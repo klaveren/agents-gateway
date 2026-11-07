@@ -57,6 +57,7 @@ import { OpencodeDetector } from '@infra/import/Opencode.Detector'
 import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
 import { AgentController } from '@infra/http/Agent.Controller'
 import { AuthController } from '@infra/http/Auth.Controller'
+import { ModelGroupRetirement } from '@application/ModelGroupRetirement.Service'
 import { ProvidersController } from '@infra/http/Providers.Controller'
 import { UsageController } from '@infra/http/Usage.Controller'
 import { makeCredentials } from './Credentials.Factory'
@@ -216,12 +217,20 @@ export function makeAuthController(): AuthController {
   return new AuthController({ accounts, proof, accessTokens })
 }
 
+/** ⚠️ Uma só: lê as mesmas configurações e o mesmo catálogo que o resto. */
+export function makeModelGroupRetirement(): ModelGroupRetirement {
+  const providers = makeProviders()
+  const models = makeModelCatalog()
+  return new ModelGroupRetirement(makeSettings(), (provider, model) => providers.get(provider)?.enabled === true && models.isEnabled(provider, model))
+}
+
 export function makeProvidersController(): ProvidersController {
   return new ProvidersController({
     providers: makeProviders(),
     credentials: makeCredentials(),
     agents: makeAgents(),
     models: makeModelCatalog(),
+    retire: (by) => makeModelGroupRetirement().retire(by),
     proof: makeAuth().proof,
     logins: new SubscriptionLogins(),
   })

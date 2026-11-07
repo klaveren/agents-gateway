@@ -414,7 +414,7 @@ const settingsSchema = {
       type: 'array',
       maxItems: 50,
       description:
-        'Model groups: ordered steps (provider + model) and switch rules. When a model fails for a reason the group switches on (quota, rate limit, model unavailable…), the conversation moves to the next available step and STAYS there. A conversation opened without a model starts at the first available step. Agents point to one (`modelGroup`).',
+        'Model groups: ordered steps (provider + model) and switch rules. When a model fails for a reason the group switches on (quota, rate limit, model unavailable…), the conversation moves to the next available step and STAYS there. A conversation opened without a model starts at the first available step. Agents point to one (`modelGroup`). ⛔ Only ENABLED models of RUNNING providers can be steps (a changed group with anything else is a 422 naming the step); a model disabled or a provider turned off/deleted leaves every group at once, and a group left with no steps stays (empty: the agent uses its own models).',
       items: {
         type: 'object',
         required: ['id', 'name', 'steps'],
@@ -424,7 +424,6 @@ const settingsSchema = {
           description: { type: 'string', maxLength: 500 },
           steps: {
             type: 'array',
-            minItems: 1,
             maxItems: 10,
             items: { type: 'object', required: ['provider', 'model'], properties: { provider: { type: 'string' }, model: { type: 'string' } } },
           },

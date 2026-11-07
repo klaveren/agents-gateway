@@ -22,6 +22,7 @@ import {
   makeMcpServersController,
   makeProvidersController,
   makeUsageController,
+  makeModelGroupRetirement,
 } from '@composition/factories/Controller.Factory'
 import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
 import { persistInstalls } from '@infra/packages/Persistent.Installs'
@@ -89,6 +90,10 @@ async function bootstrap() {
   await migrateToProjects(controller.conversations)
   // O histórico do catálogo: baseline do que não tem revisão e deriva do que mudou fora dele (semente, migrações, banco).
   reconcileCatalogHistory()
+  // Só modelo habilitado fica nas sequências de modelos: limpa o que já estava gravado (idempotente).
+  await makeModelGroupRetirement()
+    .retire('boot')
+    .catch((error: unknown) => console.error('[model-groups] limpeza do boot falhou:', error))
   // As pastas dos arquivos de recurso, a partir do catálogo (ver `ResourceFile.Model`).
   syncResourceFiles()
   const server = new HttpServer(

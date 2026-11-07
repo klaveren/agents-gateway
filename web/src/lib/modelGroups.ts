@@ -1,4 +1,4 @@
-import type { TSwitchFailure } from './types'
+import type { IFallbackStep, TSwitchFailure } from './types'
 
 /** O valor de `modelGroup` do agente que não troca de modelo (espelha `NO_MODEL_GROUP` do servidor). */
 export const NO_MODEL_GROUP = 'none'
@@ -17,3 +17,20 @@ export const SWITCH_OPTIONS: Array<{ value: TSwitchFailure; label: string; hint:
 
 /** Mesma regra do servidor: 2–48 letras minúsculas, dígitos ou hífens; `none` é reservado. */
 export const MODEL_GROUP_ID = /^[a-z0-9][a-z0-9-]{1,47}$/
+
+/**
+ * ⚖️ O passo serve? Provedor LIGADO e modelo ATIVADO no catálogo dele (a regra do servidor). `undefined` = ainda não dá para
+ * saber (a lista de provedores ou o catálogo dele não chegou): nada é tirado nem marcado por palpite.
+ */
+export function stepServes(
+  step: IFallbackStep,
+  providers: ReadonlyArray<{ id: string; enabled: boolean }>,
+  catalog: (providerId: string) => ReadonlyArray<{ modelId: string; enabled: boolean; available: boolean }> | undefined,
+): boolean | undefined {
+  const provider = providers.find((item) => item.id === step.provider)
+  if (!provider) return providers.length ? false : undefined
+  if (!provider.enabled) return false
+  const models = catalog(step.provider)
+  if (!models) return undefined
+  return models.some((model) => model.modelId === step.model && model.enabled && model.available !== false)
+}

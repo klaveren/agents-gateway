@@ -21,7 +21,12 @@ async function flush() {
 const PADRAO = { id: 'padrao', name: 'Padrão', steps: [{ provider: 'claude', model: 'sonnet' }], switchOn: ['quota'] }
 const RAPIDO = { id: 'rapido', name: 'Rápido', steps: [{ provider: 'claude', model: 'haiku' }] }
 
-async function mount(initial: string) {
+const MODELOS = [
+  { modelId: 'sonnet', enabled: true, available: true },
+  { modelId: 'haiku', enabled: true, available: true },
+]
+
+async function mount(initial: string, groups: unknown[] = [PADRAO, RAPIDO], models: unknown[] = MODELOS) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().isAdmin = true
@@ -31,14 +36,10 @@ async function mount(initial: string) {
       puts.push(init.body)
       return {}
     }
-    if (url === '/settings') return { audience: 'all', modelGroups: [PADRAO, RAPIDO], defaultModelGroup: 'padrao' }
+    if (url === '/settings') return { audience: 'all', modelGroups: groups, defaultModelGroup: 'padrao' }
     if (url === '/agents') return [{ id: 'a1', name: 'Um', providers: [], modes: ['chat'], allowedTools: [], modelGroup: 'rapido' }]
     if (url === '/providers') return [{ id: 'claude', name: 'Claude', enabled: true, subscription: false, credential: { configured: true } }]
-    if (url === '/providers/claude/models')
-      return [
-        { modelId: 'sonnet', enabled: true },
-        { modelId: 'haiku', enabled: true },
-      ]
+    if (url === '/providers/claude/models') return models
     return []
   })
   await useSettingsStore().ensure()
@@ -90,5 +91,31 @@ describe('AgentModelGroup', () => {
     const { host } = await mount(NO_MODEL_GROUP)
     expect(host.querySelector('[data-test=group-models]')).toBeNull()
     expect(host.textContent).toContain('Sem troca automática, o agente fica no modelo escolhido')
+  })
+
+  it('⚖️ o seletor de passo só oferece modelo habilitado; passo desabilitado vem marcado e sai ao salvar', async () => {
+    const velha = { id: 'velha', name: 'Velha', steps: [{ provider: 'claude', model: 'sonnet' }, { provider: 'claude', model: 'haiku' }] }
+    const { host, puts, part } = await mount('velha', [PADRAO, velha], [
+      { modelId: 'sonnet', enabled: false, available: true },
+      { modelId: 'haiku', enabled: true, available: true },
+      { modelId: 'opus', enabled: true, available: false },
+    ])
+    const options = [...host.querySelectorAll('[data-test=group-models] select option')].map((option) => option.textContent ?? '')
+    expect(options.join('|')).not.toContain('sonnet')
+    expect(options.join('|')).not.toContain('opus')
+    expect(host.querySelector('[data-test=stale-warning]')).not.toBeNull()
+    expect(part.value?.dirty).toBe(true)
+
+    await part.value?.commit()
+    const sent = (puts[0] as { modelGroups: Array<{ id: string; steps: unknown[] }> }).modelGroups
+    expect(sent.map((group) => group.id)).toEqual(['padrao', 'velha'])
+    expect(sent[1].steps).toEqual([{ provider: 'claude', model: 'haiku' }])
+  })
+
+  it('sequência vazia (todos os modelos saíram): mostra "sem modelos" e salva vazia', async () => {
+    const { host, puts, part } = await mount('vazia', [PADRAO, { id: 'vazia', name: 'Vazia', steps: [] }])
+    expect(host.querySelector('[data-test=chain-empty]')?.textContent).toContain('o agente usa os dele')
+    expect(part.value?.dirty).toBe(false)
+    expect(puts).toEqual([])
   })
 })

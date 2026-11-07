@@ -230,12 +230,14 @@ describe('catálogo de modelos (integração)', () => {
     const { makeProviders } = await import('@composition/factories/Providers.Factory')
     const { makeAuth } = await import('@composition/factories/Auth.Factory')
     const { ProvidersController } = await import('./Providers.Controller')
+    const { makeModelGroupRetirement } = await import('@composition/factories/Controller.Factory')
 
     const providers = new ProvidersController({
       providers: makeProviders(),
       credentials: makeCredentials(),
       agents: makeAgents(),
       models: makeModelCatalog(),
+      retire: (by) => makeModelGroupRetirement().retire(by),
       proof: makeAuth().proof,
       list: async () => [{ id: 'vendor/a', price: { input: 1, output: 2 } }, { id: 'vendor/b' }],
     })
@@ -311,5 +313,64 @@ describe('catálogo de modelos (integração)', () => {
   it('sem chave salva, sincronizar é 422', async () => {
     await call('/providers', { method: 'POST', token: admin, body: { id: 'sem-chave', name: 'Sem chave', protocol: 'openai', baseUrl: 'https://api.semchave.example/v1' } })
     assert.strictEqual((await call('/providers/sem-chave/models/sync', { method: 'POST', token: admin })).status, 422)
+  })
+
+  it('⚖️ sequência de modelos: só modelo habilitado entra (422); desabilitar o modelo, desligar e apagar o provider tiram o passo de todas, e a vazia continua', async () => {
+    for (const id of ['seq-a', 'seq-b', 'seq-c'])
+      await call('/providers', { method: 'POST', token: admin, body: { id, name: id, protocol: 'openai', baseUrl: `https://api.${id}.example/v1` } })
+    for (const [id, model] of [
+      ['seq-a', 'm1'],
+      ['seq-a', 'm2'],
+      ['seq-b', 'm3'],
+      ['seq-c', 'm4'],
+    ]) {
+      await call(`/providers/${id}/models`, { method: 'POST', token: admin, body: { modelId: model } })
+      if (model !== 'm2') await call(`/providers/${id}/models`, { method: 'PUT', token: admin, body: { modelId: model, enabled: true } })
+    }
+    const steps = (provider: string, model: string) => ({ provider, model })
+    const stepsOf = async () =>
+      ((await call('/settings', { token: admin })).body.result.modelGroups as Array<{ id: string; steps: Array<{ model: string }> }>).map((g) => [
+        g.id,
+        g.steps.map((s) => s.model),
+      ])
+    const put = (modelGroups: unknown) => call('/settings', { method: 'PUT', token: admin, body: { modelGroups } })
+
+    // m2 existe mas está desabilitado: 422 com o passo.
+    const refused = await put([{ id: 'g1', name: 'G1', steps: [steps('seq-a', 'm1'), steps('seq-a', 'm2')] }])
+    assert.strictEqual(refused.status, 422)
+    assert.ok(JSON.stringify(refused.body).includes('steps[1]'))
+    assert.strictEqual(
+      (
+        await put([
+          { id: 'g1', name: 'G1', steps: [steps('seq-a', 'm1'), steps('seq-b', 'm3'), steps('seq-c', 'm4')] },
+          { id: 'g2', name: 'G2', steps: [steps('seq-a', 'm1')] },
+        ])
+      ).status,
+      200,
+    )
+
+    // Modelo desabilitado: sai de TODAS; g2 fica vazia e continua.
+    await call('/providers/seq-a/models', { method: 'PUT', token: admin, body: { modelId: 'm1', enabled: false } })
+    assert.deepStrictEqual(await stepsOf(), [
+      ['g1', ['m3', 'm4']],
+      ['g2', []],
+    ])
+    // Editar outra coisa nas configurações com uma sequência vazia não trava.
+    assert.strictEqual((await call('/settings', { method: 'PUT', token: admin, body: { audience: 'all' } })).status, 200)
+
+    // Provider desligado.
+    await call('/providers/seq-b', { method: 'PUT', token: admin, body: { enabled: false } })
+    assert.deepStrictEqual(await stepsOf(), [
+      ['g1', ['m4']],
+      ['g2', []],
+    ])
+
+    // Provider apagado.
+    assert.strictEqual((await call('/providers/seq-c', { method: 'DELETE', token: admin })).status, 200)
+    assert.deepStrictEqual(await stepsOf(), [
+      ['g1', []],
+      ['g2', []],
+    ])
+    assert.strictEqual((await call('/settings', { token: admin })).body.result.updatedBy, 'root@x.test')
   })
 })
