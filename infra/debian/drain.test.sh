@@ -66,9 +66,21 @@ drain_and_wait ""
 check "sem rota de dreno: ainda espera zerar" 0 "$?"
 SET_RC=0
 
-# 6. O gateway não respondeu (vazio): não trava.
-drain_running() { echo ""; }
+# 6. ⛔ O gateway não respondeu (vazio): NÃO é zero — espera e pergunta de novo; com teto, não reinicia.
+CLOCK=0 SETS=()
+echo 0 >"$STATE"
+drain_running() {
+  local i
+  i=$(<"$STATE")
+  echo $((i + 1)) >"$STATE"
+  ((i < 2)) && echo "" || echo 0
+}
 drain_and_wait ""
-check "sem resposta: não trava" 0 "$?"
+check "sem resposta: espera até responder zero" 0 "$?"
+check "sem resposta: perguntou de novo" 3 "$(<"$STATE")"
+CLOCK=0 SETS=()
+drain_running() { echo ""; }
+drain_and_wait 1
+check "sem resposta com teto: não reinicia" 1 "$?"
 
 exit $fail
