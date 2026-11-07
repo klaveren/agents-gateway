@@ -191,6 +191,45 @@ if systemctl is-active --quiet "$SERVICE"; then
 fi
 systemctl restart "$SERVICE"
 
+# --- 8b. O backup diário (03:30): banco consistente, chave separada, projetos sem repositórios; 7 diários + 4 semanais.
+#         Fica no servidor (`$GATEWAY_DATA/backups`); levar para fora é decisão do dono. Roda como o usuário do serviço.
+#         Restauração: docs/BACKUP.md ---
+log "Backup diário ($SERVICE-backup.timer)"
+cat >"/etc/systemd/system/$SERVICE-backup.service" <<UNIT
+# Gerada por infra/debian/setup.sh — não edite aqui: rode o setup de novo.
+[Unit]
+Description=Backup do dado do Agents Gateway
+
+[Service]
+Type=oneshot
+User=$GATEWAY_USER
+Group=$GATEWAY_USER
+WorkingDirectory=$GATEWAY_HOME
+Environment=HOME=$USER_HOME
+Environment=PATH=$NODE_DIR:/usr/local/bin:/usr/bin:/bin
+Environment=NODE_BIN=$NODE_BIN
+Environment=GATEWAY_DATA=$GATEWAY_DATA
+Environment=CONVERSATIONS_DB=$GATEWAY_DATA/gateway.db
+# O systemd lê o arquivo como root: a chave (SECRETS_KEY) chega ao script sem o usuário do serviço ler o arquivo.
+EnvironmentFile=$GATEWAY_ENV
+ExecStart=/bin/bash $GATEWAY_HOME/infra/debian/backup.sh
+UNIT
+cat >"/etc/systemd/system/$SERVICE-backup.timer" <<UNIT
+# Gerada por infra/debian/setup.sh — não edite aqui: rode o setup de novo.
+[Unit]
+Description=Backup diário do Agents Gateway
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+chmod +x "$GATEWAY_HOME/infra/debian/backup.sh"
+systemctl daemon-reload
+systemctl enable --now "$SERVICE-backup.timer" >/dev/null 2>&1
+
 # --- 9. Conferência ---
 for _ in $(seq 1 30); do
   if curl -fsS "http://$GATEWAY_HOST:$GATEWAY_PORT/v1/health" >/dev/null 2>&1; then
