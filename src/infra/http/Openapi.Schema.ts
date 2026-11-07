@@ -843,6 +843,12 @@ const failures = {
     content: { 'application/json': { schema: failureEnvelope } },
   },
   '422': { description: 'Validation failed', content: { 'application/json': { schema: failureEnvelope } } },
+  '503': {
+    description:
+      'Code `draining`: the gateway is being updated and accepts no NEW turn (a new conversation, a message, `/turns`, a hook call); turns already running finish. `Retry-After: 30`: send the same request again after it. The scheduler and the hooks of the gateway itself fall here too: a schedule fires on the next cycle; a hook answers 503 to its caller, which must resend the event.',
+    headers: { 'Retry-After': { schema: { type: 'integer' }, description: 'Seconds to wait before retrying (30)' } },
+    content: { 'application/json': { schema: failureEnvelope } },
+  },
 }
 
 const json = (schema: object) => ({ content: { 'application/json': { schema } } })
@@ -1416,8 +1422,22 @@ export const OPENAPI_DOCUMENT = {
     '/health': {
       get: {
         summary: 'Liveness, MCP status and live session count',
+        description:
+          'Called from the server itself with `?turns=1`: `{ running, draining }` — how many turns are running and whether drain mode is on (the deploy waits for `running: 0`).',
         security: [],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) } },
+      },
+    },
+    '/health/drain': {
+      post: {
+        summary:
+          'Drain mode for a deploy: turns off NEW turns (503 `draining`, `Retry-After: 30`) and lets the running ones finish. Only from the server itself (loopback, no proxy headers); 404 from anywhere else. Memory only: a restart clears it',
+        security: [],
+        requestBody: { required: false, ...json({ type: 'object', properties: { on: { type: 'boolean', default: true, description: '`false` turns drain mode off' } } }) },
+        responses: {
+          '200': { description: 'The new state', ...json(envelope({ type: 'object', properties: { draining: { type: 'boolean' } } })) },
+          '404': failures['404'],
+        },
       },
     },
     '/auth/status': {
@@ -3501,6 +3521,7 @@ export const OPENAPI_DOCUMENT = {
             content: { 'application/json': { schema: failureEnvelope } },
           },
           '409': { description: 'Code hook_owner_inactive: the account the hook runs as is disabled or gone', content: { 'application/json': { schema: failureEnvelope } } },
+          '503': failures['503'],
           '429': {
             description: 'Too many accepted calls to this hook (HOOK_RATE_LIMIT per minute), or too many failed calls from this address (HOOK_FAIL_LIMIT per minute)',
             content: { 'application/json': { schema: failureEnvelope } },
@@ -5033,6 +5054,7 @@ export const OPENAPI_DOCUMENT = {
           '403': failures['403'],
           '404': failures['404'],
           '422': failures['422'],
+          '503': failures['503'],
         },
       },
       get: {
@@ -5128,6 +5150,7 @@ export const OPENAPI_DOCUMENT = {
           },
           '404': failures['404'],
           '409': { description: 'A turn is already running in this conversation' },
+          '503': failures['503'],
         },
       },
     },
@@ -5253,6 +5276,7 @@ export const OPENAPI_DOCUMENT = {
           '404': failures['404'],
           '409': { description: '`session_busy` (a turn is running) or `queue_full`', ...json(failureEnvelope) },
           '422': failures['422'],
+          '503': failures['503'],
         },
       },
     },

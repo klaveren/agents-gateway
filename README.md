@@ -678,6 +678,12 @@ enters the same turn:
   `aborted`.
 - One turn per conversation: a second one while the first runs gets 409 `session_busy`, on this
   route and on `/messages`.
+- **Deploy drain:** while the gateway is being updated it answers 503 `draining` with
+  `Retry-After: 30` to every NEW turn (new conversation, `/messages`, `/turns`, a hook call);
+  running turns finish. Resend the same request after the wait. A schedule fires on the next
+  cycle; a hook answers 503 to its caller, which must resend the event. The deploy turns it on
+  (`POST /v1/health/drain`, server-local only) and restarts at `running: 0`, never cutting a turn;
+  `DEPLOY_WAIT_MINUTES` is an optional ceiling — when it runs out nothing restarts.
 - With `callbackUrl` on the conversation, the end of every turn is POSTed there, signed with
   `X-Gateway-Signature`. Only hosts in `TURN_CALLBACK_HOSTS` are accepted, and it tries 3 times.
 - **Live on the screen:** a turn started anywhere (the API, a schedule, a delegation, another

@@ -50,6 +50,7 @@ import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
+import { drain, DRAIN_RETRY_SECONDS, fromThisHostDirectly, refuseWhenDraining } from './Drain.State'
 import { SessionBusyError, SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { IProjectCaller, ProjectsService } from '@application/Projects.Service'
 import { agentFootprint } from '@application/Agent.Footprint'
@@ -233,6 +234,7 @@ export class AgentController {
 
   constructor(private readonly usecases: IAgentControllerDeps) {
     this.health = this.health.bind(this)
+    this.drain = this.drain.bind(this)
     this.getAgents = this.getAgents.bind(this)
     this.getAgentTools = this.getAgentTools.bind(this)
     this.getAgentFootprint = this.getAgentFootprint.bind(this)
@@ -294,7 +296,7 @@ export class AgentController {
       // conversa nunca é cortada por um reinício.
       if (sameHost(req)) {
         const running = (await this.usecases.listSessions.execute()).filter((session) => session.status === 'running').length
-        if (req.query.turns !== undefined) return { status: 'ok', running }
+        if (req.query.turns !== undefined) return { status: 'ok', running, draining: drain.active() }
       }
       // ⛔ Rota pública e BARATA: sem reconectar MCP (cada chamada abria conexão com todos os servidores
       // — amplificação de graça para quem martelar) e sem contagens. O detalhe é só para admin.
@@ -309,6 +311,18 @@ export class AgentController {
         sessions: (await this.usecases.listSessions.execute()).length,
       }
     })
+  }
+
+  /**
+   * ⚖️ O DRENO do deploy (`POST /health/drain`; o corpo `{ "on": false }` desliga, o padrão liga): com ele ligado, turno
+   * novo é 503 `draining` e os em andamento seguem. ⛔ Só do PRÓPRIO servidor, sem proxy no meio (`fromThisHostDirectly`),
+   * e sem credencial nova: quem fala com a porta a partir da máquina já é dono dela. De outro lugar: 404.
+   */
+  async drain(req: Request, res: Response) {
+    if (!fromThisHostDirectly(req)) return void res.status(404).json(fail('Not found', 'not_found'))
+    const body = (req.body ?? {}) as { on?: unknown }
+    drain.set(body.on !== false)
+    res.json(ok({ draining: drain.active() }))
   }
 
   /**
@@ -940,6 +954,7 @@ export class AgentController {
     await this.respond(
       res,
       async () => {
+        refuseWhenDraining()
         const resolved = await this.requireCaller()
 
         // ⛔ A AUDIÊNCIA vem ANTES do corpo: quem é recusado não precisa saber se o corpo estava
@@ -1751,6 +1766,11 @@ export class AgentController {
     } catch (error: unknown) {
       return this.refused(res, error, req, sessionId)
     }
+    try {
+      refuseWhenDraining()
+    } catch (error: unknown) {
+      return this.refused(res, error, req, sessionId)
+    }
     const wantsJson = req.accepts(['text/event-stream', 'application/json']) === 'application/json'
 
     return wantsJson ? this.sendMessageAsJson(res, sessionId, input, req) : this.sendMessageAsStream(res, sessionId, input, req)
@@ -1905,6 +1925,7 @@ export class AgentController {
     callback: ITurnCallbackTarget | undefined,
   ): { live: ILiveTurn; done: Promise<void> } {
     if (session.status === 'running' || this.liveTurns.has(sessionId)) throw new SessionBusyError(sessionId)
+    refuseWhenDraining()
     const live: ILiveTurn = { turn: session.turns, startedAt: Date.now(), text: '', tools: [] }
     this.liveTurns.set(sessionId, live)
     return { live, done: this.runTurn(sessionId, input, live, callback) }
@@ -2218,7 +2239,8 @@ export class AgentController {
 
   private sendFailure(res: Response, error: unknown, scope: string) {
     const failure = toHttpFailure(error)
-    if (failure.status >= 500) console.error(`${scope} Error:`, failure.message)
+    if (failure.status >= 500 && failure.code !== 'draining') console.error(`${scope} Error:`, failure.message)
+    if (failure.code === 'draining') res.setHeader('Retry-After', String(DRAIN_RETRY_SECONDS))
     res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
   }
 }

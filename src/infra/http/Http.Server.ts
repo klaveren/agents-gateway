@@ -110,7 +110,7 @@ const ARCHIVE_TYPES = ['application/gzip', 'application/x-gzip', 'application/x-
 export const THROTTLED_PATHS = ['/auth/login', '/auth/setup', '/auth/password']
 
 /** ⚠️ O hook é público: a credencial dele é a chave do hook (ver `Hooks.Controller`), não uma conta. */
-export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login', HOOK_PATH]
+export const PUBLIC_PATHS: readonly string[] = ['/health', '/health/drain', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login', HOOK_PATH]
 
 export type TRouteMethod = 'get' | 'post' | 'put' | 'patch' | 'delete'
 
@@ -503,6 +503,7 @@ function buildRoutes(
     { method: 'post', path: '/providers/:id/login/code', handler: providers.loginCode },
     { method: 'delete', path: '/providers/:id/login', handler: providers.loginCancel },
     { method: 'get', path: '/health', handler: controller.health },
+    { method: 'post', path: '/health/drain', handler: controller.drain },
     { method: 'get', path: '/auth/status', handler: auth.status },
     { method: 'post', path: '/auth/setup', handler: auth.setup },
     { method: 'post', path: '/auth/login', handler: auth.login },
