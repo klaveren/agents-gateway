@@ -400,7 +400,24 @@ export class AgentController {
     const current = await this.usecases.settings.read()
     // Os grupos: bem formados e só com provedor que existe. O padrão tem de ser um deles; o grupo que um agente usa não sai.
     const groups = body.modelGroups === undefined ? (current.modelGroups ?? []) : (body.modelGroups ?? [])
-    issues.push(...modelGroupIssues(groups, this.usecases.providers ? (provider) => !!this.usecases.providers!.get(provider) : undefined))
+    // ⛔ Cada passo de uma sequência que MUDOU é um modelo HABILITADO de um provedor LIGADO. As que não mudaram passam: já saíram
+    // limpas pela retirada automática, e quem edita outra coisa nas configurações não pode ficar preso numa sequência velha.
+    const stored = current.modelGroups ?? []
+    const shape = (group: IModelGroup | undefined) =>
+      JSON.stringify(
+        group && [group.id, group.name, group.description ?? null, group.steps.map((step) => [step.provider, step.model]), group.switchOn ?? null, group.cooldownMinutes ?? null],
+      )
+    const changed = (group: IModelGroup) => shape(stored.find((item) => item.id === group.id)) !== shape(group)
+    const providers = this.usecases.providers
+    const models = this.usecases.models
+    issues.push(
+      ...modelGroupIssues(groups, providers ? (provider) => !!providers.get(provider) : undefined, (step, group) => {
+        if (!changed(group)) return undefined
+        if (providers && !providers.get(step.provider)?.enabled) return 'provider is disabled'
+        if (models && !models.isEnabled(step.provider, step.model)) return 'model is not enabled in the catalog'
+        return undefined
+      }),
+    )
     const defaultGroup = body.defaultModelGroup === undefined ? current.defaultModelGroup : body.defaultModelGroup || undefined
     if (defaultGroup && !groups.some((group) => group.id === defaultGroup)) issues.push({ field: 'defaultModelGroup', message: `unknown model group: ${defaultGroup}` })
     for (const agent of this.agents.list())

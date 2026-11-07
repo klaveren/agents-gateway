@@ -7,7 +7,7 @@ import { computed, onMounted, ref, watch } from 'vue'
   import Icon from '@/components/Icon.vue'
   import MasterDetail from '@/components/MasterDetail.vue'
   import { ApiError } from '@/lib/api'
-  import { DEFAULT_COOLDOWN_MINUTES, DEFAULT_SWITCH_ON, MODEL_GROUP_ID, NO_MODEL_GROUP, SWITCH_OPTIONS } from '@/lib/modelGroups'
+  import { DEFAULT_COOLDOWN_MINUTES, DEFAULT_SWITCH_ON, MODEL_GROUP_ID, NO_MODEL_GROUP, stepServes, SWITCH_OPTIONS } from '@/lib/modelGroups'
   import type { IFallbackStep, IModelGroup, IProviderStatus, TSwitchFailure } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
   import { useAuthStore } from '@/stores/auth'
@@ -51,9 +51,11 @@ import { computed, onMounted, ref, watch } from 'vue'
     (ids) => ids.forEach((id) => void providers.models(id).catch(() => undefined)),
     { immediate: true },
   )
+  /** ⚖️ Passo que não serve (modelo desabilitado, provedor desligado): marcado na lista e tirado ao salvar. */
+  const stale = (step: IFallbackStep) => stepServes(step, providers.list, (id) => providers.catalogs.get(id)) === false
   const stepOptions = computed<IFallbackStep[]>(() =>
     runnableProviders.value.flatMap((provider: IProviderStatus) =>
-      (providers.catalogs.get(provider.id) ?? []).filter((model) => model.enabled).map((model) => ({ provider: provider.id, model: model.modelId })),
+      (providers.catalogs.get(provider.id) ?? []).filter((model) => model.enabled && model.available !== false).map((model) => ({ provider: provider.id, model: model.modelId })),
     ),
   )
 
@@ -86,14 +88,14 @@ import { computed, onMounted, ref, watch } from 'vue'
   }
 
   const idInvalid = computed(() => adding.value && (!MODEL_GROUP_ID.test(draft.value.id) || draft.value.id === NO_MODEL_GROUP))
-  const canSave = computed(() => !!draft.value.name.trim() && !idInvalid.value && draft.value.steps.length > 0 && !busy.value)
+  const canSave = computed(() => !!draft.value.name.trim() && !idInvalid.value && !busy.value)
 
   function built(): IModelGroup {
     return {
       id: draft.value.id,
       name: draft.value.name.trim(),
       ...(draft.value.description.trim() ? { description: draft.value.description.trim() } : {}),
-      steps: draft.value.steps,
+      steps: draft.value.steps.filter((step) => !stale(step)),
       switchOn: draft.value.switchOn,
       ...(draft.value.cooldown !== '' ? { cooldownMinutes: Number(draft.value.cooldown) } : {}),
     }
@@ -181,7 +183,7 @@ import { computed, onMounted, ref, watch } from 'vue'
           </span>
           <span class="block truncate text-xs text-zinc-500">
             <code>{{ group.id }}</code>
-            · {{ group.steps.length }} {{ group.steps.length === 1 ? 'passo' : 'passos' }} · {{ countOf(group.id) }} {{ countOf(group.id) === 1 ? 'agente' : 'agentes' }}
+            · {{ group.steps.length ? `${group.steps.length} ${group.steps.length === 1 ? 'passo' : 'passos'}` : 'sem modelos: o agente usa os dele' }} · {{ countOf(group.id) }} {{ countOf(group.id) === 1 ? 'agente' : 'agentes' }}
             <template v-if="group.id === defaultId">+ os sem sequência</template>
           </span>
         </span>
@@ -215,7 +217,7 @@ import { computed, onMounted, ref, watch } from 'vue'
             <p class="text-xs text-zinc-500">
               A ordem de uso. A conversa começa no primeiro modelo disponível; quando ele falha, passa para o próximo, e assim por diante. Só aparecem modelos ativados.
             </p>
-            <FallbackChain v-model="draft.steps" :options="stepOptions" />
+            <FallbackChain v-model="draft.steps" :options="stepOptions" :stale="stale" />
           </div>
 
           <fieldset class="flex flex-col gap-2">

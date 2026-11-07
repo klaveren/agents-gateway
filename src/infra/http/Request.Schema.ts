@@ -88,7 +88,7 @@ const modelGroup = z.object({
   id: modelGroupRef,
   name: z.string().trim().min(1).max(MODEL_GROUP_BOUNDS.name),
   description: z.string().trim().max(MODEL_GROUP_BOUNDS.description).optional(),
-  steps: z.array(fallbackStep).min(1).max(MODEL_GROUP_BOUNDS.steps),
+  steps: z.array(fallbackStep).max(MODEL_GROUP_BOUNDS.steps),
   switchOn: z.array(z.enum(SWITCHABLE_FAILURES as [TProviderFailure, ...TProviderFailure[]])).optional(),
   cooldownMinutes: z.number().int().min(MODEL_GROUP_BOUNDS.cooldownMinutes.min).max(MODEL_GROUP_BOUNDS.cooldownMinutes.max).optional(),
 })

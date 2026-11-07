@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from './enums/EMode.Enum'
-import { benchKeyOf, fallbackChain, groupOf, IModelGroup, modelGroupIssues, nextStep, switchesOn, withGroupTargets } from './Fallback.Policy'
+import { benchKeyOf, fallbackChain, groupOf, IModelGroup, modelGroupIssues, nextStep, retireSteps, switchesOn, withGroupTargets } from './Fallback.Policy'
 import { IAgent } from './models/Agent.Model'
 
 const agent: IAgent = {
@@ -77,7 +77,31 @@ describe('Fallback.Policy — grupos de modelos', () => {
     )
     assert.deepStrictEqual(
       issues.map((issue) => issue.field),
-      ['modelGroups[0].id', 'modelGroups[0].name', 'modelGroups[0].steps', 'modelGroups[1].steps[0].provider', 'modelGroups[1].switchOn', 'modelGroups[2].id', 'modelGroups[3].id'],
+      ['modelGroups[0].id', 'modelGroups[0].name', 'modelGroups[1].steps[0].provider', 'modelGroups[1].switchOn', 'modelGroups[2].id', 'modelGroups[3].id'],
     )
+  })
+
+  it('⚖️ retireSteps tira o passo que não serve de todos os grupos; o vazio fica; nada a tirar devolve o mesmo array', () => {
+    const groups: IModelGroup[] = [
+      {
+        ...padrao,
+        id: 'a',
+        steps: [
+          { provider: 'p', model: 'm1' },
+          { provider: 'p', model: 'm2' },
+        ],
+      },
+      { ...padrao, id: 'b', steps: [{ provider: 'p', model: 'm1' }] },
+    ]
+    const out = retireSteps(groups, (step) => step.model !== 'm1')
+    assert.deepStrictEqual(
+      out.groups.map((group) => group.steps.length),
+      [1, 0],
+    )
+    assert.deepStrictEqual(
+      out.removed.map((item) => item.group),
+      ['a', 'b'],
+    )
+    assert.strictEqual(retireSteps(groups, () => true).groups, groups)
   })
 })

@@ -2,7 +2,7 @@
   import { computed, onMounted, ref, watch } from 'vue'
   import FallbackChain from './FallbackChain.vue'
   import { api, ApiError } from '@/lib/api'
-  import { DEFAULT_COOLDOWN_MINUTES, DEFAULT_SWITCH_ON, NO_MODEL_GROUP, SWITCH_OPTIONS } from '@/lib/modelGroups'
+  import { DEFAULT_COOLDOWN_MINUTES, DEFAULT_SWITCH_ON, NO_MODEL_GROUP, stepServes, SWITCH_OPTIONS } from '@/lib/modelGroups'
   import type { IFallbackStep, IModelGroup, IProviderStatus, TSwitchFailure } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
   import { useAuthStore } from '@/stores/auth'
@@ -54,9 +54,12 @@
   )
   const stepOptions = computed<IFallbackStep[]>(() =>
     runnable.value.flatMap((provider: IProviderStatus) =>
-      (providers.catalogs.get(provider.id) ?? []).filter((model) => model.enabled).map((model) => ({ provider: provider.id, model: model.modelId })),
+      (providers.catalogs.get(provider.id) ?? []).filter((model) => model.enabled && model.available !== false).map((model) => ({ provider: provider.id, model: model.modelId })),
     ),
   )
+
+  /** ⚖️ Passo que não serve (modelo desabilitado, provedor desligado): marcado na lista e tirado ao salvar. */
+  const stale = (step: IFallbackStep) => stepServes(step, providers.list, (id) => providers.catalogs.get(id)) === false
 
   const draft = ref({ steps: [] as IFallbackStep[], switchOn: [...DEFAULT_SWITCH_ON] as TSwitchFailure[], cooldown: '' as number | '' })
   const note = ref<string>()
@@ -76,6 +79,7 @@
     const group = effective.value
     if (!group) return false
     return (
+      draft.value.steps.some(stale) ||
       JSON.stringify(draft.value.steps) !== JSON.stringify(group.steps) ||
       JSON.stringify([...draft.value.switchOn].sort()) !== JSON.stringify([...(group.switchOn ?? DEFAULT_SWITCH_ON)].sort()) ||
       (draft.value.cooldown === '' ? undefined : Number(draft.value.cooldown)) !== group.cooldownMinutes
@@ -102,18 +106,19 @@
 
   async function saveGroup() {
     const group = effective.value
-    if (!group || !draft.value.steps.length) return
+    if (!group) return
     busy.value = true
     note.value = failure.value = undefined
     try {
       const next: IModelGroup = {
         ...group,
-        steps: draft.value.steps,
+        steps: draft.value.steps.filter((step) => !stale(step)),
         switchOn: draft.value.switchOn,
         ...(draft.value.cooldown !== '' ? { cooldownMinutes: Number(draft.value.cooldown) } : {}),
       }
       if (draft.value.cooldown === '') delete next.cooldownMinutes
       await settings.save({ modelGroups: groups.value.map((item) => (item.id === group.id ? next : item)) })
+      draft.value.steps = next.steps.map((step) => ({ ...step }))
       note.value = 'Sequência salva. Vale no próximo turno, para todos os agentes que a usam.'
     } catch (error) {
       failure.value = describe(error)
@@ -156,7 +161,7 @@
       <div class="flex flex-col gap-4 p-3">
         <div class="flex flex-col gap-2">
           <p class="hint">A ordem de uso. A conversa começa no primeiro modelo disponível; quando ele falha, passa para o próximo, e assim por diante. Só aparecem modelos ativados.</p>
-          <FallbackChain v-model="draft.steps" :options="stepOptions" />
+          <FallbackChain v-model="draft.steps" :options="stepOptions" :stale="stale" />
         </div>
         <div class="flex flex-col gap-1.5">
           <span class="text-sm text-zinc-300">Trocar de modelo quando</span>
