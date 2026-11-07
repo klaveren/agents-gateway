@@ -4,7 +4,14 @@ import { after, before, describe, it } from 'node:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { makeAuth } from '@composition/factories/Auth.Factory'
-import { makeAuthController, makeCatalogController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
+import {
+  makeAuthController,
+  makeCatalogController,
+  makeController,
+  makePermissionRequestsController,
+  makeProvidersController,
+  makeUsageController,
+} from '@composition/factories/Controller.Factory'
 import { makeProjects } from '@composition/factories/Projects.Factory'
 import { makeGuidance } from '@composition/factories/Guidance.Factory'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -98,6 +105,7 @@ describe('MCP do próprio gateway (integração)', () => {
       undefined,
       undefined,
       makeCatalogController(),
+      makePermissionRequestsController(),
     ).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
@@ -482,6 +490,63 @@ describe('MCP do próprio gateway (integração)', () => {
       body: '{}',
     })
     assert.strictEqual(after.status, 401)
+  })
+
+  it('⛔ save_agent por AGENTE: nasce no projeto da conversa, no mínimo; o que amplia vira pedido; omitir projectId mantém o projeto', async () => {
+    await call('/projects', { method: 'POST', token: admin, body: { id: 'projsave', name: 'projsave' } })
+    await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'claude-sonnet-5' } })
+    await call('/providers/claude/models', { method: 'PUT', token: admin, body: { modelId: 'claude-sonnet-5', enabled: true } })
+    const grant = turnGrants().register({ tools: [], context: { token: admin, agentId: 'atlas', sessionId: 's2', conversationProjectId: 'projsave' } })
+    try {
+      const client = new Client({ name: 'teste', version: '1.0.0' })
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Turn-Grant': grant } } }))
+      const agent = {
+        id: 'filho-save',
+        name: 'Filho',
+        providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }],
+        systemPrompt: 'Você ajuda.',
+        modes: ['agent'],
+        allowedTools: ['run_bash'],
+        adminOnly: false,
+      }
+      const created = await client.callTool({ name: 'save_agent', arguments: agent })
+      assert.ok(!(created as { isError?: boolean }).isError, JSON.stringify(created))
+      const stored = (await call('/agents/filho-save', { token: admin })).result
+      assert.strictEqual(stored.projectId, 'projsave', 'sem projectId nasce no projeto da conversa')
+      assert.ok(!(stored.allowedTools ?? []).length, 'run_bash não foi gravado')
+      assert.strictEqual(stored.adminOnly, true)
+      const pending = (await call('/agents/filho-save/permission-requests', { token: admin })).result as Array<{ kind: string }>
+      assert.ok(
+        pending.some((request) => request.kind === 'agent-patch'),
+        JSON.stringify(pending),
+      )
+
+      // Editar sem projectId mantém o projeto; pedir a ferramenta de novo não a grava.
+      const edited = await client.callTool({ name: 'save_agent', arguments: { ...agent, name: 'Filho 2', allowedTools: ['run_bash'] } })
+      assert.ok(!(edited as { isError?: boolean }).isError, JSON.stringify(edited))
+      const after = (await call('/agents/filho-save', { token: admin })).result
+      assert.deepStrictEqual([after.name, after.projectId, (after.allowedTools ?? []).length], ['Filho 2', 'projsave', 0])
+    } finally {
+      turnGrants().release(grant)
+    }
+
+    // Pessoa direto pelo MCP: grava na hora e, sem projectId, não derruba o agente de projeto para global.
+    const person = await connect(admin)
+    const saved = await person.callTool({
+      name: 'save_agent',
+      arguments: {
+        id: 'filho-save',
+        name: 'Filho 3',
+        providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }],
+        systemPrompt: 'Você ajuda.',
+        modes: ['agent'],
+        allowedTools: ['run_bash'],
+      },
+    })
+    assert.ok(!(saved as { isError?: boolean }).isError, JSON.stringify(saved))
+    const final = (await call('/agents/filho-save', { token: admin })).result
+    assert.strictEqual(final.projectId, 'projsave')
+    assert.ok(final.allowedTools.length > 0, 'a pessoa grava na hora')
   })
 
   it('⛔ o agente (concessão) só alcança conversas do PROJETO da conversa dele: ler, mandar mensagem e reconfigurar em outro projeto são recusados', async () => {
