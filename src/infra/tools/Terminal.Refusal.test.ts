@@ -166,3 +166,78 @@ describe('terminal — /tmp privado do cerco e recusas com a saída', () => {
     assert.doesNotMatch((await inSandbox('rm -rf /')) ?? '', /save_permission_rules/)
   })
 })
+
+describe('terminal — $TMPDIR do cerco e variável de laço literal', () => {
+  const wr = (pattern: string): IPermissionRule => ({ category: 'write', pattern, decision: 'allow' })
+  const base = [
+    rule('node *', 'allow'),
+    rule('cat *', 'allow'),
+    rule('echo *', 'allow'),
+    rule('awk *', 'allow'),
+    rule('printf *', 'allow'),
+    rule('read *', 'allow'),
+    rule('bash *', 'allow'),
+  ]
+  const run = (command: string, rules: IPermissionRule[]) =>
+    terminalRefusal(command, '/w', checker([...base, ...rules]), {}, undefined, { variables: { TMPDIR: '/w/.tmp', HOME: '/w/.home' } })
+
+  it('`> $TMPDIR/x`, `${TMPDIR}/x` e `"$TMPDIR/x"` passam com a regra de escrita da pasta tmp', async () => {
+    for (const dest of ['$TMPDIR/val.txt', '${TMPDIR}/val.txt', '"$TMPDIR/val.txt"', '$HOME/a.txt']) {
+      assert.strictEqual(await run(`node x.mjs > ${dest}`, [wr('.tmp/**'), wr('.home/**')]), undefined, dest)
+    }
+  })
+
+  it('⛔ sem regra de escrita para a pasta tmp, o caminho resolvido é recusado pela regra normal', async () => {
+    assert.match((await run('node x.mjs > $TMPDIR/val.txt', [])) ?? '', /nenhuma regra de escrita permite/)
+  })
+
+  it('no cerco, o rascunho (`$TMPDIR`, `$HOME`) passa sem regra; fora dele, não', async () => {
+    const inCerco = (command: string) =>
+      terminalRefusal(command, '/w', checker(base), {}, undefined, { variables: { TMPDIR: '/w/.tmp', HOME: '/w/.home' }, scratch: ['/w/.tmp', '/w/.home'] })
+    assert.strictEqual(await inCerco('node x.mjs > $TMPDIR/val.txt 2>&1'), undefined)
+    assert.strictEqual(await inCerco('echo x > .home/a.txt'), undefined)
+    assert.match((await inCerco('echo x > .tmpx/a.txt')) ?? '', /nenhuma regra de escrita permite/)
+    assert.match((await inCerco('echo x > ../fora.txt')) ?? '', /nenhuma regra de escrita permite/)
+  })
+
+  it('⛔ TMPDIR reatribuído no script, outra variável e expansão com operador seguem dinâmicas', async () => {
+    const rules = [wr('**')]
+    for (const command of [
+      'TMPDIR=/etc; echo x > $TMPDIR/y',
+      'export TMPDIR=/etc; echo x > $TMPDIR/y',
+      'echo x > $TMPDIR/y; TMPDIR=/etc',
+      'read TMPDIR; echo x > $TMPDIR/y',
+      'echo x > $OUTRA/y',
+      'echo x > ${TMPDIR:-/etc}/y',
+      'echo x > ${TMPDIR%/*}/y',
+    ]) {
+      assert.match((await run(command, rules)) ?? '', /dynamic-redirect/, command)
+    }
+    assert.strictEqual(await run('printf %s $TMPDIR; echo x > $TMPDIR/y', rules), undefined)
+  })
+
+  it('sem as variáveis do cerco informadas, `$TMPDIR` segue dinâmico', async () => {
+    assert.match((await terminalRefusal('echo x > $TMPDIR/y', '/w', checker([...base, wr('**')]), {})) ?? '', /dynamic-redirect/)
+  })
+
+  it('`for f in a.ts b.ts; do cat x > $f; done`: passa se a regra cobre os dois, recusa se cobre só um', async () => {
+    assert.strictEqual(await run('for f in a.ts b.ts; do awk 1 $f > /w/.tmp/x && cat /w/.tmp/x > $f; done', [wr('**')]), undefined)
+    assert.strictEqual(await run('for f in a.ts b.ts; do cat x > $f; done', [wr('a.ts'), wr('b.ts')]), undefined)
+    assert.match((await run('for f in a.ts b.ts; do cat x > $f; done', [wr('a.ts')])) ?? '', /nenhuma regra de escrita permite/)
+  })
+
+  it('⛔ laço sobre lista não literal, reatribuído no corpo, ou variável fora do corpo, segue dinâmico', async () => {
+    const rules = [wr('**')]
+    for (const command of [
+      'for f in $(ls); do cat x > $f; done',
+      'for f in *.ts; do cat x > $f; done',
+      'for f in a.ts $X; do cat x > $f; done',
+      'for f in a.ts b.ts; do f=/etc/passwd; cat x > $f; done',
+      'for f in a.ts b.ts; do read f; cat x > $f; done',
+      'for f in a.ts b.ts; do :; done; cat x > $f',
+      'for f; do cat x > $f; done',
+    ]) {
+      assert.match((await run(command, rules)) ?? '', /dynamic-redirect/, command)
+    }
+  })
+})

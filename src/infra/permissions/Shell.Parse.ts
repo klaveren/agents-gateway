@@ -162,12 +162,45 @@ function skipFlags(argv: string[], i: number, withArg: string[]): number {
   return i
 }
 
+/** Builtins que gravam em variável pelo nome (`read TMPDIR`, `unset TMPDIR`, `printf -v`…). */
+const VARIABLE_WRITERS = new Set(['read', 'unset', 'printf', 'declare', 'typeset', 'local', 'readonly', 'mapfile', 'readarray', 'getopts', 'let', 'export', 'eval', 'set'])
+const MAX_VALUES = 64
+
+/** A variável `name` pode ser (re)escrita dentro de `node`? Conservador: na dúvida, sim. */
+function touches(node: Node, name: string): boolean {
+  const stack: Node[] = [node]
+  for (let n = stack.pop(); n; n = stack.pop()) {
+    if (n.type === 'variable_assignment' && n.childForFieldName('name')?.text === name) return true
+    if (n.type === 'for_statement' && n.childForFieldName('variable')?.text === name) return true
+    if (n.text.includes(name)) {
+      // Só quando o NOME é argumento do builtin (`read TMPDIR`, `printf -v TMPDIR`); `printf %s $TMPDIR` apenas lê.
+      if ((n.type === 'command' || n.type === 'declaration_command') && VARIABLE_WRITERS.has(n.children[0]?.text ?? '')) {
+        if (n.children.slice(1).some((c) => c.text === name || c.text.startsWith(`${name}=`) || c.text.startsWith(`${name}[`))) return true
+      }
+      if (/arith|binary_expression|postfix_expression|unary_expression/.test(n.type)) return true
+      // `${X:=v}`, `${X:?}`…: só a forma simples `${X}` lê sem mexer.
+      if (n.type === 'expansion' && n.text !== `\${${name}}`) return true
+    }
+    stack.push(...n.children)
+  }
+  return false
+}
+
 class Analyzer {
   readonly commands: IShellCommand[] = []
   readonly redirects: IShellRedirect[] = []
   readonly opaque = new Set<string>()
+  /** Variáveis que o PRÓPRIO gateway define para o comando (TMPDIR, HOME): valem como literal enquanto o script não as mexe. */
+  private env: Readonly<Record<string, string>>
+  /** Variável de laço `for v in <literais>` -> as palavras; só dentro do corpo. */
+  private loops = new Map<string, string[]>()
 
-  constructor(private readonly parser: Parser) {}
+  constructor(
+    private readonly parser: Parser,
+    variables: Readonly<Record<string, string>> = {},
+  ) {
+    this.env = variables
+  }
 
   analyze(script: string, depth: number): void {
     if (depth > MAX_DEPTH) {
@@ -179,12 +212,78 @@ class Analyzer {
       this.opaque.add('parse-error')
       return
     }
+    const previous = { env: this.env, loops: this.loops }
     try {
       if (tree.rootNode.hasError) this.opaque.add('parse-error')
+      // ⛔ Script que reatribui a variável (em qualquer ponto) volta a ser dinâmico para ela; o script de dentro (`bash -c`) começa sem laços.
+      this.env = Object.fromEntries(Object.entries(this.env).filter(([name]) => !touches(tree.rootNode, name)))
+      this.loops = new Map()
       this.walk(tree.rootNode, depth)
     } finally {
+      this.env = previous.env
+      this.loops = previous.loops
       tree.delete()
     }
+  }
+
+  /**
+   * Os valores literais que a palavra pode ter, ou undefined se só existem em execução. Só entram variável conhecida do
+   * gateway e variável de laço sobre palavras literais; qualquer outra expansão continua dinâmica (falha fechada).
+   */
+  private values(node: Node, loops = true): string[] | undefined {
+    switch (node.type) {
+      case 'simple_expansion':
+      case 'expansion': {
+        const [variable] = node.namedChildren
+        if (node.namedChildren.length !== 1 || variable.type !== 'variable_name') return undefined
+        if (node.type === 'expansion' && node.text !== `\${${variable.text}}`) return undefined
+        const loop = loops ? this.loops.get(variable.text) : undefined
+        if (loop) return loop
+        const value = this.env[variable.text]
+        return value === undefined ? undefined : [value]
+      }
+      case 'string': {
+        const children = node.namedChildren
+        const parts = children.map((c) => (c.type === 'string_content' ? [unescapeDouble(c.text)] : c.type.endsWith('expansion') ? this.values(c, loops) : undefined))
+        const covered = children.reduce((sum, c) => sum + c.text.length, 0)
+        if (parts.some((p) => !p) || covered !== node.text.length - (node.text.startsWith('$"') ? 3 : 2)) return undefined
+        return this.product(parts as string[][])
+      }
+      case 'concatenation':
+      case 'command_name': {
+        const parts = node.namedChildren.map((c) => this.values(c, loops))
+        return parts.some((p) => !p) || !parts.length ? undefined : this.product(parts as string[][])
+      }
+      default: {
+        const resolved = resolve(node)
+        return resolved.dynamic || resolved.glob || /[$`]/.test(resolved.value) ? undefined : [resolved.value]
+      }
+    }
+  }
+
+  private product(parts: string[][]): string[] | undefined {
+    let all = ['']
+    for (const part of parts) {
+      all = all.flatMap((head) => part.map((tail) => head + tail))
+      if (all.length > MAX_VALUES) return undefined
+    }
+    return all
+  }
+
+  /** `for v in a b c; do …; done` com só palavras literais (sem expansão, glob ou chave): v vale cada uma, e nada no laço a reatribui. */
+  private literalLoop(node: Node): string[] | undefined {
+    const name = node.childForFieldName('variable')?.text
+    const body = node.childForFieldName('body')
+    const items = node.childrenForFieldName('value')
+    if (!name || !body || !items.length) return undefined
+    const words: string[] = []
+    for (const item of items) {
+      const resolved = resolve(item)
+      // Sem espaço/glob no valor: `> $f` sem aspas racharia ou expandiria.
+      if (resolved.dynamic || resolved.glob || /[$`\s*?[{~]/.test(resolved.value) || resolved.value === '') return undefined
+      words.push(resolved.value)
+    }
+    return words.length > MAX_VALUES || touches(body, name) ? undefined : words
   }
 
   private walk(node: Node, depth: number): void {
@@ -209,7 +308,25 @@ class Analyzer {
         this.fileRedirect(node)
         break
     }
-    for (const child of node.children) this.walk(child, depth)
+    // A variável do laço só vale no corpo; fora dele (ou num laço que não é literal), segue dinâmica.
+    const loopName = node.type === 'for_statement' ? node.childForFieldName('variable')?.text : undefined
+    const loopBody = loopName ? node.childForFieldName('body') : null
+    for (const child of node.children) {
+      if (!loopName || child.id !== loopBody?.id) {
+        this.walk(child, depth)
+        continue
+      }
+      const outer = this.loops.get(loopName)
+      const words = this.literalLoop(node)
+      if (words) this.loops.set(loopName, words)
+      else this.loops.delete(loopName)
+      try {
+        this.walk(child, depth)
+      } finally {
+        if (outer) this.loops.set(loopName, outer)
+        else this.loops.delete(loopName)
+      }
+    }
     // Heredoc/herestring alimentando um shell/interpretador = script que não vemos.
     if (node.children.some((c) => c.type === 'heredoc_redirect' || c.type === 'herestring_redirect')) {
       if (this.commands.slice(start).some((c) => INTERPRETER.test(c.name))) this.opaque.add('heredoc-interpreter')
@@ -231,7 +348,12 @@ class Analyzer {
       else args.push(c)
     }
     if (!nameNode) return
-    const name = resolve(nameNode)
+    let name = resolve(nameNode)
+    if (name.dynamic) {
+      // `$TMPDIR/run.sh`: variável do gateway vale o caminho que o cerco dá a ela.
+      const known = this.values(nameNode, false)
+      if (known?.length === 1) name = { value: known[0], dynamic: false, glob: false }
+    }
     if (name.dynamic || name.glob || name.value === '') this.opaque.add('dynamic-command')
     const resolved = args.map(resolve)
     const argv = [name.value, ...resolved.map((a) => a.value)]
@@ -323,23 +445,31 @@ class Analyzer {
     const dest = node.childForFieldName('destination')
     if (!dest) return
     const target = resolve(dest)
+    let targets = [target.value]
     if (/[$`]/.test(target.value) || target.dynamic) {
-      // Dup de fd (`>&$fd`) não toca arquivo, mas não dá para provar.
-      this.opaque.add('dynamic-redirect')
-      return
+      // `$TMPDIR/x` e a variável de um laço literal viram os valores conhecidos; o resto (inclusive dup de fd `>&$fd`, que não dá para provar) é dinâmico.
+      const known = this.values(dest)
+      if (!known) {
+        this.opaque.add('dynamic-redirect')
+        return
+      }
+      targets = known
     }
-    if (op === '>&' || op === '<&') {
-      if (/^\d+-?$|^-$/.test(target.value) || op === '<&') return
+    for (const value of targets) {
+      if ((op === '>&' || op === '<&') && (/^\d+-?$|^-$/.test(value) || op === '<&')) continue
+      if (value === '/dev/null') continue
+      const kind = WRITE_OPS.has(op) || op === '>&' ? 'write' : 'read'
+      this.redirects.push({ kind, target: value })
     }
-    if (target.value === '/dev/null') return
-    const kind = WRITE_OPS.has(op) || op === '>&' ? 'write' : 'read'
-    this.redirects.push({ kind, target: target.value })
   }
 }
 
-/** Analisa o comando bash sem executá-lo. `opaque` não vazio = o chamador deve falhar fechado. */
-export async function analyzeShell(command: string): Promise<IShellAnalysis> {
-  const analyzer = new Analyzer(await getParser())
+/**
+ * Analisa o comando bash sem executá-lo. `opaque` não vazio = o chamador deve falhar fechado.
+ * `variables`: o que o próprio gateway define para o comando (TMPDIR, HOME): valem como literal, salvo se o script as reatribui.
+ */
+export async function analyzeShell(command: string, variables?: Readonly<Record<string, string>>): Promise<IShellAnalysis> {
+  const analyzer = new Analyzer(await getParser(), variables)
   analyzer.analyze(command, 0)
   return { commands: analyzer.commands, redirects: analyzer.redirects, opaque: [...analyzer.opaque] }
 }

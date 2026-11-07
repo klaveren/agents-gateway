@@ -264,7 +264,13 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       ...(shared.length ? { sharedFolders: shared } : {}),
     }
     // O `/tmp` do comando só é privado onde o cerco o monta vazio (Linux, ver `hostSocketDirs`); no Mac é o do host.
-    const refusal = await terminalRefusal(command, root, permissions, asker, folder, { privateTmp: !!sandbox.wrapWith && process.platform === 'linux' })
+    const refusal = await terminalRefusal(command, root, permissions, asker, folder, {
+      privateTmp: !!sandbox.wrapWith && process.platform === 'linux',
+      // ⚖️ O que o cerco define para ESTE comando (ver `scoped` em `wrapWithPlan`): `> $TMPDIR/x` vale o caminho real.
+      variables: { TMPDIR: join(place.scratchBase ?? root, '.tmp'), HOME: join(place.scratchBase ?? root, '.home') },
+      // As pastas de rascunho que o cerco deixa gravar sempre (`$TMPDIR`, `$HOME`): sem regra, como no próprio cerco.
+      ...(sandbox.wrapWith ? { scratch: [join(place.scratchBase ?? root, '.tmp'), join(place.scratchBase ?? root, '.home')] } : {}),
+    })
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
     const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
@@ -570,9 +576,9 @@ export async function terminalRefusal(
   permissions: IPermissionChecker,
   asker: IPermissionAsker,
   folder?: { dir: string; projectDir: string },
-  options: { privateTmp?: boolean } = {},
+  options: { privateTmp?: boolean; variables?: Readonly<Record<string, string>>; scratch?: readonly string[] } = {},
 ): Promise<string | undefined> {
-  const analysis = await analyzeShell(command)
+  const analysis = await analyzeShell(command, options.variables)
   if (analysis.opaque.length) return opaqueRefusal(analysis.opaque)
   if (!analysis.commands.length && !analysis.redirects.length) return 'nenhum comando'
   // ⛔ O programa que o transporte do ssh lança (`-o ProxyCommand`, `rsync -e`, `GIT_SSH_COMMAND`…) não passa pela análise: só o `ssh` simples.
@@ -591,6 +597,8 @@ export async function terminalRefusal(
   for (const redirect of analysis.redirects) {
     // ⚖️ `/tmp/**` e `/var/tmp/**` DENTRO do cerco são do próprio comando (vazios, descartados no fim): não tocam o servidor.
     if (options.privateTmp && inPrivateTmp(root, redirect.target)) continue
+    // ⚖️ O rascunho do cerco (`$TMPDIR`, `$HOME` do comando): o cerco já o deixa gravar para qualquer agente.
+    if (options.scratch && inScratch(root, redirect.target, options.scratch)) continue
     const aliases = redirect.target.startsWith('~') ? [] : projectAliases(resolve(root, redirect.target), folder)
     const verdict = permissions.check(asker, { category: redirect.kind, value: workPath(root, redirect.target), ...(aliases.length ? { aliases } : {}) }, { log: true })
     if (!verdict.allowed) return verdict.reason
@@ -657,6 +665,12 @@ const REMOTE_PLAIN_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/
 const RULE_HINT = 'peça a regra com save_permission_rules (uma pessoa aprova)'
 
 /** O alvo do redirecionamento está no `/tmp` ou no `/var/tmp` (caminho já normalizado, sem `..` que escape). */
+function inScratch(root: string, target: string, scratch: readonly string[]): boolean {
+  if (target.startsWith('~')) return false
+  const abs = posix.resolve(root, target)
+  return scratch.some((dir) => abs.startsWith(`${posix.resolve(dir)}/`))
+}
+
 function inPrivateTmp(root: string, target: string): boolean {
   if (target.startsWith('~')) return false
   const under = (path: string) => PRIVATE_TMP.some((dir) => path === dir || path.startsWith(`${dir}/`))
