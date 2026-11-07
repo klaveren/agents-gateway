@@ -109,6 +109,21 @@ describe('Cerco.Plan', () => {
     assert.ok(plan.readDeny.includes('/w/p/**/secrets.json') && !plan.readDeny.some((path) => path.endsWith('secrets.*')))
   })
 
+  it('⚖️ o modelo dentro de repositório aninhado e de worktree é reaberto; o .env de verdade segue negado', () => {
+    const files: Record<string, string[]> = {
+      '**/.env.*': [
+        'repositories/logiccus/apis/logiccus/.env.example',
+        'repositories/logiccus/_worktrees/EP-1/apps/.env.local.sample',
+        'repositories/logiccus/apis/logiccus/.env.local',
+      ],
+    }
+    const plan = cercoPlan({ agent: [rule('read', '**')] }, { ...base, find: (pattern) => files[pattern] ?? [] })
+    assert.ok(plan.readAllow.includes('/w/p/repositories/logiccus/apis/logiccus/.env.example'))
+    assert.ok(plan.readAllow.includes('/w/p/repositories/logiccus/_worktrees/EP-1/apps/.env.local.sample'))
+    assert.ok(!plan.readAllow.includes('/w/p/repositories/logiccus/apis/logiccus/.env.local'))
+    assert.ok(plan.readDeny.includes('/w/p/**/.env') && plan.readDeny.includes('/w/p/**/.env.*'))
+  })
+
   it('as liberações das camadas abrem; a negação do projeto que o agente reabriu por dentro sai; a outra fica', () => {
     const plan = cercoPlan(
       {
