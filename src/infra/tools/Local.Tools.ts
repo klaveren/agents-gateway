@@ -428,10 +428,13 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     {
       origin: 'local',
       name: 'search_web',
-      description: 'Searches the internet for up-to-date information.',
+      description: 'Searches the internet for up-to-date information. Each result has a title, the URL of the source (cite it, or open it) and a snippet.',
       inputSchema: {
         type: 'object',
-        properties: { query: { type: 'string', description: 'The search query' } },
+        properties: {
+          query: { type: 'string', description: 'The search query' },
+          limit: { type: 'number', description: 'How many results to return (default 5, max 10)' },
+        },
         required: ['query'],
         additionalProperties: false,
       },
@@ -440,7 +443,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         if (!query) return { status: 'error', result: 'search_web requires a non-empty query.' }
 
         try {
-          return { status: 'success', result: parseResults(await fetchHtml(query)) }
+          return { status: 'success', result: parseResults(await fetchHtml(query), searchLimit(args.limit)) }
         } catch (error: unknown) {
           return { status: 'error', result: `Search failed: ${toMessage(error)}` }
         }
@@ -1089,18 +1092,44 @@ function readDocTool(docs: IDocReader, permissions?: IPermissionChecker): ILocal
   }
 }
 
-/** O HTML do DuckDuckGo é estável o bastante para os cinco primeiros resultados. */
-function parseResults(html: string): string {
+const SEARCH_LIMIT_DEFAULT = 5
+const SEARCH_LIMIT_MAX = 10
+
+/** O HTML do DuckDuckGo é estável o bastante para os primeiros resultados: título, URL do destino e trecho. */
+export function parseResults(html: string, limit = SEARCH_LIMIT_DEFAULT): string {
   const results: string[] = []
-  const blocks = html.split('result__body').slice(1, 6)
+  const blocks = html.split('result__body').slice(1)
 
   for (const block of blocks) {
-    const title = stripTags(match(block, /class="result__a"[^>]*>([\s\S]*?)<\/a>/))
-    const snippet = stripTags(match(block, /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/))
-    if (title && snippet) results.push(`Title: ${title}\nSnippet: ${snippet}`)
+    if (results.length >= limit) break
+    const anchor = /<a\b[^>]*class="[^"]*result__a[^"]*"[^>]*>([\s\S]*?)<\/a>/.exec(block)
+    const title = stripTags(anchor?.[1] ?? '')
+    const url = targetUrl(/\bhref="([^"]*)"/.exec(anchor?.[0] ?? '')?.[1] ?? '')
+    const snippet = stripTags(match(block, /class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/))
+    if (title && snippet) results.push(`Title: ${title}\n${url ? `URL: ${url}\n` : ''}Snippet: ${snippet}`)
   }
 
   return results.join('\n\n') || 'No results found.'
+}
+
+/** O destino real: o DuckDuckGo passa o link por `//duckduckgo.com/l/?uddg=<url>`; só http(s) sai daqui. */
+function targetUrl(href: string): string {
+  const raw = href.replace(/&amp;/g, '&').trim()
+  if (!raw || raw.startsWith('#')) return ''
+  try {
+    const link = new URL(raw.startsWith('//') ? `https:${raw}` : raw)
+    const target = link.hostname.endsWith('duckduckgo.com') && link.pathname === '/l/' ? (link.searchParams.get('uddg') ?? '') : link.href
+    const url = new URL(target)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : ''
+  } catch {
+    return ''
+  }
+}
+
+/** `limit` do agente: inteiro de 1 a 10; fora disso, o padrão (5) ou o teto. */
+function searchLimit(value: unknown): number {
+  const asked = Math.floor(Number(value))
+  return Number.isFinite(asked) && asked >= 1 ? Math.min(asked, SEARCH_LIMIT_MAX) : SEARCH_LIMIT_DEFAULT
 }
 
 function match(source: string, pattern: RegExp): string {

@@ -148,6 +148,39 @@ describe('LocalTools', () => {
     assert.match(outcome.result, /Title: Second hit/)
   })
 
+  it('search_web devolve a URL do destino (decodifica o redirecionador do DuckDuckGo) e respeita `limit`', async () => {
+    const hit = (n: number) => `
+      <div class="result__body">
+        <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa%3Fx%3D1%26y%3D2&amp;rut=abc">Hit ${n}</a>
+        <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com">Snippet ${n}</a>
+      </div>`
+    const html = Array.from({ length: 12 }, (_, i) => hit(i + 1)).join('')
+    const tools = toolsWith(undefined, async () => html)
+    const run = async (args: Record<string, unknown>) => (await find(tools, 'search_web').execute({ query: 'x', ...args })).result
+
+    const byDefault = await run({})
+    assert.match(byDefault, /Title: Hit 1\nURL: https:\/\/example\.com\/a\?x=1&y=2\nSnippet: Snippet 1/)
+    assert.strictEqual(byDefault.split('Title: ').length - 1, 5)
+    assert.strictEqual((await run({ limit: 2 })).split('Title: ').length - 1, 2)
+    assert.strictEqual((await run({ limit: 50 })).split('Title: ').length - 1, 10)
+    assert.strictEqual((await run({ limit: 'abc' })).split('Title: ').length - 1, 5)
+  })
+
+  it('search_web: link direto vira a própria URL; esquema que não é http(s) não sai', async () => {
+    const html = `
+      <div class="result__body"><a class="result__a" href="https://direct.test/p">Direto</a><a class="result__snippet">um</a></div>
+      <div class="result__body"><a class="result__a" href="javascript:alert(1)">Ruim</a><a class="result__snippet">dois</a></div>`
+    const out = (
+      await find(
+        toolsWith(undefined, async () => html),
+        'search_web',
+      ).execute({ query: 'x' })
+    ).result
+    assert.match(out, /Title: Direto\nURL: https:\/\/direct\.test\/p\n/)
+    assert.match(out, /Title: Ruim\nSnippet: dois/)
+    assert.doesNotMatch(out, /javascript/)
+  })
+
   it('says so when the search finds nothing', async () => {
     const tools = toolsWith(undefined, async () => '<html></html>')
     const outcome = await find(tools, 'search_web').execute({ query: 'anything' })
