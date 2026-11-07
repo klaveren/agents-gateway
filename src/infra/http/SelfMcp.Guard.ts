@@ -4,6 +4,7 @@ import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
 import { TURN_GRANT_LOCAL } from './Security.Middleware'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { ISelfReply, TSelfApi } from './Self.Api'
+import { AGENT_PATCH_FIELDS } from '@domain/AgentPatch.Policy'
 
 /**
  * Onde um AGENTE pode escrever pelo MCP do gateway: o projeto da conversa dele (`projectId`), e nada mais. `unrestricted` =
@@ -41,6 +42,56 @@ function bodyProject(body: unknown, key = 'projectId'): string | null | undefine
   if (!body || typeof body !== 'object' || !(key in body)) return undefined
   const value = (body as Record<string, unknown>)[key]
   return typeof value === 'string' && value ? value : null
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
+
+/** ⚖️ Quem grava `save_agent` por agente diz o porquê ao pedido (a pessoa que aprova lê). */
+const SAVE_REASON = 'Gravado por um agente (save_agent): o que amplia acesso espera a confirmação de uma pessoa na tela.'
+
+/**
+ * ⛔ `save_agent` CHAMADO POR UM AGENTE NÃO AMPLIA ACESSO. `PUT/POST /agents` grava na hora; um agente injetado trocaria
+ * ferramentas, `adminOnly`, permissões, delegação e sandbox de qualquer agente do projeto (o dele inclusive). Aqui a
+ * escrita passa pelo `PATCH /agents/:id` (o `patch_agent`), que decide "amplia" pelo detector do catálogo: o que amplia
+ * vira pedido pendente e o resto grava já.
+ *  - Agente que existe: só os campos ENVIADOS vão no patch (o que o `PUT` apagaria por omissão, como `adminOnly`, ficaria
+ *    aberto — aqui fica como está).
+ *  - Agente novo: nasce no MÍNIMO (sem ferramentas, só admin, sandbox fechado, sem permissões, terminal, env nem grupo de
+ *    modelos) e o corpo inteiro segue como patch: tudo o que passa do mínimo é pedido pendente, que a pessoa aprova na
+ *    tela. Se o patch for recusado (corpo inválido), o recém-criado é apagado: não sobra agente pela metade.
+ */
+async function saveAgentWithoutWidening(api: TSelfApi, method: 'POST' | 'PUT', path: string, body: Record<string, unknown>): Promise<ISelfReply> {
+  const patch = Object.fromEntries(AGENT_PATCH_FIELDS.filter((field) => field in body).map((field) => [field, body[field]]))
+  const asked = (id: string) => api('PATCH', `/agents/${encodeURIComponent(id)}`, { body: { patch, reason: SAVE_REASON } })
+  if (method === 'PUT') {
+    const id = segment(path, 1)
+    if (!Object.keys(patch).length) return api('GET', `/agents/${encodeURIComponent(id)}`)
+    const patched = await asked(id)
+    if (!patched.ok) return patched
+    const now = await api('GET', `/agents/${encodeURIComponent(id)}`)
+    return { ...now, result: { ...(isObject(now.result) ? now.result : {}), ...withPending(patched.result) } }
+  }
+
+  const id = typeof body.id === 'string' ? body.id : ''
+  const providers = Array.isArray(body.providers)
+    ? body.providers.map((target) => (isObject(target) ? Object.fromEntries(Object.entries(target).filter(([key]) => key !== 'sandbox' && key !== 'network')) : target))
+    : body.providers
+  const minimum: Record<string, unknown> = { ...body, providers, allowedTools: [], adminOnly: true }
+  for (const field of ['permissions', 'terminal', 'env', 'modelGroup']) delete minimum[field]
+  const created = await api('POST', '/agents', { body: minimum })
+  if (!created.ok) return created
+  const patched = await asked(id)
+  if (!patched.ok) {
+    await api('DELETE', `/agents/${encodeURIComponent(id)}`)
+    return patched
+  }
+  return { ...created, result: { ...(isObject(created.result) ? created.result : {}), ...withPending(patched.result) } }
+}
+
+/** Do resultado do patch, só o que o chamador precisa ver: o que ficou pendente e o aviso (pendente ≠ liberado). */
+function withPending(result: unknown): Record<string, unknown> {
+  if (!isObject(result)) return {}
+  return { ...(result.pending ? { pending: result.pending } : {}), ...(result.pending && typeof result.notice === 'string' ? { notice: result.notice } : {}) }
 }
 
 /**
@@ -103,8 +154,10 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         return inScope(id)
       }
       case 'agents': {
-        // Pedidos de mudança (a pessoa aprova na tela): valem para o agente da conversa e seguem como estavam.
-        if (method === 'PATCH' || clean.endsWith('/permission-rules')) return undefined
+        // Pedidos de regra (a pessoa aprova na tela): valem para o agente da conversa e seguem como estavam.
+        if (clean.endsWith('/permission-rules')) return undefined
+        // ⛔ O `PATCH` (patch_agent, e o save_agent de agente) grava NA HORA o que não amplia: o agente alvo tem de ser do
+        // projeto da conversa, como no PUT.
         if (clean === '/agents') return inScope(bodyProject(body))
         const owner = await agentProject(id)
         if (owner.reply) return owner.reply
@@ -129,6 +182,9 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         if (clean !== '/catalog/history/restore') return refuse('Not available to an agent conversation')
         return inScope(bodyProject(body, 'project'))
       }
+      // ⛔ Configuração do sistema (sequências de modelos): nem o agente do Atlas (admin sem projeto) grava — é da pessoa.
+      case 'settings':
+        return refuse('An agent conversation cannot change the gateway settings')
       default:
         // Provedores, modelos, pacotes e o resto: do gateway, não de uma conversa de projeto.
         return scope.unrestricted ? undefined : refuse('Not available to an agent conversation in a project')
@@ -174,7 +230,10 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
       if (denied) return denied
     }
     if (method === 'GET') {
-      const answer = await api(method, path, options)
+      // ⛔ O monitor (`scope=all`) de um agente já sai recortado no projeto da origem, para a página não vir vazia do filtro abaixo.
+      const pinned =
+        root === 'conversations' && !id && scope.projectId && options?.query?.scope === 'all' ? { ...options, query: { ...options.query, project: scope.projectId } } : options
+      const answer = await api(method, path, pinned)
       // A lista de conversas mostra só as do projeto da origem.
       const listed = (answer.result as { sessions?: unknown } | undefined)?.sessions
       if (root === 'conversations' && !id && answer.ok && Array.isArray(listed)) {
@@ -185,6 +244,13 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
       }
       return answer
     }
-    return (await check(method, path, options?.body)) ?? api(method, path, options)
+    // O agente criado pelo agente nasce no projeto da conversa dele (o prompt diz que o que se cria pertence ao projeto).
+    let body = options?.body
+    if (method === 'POST' && clean === '/agents' && isObject(body) && !('projectId' in body) && scope.projectId) body = { ...body, projectId: scope.projectId }
+    const denied = await check(method, path, body)
+    if (denied) return denied
+    const saving = clean === '/agents' ? method === 'POST' : method === 'PUT' && root === 'agents' && clean.split('/').filter(Boolean).length === 2
+    if (saving && isObject(body)) return saveAgentWithoutWidening(api, method as 'POST' | 'PUT', clean, body)
+    return api(method, path, { ...options, ...(body === options?.body ? {} : { body }) })
   }
 }

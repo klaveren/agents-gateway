@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import { Request, Response } from 'express'
 import { AgentHooksService } from '@application/AgentHooks.Service'
 import { HOOK_DEFAULTS, IAgentHook } from '@domain/models/AgentHook.Model'
+import { drain } from './Drain.State'
 import { eventMessage, HooksController } from './Hooks.Controller'
 
 describe('eventMessage — o que o agente recebe de um hook', () => {
@@ -89,6 +90,18 @@ describe('HooksController.receive — a cota depois de conferir a chave', () => 
         .then(() => reply)
     }
   }
+
+  it('⚖️ drenando para um deploy, o hook autenticado recebe 503 `draining` (e o não autenticado segue 401)', async () => {
+    const fire = build()
+    drain.set(true)
+    try {
+      assert.deepStrictEqual(await fire('3.3.3.3', 'deploy', 'whk_certa'), { status: 503, code: 'draining' })
+      assert.deepStrictEqual(await fire('3.3.3.3', 'deploy', 'errada'), { status: 401, code: 'hook_unauthorized' })
+    } finally {
+      drain.set(false)
+    }
+    assert.strictEqual((await fire('3.3.3.3', 'deploy', 'whk_certa')).status, 409, 'sem dreno, segue o fluxo normal')
+  })
 
   it('⛔ 401 uniforme: hook inexistente e chave errada respondem igual', async () => {
     const fire = build()

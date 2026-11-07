@@ -7,6 +7,7 @@ import { provenCaller } from './Caller.Access'
 import { clientIp, WindowCounter } from './Security.Middleware'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
+import { drain, DRAIN_RETRY_SECONDS } from './Drain.State'
 import { fail, ok } from './Http.Response'
 import { requireAgentAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
@@ -68,7 +69,8 @@ export class HooksController {
   }
 
   async receive(req: Request, res: Response): Promise<void> {
-    const deny = (status: number, code: 'not_found' | 'hook_unauthorized' | 'hook_owner_inactive' | 'rate_limited', message: string) => res.status(status).json(fail(message, code))
+    const deny = (status: number, code: 'not_found' | 'draining' | 'hook_unauthorized' | 'hook_owner_inactive' | 'rate_limited', message: string) =>
+      res.status(status).json(fail(message, code))
     const agentId = req.params.agentId as string
     const name = req.params.hookName as string
 
@@ -88,6 +90,11 @@ export class HooksController {
     if (!hook || !secret || !this.verifiedFresh(hook, secret, req, raw)) {
       this.rejected.hit(ip)
       return void deny(401, 'hook_unauthorized', 'Missing or wrong hook credentials')
+    }
+    // ⚖️ Gateway drenando para um deploy: quem chamou (já autenticado) reenvia depois do `Retry-After`. Nada é aceito nem gravado.
+    if (drain.active()) {
+      res.setHeader('Retry-After', String(DRAIN_RETRY_SECONDS))
+      return void deny(503, 'draining', 'The gateway is restarting for an update; resend this event shortly')
     }
     const exhausted = this.accepted.over(`${agentId}/${name}`)
     if (exhausted) return tooMany(exhausted)
@@ -123,6 +130,7 @@ export class HooksController {
     } catch (error: unknown) {
       const failure = error instanceof SelfCallError ? error : undefined
       this.deps.hooks.finishDelivery(delivery.id, { status: 'error', error: failure?.message ?? String(error) })
+      if (failure?.code === 'draining') res.setHeader('Retry-After', String(DRAIN_RETRY_SECONDS))
       res.status(failure?.status ?? 500).json(fail(failure?.message ?? 'Could not open the conversation', (failure?.code as never) ?? 'internal_error'))
     }
   }

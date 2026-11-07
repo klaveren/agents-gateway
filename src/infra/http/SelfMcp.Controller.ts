@@ -4,6 +4,8 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
 import { CATALOG_KINDS, TCatalogKind } from '@domain/Catalog.Document'
+import { MODEL_GROUP_BOUNDS, MODEL_GROUP_ID, SWITCHABLE_FAILURES } from '@domain/Fallback.Policy'
+import type { TProviderFailure } from '@domain/Provider.Failure'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
 import { ISelfReply, selfApi, selfBase, TSelfApi } from './Self.Api'
 import { agentScopeOf, scopedWrites } from './SelfMcp.Guard'
@@ -380,28 +382,48 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'list_conversations',
     {
-      description: 'List conversations (yours; an administrator sees all). `projectId` keeps one project; `metadata` filters by stored metadata keys, e.g. { accountId: "xpto" }.',
+      description:
+        'List conversations. By default yours (`q` then matches the title or id of those). `all: true` is the monitor, for whoever administers: everyone\'s conversations in the projects you administer (those outside any project, if you administer the gateway), paginated (`page`, `pageSize`), and `q` searches title, e-mail and id. An agent only ever sees the conversations of its own project. `projectId` keeps one project; `metadata` filters by stored metadata keys, e.g. { accountId: "xpto" }.',
       inputSchema: {
-        q: z.string().optional(),
+        q: z.string().optional().describe('Text search (title, id; with `all`, also the owner e-mail)'),
+        all: z.boolean().optional().describe('The monitor: the conversations of everyone, in what you administer (administrators only)'),
+        page: z.number().int().min(1).optional().describe('With `all`: the page (1-based)'),
+        pageSize: z.number().int().min(1).max(100).optional().describe('With `all`: items per page'),
         projectId: z.string().optional(),
         metadata: z.record(z.string(), z.string()).optional(),
         limit: z.number().int().min(1).max(100).optional(),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ q, projectId, metadata, limit }) =>
-      reply(await api('GET', '/conversations', { query: { ...metadata, q, limit, project: projectId } }), (result) =>
-        ((result as { sessions?: Array<Record<string, unknown>> }).sessions ?? []).map((session) => ({
-          id: session.id,
-          title: session.title,
-          agentId: session.agentId,
-          model: session.model,
-          turns: session.turns,
-          updatedAt: session.updatedAt,
-          usage: session.usage,
-          ...(session.costUsd === undefined ? {} : { costUsd: session.costUsd }),
-        })),
-      ),
+    async ({ q, all, page, pageSize, projectId, metadata, limit }) => {
+      const search = q?.trim()
+      // ⛔ `q` nunca vira filtro de metadado (a rota trata chave desconhecida assim): no monitor é a busca do servidor; nas
+      // próprias, o corte é aqui, sobre as que a rota devolveu.
+      const query = all
+        ? { ...metadata, scope: 'all', page: page ?? 1, pageSize: pageSize ?? limit, q: search || undefined, project: projectId }
+        : { ...metadata, limit: search ? 100 : limit, project: projectId }
+      const answer = await api('GET', '/conversations', { query })
+      const wanted = search?.toLowerCase()
+      const matches = (session: Record<string, unknown>) =>
+        all || !wanted || [session.title, session.id].some((field) => typeof field === 'string' && field.toLowerCase().includes(wanted))
+      return reply(answer, (result) => {
+        const body = result as { sessions?: Array<Record<string, unknown>>; total?: number; page?: number; pageSize?: number }
+        const sessions = (body.sessions ?? [])
+          .filter(matches)
+          .slice(0, all ? undefined : limit)
+          .map((session) => ({
+            id: session.id,
+            title: session.title,
+            agentId: session.agentId,
+            model: session.model,
+            turns: session.turns,
+            updatedAt: session.updatedAt,
+            usage: session.usage,
+            ...(session.costUsd === undefined ? {} : { costUsd: session.costUsd }),
+          }))
+        return all ? { sessions, total: body.total, page: body.page, pageSize: body.pageSize } : sessions
+      })
+    },
   )
 
   server.registerTool(
@@ -506,7 +528,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_model_groups',
     {
       description:
-        'The model groups (Settings → model groups): ordered steps (provider + model) and when to switch. An agent points to one (`modelGroup`; absent = `defaultModelGroup`, `none` = no switching): a conversation opened without a model starts at the first available step, and when a model fails (quota, rate limit, model unavailable…) the conversation moves to the next step and STAYS there. Groups are edited only on the screen.',
+        'The model groups (Settings → model groups): ordered steps (provider + model) and when to switch. An agent points to one (`modelGroup`; absent = `defaultModelGroup`, `none` = no switching): a conversation opened without a model starts at the first available step, and when a model fails (quota, rate limit, model unavailable…) the conversation moves to the next step and STAYS there. Edit them with save_model_group / delete_model_group.',
       annotations: { readOnlyHint: true },
     },
     async () =>
@@ -986,18 +1008,80 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ providerId, modelId, ...price }) => reply(await api('PUT', `/providers/${encodeURIComponent(providerId)}/models`, { body: { modelId, price } })),
   )
 
+  system.registerTool(
+    'save_model_group',
+    {
+      description:
+        'Create or replace ONE model group by id (the others stay): ordered `steps` (provider + model, both must be enabled and the provider running), `switchOn` (failures that move to the next step; absent = quota, rate_limit, model) and `cooldownMinutes`. Send every field, since an omitted one falls back to its default. Every problem comes back at once.',
+      inputSchema: {
+        id: z.string().trim().regex(MODEL_GROUP_ID, '2–48 lowercase letters, digits or hyphens'),
+        name: z.string().trim().min(1).max(MODEL_GROUP_BOUNDS.name),
+        description: z.string().trim().max(MODEL_GROUP_BOUNDS.description).optional(),
+        steps: z
+          .array(z.object({ provider: z.string().trim().min(1).max(100), model: z.string().trim().min(1).max(200) }))
+          .min(1)
+          .max(MODEL_GROUP_BOUNDS.steps),
+        switchOn: z.array(z.enum(SWITCHABLE_FAILURES as [TProviderFailure, ...TProviderFailure[]])).optional(),
+        cooldownMinutes: z.number().int().min(MODEL_GROUP_BOUNDS.cooldownMinutes.min).max(MODEL_GROUP_BOUNDS.cooldownMinutes.max).optional(),
+      },
+    },
+    async (group) => {
+      // ⚖️ Lê, troca só esta e grava a lista pelo PUT /settings: a validação da tela vale (passo ativo, provider que roda).
+      const current = await api('GET', '/settings')
+      if (!current.ok) return reply(current)
+      const groups = ((current.result as { modelGroups?: Array<{ id: string }> }).modelGroups ?? []).slice()
+      const at = groups.findIndex((item) => item.id === group.id)
+      if (at >= 0) groups[at] = group
+      else groups.push(group)
+      return reply(await api('PUT', '/settings', { body: { modelGroups: groups } }), (result) => ({
+        saved: group.id,
+        modelGroups: (result as { modelGroups?: unknown[] }).modelGroups ?? [],
+      }))
+    },
+  )
+
+  system.registerTool(
+    'delete_model_group',
+    {
+      description: 'Delete one model group by id. Refused while an agent uses it or it is the default group.',
+      inputSchema: { id: z.string().trim().min(1) },
+      annotations: { destructiveHint: true },
+    },
+    async ({ id }) => {
+      const current = await api('GET', '/settings')
+      if (!current.ok) return reply(current)
+      const groups = (current.result as { modelGroups?: Array<{ id: string }> }).modelGroups ?? []
+      if (!groups.some((item) => item.id === id)) return { ...text({ status: 404, code: 'not_found', message: `unknown model group: ${id}` }), isError: true }
+      return reply(await api('PUT', '/settings', { body: { modelGroups: groups.filter((item) => item.id !== id) } }), (result) => ({
+        deleted: id,
+        modelGroups: (result as { modelGroups?: unknown[] }).modelGroups ?? [],
+      }))
+    },
+  )
+
   server.registerTool(
     'save_agent',
     {
       description:
-        'Create an agent, or replace the one with the same id: send every field, since an omitted adminOnly, sandbox or network falls back to its default (open to everyone, read-only, no network). Every problem comes back at once, field by field.',
+        'Create an agent, or replace the one with the same id: send every field, since an omitted adminOnly, sandbox or network falls back to its default (open to everyone, read-only, no network). Every problem comes back at once, field by field. Omitting projectId keeps the project of an existing agent (only an explicit null makes it global); from a conversation in a project, a new agent is born in that project. ⛔ Called by an agent, it never widens access by itself: tools, delegation, permissions, exposure (adminOnly/role), sandbox/network, env and model group beyond what the agent already has stay PENDING until an administrator confirms on the screen (the result says what and where; never say it was granted before that), and the rest applies now. A new agent starts with no tools, admin-only, read-only sandbox, and the rest is requested.',
       inputSchema: { ...agentShape, importedFrom },
     },
     async ({ importedFrom: source, ...agent }) => {
-      // ⚖️ Sem trava própria: o MCP grava o que a tela grava, e quem decide o alcance do agente é o admin.
-      const exists = (await api('GET', `/agents/${encodeURIComponent(agent.id)}`)).ok
-      const saved = exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent })
-      return withImported(api, saved, source, (result) => ({ kind: 'agent', id: agent.id, ...(typeof result.projectId === 'string' ? { projectId: result.projectId } : {}) }))
+      // ⚖️ Pessoa: o MCP grava o que a tela grava, e quem decide o alcance do agente é o admin. AGENTE: o que amplia acesso vira
+      // pedido pendente (ver `SelfMcp.Guard`, `saveAgentWithoutWidening`) e o agente novo nasce no projeto da conversa.
+      const found = await api('GET', `/agents/${encodeURIComponent(agent.id)}`)
+      // ⛔ `projectId` OMITIDO mantém o projeto do agente que existe (o PUT o tornaria global); só `null` explícito o torna global.
+      const kept = (found.result as { projectId?: string } | undefined)?.projectId
+      const body = found.ok && agent.projectId === undefined && kept ? { ...agent, projectId: kept } : agent
+      const saved = found.ok ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body }) : await api('POST', '/agents', { body })
+      const done = await withImported(api, saved, source, (result) => ({
+        kind: 'agent',
+        id: agent.id,
+        ...(typeof result.projectId === 'string' ? { projectId: result.projectId } : {}),
+      }))
+      // ⛔ O aviso vem PRIMEIRO: pendente ≠ liberado.
+      const notice = saved.ok ? (saved.result as { notice?: unknown } | undefined)?.notice : undefined
+      return typeof notice === 'string' ? { ...done, content: [{ type: 'text' as const, text: notice }, ...done.content] } : done
     },
   )
 

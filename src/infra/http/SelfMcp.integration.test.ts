@@ -4,7 +4,14 @@ import { after, before, describe, it } from 'node:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { makeAuth } from '@composition/factories/Auth.Factory'
-import { makeAuthController, makeCatalogController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
+import {
+  makeAuthController,
+  makeCatalogController,
+  makeController,
+  makePermissionRequestsController,
+  makeProvidersController,
+  makeUsageController,
+} from '@composition/factories/Controller.Factory'
 import { makeProjects } from '@composition/factories/Projects.Factory'
 import { makeGuidance } from '@composition/factories/Guidance.Factory'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -62,6 +69,7 @@ describe('MCP do próprio gateway (integração)', () => {
     return client
   }
   let mambaDir: string
+  let conversations: ReturnType<typeof makeController>['conversations']
   const names = async (token: string) => (await (await connect(token)).listTools()).tools.map((tool) => tool.name).sort()
   const json = (result: unknown) => JSON.parse((result as { content: Array<{ text: string }> }).content[0].text)
 
@@ -69,6 +77,7 @@ describe('MCP do próprio gateway (integração)', () => {
     process.env.MCP_SERVER_URL = 'http://127.0.0.1:1/mcp'
     delete process.env.SELF_MCP_WRITE
     const controller = makeController()
+    conversations = controller.conversations
     mambaDir = mkdtempSync(join(tmpdir(), 'gw-selfmcp-mamba-'))
     writeFileSync(join(mambaDir, 'micromamba'), FAKE_MAMBA)
     chmodSync(join(mambaDir, 'micromamba'), 0o755)
@@ -98,6 +107,7 @@ describe('MCP do próprio gateway (integração)', () => {
       undefined,
       undefined,
       makeCatalogController(),
+      makePermissionRequestsController(),
     ).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
@@ -171,6 +181,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'attach_resource_files',
       'delete_doc',
       'delete_hook',
+      'delete_model_group',
       'delete_resource',
       'delete_rule',
       'delete_schedule',
@@ -183,6 +194,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'save_agent',
       'save_doc',
       'save_hook',
+      'save_model_group',
       'save_permission_rules',
       'save_project',
       'save_resource',
@@ -224,6 +236,8 @@ describe('MCP do próprio gateway (integração)', () => {
       'remove_package',
       'set_model_enabled',
       'set_model_price',
+      'save_model_group',
+      'delete_model_group',
     ])
       assert.ok(!listed.includes(tool), tool)
     assert.ok((await names(admin)).includes('list_providers'))
@@ -241,6 +255,47 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.ok(Array.isArray(tools.local) && Array.isArray(tools.native) && Array.isArray(tools.mcp))
     assert.ok(tools.capabilities.some((item: { id: string }) => item.id === 'cap:terminal'))
     assert.ok(!tools.local.some((tool: { name: string }) => tool.name === 'run_bash'))
+  })
+
+  it('save_model_group cria e troca UMA sequência sem apagar as outras; delete_model_group recusa a padrão e a que não existe', async () => {
+    const client = await connect(admin)
+    const step = { provider: 'claude', model: 'claude-sonnet-5' }
+    const ok = async (args: Record<string, unknown>) => json(await client.callTool({ name: 'save_model_group', arguments: args }))
+    await ok({ id: 'grupo-a', name: 'A', steps: [step] })
+    const saved = await ok({ id: 'grupo-b', name: 'B', steps: [step, step], switchOn: ['quota'], cooldownMinutes: 30 })
+    assert.deepStrictEqual(
+      saved.modelGroups.map((group: { id: string }) => group.id),
+      ['grupo-a', 'grupo-b'],
+    )
+    await ok({ id: 'grupo-a', name: 'A2', steps: [step] })
+    const listed = json(await client.callTool({ name: 'list_model_groups', arguments: {} }))
+    assert.deepStrictEqual(
+      listed.modelGroups.map((group: { id: string; name: string }) => [group.id, group.name]),
+      [
+        ['grupo-a', 'A2'],
+        ['grupo-b', 'B'],
+      ],
+    )
+    assert.deepStrictEqual([listed.modelGroups[1].switchOn, listed.modelGroups[1].cooldownMinutes], [['quota'], 30])
+
+    // A validação da tela vale: provider que não existe não entra, e nada é gravado.
+    const bad = await client.callTool({ name: 'save_model_group', arguments: { id: 'grupo-c', name: 'C', steps: [{ provider: 'nao-existe', model: 'claude-sonnet-5' }] } })
+    assert.strictEqual(bad.isError, true)
+    assert.strictEqual(json(await client.callTool({ name: 'list_model_groups', arguments: {} })).modelGroups.length, 2)
+
+    // Padrão não sai; a que não existe é recusada; a livre sai.
+    await call('/settings', { method: 'PUT', token: admin, body: { defaultModelGroup: 'grupo-a' } })
+    assert.strictEqual((await client.callTool({ name: 'delete_model_group', arguments: { id: 'grupo-a' } })).isError, true)
+    assert.strictEqual((await client.callTool({ name: 'delete_model_group', arguments: { id: 'zzz-nao' } })).isError, true)
+    const left = json(await client.callTool({ name: 'delete_model_group', arguments: { id: 'grupo-b' } }))
+    assert.deepStrictEqual(
+      left.modelGroups.map((group: { id: string }) => group.id),
+      ['grupo-a'],
+    )
+
+    // Quem não é admin do gateway nem vê a ferramenta.
+    assert.ok(!(await names(member)).includes('save_model_group'))
+    await call('/settings', { method: 'PUT', token: admin, body: { defaultModelGroup: null, modelGroups: null } })
   })
 
   it('list_providers e list_models: só o ativo por padrão; includeDisabled mostra o resto', async () => {
@@ -482,6 +537,120 @@ describe('MCP do próprio gateway (integração)', () => {
       body: '{}',
     })
     assert.strictEqual(after.status, 401)
+  })
+
+  it('⛔ save_agent por AGENTE: nasce no projeto da conversa, no mínimo; o que amplia vira pedido; omitir projectId mantém o projeto', async () => {
+    await call('/projects', { method: 'POST', token: admin, body: { id: 'projsave', name: 'projsave' } })
+    await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'claude-sonnet-5' } })
+    await call('/providers/claude/models', { method: 'PUT', token: admin, body: { modelId: 'claude-sonnet-5', enabled: true } })
+    const grant = turnGrants().register({ tools: [], context: { token: admin, agentId: 'atlas', sessionId: 's2', conversationProjectId: 'projsave' } })
+    try {
+      const client = new Client({ name: 'teste', version: '1.0.0' })
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Turn-Grant': grant } } }))
+      const agent = {
+        id: 'filho-save',
+        name: 'Filho',
+        providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }],
+        systemPrompt: 'Você ajuda.',
+        modes: ['agent'],
+        allowedTools: ['run_bash'],
+        adminOnly: false,
+      }
+      const created = await client.callTool({ name: 'save_agent', arguments: agent })
+      assert.ok(!(created as { isError?: boolean }).isError, JSON.stringify(created))
+      const stored = (await call('/agents/filho-save', { token: admin })).result
+      assert.strictEqual(stored.projectId, 'projsave', 'sem projectId nasce no projeto da conversa')
+      assert.ok(!(stored.allowedTools ?? []).length, 'run_bash não foi gravado')
+      assert.strictEqual(stored.adminOnly, true)
+      const pending = (await call('/agents/filho-save/permission-requests', { token: admin })).result as Array<{ kind: string }>
+      assert.ok(
+        pending.some((request) => request.kind === 'agent-patch'),
+        JSON.stringify(pending),
+      )
+
+      // Editar sem projectId mantém o projeto; pedir a ferramenta de novo não a grava.
+      const edited = await client.callTool({ name: 'save_agent', arguments: { ...agent, name: 'Filho 2', allowedTools: ['run_bash'] } })
+      assert.ok(!(edited as { isError?: boolean }).isError, JSON.stringify(edited))
+      const after = (await call('/agents/filho-save', { token: admin })).result
+      assert.deepStrictEqual([after.name, after.projectId, (after.allowedTools ?? []).length], ['Filho 2', 'projsave', 0])
+    } finally {
+      turnGrants().release(grant)
+    }
+
+    // Pessoa direto pelo MCP: grava na hora e, sem projectId, não derruba o agente de projeto para global.
+    const person = await connect(admin)
+    const saved = await person.callTool({
+      name: 'save_agent',
+      arguments: {
+        id: 'filho-save',
+        name: 'Filho 3',
+        providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }],
+        systemPrompt: 'Você ajuda.',
+        modes: ['agent'],
+        allowedTools: ['run_bash'],
+      },
+    })
+    assert.ok(!(saved as { isError?: boolean }).isError, JSON.stringify(saved))
+    const final = (await call('/agents/filho-save', { token: admin })).result
+    assert.strictEqual(final.projectId, 'projsave')
+    assert.ok(final.allowedTools.length > 0, 'a pessoa grava na hora')
+  })
+
+  it('list_conversations: `all` é o monitor paginado (q busca texto, não metadado); sem `all`, q filtra as próprias; o agente fica no projeto dele', async () => {
+    for (const id of ['la', 'lb']) await call('/projects', { method: 'POST', token: admin, body: { id, name: id } })
+    // Conversas gravadas (a lista é do histórico, não das vivas): uma por projeto, com título para a busca.
+    const me = (await call('/auth/me', { token: admin })).result
+    const open = async (projectId: string, title: string) => {
+      const id = `lc-${projectId}-${title}`
+      const at = new Date()
+      await conversations.saveSession({
+        id,
+        agentId: 'atlas',
+        provider: 'claude',
+        mode: 'chat',
+        model: 'claude-sonnet-5',
+        title,
+        createdAt: at,
+        updatedAt: at,
+        turns: 1,
+        usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, totalTokens: 2 },
+        metadata: { project: projectId, owner: { id: me.id, ...(me.account ? { account: me.account } : {}), email: me.email } },
+      })
+      return id
+    }
+    const [inA, inB] = [await open('la', 'faturamento-mensal'), await open('lb', 'outro-assunto')]
+    const asAdmin = await connect(admin)
+    const list = async (client: Client, args: Record<string, unknown>) => json(await client.callTool({ name: 'list_conversations', arguments: args }))
+    const ids = (listed: { sessions: Array<{ id: string }> }) => listed.sessions.map((session) => session.id)
+
+    // O monitor: traz as de todos do que se administra, com total e página; o `q` é busca de texto (id), não metadado.
+    const all = await list(asAdmin, { all: true, projectId: 'la' })
+    assert.deepStrictEqual(ids(all), [inA])
+    assert.strictEqual(all.page, 1)
+    assert.strictEqual(all.total, 1)
+    assert.deepStrictEqual(ids(await list(asAdmin, { all: true, q: 'outro-assunto' })), [inB])
+    assert.deepStrictEqual(ids(await list(asAdmin, { all: true, q: 'nada-assim-existe' })), [])
+
+    // Sem `all`, `q` não vira filtro de metadado (antes esvaziava a lista): corta por título/id.
+    const mine = (await list(asAdmin, { q: 'FATURAMENTO' })) as unknown as Array<{ id: string }>
+    assert.deepStrictEqual(
+      mine.map((session) => session.id),
+      [inA],
+    )
+
+    // O membro não é admin: `all` é 404, como na API.
+    assert.strictEqual(json(await (await connect(member)).callTool({ name: 'list_conversations', arguments: { all: true } })).status, 404)
+
+    // O agente (concessão) em `la` vê o monitor só de `la`, mesmo pedindo `lb`.
+    const grant = turnGrants().register({ tools: [], context: { token: admin, agentId: 'atlas', sessionId: inA, conversationProjectId: 'la' } })
+    try {
+      const client = new Client({ name: 'teste', version: '1.0.0' })
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Turn-Grant': grant } } }))
+      assert.deepStrictEqual(ids(await list(client, { all: true })), [inA])
+      assert.deepStrictEqual(ids(await list(client, { all: true, projectId: 'lb' })), [inA], 'o projeto pedido não escapa do da origem')
+    } finally {
+      turnGrants().release(grant)
+    }
   })
 
   it('⛔ o agente (concessão) só alcança conversas do PROJETO da conversa dele: ler, mandar mensagem e reconfigurar em outro projeto são recusados', async () => {

@@ -19,7 +19,7 @@ echo "🚀 $REF ($REVISION) → $HOST"
 
 # Só as variáveis do setup atravessam, entre aspas simples (o valor não é interpretado pelo shell remoto).
 forward=""
-for name in GATEWAY_USER GATEWAY_HOME GATEWAY_DATA GATEWAY_HOST GATEWAY_PORT GATEWAY_ENV NODE_BIN SKIP_APT DEPLOY_WAIT_MINUTES; do
+for name in GATEWAY_USER GATEWAY_HOME GATEWAY_DATA GATEWAY_HOST GATEWAY_PORT GATEWAY_ENV NODE_BIN SKIP_APT DEPLOY_WAIT_MINUTES DEPLOY_DRAIN; do
   if [[ -n "${!name:-}" ]]; then forward+=" $name='${!name//\'/}'"; fi
 done
 

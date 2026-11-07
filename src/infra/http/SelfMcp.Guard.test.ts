@@ -31,7 +31,6 @@ describe('SelfMcp.Guard', () => {
     const guarded = scopedWrites(api, { projectId: 'P', unrestricted: false })
 
     assert.ok(refused(await guarded('POST', '/agents', { body: { id: 'novo', projectId: 'Q' } })))
-    assert.ok(refused(await guarded('POST', '/agents', { body: { id: 'novo' } })), 'sem projectId = global')
     assert.ok(refused(await guarded('POST', '/agents', { body: { id: 'novo', projectId: null } })))
     assert.ok(refused(await guarded('PUT', '/agents/a-q', { body: { name: 'x' } })), 'agente existente de Q')
     assert.ok(refused(await guarded('PUT', '/agents/atlas', { body: { name: 'x' } })), 'agente global')
@@ -47,6 +46,7 @@ describe('SelfMcp.Guard', () => {
     assert.ok(refused(await guarded('POST', '/catalog/history/restore', { body: { kind: 'rule', id: 'r-q', project: 'Q' } })))
     assert.ok(refused(await guarded('POST', '/sessions', { body: { agentId: 'a-q' } })), 'abrir conversa com o agente de Q')
     assert.ok(refused(await guarded('POST', '/sessions', { body: { agentId: 'atlas', projectId: 'Q' } })))
+    assert.ok(refused(await guarded('PATCH', '/agents/a-q', { body: { patch: { name: 'x' }, reason: 'x' } })), 'o patch grava na hora o que não amplia: só no projeto da conversa')
     assert.deepStrictEqual(written, [])
   })
 
@@ -62,7 +62,7 @@ describe('SelfMcp.Guard', () => {
     assert.strictEqual((await guarded('PUT', '/projects/P/members', { body: { members: [] } })).ok, true)
     assert.strictEqual((await guarded('POST', '/sessions', { body: { agentId: 'atlas', projectId: 'P' } })).ok, true, 'agente global, conversa do projeto')
     assert.strictEqual((await guarded('PATCH', '/agents/a-p', { body: { patch: {}, reason: 'x' } })).ok, true, 'pedido que a pessoa aprova na tela')
-    assert.strictEqual(written.length, 8)
+    assert.strictEqual(written.length, 9, 'o save_agent de agente grava o mínimo e pede o resto (POST + PATCH, PUT → PATCH)')
   })
 
   it('⛔ o agente não compartilha (mexe em OUTRO projeto): PUT .../shares é recusado mesmo no projeto da conversa e para o Atlas', async () => {
@@ -90,7 +90,14 @@ describe('SelfMcp.Guard', () => {
     assert.strictEqual((await guarded('POST', '/agents', { body: { id: 'n', projectId: 'Q' } })).ok, true)
     assert.strictEqual((await guarded('POST', '/projects', { body: { id: 'z' } })).ok, true)
     assert.strictEqual((await guarded('PUT', '/providers/x/models', { body: {} })).ok, true)
-    assert.strictEqual(written.length, 3)
+    assert.strictEqual(written.length, 4)
+  })
+
+  it('⛔ agente não edita as sequências de modelos (PUT /settings), nem o Atlas', async () => {
+    const { api, written } = fakeApi()
+    for (const scope of [{ projectId: 'P', unrestricted: false }, { unrestricted: true }, { unrestricted: false }])
+      assert.ok(refused(await scopedWrites(api, scope)('PUT', '/settings', { body: { modelGroups: [] } })))
+    assert.deepStrictEqual(written, [])
   })
 
   it('sem projeto e sem ser administrador do gateway, o agente não escreve em lugar nenhum', async () => {
@@ -99,6 +106,99 @@ describe('SelfMcp.Guard', () => {
     assert.ok(refused(await guarded('POST', '/agents', { body: { id: 'n', projectId: 'Q' } })))
     assert.ok(refused(await guarded('POST', '/agents', { body: { id: 'n' } })))
     assert.deepStrictEqual(written, [])
+  })
+
+  describe('⛔ save_agent de agente não amplia acesso; agente novo nasce no projeto da conversa', () => {
+    /** API falsa que guarda o agente e os corpos recebidos. */
+    function saving(existing: Record<string, unknown> = {}) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const calls: Array<{ method: string; path: string; body?: any }> = []
+      const api: TSelfApi = async (method, path, options) => {
+        calls.push({ method, path, body: options?.body })
+        if (method === 'GET') return path === '/agents/a-p' ? { ok: true, status: 200, result: { id: 'a-p', projectId: 'P', ...existing } } : { ok: false, status: 404 }
+        if (method === 'PATCH') return { ok: true, status: 200, result: { agentId: 'x', applied: [], pending: [{ id: 'r1' }], notice: 'PENDENTE' } }
+        return { ok: true, status: 201, result: { id: 'novo', ...((options?.body as object) ?? {}) } }
+      }
+      return { api, calls }
+    }
+
+    it('o agente que se dá run_bash / terminal * pelo save_agent: não grava, vira pedido', async () => {
+      const { api, calls } = saving()
+      const guarded = scopedWrites(api, { projectId: 'P', unrestricted: false })
+      const answer = await guarded('PUT', '/agents/a-p', {
+        body: { id: 'a-p', name: 'A', allowedTools: ['run_bash'], permissions: [{ category: 'terminal', pattern: '*', effect: 'allow' }], projectId: 'P' },
+      })
+      assert.strictEqual(answer.ok, true)
+      assert.ok(!calls.some((call) => call.method === 'PUT' || call.method === 'POST'), 'nada de PUT/POST')
+      const patch = calls.find((call) => call.method === 'PATCH')
+      assert.strictEqual(patch?.path, '/agents/a-p')
+      assert.deepStrictEqual(patch?.body.patch.allowedTools, ['run_bash'])
+      assert.ok(patch?.body.reason)
+      assert.strictEqual((answer.result as { notice?: string }).notice, 'PENDENTE')
+    })
+
+    it('editar manda só os campos enviados (adminOnly omitido não abre o agente)', async () => {
+      const { api, calls } = saving({ adminOnly: true })
+      const guarded = scopedWrites(api, { projectId: 'P', unrestricted: false })
+      await guarded('PUT', '/agents/a-p', { body: { id: 'a-p', name: 'B' } })
+      assert.deepStrictEqual(calls.find((call) => call.method === 'PATCH')?.body.patch, { name: 'B' })
+    })
+
+    it('agente novo sem projectId nasce no projeto da conversa, no mínimo, e o resto é pedido', async () => {
+      const { api, calls } = saving()
+      const guarded = scopedWrites(api, { projectId: 'P', unrestricted: false })
+      const body = {
+        id: 'novo',
+        name: 'N',
+        providers: [{ provider: 'codex', models: ['m'], sandbox: 'full', network: true }],
+        allowedTools: ['run_bash', 'agent:outro'],
+        modes: ['agent'],
+        adminOnly: false,
+        env: { A: 'b' },
+      }
+      const answer = await guarded('POST', '/agents', { body })
+      assert.strictEqual(answer.ok, true)
+      const created = calls.find((call) => call.method === 'POST')
+      assert.strictEqual(created?.body.projectId, 'P')
+      assert.deepStrictEqual(created?.body.allowedTools, [])
+      assert.strictEqual(created?.body.adminOnly, true)
+      assert.deepStrictEqual(created?.body.providers, [{ provider: 'codex', models: ['m'] }])
+      assert.strictEqual(created?.body.env, undefined)
+      const patch = calls.find((call) => call.method === 'PATCH')
+      assert.strictEqual(patch?.path, '/agents/novo')
+      assert.deepStrictEqual(patch?.body.patch.allowedTools, ['run_bash', 'agent:outro'])
+      assert.strictEqual(patch?.body.patch.adminOnly, false)
+      assert.strictEqual(patch?.body.patch.providers[0].sandbox, 'full')
+      assert.strictEqual((answer.result as { notice?: string }).notice, 'PENDENTE')
+    })
+
+    it('patch recusado (corpo inválido): o agente recém-criado é apagado', async () => {
+      const calls: string[] = []
+      const api: TSelfApi = async (method, path) => {
+        calls.push(`${method} ${path}`)
+        if (method === 'PATCH') return { ok: false, status: 422, code: 'validation_error' }
+        return { ok: true, status: 201, result: {} }
+      }
+      const answer = await scopedWrites(api, { projectId: 'P', unrestricted: false })('POST', '/agents', { body: { id: 'novo' } })
+      assert.strictEqual(answer.status, 422)
+      assert.deepStrictEqual(calls, ['POST /agents', 'PATCH /agents/novo', 'DELETE /agents/novo'])
+    })
+
+    it('mover para global (projectId null) continua recusado ao agente de projeto', async () => {
+      const { api, calls } = saving()
+      const guarded = scopedWrites(api, { projectId: 'P', unrestricted: false })
+      assert.ok(refused(await guarded('PUT', '/agents/a-p', { body: { id: 'a-p', projectId: null } })))
+      assert.ok(!calls.some((call) => call.method !== 'GET'))
+    })
+
+    it('pessoa (sem escopo de agente) segue direto, sem pedido: não passa pelo guard', async () => {
+      const { api, calls } = saving()
+      await api('PUT', '/agents/a-p', { body: { allowedTools: ['run_bash'] } })
+      assert.deepStrictEqual(
+        calls.map((call) => call.method),
+        ['PUT'],
+      )
+    })
   })
 
   it('leituras passam como estão', async () => {

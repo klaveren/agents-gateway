@@ -29,6 +29,8 @@ export class ScheduleRunner {
     private readonly service: AgentSchedulesService,
     private readonly execute: TScheduleExecutor,
     private readonly now: () => Date = () => new Date(),
+    /** Gateway drenando para um deploy: nada dispara (ver `Drain.State`). O horário segue vencido e roda no ciclo seguinte. */
+    private readonly draining: () => boolean = () => false,
   ) {}
 
   start(): void {
@@ -46,6 +48,8 @@ export class ScheduleRunner {
   /** Uma conferência: dispara o que venceu e registra o que se perdeu. Devolve as execuções que começaram. */
   async tick(): Promise<Array<Promise<void>>> {
     const started: Array<Promise<void>> = []
+    // ⚖️ Não marca nem registra nada: a execução vencida fica para o próximo ciclo (o processo novo, ou o dreno desligado).
+    if (this.draining()) return started
     const now = this.now()
     for (const schedule of this.service.list()) {
       if (!schedule.enabled || !this.service.nextRun(schedule, now)) continue

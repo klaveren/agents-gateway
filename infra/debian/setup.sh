@@ -174,22 +174,56 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null 2>&1
-# ⛔ O reinício nunca corta uma conversa: com o serviço no ar, espera até nenhum turno estar rodando (o build já foi
-# feito; o reinício leva segundos), pelo tempo que for. `DEPLOY_WAIT_MINUTES=<n>` põe um teto (0 = reinicia já).
+# ⛔ O reinício nunca corta uma conversa. Com o serviço no ar, espera `running: 0`, pelo tempo que for; com
+# `DEPLOY_DRAIN=1`, liga antes o DRENO (turno novo recebe 503 `draining` com `Retry-After`; os em andamento acabam) — com
+# a esteira rodando sem parar, só assim chega a zero, mas quem chama precisa reenviar o 503. `DEPLOY_WAIT_MINUTES=<n>` é um teto OPCIONAL: acabando, o dreno é desligado e o setup PARA com erro,
+# sem reiniciar (rode de novo). O processo novo nasce sem dreno.
 if systemctl is-active --quiet "$SERVICE"; then
-  started=$(date +%s)
-  while :; do
-    running=$(curl -fsS --max-time 5 "http://$GATEWAY_HOST:$GATEWAY_PORT/v1/health?turns=1" 2>/dev/null | sed -n 's/.*"running":\([0-9]*\).*/\1/p')
-    [[ -z "$running" || "$running" == "0" ]] && break
-    if [[ -n "${DEPLOY_WAIT_MINUTES:-}" ]] && (( $(date +%s) - started >= DEPLOY_WAIT_MINUTES * 60 )); then
-      log "Ainda há $running turno(s) rodando; o teto de espera (DEPLOY_WAIT_MINUTES=$DEPLOY_WAIT_MINUTES) acabou"
-      break
-    fi
-    log "Esperando $running turno(s) terminar antes de reiniciar…"
-    sleep 15
-  done
+  # shellcheck source=drain.sh
+  source "$SOURCE/infra/debian/drain.sh"
+  drain_and_wait "${DEPLOY_WAIT_MINUTES:-}" ||
+    die "Ainda há $DRAIN_LEFT turno(s) rodando e o teto de espera (DEPLOY_WAIT_MINUTES=$DEPLOY_WAIT_MINUTES) acabou: NÃO reiniciei (dreno desligado). O código novo já está em $GATEWAY_HOME; rode de novo quando os turnos acabarem."
 fi
 systemctl restart "$SERVICE"
+
+# --- 8b. O backup diário (03:30): banco consistente, chave separada, projetos sem repositórios; 7 diários + 4 semanais.
+#         Fica no servidor (`$GATEWAY_DATA/backups`); levar para fora é decisão do dono. Roda como o usuário do serviço.
+#         Restauração: docs/BACKUP.md ---
+log "Backup diário ($SERVICE-backup.timer)"
+cat >"/etc/systemd/system/$SERVICE-backup.service" <<UNIT
+# Gerada por infra/debian/setup.sh — não edite aqui: rode o setup de novo.
+[Unit]
+Description=Backup do dado do Agents Gateway
+
+[Service]
+Type=oneshot
+User=$GATEWAY_USER
+Group=$GATEWAY_USER
+WorkingDirectory=$GATEWAY_HOME
+Environment=HOME=$USER_HOME
+Environment=PATH=$NODE_DIR:/usr/local/bin:/usr/bin:/bin
+Environment=NODE_BIN=$NODE_BIN
+Environment=GATEWAY_DATA=$GATEWAY_DATA
+Environment=CONVERSATIONS_DB=$GATEWAY_DATA/gateway.db
+# O systemd lê o arquivo como root: a chave (SECRETS_KEY) chega ao script sem o usuário do serviço ler o arquivo.
+EnvironmentFile=$GATEWAY_ENV
+ExecStart=/bin/bash $GATEWAY_HOME/infra/debian/backup.sh
+UNIT
+cat >"/etc/systemd/system/$SERVICE-backup.timer" <<UNIT
+# Gerada por infra/debian/setup.sh — não edite aqui: rode o setup de novo.
+[Unit]
+Description=Backup diário do Agents Gateway
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+chmod +x "$GATEWAY_HOME/infra/debian/backup.sh"
+systemctl daemon-reload
+systemctl enable --now "$SERVICE-backup.timer" >/dev/null 2>&1
 
 # --- 9. Conferência ---
 for _ in $(seq 1 30); do
