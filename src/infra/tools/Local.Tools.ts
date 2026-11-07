@@ -264,7 +264,11 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       ...(shared.length ? { sharedFolders: shared } : {}),
     }
     // O `/tmp` do comando só é privado onde o cerco o monta vazio (Linux, ver `hostSocketDirs`); no Mac é o do host.
-    const refusal = await terminalRefusal(command, root, permissions, asker, folder, { privateTmp: !!sandbox.wrapWith && process.platform === 'linux' })
+    const refusal = await terminalRefusal(command, root, permissions, asker, folder, {
+      privateTmp: !!sandbox.wrapWith && process.platform === 'linux',
+      // ⚖️ O que o cerco define para ESTE comando (ver `scoped` em `wrapWithPlan`): `> $TMPDIR/x` vale o caminho real.
+      variables: { TMPDIR: join(place.scratchBase ?? root, '.tmp'), HOME: join(place.scratchBase ?? root, '.home') },
+    })
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
     const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
@@ -570,9 +574,9 @@ export async function terminalRefusal(
   permissions: IPermissionChecker,
   asker: IPermissionAsker,
   folder?: { dir: string; projectDir: string },
-  options: { privateTmp?: boolean } = {},
+  options: { privateTmp?: boolean; variables?: Readonly<Record<string, string>> } = {},
 ): Promise<string | undefined> {
-  const analysis = await analyzeShell(command)
+  const analysis = await analyzeShell(command, options.variables)
   if (analysis.opaque.length) return opaqueRefusal(analysis.opaque)
   if (!analysis.commands.length && !analysis.redirects.length) return 'nenhum comando'
   // ⛔ O programa que o transporte do ssh lança (`-o ProxyCommand`, `rsync -e`, `GIT_SSH_COMMAND`…) não passa pela análise: só o `ssh` simples.
