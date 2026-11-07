@@ -356,8 +356,9 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const analysis = await analyzeShell(command)
     const real = [...new Set([...realReasons(analysis, analysis.opaque.length ? textual : [...COMMAND_REASONS]), ...(await remoteReasons(analysis, command))])]
     if (!real.length) return undefined
-    if (deps.permissions && (await remoteSudoAllowed(command, deps.permissions, askerOf(context)))) return undefined
-    return real[0]
+    const gap = deps.permissions ? await remoteSudoGap(command, deps.permissions, askerOf(context)) : []
+    if (gap === undefined) return undefined
+    return gap.length ? `${real[0]} (sem regra: ${gap.map((text) => `\`${clip(text, 120)}\``).join(', ')})` : real[0]
   }
 
   async function guardedBash(command: string, context: IExecutionContext | undefined, permissions: IPermissionChecker, askedSeconds?: number): Promise<IToolResult> {
@@ -616,17 +617,34 @@ export async function terminalRefusal(
  * basta. O local segue recusado. O nome do teste é do sudo, de quando só ele passava; vale para a lista de `privilegedOf`.
  */
 export async function remoteSudoAllowed(command: string, permissions: IPermissionChecker, asker: IPermissionAsker): Promise<boolean> {
+  return (await remoteSudoGap(command, permissions, asker)) === undefined
+}
+
+/**
+ * O que falta para o privilegiado remoto passar: nada (`undefined`) se passa; senão, os trechos sem regra que os cubra, para
+ * a recusa dizer QUAL foi (o Argos, com vários `ssh … 'sudo …'` na linha, só sabia que a linha inteira caiu). Vazio = a
+ * recusa não é de regra (local, opaca).
+ */
+export async function remoteSudoGap(command: string, permissions: IPermissionChecker, asker: IPermissionAsker): Promise<string[] | undefined> {
   const analysis = await analyzeShell(command)
-  if (analysis.opaque.length) return false
-  if (analysis.commands.some((part) => privilegedOf(part) || /^\s*(sudo|doas)\b/.test(part.text))) return false
+  if (analysis.opaque.length) return []
+  if (analysis.commands.some((part) => privilegedOf(part) || /^\s*(sudo|doas)\b/.test(part.text))) return []
   const layers = permissions.layers?.(asker)
   const rules = [...(layers?.agent ?? []), ...(layers?.project ?? [])].filter((rule) => rule.category === 'terminal' && rule.decision === 'allow')
   // Só o ssh com privilegiado no comando remoto: a palavra num grep ao lado não é escalada (ver `realReasons`).
   const remotes = (await Promise.all(analysis.commands.map(async (part) => ({ part, remote: await remoteOf(part, command) })))).filter((item) => item.remote)
   const withPrivilege = remotes.filter((item) => item.remote!.opaque || item.remote!.privileged.length)
-  if (!withPrivilege.length) return false
-  for (const { part, remote } of withPrivilege) if (!(await sshCovered(part.argv, remote!, rules))) return false
-  return true
+  if (!withPrivilege.length) return []
+  const gap: string[] = []
+  for (const { part, remote } of withPrivilege) {
+    if (await sshCovered(part.argv, remote!, rules)) continue
+    const prefix = part.argv.slice(0, sshRemoteStart(part.argv))
+    const missing = remote!.privileged
+      .filter(({ command, kind }) => !rules.some((rule) => cites(rule.pattern, kind.cite) && commandMatches(rule.pattern, [...prefix, ...command.argv])))
+      .map(({ command }) => command.text)
+    gap.push(...(missing.length ? missing : [part.text]))
+  }
+  return gap.length ? [...new Set(gap)] : undefined
 }
 
 /**
@@ -661,11 +679,13 @@ function cites(pattern: string, word: string): boolean {
   return pattern.split(/\s+/).some((part) => part.replace(/\*/g, ' ').split(/\s+/).includes(word))
 }
 
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
+
 /** A palavra remota que o shell de lá lê como está. */
 const REMOTE_PLAIN_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/
 
 /** Pedir a regra: a saída que o agente tem quando o terminal nega (a ferramenta é a do MCP do gateway, quando ele a tem). */
-const RULE_HINT = 'peça a regra com save_permission_rules (uma pessoa aprova)'
+const RULE_HINT = 'peça a regra (com save_permission_rules, se você tem a ferramenta; senão, a quem coordena você); uma pessoa aprova'
 
 /** O alvo do redirecionamento está no `/tmp` ou no `/var/tmp` (caminho já normalizado, sem `..` que escape). */
 function inScratch(root: string, target: string, scratch: readonly string[]): boolean {
@@ -1344,7 +1364,7 @@ export function policyRefusal(denied: string, command: string): string {
   const base = `Refused by the gateway tool policy: ${denied}.`
   if (!/privilege escalation|host power control/.test(denied)) return base
   return /(^|[\s;&|(])ssh\s/.test(command)
-    ? `${base} No host remoto, sudo/su/reboot só passam com uma regra de terminal que os libere E cite (ex.: \`ssh 10.10.0.1 sudo k3s kubectl *\`); peça com save_permission_rules (uma pessoa aprova).`
+    ? `${base} No host remoto, sudo/su/reboot só passam com uma regra de terminal que os libere E cite (ex.: \`ssh 10.10.0.1 sudo k3s kubectl *\`); peça a regra (com save_permission_rules, se você tem a ferramenta; senão, a quem coordena você); uma pessoa aprova.`
     : `${base} Local, isso nunca roda no cerco.`
 }
 

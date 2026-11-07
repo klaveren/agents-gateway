@@ -100,6 +100,11 @@ describe('Permission.Policy', () => {
     assert.ok(commandMatches('git *', ['git', 'push', '-f']))
     assert.ok(!commandMatches('git', ['git', 'status']))
     assert.ok(commandMatches('npm run test*', ['npm', 'run', 'test:unit']))
+    // O `*` colado na última palavra é prefixo do comando: `git status*` cobre `git status --short` (o `**` segue uma palavra).
+    assert.ok(commandMatches('git status*', ['git', 'status', '--short']))
+    assert.ok(commandMatches('git status*', ['git', 'status']))
+    assert.ok(!commandMatches('git status*', ['git', 'stash', 'pop']))
+    assert.ok(!commandMatches('git st*tus x', ['git', 'status', 'x', 'y']))
     assert.ok(commandMatches('rm *', ['/bin/rm', '-rf', 'x']))
     assert.ok(commandMatches('git push * main', ['git', 'push', '--force', 'origin', 'main']))
     assert.ok(!commandMatches('git push * main', ['git', 'push', 'origin', 'dev']))
