@@ -500,6 +500,13 @@ export class AgentController {
     return requireProjectsAdmin(this.usecases.proof, projectId || !alsoProject || !this.usecases.projects?.exists(alsoProject) ? [projectId] : [projectId, alsoProject], operation)
   }
 
+  /** ⛔ Agente só de admin (`adminOnly`): os comandos e as ferramentas dele só para quem o administra (a mesma regra de abrir conversa). */
+  private async opensAdminOnly(agent: IAgent): Promise<boolean> {
+    if (!agent.adminOnly) return true
+    const view = await adminView(this.usecases.proof)
+    return !!view && administers(view, agent.projectId)
+  }
+
   /** O agente aparece para esta pessoa (neste projeto, se pedido)? O global aparece em todos. */
   private agentVisible(agent: IAgent, caller: IProjectCaller, project?: string): boolean {
     if (!agent.projectId) return true
@@ -604,7 +611,7 @@ export class AgentController {
       const resolved = await this.requireCaller()
       const caller = this.callerOf(resolved)
       const agent = this.agents.get(req.params.agentId as string)
-      if (!agent || !this.agentVisible(agent, caller)) throw new AgentNotFoundError(req.params.agentId as string)
+      if (!agent || !this.agentVisible(agent, caller) || !(await this.opensAdminOnly(agent))) throw new AgentNotFoundError(req.params.agentId as string)
       // Os commands e as skills: a caixa sugere os dois ao digitar `/` (a skill escolhida vai inteira, já carregada).
       const guidance = this.usecases.guidance
       const resources = [...(guidance?.usableResources('command', agent.id) ?? []), ...(guidance?.usableResources('skill', agent.id) ?? [])].map((resource) => ({
@@ -886,7 +893,7 @@ export class AgentController {
       const agentId = req.params.agentId as string
       const agent = this.agents.get(agentId)
       // ⛔ O agente de um projeto (e os MCPs dele) não existe para quem não é do projeto.
-      if (!agent || !this.agentVisible(agent, this.callerOf(resolved))) throw new AgentNotFoundError(agentId)
+      if (!agent || !this.agentVisible(agent, this.callerOf(resolved)) || !(await this.opensAdminOnly(agent))) throw new AgentNotFoundError(agentId)
 
       // As capacidades entram pelas ferramentas do gateway que as implementam (a lista é a mesma em todo provedor).
       // ⛔ Os MCPs: só os do escopo do agente (os globais e os do projeto dele).
