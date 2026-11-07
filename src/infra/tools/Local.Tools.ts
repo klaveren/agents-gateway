@@ -475,7 +475,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
 
         const denied = await guardRefusal(command, context)
         if (denied) {
-          return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
+          return { status: 'error', result: policyRefusal(denied, command) }
         }
         if (dumpsClusterSecret(command)) return { status: 'error', result: CLUSTER_SECRET_REFUSAL }
         const printing = secretPrintRefusal(command, context, deps.secrets)
@@ -1259,7 +1259,7 @@ function backgroundTools(
       async execute(args, context) {
         const command = String(args.command ?? '')
         const denied = await guardRefusal(command, context)
-        if (denied) return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
+        if (denied) return { status: 'error', result: policyRefusal(denied, command) }
         if (dumpsClusterSecret(command)) return { status: 'error', result: CLUSTER_SECRET_REFUSAL }
         return start(command, typeof args.name === 'string' ? args.name : undefined, context)
       },
@@ -1331,4 +1331,16 @@ export function exactTcpTarget(pattern: string): boolean {
   if (!match) return false
   const [, host, port] = match
   return !['80', '443'].includes(port) && !/^(?:localhost|127\.0\.0\.1|\[::1\])$/i.test(host)
+}
+
+/**
+ * A recusa da política com a SAÍDA: o privilegiado no host remoto passa com uma regra que o libere e o cite (a pessoa
+ * aprova); o local, nunca. O motivo técnico fica no começo (o log e os testes o leem).
+ */
+export function policyRefusal(denied: string, command: string): string {
+  const base = `Refused by the gateway tool policy: ${denied}.`
+  if (!/privilege escalation|host power control/.test(denied)) return base
+  return /(^|[\s;&|(])ssh\s/.test(command)
+    ? `${base} No host remoto, sudo/su/reboot só passam com uma regra de terminal que os libere E cite (ex.: \`ssh 10.10.0.1 sudo k3s kubectl *\`); peça com save_permission_rules (uma pessoa aprova).`
+    : `${base} Local, isso nunca roda no cerco.`
 }
