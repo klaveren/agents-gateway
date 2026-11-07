@@ -75,11 +75,20 @@ describe('Permission.Policy', () => {
       'secrets.env',
       'k.key',
       'repositories/logiccus/.credentials/automation/agents-gateway.env',
-      'deploy/prod.env',
       'x/.credentials/token.txt',
     ])
       assert.deepStrictEqual([read(path).allowed, read(path).layer], [false, 'system'], path)
-    for (const path of ['.env.example', 'apps/.env.local.example', '.env.sample', 'x/.env.template', '.env.dist', 'lib/secrets.js', 'bin/secrets.sh', 'secrets.ts'])
+    for (const path of [
+      'infra/profiles/default.env',
+      '.env.example',
+      'apps/.env.local.example',
+      '.env.sample',
+      'x/.env.template',
+      '.env.dist',
+      'lib/secrets.js',
+      'bin/secrets.sh',
+      'secrets.ts',
+    ])
       assert.strictEqual(read(path).allowed, true, path)
     assert.strictEqual(decide({ category: 'write', value: '.env.example' }, { agent }).allowed, true)
     // A negação de uma camada que cobre o modelo continua valendo.
