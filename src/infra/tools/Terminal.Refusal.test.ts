@@ -220,6 +220,12 @@ describe('terminal — $TMPDIR do cerco e variável de laço literal', () => {
     const inCerco = (command: string, rules: IPermissionRule[] = []) =>
       terminalRefusal(command, '/w', checker([...base, ...rules]), {}, undefined, { variables: { TMPDIR: '/w/.tmp', HOME: '/w/.home' }, scratch: ['/w/.tmp', '/w/.home'] })
     assert.strictEqual(await inCerco('D=$TMPDIR/head; echo x > $D/a.txt'), undefined)
+    // O `$$` (o PID, só dígitos) fica dentro da pasta: o teste do Zeus em 07/11 era recusado como destino dinâmico.
+    assert.strictEqual(await inCerco('f="$TMPDIR/rw-probe-$$"; echo ok > "$f" && cat "$f" && rm "$f"', [rule('cat *', 'allow'), rule('rm *', 'allow')]), undefined)
+    assert.strictEqual(await inCerco('echo ok > $TMPDIR/x-$$'), undefined)
+    assert.match((await inCerco('echo ok > $TMPDIR/../x-$$')) ?? '', /nenhuma regra de escrita permite/)
+    // ⛔ `$RANDOM` não vale dígito: depois do `unset`, é uma variável comum (aqui, o caminho de fora que ela aponta).
+    assert.match((await inCerco('unset RANDOM; RANDOM=../x; echo ok > $TMPDIR/$RANDOM')) ?? '', /nenhuma regra de escrita permite "x"/)
     assert.strictEqual(await inCerco('D=$TMPDIR/head\nE=$D/sub\necho x > "$E/a.txt"'), undefined)
     assert.strictEqual(await inCerco('D=out; echo x > $D/a.txt', [wr('out/**')]), undefined)
     assert.match((await inCerco('D=out; echo x > $D/a.txt')) ?? '', /nenhuma regra de escrita permite "out\/a.txt"/)
