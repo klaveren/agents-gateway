@@ -384,19 +384,21 @@ describe('findUnder — os modelos de segredo reabertos para leitura', () => {
     writeFileSync(join(root, 'repositories', 'logiccus', 'apis', 'logiccus', '.env.example'), 'A=')
     writeFileSync(join(root, 'repositories', 'logiccus', '.git', '.env.example'), 'nunca')
     mkdirSync(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1', 'apps'), { recursive: true })
+    mkdirSync(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1', 'apis', 'logiccus'), { recursive: true })
     writeFileSync(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1', '.git'), 'gitdir: ../../.git/worktrees/EP-1')
     writeFileSync(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1', 'apps', '.env.example'), 'A=')
+    writeFileSync(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1', 'apis', 'logiccus', '.env.example'), 'A=')
     mkdirSync(join(root, 'repositories', 'logiccus', 'node_modules', 'p'), { recursive: true })
     writeFileSync(join(root, 'repositories', 'logiccus', 'node_modules', 'p', '.env.example'), 'nunca')
     writeFileSync(join(root, 'repositories', 'logiccus', 'apis', 'logiccus', '.env'), 'SEGREDO=1')
-    // As worktrees entram DEPOIS da árvore principal (o teto corta por elas): o `git diff` na worktree via /dev/null.
+    // A worktree não é varrida: o modelo do repositório, no mesmo caminho dela, entra depois (o `git diff` lá via /dev/null).
     assert.deepStrictEqual(findUnder(root, '**/.env.*'), [
       '.agents/skills/x/.env.example',
       'repositories/logiccus/apis/logiccus/.env.example',
-      'repositories/logiccus/_worktrees/EP-1/apps/.env.example',
+      'repositories/logiccus/_worktrees/EP-1/apis/logiccus/.env.example',
     ])
     // Na conversa dentro da worktree, a raiz é ela: os modelos dela entram.
-    assert.deepStrictEqual(findUnder(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1'), '**/.env.*'), ['apps/.env.example'])
+    assert.deepStrictEqual(findUnder(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1'), '**/.env.*').sort(), ['apis/logiccus/.env.example', 'apps/.env.example'])
   })
 
   it('⛔ passou do teto de modelos, o resto fica escondido; os da árvore principal vêm antes dos das worktrees', () => {
@@ -405,9 +407,11 @@ describe('findUnder — os modelos de segredo reabertos para leitura', () => {
       mkdirSync(join(many, `d${i}`), { recursive: true })
       writeFileSync(join(many, `d${i}`, '.env.example'), 'A=')
     }
-    for (let i = 0; i < 400; i += 1) {
-      mkdirSync(join(many, '_worktrees', `EP-${i}`), { recursive: true })
-      writeFileSync(join(many, '_worktrees', `EP-${i}`, '.env.example'), 'A=')
+    for (let i = 0; i < 40; i += 1) {
+      for (let j = 0; j < 10; j += 1) {
+        mkdirSync(join(many, '_worktrees', `EP-${i}`, `d${j}`), { recursive: true })
+        writeFileSync(join(many, '_worktrees', `EP-${i}`, `d${j}`, '.env.example'), 'A=')
+      }
     }
     const found = findUnder(many, '**/.env.*')
     assert.strictEqual(found.length, 400)
