@@ -380,28 +380,48 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'list_conversations',
     {
-      description: 'List conversations (yours; an administrator sees all). `projectId` keeps one project; `metadata` filters by stored metadata keys, e.g. { accountId: "xpto" }.',
+      description:
+        'List conversations. By default yours (`q` then matches the title or id of those). `all: true` is the monitor, for whoever administers: everyone\'s conversations in the projects you administer (those outside any project, if you administer the gateway), paginated (`page`, `pageSize`), and `q` searches title, e-mail and id. An agent only ever sees the conversations of its own project. `projectId` keeps one project; `metadata` filters by stored metadata keys, e.g. { accountId: "xpto" }.',
       inputSchema: {
-        q: z.string().optional(),
+        q: z.string().optional().describe('Text search (title, id; with `all`, also the owner e-mail)'),
+        all: z.boolean().optional().describe('The monitor: the conversations of everyone, in what you administer (administrators only)'),
+        page: z.number().int().min(1).optional().describe('With `all`: the page (1-based)'),
+        pageSize: z.number().int().min(1).max(100).optional().describe('With `all`: items per page'),
         projectId: z.string().optional(),
         metadata: z.record(z.string(), z.string()).optional(),
         limit: z.number().int().min(1).max(100).optional(),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ q, projectId, metadata, limit }) =>
-      reply(await api('GET', '/conversations', { query: { ...metadata, q, limit, project: projectId } }), (result) =>
-        ((result as { sessions?: Array<Record<string, unknown>> }).sessions ?? []).map((session) => ({
-          id: session.id,
-          title: session.title,
-          agentId: session.agentId,
-          model: session.model,
-          turns: session.turns,
-          updatedAt: session.updatedAt,
-          usage: session.usage,
-          ...(session.costUsd === undefined ? {} : { costUsd: session.costUsd }),
-        })),
-      ),
+    async ({ q, all, page, pageSize, projectId, metadata, limit }) => {
+      const search = q?.trim()
+      // ⛔ `q` nunca vira filtro de metadado (a rota trata chave desconhecida assim): no monitor é a busca do servidor; nas
+      // próprias, o corte é aqui, sobre as que a rota devolveu.
+      const query = all
+        ? { ...metadata, scope: 'all', page: page ?? 1, pageSize: pageSize ?? limit, q: search || undefined, project: projectId }
+        : { ...metadata, limit: search ? 100 : limit, project: projectId }
+      const answer = await api('GET', '/conversations', { query })
+      const wanted = search?.toLowerCase()
+      const matches = (session: Record<string, unknown>) =>
+        all || !wanted || [session.title, session.id].some((field) => typeof field === 'string' && field.toLowerCase().includes(wanted))
+      return reply(answer, (result) => {
+        const body = result as { sessions?: Array<Record<string, unknown>>; total?: number; page?: number; pageSize?: number }
+        const sessions = (body.sessions ?? [])
+          .filter(matches)
+          .slice(0, all ? undefined : limit)
+          .map((session) => ({
+            id: session.id,
+            title: session.title,
+            agentId: session.agentId,
+            model: session.model,
+            turns: session.turns,
+            updatedAt: session.updatedAt,
+            usage: session.usage,
+            ...(session.costUsd === undefined ? {} : { costUsd: session.costUsd }),
+          }))
+        return all ? { sessions, total: body.total, page: body.page, pageSize: body.pageSize } : sessions
+      })
+    },
   )
 
   server.registerTool(

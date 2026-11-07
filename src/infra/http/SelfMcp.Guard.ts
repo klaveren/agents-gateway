@@ -174,7 +174,10 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
       if (denied) return denied
     }
     if (method === 'GET') {
-      const answer = await api(method, path, options)
+      // ⛔ O monitor (`scope=all`) de um agente já sai recortado no projeto da origem, para a página não vir vazia do filtro abaixo.
+      const pinned =
+        root === 'conversations' && !id && scope.projectId && options?.query?.scope === 'all' ? { ...options, query: { ...options.query, project: scope.projectId } } : options
+      const answer = await api(method, path, pinned)
       // A lista de conversas mostra só as do projeto da origem.
       const listed = (answer.result as { sessions?: unknown } | undefined)?.sessions
       if (root === 'conversations' && !id && answer.ok && Array.isArray(listed)) {

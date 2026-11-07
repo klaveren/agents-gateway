@@ -62,6 +62,7 @@ describe('MCP do próprio gateway (integração)', () => {
     return client
   }
   let mambaDir: string
+  let conversations: ReturnType<typeof makeController>['conversations']
   const names = async (token: string) => (await (await connect(token)).listTools()).tools.map((tool) => tool.name).sort()
   const json = (result: unknown) => JSON.parse((result as { content: Array<{ text: string }> }).content[0].text)
 
@@ -69,6 +70,7 @@ describe('MCP do próprio gateway (integração)', () => {
     process.env.MCP_SERVER_URL = 'http://127.0.0.1:1/mcp'
     delete process.env.SELF_MCP_WRITE
     const controller = makeController()
+    conversations = controller.conversations
     mambaDir = mkdtempSync(join(tmpdir(), 'gw-selfmcp-mamba-'))
     writeFileSync(join(mambaDir, 'micromamba'), FAKE_MAMBA)
     chmodSync(join(mambaDir, 'micromamba'), 0o755)
@@ -482,6 +484,63 @@ describe('MCP do próprio gateway (integração)', () => {
       body: '{}',
     })
     assert.strictEqual(after.status, 401)
+  })
+
+  it('list_conversations: `all` é o monitor paginado (q busca texto, não metadado); sem `all`, q filtra as próprias; o agente fica no projeto dele', async () => {
+    for (const id of ['la', 'lb']) await call('/projects', { method: 'POST', token: admin, body: { id, name: id } })
+    // Conversas gravadas (a lista é do histórico, não das vivas): uma por projeto, com título para a busca.
+    const me = (await call('/auth/me', { token: admin })).result
+    const open = async (projectId: string, title: string) => {
+      const id = `lc-${projectId}-${title}`
+      const at = new Date()
+      await conversations.saveSession({
+        id,
+        agentId: 'atlas',
+        provider: 'claude',
+        mode: 'chat',
+        model: 'claude-sonnet-5',
+        title,
+        createdAt: at,
+        updatedAt: at,
+        turns: 1,
+        usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, totalTokens: 2 },
+        metadata: { project: projectId, owner: { id: me.id, ...(me.account ? { account: me.account } : {}), email: me.email } },
+      })
+      return id
+    }
+    const [inA, inB] = [await open('la', 'faturamento-mensal'), await open('lb', 'outro-assunto')]
+    const asAdmin = await connect(admin)
+    const list = async (client: Client, args: Record<string, unknown>) => json(await client.callTool({ name: 'list_conversations', arguments: args }))
+    const ids = (listed: { sessions: Array<{ id: string }> }) => listed.sessions.map((session) => session.id)
+
+    // O monitor: traz as de todos do que se administra, com total e página; o `q` é busca de texto (id), não metadado.
+    const all = await list(asAdmin, { all: true, projectId: 'la' })
+    assert.deepStrictEqual(ids(all), [inA])
+    assert.strictEqual(all.page, 1)
+    assert.strictEqual(all.total, 1)
+    assert.deepStrictEqual(ids(await list(asAdmin, { all: true, q: 'outro-assunto' })), [inB])
+    assert.deepStrictEqual(ids(await list(asAdmin, { all: true, q: 'nada-assim-existe' })), [])
+
+    // Sem `all`, `q` não vira filtro de metadado (antes esvaziava a lista): corta por título/id.
+    const mine = (await list(asAdmin, { q: 'FATURAMENTO' })) as unknown as Array<{ id: string }>
+    assert.deepStrictEqual(
+      mine.map((session) => session.id),
+      [inA],
+    )
+
+    // O membro não é admin: `all` é 404, como na API.
+    assert.strictEqual(json(await (await connect(member)).callTool({ name: 'list_conversations', arguments: { all: true } })).status, 404)
+
+    // O agente (concessão) em `la` vê o monitor só de `la`, mesmo pedindo `lb`.
+    const grant = turnGrants().register({ tools: [], context: { token: admin, agentId: 'atlas', sessionId: inA, conversationProjectId: 'la' } })
+    try {
+      const client = new Client({ name: 'teste', version: '1.0.0' })
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Turn-Grant': grant } } }))
+      assert.deepStrictEqual(ids(await list(client, { all: true })), [inA])
+      assert.deepStrictEqual(ids(await list(client, { all: true, projectId: 'lb' })), [inA], 'o projeto pedido não escapa do da origem')
+    } finally {
+      turnGrants().release(grant)
+    }
   })
 
   it('⛔ o agente (concessão) só alcança conversas do PROJETO da conversa dele: ler, mandar mensagem e reconfigurar em outro projeto são recusados', async () => {
