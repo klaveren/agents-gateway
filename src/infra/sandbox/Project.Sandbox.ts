@@ -226,6 +226,7 @@ export class ProjectSandbox implements IProjectSandbox {
     if (existsSync(own)) planned.readAllow.push(own)
     const cerco = this.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir)) : planned
     for (const dir of writeFolders(cerco, root)) mkdirSync(dir, { recursive: true, mode: 0o700 })
+    if (place.gitCommonDir) ensureEmptyAttributes(place.gitCommonDir)
     const scratch = (name: string) => {
       const dir = join(place.scratchBase ?? root, name)
       mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -475,6 +476,22 @@ function pathExists(path: string): boolean {
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * ⚠️ O `.git/info/attributes` que não existe vira, na negação de escrita do cerco, um caminho que o git nem LÊ: todo
+ * `git status` avisava "unable to access '.git/info/attributes': Permission denied". Vazio, ele não muda nada (sem
+ * atributo, sem filtro) e a negação fica sobre um arquivo legível. Sem como criar, segue o aviso.
+ */
+export function ensureEmptyAttributes(gitCommonDir: string): void {
+  const path = join(gitCommonDir, 'info', 'attributes')
+  try {
+    if (!existsSync(join(gitCommonDir, 'HEAD')) || existsSync(path)) return
+    mkdirSync(join(gitCommonDir, 'info'), { recursive: true })
+    writeFileSync(path, '', { flag: 'wx', mode: 0o644 })
+  } catch {
+    // Somente leitura, ou outro comando criou antes: tanto faz.
   }
 }
 
