@@ -7,6 +7,7 @@ import { after, describe, it } from 'node:test'
 import { cercoPlan } from '@domain/Cerco.Plan'
 import { commandDirOf } from '@infra/accounts/Ssh.Kit'
 import {
+  ensureEmptyAttributes,
   cleanLegacyScratch,
   ensureGitProxyAuth,
   expandGlobPath,
@@ -544,5 +545,25 @@ describe('sweepMountPoints — as sobras de ponto de montagem na pasta do projet
     symlinkSync(real, join(base, 'link'))
     assert.deepStrictEqual(sweepMountPoints(join(base, 'link')), [])
     assert.ok(existsSync(join(real, 'package.json')))
+  })
+})
+
+describe('ensureEmptyAttributes — o .git/info/attributes que o git consegue ler', () => {
+  it('cria vazio num repositório que não tem; não toca no que existe nem fora de repositório', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'attrs-'))
+    try {
+      const git = join(dir, '.git')
+      mkdirSync(git)
+      ensureEmptyAttributes(git)
+      assert.strictEqual(existsSync(join(git, 'info', 'attributes')), false, 'sem HEAD não é repositório')
+      writeFileSync(join(git, 'HEAD'), 'ref: refs/heads/main\n')
+      ensureEmptyAttributes(git)
+      assert.strictEqual(readFileSync(join(git, 'info', 'attributes'), 'utf8'), '')
+      writeFileSync(join(git, 'info', 'attributes'), '*.bin binary\n')
+      ensureEmptyAttributes(git)
+      assert.strictEqual(readFileSync(join(git, 'info', 'attributes'), 'utf8'), '*.bin binary\n')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
