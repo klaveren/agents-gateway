@@ -278,7 +278,30 @@ export class McpServersController {
    * `full`: o admin vê o erro de conexão; o membro, não (a mensagem pode trazer endereço interno). `view`: ⛔ o global
    * é lido por qualquer admin, mas os agentes de OUTROS projetos que o usam só aparecem a quem os administra.
    */
+  /**
+   * ⛔ O MEMBRO (não administra o projeto) só vê QUE o MCP existe e se está de pé: nada de URL, cabeçalho, comando,
+   * contêiner, variáveis, nem o fim do segredo — é a configuração de quem administra.
+   */
+  private memberDto(server: IMcpServerConfig) {
+    const key = mcpServerKey(server)
+    const status = this.deps.registry.status().find((entry) => entry.key === key)
+    return {
+      key,
+      id: server.id,
+      ...(server.projectId ? { projectId: server.projectId } : {}),
+      name: server.name,
+      ...(server.tags?.length ? { tags: server.tags } : {}),
+      kind: server.kind ?? 'remote',
+      enabled: server.enabled,
+      // A mesma forma da tela (que lê `secret.configured` e `agents`), sem o que é de quem administra.
+      secret: { configured: this.deps.service.secretStatus(key).configured },
+      status: { connected: status?.connected ?? false },
+      agents: [] as Array<{ id: string; name: string }>,
+    }
+  }
+
   private toDto(server: IMcpServerConfig, full = true, view?: IAdminView) {
+    if (!full) return this.memberDto(server)
     const key = mcpServerKey(server)
     const secret = this.deps.service.secretStatus(key)
     const status = this.deps.registry.status().find((entry) => entry.key === key)

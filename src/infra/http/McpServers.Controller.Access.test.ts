@@ -124,6 +124,10 @@ describe('McpServers: o admin do projeto, só o projeto dele', () => {
     assert.deepStrictEqual(await keys(CAIO, { project: 'alfa' }), ['alfa.n8n'])
     assert.strictEqual((await call(CAIO, 'list')).status, 404)
     assert.strictEqual((await call(CAIO, 'list', { query: { project: 'beta' } })).status, 404)
+    // ⛔ Só que existe e se está de pé: nada de URL, cabeçalho, comando nem o fim do segredo.
+    const [seen] = (await call(CAIO, 'list', { query: { project: 'alfa' } })).body?.result as Array<Record<string, unknown>>
+    for (const field of ['url', 'headerName', 'auth', 'process', 'container', 'env', 'updatedBy']) assert.strictEqual(seen![field], undefined, field)
+    assert.deepStrictEqual(Object.keys(seen!.secret as object), ['configured'])
   })
 
   it('o global é lido por qualquer admin, sem os agentes dos projetos que ele não administra', async () => {

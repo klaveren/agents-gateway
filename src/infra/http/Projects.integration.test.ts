@@ -482,7 +482,8 @@ describe('Projetos (integração)', () => {
     assert.strictEqual((await call(ANA, 'GET', '/mcp-servers')).status, 404)
     const listed = await call(ANA, 'GET', '/mcp-servers?project=alfa')
     assert.ok(!JSON.stringify(listed.body).includes('chave-alfa'), 'a credencial continua mascarada')
-    assert.strictEqual(listed.body.result[0].secret.last4, 'alfa')
+    // ⛔ O membro sabe que há chave, não o fim dela (a configuração é de quem administra).
+    assert.deepStrictEqual(listed.body.result[0].secret, { configured: true })
     assert.strictEqual((await call(ANA, 'PUT', '/mcp-servers/alfa.n8n', { name: 'x' })).status, 404, 'membro não edita')
     assert.strictEqual((await call(ANA, 'GET', '/mcp-servers/alfa.n8n/tools')).status, 404)
 

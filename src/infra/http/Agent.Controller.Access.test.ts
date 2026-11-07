@@ -44,6 +44,7 @@ describe('AgentController: o admin do projeto, só o projeto dele', () => {
       ...TEST_AGENTS,
       { ...GOOGLE_TEST_AGENT, id: 'agente-alfa', name: 'Agente alfa', projectId: 'alfa' },
       { ...GOOGLE_TEST_AGENT, id: 'agente-beta', name: 'Agente beta', projectId: 'beta' },
+      { ...GOOGLE_TEST_AGENT, id: 'agente-alfa-admin', name: 'Agente alfa só de admin', projectId: 'alfa', adminOnly: true },
     ],
     'teste',
   )
@@ -257,6 +258,13 @@ describe('AgentController: o admin do projeto, só o projeto dele', () => {
     assert.strictEqual((await call(CAIO, 'conversationStats')).status, 404)
     assert.strictEqual((await call(CAIO, 'listErrors')).status, 404)
     assert.strictEqual((await call(ANA, 'listErrors')).status, 200)
+  })
+
+  it('⛔ agente só de admin: os comandos e as ferramentas dele só para quem administra o projeto dele', async () => {
+    assert.strictEqual((await call(ANA, 'getAgentCommands', { params: { agentId: 'agente-alfa-admin' } })).status, 200)
+    assert.strictEqual((await call(CAIO, 'getAgentCommands', { params: { agentId: 'agente-alfa-admin' } })).status, 404)
+    assert.strictEqual((await call(CAIO, 'getAgentTools', { params: { agentId: 'agente-alfa-admin' } })).status, 404)
+    assert.strictEqual((await call(CAIO, 'getAgentCommands', { params: { agentId: 'agente-alfa' } })).status, 200, 'o agente comum segue para o membro')
   })
 
   it('o sistema continua do gateway: as configurações são do root; a Ana recebe 404', async () => {
