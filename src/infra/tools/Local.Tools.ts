@@ -382,10 +382,11 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       processes.remember({ id, sessionId: context.sessionId, name: command.slice(0, 80), command, startedAt: new Date(), code: result.code, timedOut: result.timedOut, logFile })
     else rmSync(logFile, { force: true })
     const body = clipOutput(raw, limits.maxOutputChars, long && context?.sessionId ? `o log inteiro: bash_logs id ${id}` : undefined)
+    const note = readOnlyNote(raw)
     if (result.timedOut)
-      return { status: 'error', result: `${prepared.notes}Tempo esgotado (${Math.round(timeoutMs / 1000)}s): o comando e os filhos dele foram parados.\n${body}` }
-    if (result.code !== 0) return { status: 'error', result: `${prepared.notes}Exit code ${result.code ?? 1}: ${body.trim()}` }
-    return { status: 'success', result: prepared.notes + body }
+      return { status: 'error', result: `${prepared.notes}Tempo esgotado (${Math.round(timeoutMs / 1000)}s): o comando e os filhos dele foram parados.\n${body}${note}` }
+    if (result.code !== 0) return { status: 'error', result: `${prepared.notes}Exit code ${result.code ?? 1}: ${body.trim()}${note}` }
+    return { status: 'success', result: prepared.notes + body + note }
   }
 
   /** O caminho do `exec` injetado (os testes): a mesma preparação, a saída de uma vez. */
@@ -398,7 +399,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       // A linha embrulhada (a política do cerco) não interessa a quem lê; a saída de erro, sim.
       const failure = error as { stderr?: string; stdout?: string; code?: number }
       const output = [failure.stdout?.trim(), failure.stderr?.trim()].filter(Boolean).join('\n')
-      if (output) return { status: 'error', result: prepared.notes + clipOutput(`Exit code ${failure.code ?? 1}: ${output}`, maxOutputChars) }
+      if (output) return { status: 'error', result: prepared.notes + clipOutput(`Exit code ${failure.code ?? 1}: ${output}`, maxOutputChars) + readOnlyNote(output) }
       return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
     } finally {
       prepared.release()
@@ -700,6 +701,19 @@ const REMOTE_PLAIN_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/
 
 /** Pedir a regra: a saída que o agente tem quando o terminal nega (a ferramenta é a do MCP do gateway, quando ele a tem). */
 const RULE_HINT = 'peça a regra (com save_permission_rules, se você tem a ferramenta; senão, a quem coordena você); uma pessoa aprova'
+
+/**
+ * ⚠️ No cerco, "Read-only file system" é o caminho SEM regra de escrita para o agente, não o disco: o `/proc/mounts` de
+ * dentro mostra `/` somente leitura. Sem a nota, o Argos leu isso e pediu fsck do servidor seis vezes (07/11), e a Vera
+ * não entendia por que a ferramenta de escrita criava o arquivo que o terminal recusava (ver `withWriteGlobsExpanded`).
+ */
+export function readOnlyNote(output: string): string {
+  if (!/Read-only file system|EROFS/.test(output)) return ''
+  return (
+    '\n\nℹ️ No cerco, "Read-only file system" quer dizer que você não tem regra de escrita nesse caminho; o disco do servidor não está somente leitura. ' +
+    `Arquivo NOVO por regra com curinga (\`**/*.test.ts\`) se cria pela ferramenta de escrita (Write), não pelo terminal. Fora disso, ${RULE_HINT}.`
+  )
+}
 
 /** O alvo do redirecionamento está no `/tmp` ou no `/var/tmp` (caminho já normalizado, sem `..` que escape). */
 function inScratch(root: string, target: string, scratch: readonly string[]): boolean {

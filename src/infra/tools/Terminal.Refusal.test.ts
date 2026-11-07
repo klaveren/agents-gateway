@@ -4,7 +4,7 @@ import type { IPermissionChecker } from '@application/Permissions.Service'
 import { decide, type IPermissionRule } from '@domain/Permission.Policy'
 import { analyzeShell } from '@infra/permissions/Shell.Parse'
 import { transportRefusal } from './Bash.Guard'
-import { terminalRefusal } from './Local.Tools'
+import { readOnlyNote, terminalRefusal } from './Local.Tools'
 
 const rule = (pattern: string, decision: IPermissionRule['decision']): IPermissionRule => ({ category: 'terminal', pattern, decision })
 
@@ -332,5 +332,16 @@ describe('terminal — o `cd` que abre a linha', () => {
     ]) {
       assert.ok(await refusal(command, rules), command)
     }
+  })
+})
+
+describe('terminal — "Read-only file system" no cerco', () => {
+  it('explica que é falta de regra de escrita, não o disco', () => {
+    const note = readOnlyNote('/bin/bash: line 127: Page.ReservedSlugs.test.ts: Read-only file system')
+    assert.match(note, /não tem regra de escrita/)
+    assert.match(note, /o disco do servidor não está somente leitura/)
+    assert.match(note, /ferramenta de escrita \(Write\)/)
+    assert.match(readOnlyNote("touch: cannot touch 'zz': EROFS"), /regra de escrita/)
+    assert.strictEqual(readOnlyNote('ok'), '')
   })
 })
