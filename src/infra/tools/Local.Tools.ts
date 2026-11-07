@@ -659,8 +659,10 @@ const RULE_HINT = 'peça a regra com save_permission_rules (uma pessoa aprova)'
 /** O alvo do redirecionamento está no `/tmp` ou no `/var/tmp` (caminho já normalizado, sem `..` que escape). */
 function inPrivateTmp(root: string, target: string): boolean {
   if (target.startsWith('~')) return false
-  const abs = posix.resolve(root, target)
-  return PRIVATE_TMP.some((dir) => abs.startsWith(`${dir}/`))
+  const under = (path: string) => PRIVATE_TMP.some((dir) => path === dir || path.startsWith(`${dir}/`))
+  // ⛔ Pasta de trabalho dentro de /tmp (teste, instalação fora do padrão): o /tmp do comando não é só dele — vale a regra.
+  if (under(posix.resolve(root))) return false
+  return under(posix.resolve(root, target)) && posix.resolve(root, target) !== posix.resolve(root)
 }
 
 const PRIVATE_TMP = ['/tmp', '/var/tmp']
