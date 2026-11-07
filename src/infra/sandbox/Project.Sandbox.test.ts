@@ -389,19 +389,29 @@ describe('findUnder — os modelos de segredo reabertos para leitura', () => {
     mkdirSync(join(root, 'repositories', 'logiccus', 'node_modules', 'p'), { recursive: true })
     writeFileSync(join(root, 'repositories', 'logiccus', 'node_modules', 'p', '.env.example'), 'nunca')
     writeFileSync(join(root, 'repositories', 'logiccus', 'apis', 'logiccus', '.env'), 'SEGREDO=1')
-    // ⛔ As worktrees ficam de fora quando a raiz está acima delas (cada uma repete os modelos: o bwrap estourou em 07/11).
-    assert.deepStrictEqual(findUnder(root, '**/.env.*').sort(), ['.agents/skills/x/.env.example', 'repositories/logiccus/apis/logiccus/.env.example'])
+    // As worktrees entram DEPOIS da árvore principal (o teto corta por elas): o `git diff` na worktree via /dev/null.
+    assert.deepStrictEqual(findUnder(root, '**/.env.*'), [
+      '.agents/skills/x/.env.example',
+      'repositories/logiccus/apis/logiccus/.env.example',
+      'repositories/logiccus/_worktrees/EP-1/apps/.env.example',
+    ])
     // Na conversa dentro da worktree, a raiz é ela: os modelos dela entram.
     assert.deepStrictEqual(findUnder(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1'), '**/.env.*'), ['apps/.env.example'])
   })
 
-  it('⛔ passou do teto de modelos, nenhum é reaberto (o terminal não quebra por montagem demais)', () => {
+  it('⛔ passou do teto de modelos, o resto fica escondido; os da árvore principal vêm antes dos das worktrees', () => {
     const many = join(root, 'muitos')
-    for (let i = 0; i < 401; i += 1) {
+    for (let i = 0; i < 10; i += 1) {
       mkdirSync(join(many, `d${i}`), { recursive: true })
       writeFileSync(join(many, `d${i}`, '.env.example'), 'A=')
     }
-    assert.deepStrictEqual(findUnder(many, '**/.env.*'), [])
+    for (let i = 0; i < 400; i += 1) {
+      mkdirSync(join(many, '_worktrees', `EP-${i}`), { recursive: true })
+      writeFileSync(join(many, '_worktrees', `EP-${i}`, '.env.example'), 'A=')
+    }
+    const found = findUnder(many, '**/.env.*')
+    assert.strictEqual(found.length, 400)
+    assert.deepStrictEqual(found.slice(0, 10).sort(), Array.from({ length: 10 }, (_, i) => `d${i}/.env.example`).sort())
   })
 })
 
