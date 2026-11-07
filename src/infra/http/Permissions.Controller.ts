@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import { PermissionsService } from '@application/Permissions.Service'
 import { IPermissionSubject, PERMISSION_CATEGORIES, SYSTEM_RULES, TPermissionCategory } from '@domain/Permission.Policy'
-import { analyzeShell } from '@infra/permissions/Shell.Parse'
+import { analyzeShell, opaqueRefusal } from '@infra/permissions/Shell.Parse'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
@@ -82,7 +82,7 @@ export class PermissionsController {
         value: reason,
         allowed: false,
         layer: 'system' as const,
-        reason: `não dá para analisar com segurança (${reason})`,
+        reason: opaqueRefusal([reason]),
       }))
       const all = [...parts, ...opaque]
       return { allowed: all.length > 0 && all.every((part) => part.allowed), parts: all }
