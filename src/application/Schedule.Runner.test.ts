@@ -38,6 +38,32 @@ describe('ScheduleRunner', () => {
   }
   const statuses = (service: AgentSchedulesService) => service.runs('agente', 'hora-cheia').map((run) => run.status)
 
+  it('⚖️ drenando para um deploy, não dispara nem marca: o horário vencido roda no ciclo seguinte', async () => {
+    let draining = true
+    let now = new Date('2026-10-28T10:30:00Z')
+    const service = new AgentSchedulesService(
+      new SqliteAgentScheduleRepository(),
+      (id) => ({ id }),
+      () => true,
+      () => now,
+    )
+    const executed: string[] = []
+    const runner = new ScheduleRunner(
+      service,
+      async (schedule) => (executed.push(schedule.name), {}),
+      () => now,
+      () => draining,
+    )
+    service.create('agente', { name: 'hora-cheia', cron: '0 * * * *', timezone: 'UTC', prompt: '/resumir' }, { userId: 'u', label: 'u' })
+    now = new Date('2026-10-28T11:00:10Z')
+    assert.deepStrictEqual(await runner.tick(), [])
+    assert.deepStrictEqual(executed, [])
+    assert.deepStrictEqual(service.runs('agente', 'hora-cheia'), [])
+    draining = false
+    await Promise.all(await runner.tick())
+    assert.deepStrictEqual(executed, ['hora-cheia'])
+  })
+
   it('dispara o horário que venceu, uma vez só, e grava o resultado', async () => {
     const { service, runner, executed, at } = setup('2026-10-28T10:30:00Z')
     assert.deepStrictEqual(await runner.tick(), [])

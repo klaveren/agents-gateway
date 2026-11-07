@@ -22,6 +22,7 @@ import { NullSettingsRepository } from '@infra/persistence/Null.SettingsReposito
 import { IAgentSettings } from '@domain/models/Settings.Model'
 import { withCaller } from '@infra/mcp/Caller.Identity'
 import { ICallerProof } from './Caller.Proof'
+import { drain } from './Drain.State'
 import { TEST_AGENTS, testAgentCatalog } from '../../testing/Agents.Fixture'
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
@@ -180,9 +181,72 @@ describe('AgentController', () => {
       await controllerWith({}, catalog, healthProof).health(req, res)
       return locals.body?.result
     }
-    assert.deepStrictEqual(await ask('127.0.0.1'), { status: 'ok', running: 0 })
-    assert.deepStrictEqual(await ask('::ffff:10.10.0.4'), { status: 'ok', running: 0 })
+    assert.deepStrictEqual(await ask('127.0.0.1'), { status: 'ok', running: 0, draining: false })
+    assert.deepStrictEqual(await ask('::ffff:10.10.0.4'), { status: 'ok', running: 0, draining: false })
     assert.deepStrictEqual(await ask('10.10.0.99'), { status: 'ok' })
+  })
+
+  describe('modo dreno (deploy)', () => {
+    afterEach(() => drain.set(false))
+    const local = { remoteAddress: '127.0.0.1', localAddress: '127.0.0.1' }
+    const drainCall = async (socket: object, on?: boolean, headers: Record<string, string> = {}) => {
+      const { res, locals } = mockResponse()
+      const req = { ...mockRequest({ body: on === undefined ? {} : { on } }), headers, socket } as unknown as Request
+      await controllerWith().drain(req, res)
+      return locals
+    }
+
+    it('⛔ a rota só aceita o próprio host, e nunca com cabeçalho de proxy', async () => {
+      assert.strictEqual((await drainCall({ remoteAddress: '10.10.0.99', localAddress: '10.10.0.4' })).statusCode, 404)
+      assert.strictEqual(drain.active(), false)
+      // Proxy na mesma máquina: o socket é loopback, mas o cabeçalho denuncia quem está atrás.
+      assert.strictEqual((await drainCall(local, undefined, { 'x-forwarded-for': '8.8.8.8' })).statusCode, 404)
+      assert.strictEqual((await drainCall(local, undefined, { 'x-real-ip': '8.8.8.8' })).statusCode, 404)
+      assert.strictEqual(drain.active(), false)
+      assert.deepStrictEqual((await drainCall(local)).body?.result, { draining: true })
+      assert.strictEqual((await drainCall({ remoteAddress: '::ffff:10.10.0.4', localAddress: '10.10.0.4' }, false)).statusCode, 200)
+      assert.strictEqual(drain.active(), false)
+    })
+
+    it('o health do host informa `draining`', async () => {
+      const catalog = { mcp: { connectAll: async () => undefined, status: () => [] } } as unknown as ToolCatalog
+      const ask = async () => {
+        const { res, locals } = mockResponse()
+        await controllerWith({}, catalog, healthProof).health({ ...mockRequest(), query: { turns: '1' }, socket: local } as unknown as Request, res)
+        return locals.body?.result
+      }
+      assert.deepStrictEqual(await ask(), { status: 'ok', running: 0, draining: false })
+      drain.set(true)
+      assert.deepStrictEqual(await ask(), { status: 'ok', running: 0, draining: true })
+    })
+
+    it('turno novo é 503 `draining` com Retry-After (mensagem, turns, conversa nova); o em andamento termina', async () => {
+      let finish = () => undefined as void
+      const controller = controllerWith({
+        sendMessage: async function* () {
+          yield { type: 'message.started', sessionId: 's1', timestamp: new Date() }
+          await new Promise<void>((resolve) => (finish = resolve))
+          yield { type: 'text.delta', sessionId: 's1', timestamp: new Date(), payload: { text: 'fim' } }
+        },
+      })
+      const running = mockResponse()
+      const inFlight = controller.sendMessage(mockRequest({ params: { id: 's1' }, body: { message: 'hi' }, accept: 'application/json' }), running.res)
+      await new Promise((resolve) => setImmediate(resolve))
+
+      drain.set(true)
+      for (const handler of ['sendMessage', 'startTurn', 'createSession'] as const) {
+        const { res, locals } = mockResponse()
+        await controller[handler](mockRequest({ params: { id: 's2' }, body: { message: 'hi', agentId: 'pesquisa-teste' }, accept: 'application/json' }), res)
+        assert.strictEqual(locals.statusCode, 503, handler)
+        assert.strictEqual(locals.body?.code, 'draining', handler)
+        assert.strictEqual(locals.headers['Retry-After'], '30', handler)
+      }
+
+      finish()
+      await inFlight
+      assert.strictEqual(running.locals.statusCode, 200)
+      assert.strictEqual((running.locals.body?.result as { text: string }).text, 'fim')
+    })
   })
 
   it('lets health retry the MCP connection for the admin, so it heals without any tool traffic', async () => {

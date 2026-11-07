@@ -1,5 +1,6 @@
 import { AgentSchedulesService } from '@application/AgentSchedules.Service'
 import { ScheduleRunner } from '@application/Schedule.Runner'
+import { drain } from '@infra/http/Drain.State'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteAgentScheduleRepository } from '@infra/persistence/Sqlite.AgentScheduleRepository'
 import { makeScheduleExecutor } from '@infra/schedule/Schedule.Executor'
@@ -37,6 +38,8 @@ export function makeScheduleRunner(): ScheduleRunner {
       sessionFor: (userId) => makeAuth().accounts?.sessionForHook(userId),
       setSession: (schedule, sessionId) => schedules.setSession(schedule, sessionId),
     }),
+    undefined,
+    drain.active,
   )
   return runner
 }

@@ -82,6 +82,7 @@ export type TErrorCode =
   | 'login_locked'
   | 'session_not_found'
   | 'session_busy'
+  | 'draining'
   | 'queue_full'
   | 'package_busy'
   | 'hook_unauthorized'
