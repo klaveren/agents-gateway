@@ -125,8 +125,8 @@ describe('AgentController: compartilhar o agente com outro projeto', () => {
     })
   const share = (as: string, list: string[], agentId = 'agente-alfa') => call(as, 'shareAgent', { params: { agentId }, body: { projects: list } })
   const listed = async (as: string, project: string) =>
-    ((await call(as, 'getAgents', { query: { project } })).body!.result as Array<{ id: string; sharedFrom?: string; sharedWith?: string[] }>).filter(
-      (agent) => agent.id.startsWith('agente-'),
+    ((await call(as, 'getAgents', { query: { project } })).body!.result as Array<{ id: string; sharedFrom?: string; sharedWith?: string[] }>).filter((agent) =>
+      agent.id.startsWith('agente-'),
     )
   const body = (id: string, projectId: string) => ({
     id,

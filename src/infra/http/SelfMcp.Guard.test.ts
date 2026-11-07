@@ -73,6 +73,9 @@ describe('SelfMcp.Guard', () => {
       assert.ok(refused(await guarded('PUT', '/docs/spec-p/shares', { body: { projects: ['Q'] } })))
       assert.ok(refused(await guarded('PUT', '/docs/spec-p/shares', { body: { projects: [] } })), 'parar de compartilhar também')
       assert.ok(refused(await guarded('PUT', '/resources/skill%20p/shares/', { body: { projects: ['Q'] } })))
+      // ⛔ O agente também não compartilha AGENTES (nem o próprio).
+      assert.ok(refused(await guarded('PUT', '/agents/a-p/shares', { body: { projects: ['Q'] } })), JSON.stringify(scope))
+      assert.ok(refused(await guarded('PUT', '/agents/a-p/shares/', { body: { projects: [] } })), 'parar também')
       assert.deepStrictEqual(written, [])
     }
   })

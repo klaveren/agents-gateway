@@ -497,6 +497,44 @@ describe('CatalogRestoreUseCase — compartilhamento (sharedWith)', () => {
     assert.deepStrictEqual(built.guidance.doc('guia').sharedWith, ['beta'])
   })
 
+  it('⛔ o AGENTE passa pela mesma trava: restaurar a revisão que o compartilhava exige o admin do projeto acrescentado', async () => {
+    const built = shared()
+    const kept: Array<[string, readonly string[]]> = []
+    built.agents.useShares({ exists: (id) => !!built.projects.exists(id), changed: (id, projects) => kept.push([id, projects]) })
+    built.agents.save(agent('dev', { projectId: 'alfa' }), saving('ana', true))
+    built.agents.share('dev', ['beta'], 'ana')
+    built.agents.share('dev', [], 'ana')
+    const request = () => ({ item: { kind: 'agent' as const, itemId: 'dev' }, revision: 2, expectedRevision: built.last('agent', 'dev') })
+
+    const denied = await refused(built.restore.restore(request(), owner('alfa')), CatalogShareForbiddenError)
+    assert.deepStrictEqual(denied.projects, ['beta'])
+    assert.strictEqual(built.agents.get('dev')?.sharedWith, undefined)
+    kept.length = 0
+
+    await built.restore.restore(request(), owner('alfa', 'beta'))
+    assert.deepStrictEqual(built.agents.get('dev')?.sharedWith, ['beta'])
+    assert.deepStrictEqual(kept.at(-1), ['dev', ['beta']])
+
+    // Tirar o projeto pelo restaurar não pede nada além do escopo do agente, e apaga os valores de quem saiu.
+    await built.restore.restore({ item: { kind: 'agent', itemId: 'dev' }, revision: 3, expectedRevision: built.last('agent', 'dev') }, owner('alfa'))
+    assert.strictEqual(built.agents.get('dev')?.sharedWith, undefined)
+    assert.deepStrictEqual(kept.at(-1), ['dev', []])
+  })
+
+  it('⛔ o agente editado pelo formulário/API (`save` sem `shares`) não perde nem ganha projeto; o corpo do restaurar é que manda', async () => {
+    const built = shared()
+    built.agents.useShares({ exists: (id) => !!built.projects.exists(id), changed: () => undefined })
+    built.agents.save(agent('dev', { projectId: 'alfa' }), saving('ana', true))
+    built.agents.share('dev', ['beta'], 'ana')
+    built.agents.save(agent('dev', { projectId: 'alfa', systemPrompt: 'Novo prompt', sharedWith: ['gama'] }), saving('ana', false))
+    assert.deepStrictEqual(built.agents.get('dev')?.sharedWith, ['beta'])
+    // Agente global não compartilha; projeto que não existe é recusado.
+    built.agents.save(agent('globalzinho'), saving('root', true))
+    assert.throws(() => built.agents.share('globalzinho', ['beta'], 'root'))
+    assert.throws(() => built.agents.share('dev', ['nao-existe'], 'ana'))
+    assert.throws(() => built.agents.share('dev', ['alfa'], 'ana'))
+  })
+
   it('⛔ reverter um lote que volta a compartilhar também exige o admin do projeto acrescentado (antes de gravar qualquer coisa)', async () => {
     const { restore, guidance, history, repository } = shared()
     guidance.shareResource('tabela', ['beta'], 'ana')

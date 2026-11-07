@@ -279,10 +279,15 @@ const agentSchema = {
         'The model group (Settings → model groups) the agent switches through when a model fails, and starts in when no model is picked. Absent = the default group; `none` = no switching.',
     },
     projectId: { type: 'string', description: 'The project the agent belongs to. Absent = global (every project).' },
-    sharedWith: { type: 'array', items: { type: 'string' }, description: 'List, administrators of the owner project only: the projects the agent is shared with (their members talk to it).' },
+    sharedWith: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'List, administrators of the owner project only: the projects the agent is shared with (their members talk to it).',
+    },
     sharedFrom: {
       type: 'string',
-      description: 'List of `?project=B`, for an agent another project shared with B: the owner project. Read-only in B (only the owner project edits it); absent for B\'s own agents.',
+      description:
+        "List of `?project=B`, for an agent another project shared with B: the owner project. Read-only in B (only the owner project edits it); absent for B's own agents.",
     },
     importIssueCount: { type: 'integer', description: 'List, administrators only: how many import issues the agent has (the detail lists them). Absent = none.' },
   },
@@ -3958,7 +3963,8 @@ export const OPENAPI_DOCUMENT = {
             in: 'query',
             required: false,
             schema: { type: 'string' },
-            description: 'The project whose values (the owner project when absent, or one the agent is shared with). Administrators of THAT project only; 404 for any other project.',
+            description:
+              'The project whose values (the owner project when absent, or one the agent is shared with). Administrators of THAT project only; 404 for any other project.',
           },
         ],
         responses: {
@@ -3992,7 +3998,13 @@ export const OPENAPI_DOCUMENT = {
         parameters: [
           { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'name', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,63}$' } },
-          { name: 'project', in: 'query', required: false, schema: { type: 'string' }, description: 'The project whose values (absent = the owner project); one the agent is shared with.' },
+          {
+            name: 'project',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'The project whose values (absent = the owner project); one the agent is shared with.',
+          },
         ],
         requestBody: { required: true, ...json({ type: 'object', properties: { value: { type: 'string', maxLength: 16384 }, description: { type: 'string', maxLength: 300 } } }) },
         responses: {
@@ -4022,7 +4034,13 @@ export const OPENAPI_DOCUMENT = {
         parameters: [
           { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
-          { name: 'project', in: 'query', required: false, schema: { type: 'string' }, description: 'The project whose values (absent = the owner project); one the agent is shared with.' },
+          {
+            name: 'project',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'The project whose values (absent = the owner project); one the agent is shared with.',
+          },
         ],
         responses: {
           '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) },
@@ -4776,7 +4794,7 @@ export const OPENAPI_DOCUMENT = {
     '/agents/{agentId}/shares': {
       put: {
         summary:
-          'Replace the whole list of projects this agent is shared with: their members TALK to it (the conversation opened there belongs to the receiving project: its folder, rules, accounts and MCPs; the agent skills, commands and specs stay the owner\'s, read-only; the agent secrets do not go along: each project sets its own values). Nobody there edits it. Administrators of the owner project and of every project added; anyone else gets 404. A global agent is not shared (422). Returns the agent (detail) with `sharedWith`',
+          "Replace the whole list of projects this agent is shared with: their members TALK to it (the conversation opened there belongs to the receiving project: its folder, rules, accounts and MCPs; the agent skills, commands and specs stay the owner's, read-only; the agent secrets do not go along: each project sets its own values). Nobody there edits it. Administrators of the owner project and of every project added; anyone else gets 404. A global agent is not shared (422). Returns the agent (detail) with `sharedWith`",
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,

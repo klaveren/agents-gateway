@@ -670,7 +670,9 @@ export class AgentController {
       // ⚖️ Título e resumo só — o mesmo que o agente já vê no índice. O projeto vem da tela, e só vale o que a pessoa usa.
       // ⛔ Compartilhado: os documentos são os do projeto que recebe (a conversa é dele); as skills e os commands, os da origem liberados ao agente.
       const receiving = !!requested && sharedInto(agent, requested) && !!this.usecases.projects?.canUse(caller, requested)
-      const project = receiving ? requested : (agent.projectId ?? (requested && this.usecases.projects?.exists(requested) && this.usecases.projects.canUse(caller, requested) ? requested : undefined))
+      const project = receiving
+        ? requested
+        : (agent.projectId ?? (requested && this.usecases.projects?.exists(requested) && this.usecases.projects.canUse(caller, requested) ? requested : undefined))
       const docs = guidance ? [...guidance.docs(null), ...(project ? guidance.docs(project) : [])] : []
       return [...resources, ...docs.map((doc) => ({ id: `${doc.kind}:${doc.id}`, kind: doc.kind, description: doc.summary ? `${doc.title} — ${doc.summary}` : doc.title }))]
     })

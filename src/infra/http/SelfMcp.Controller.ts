@@ -359,7 +359,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_agents',
     {
       description:
-        'List the agents: providers, each with its models (with price) and reasoning levels per model, lanes and tools, and `projectId` (absent = global). With `projectId`, only that project agents plus the global ones. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
+        'List the agents: providers, each with its models (with price) and reasoning levels per model, lanes and tools, and `projectId` (absent = global). With `projectId`, only that project agents, the ones other projects shared with it (`sharedFrom`: talk only, the owner project edits) and the global ones. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
       inputSchema: { projectId: z.string().optional() },
       annotations: { readOnlyHint: true },
     },

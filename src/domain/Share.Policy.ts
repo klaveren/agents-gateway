@@ -42,7 +42,8 @@ export function normalizeShares(projects: readonly string[]): string[] {
 /** O que impede compartilhar o item com estes projetos (vazio = pode). `exists`: o projeto existe. */
 export function shareIssues(item: IShareable, projects: readonly string[], exists: (projectId: string) => boolean): Array<{ field: string; message: string }> {
   const issues: Array<{ field: string; message: string }> = []
-  const shareable = (SHAREABLE_RESOURCE_KINDS as readonly string[]).includes(item.kind) || (SHAREABLE_DOC_KINDS as readonly string[]).includes(item.kind) || item.kind === AGENT_KIND
+  const shareable =
+    (SHAREABLE_RESOURCE_KINDS as readonly string[]).includes(item.kind) || (SHAREABLE_DOC_KINDS as readonly string[]).includes(item.kind) || item.kind === AGENT_KIND
   if (!shareable) issues.push({ field: 'projects', message: `a ${item.kind} is not shared (only agents, skills, commands, specs and knowledge)` })
   if (!item.projectId && projects.length) issues.push({ field: 'projects', message: 'a global item already serves every project' })
   if (projects.length > SHARE_MAX_PROJECTS) issues.push({ field: 'projects', message: `at most ${SHARE_MAX_PROJECTS} projects` })

@@ -8,7 +8,7 @@ import { makePermissions } from './Permissions.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
 import { makeSecretMasker } from './SecretMask.Factory'
 import { makeGuidance } from './Guidance.Factory'
-import { runsUnder, sharedInto } from '@domain/Share.Policy'
+import { runsUnder } from '@domain/Share.Policy'
 import { makeResourceFiles } from './ResourceFiles.Factory'
 import { makeConversationRepository } from './Conversations.Factory'
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
@@ -279,12 +279,8 @@ export function agentFolderOf(agentId: string, conversationProject?: string): { 
 export function sharedFoldersOf(projectId: string | undefined, agentId?: string): string[] {
   if (!projectId) return []
   const files = makeResourceFiles()
-  const guidance = makeGuidance()
   // Os compartilhados com o projeto + os que o AGENTE compartilhado liberou, da origem dele (uma conversa do projeto que o recebe os lê).
-  const agent = agentId ? makeAgents().get(agentId) : undefined
-  const granted = agent && sharedInto(agent, projectId) ? [...guidance.usableResources('skill', agent.id), ...guidance.usableResources('command', agent.id)] : []
-  const dirs = [...guidance.sharedResources(projectId), ...granted]
-    .filter((resource) => resource.projectId && resource.projectId !== projectId)
+  return makeGuidance()
+    .readableElsewhere(projectId, agentId)
     .map((resource) => files.dirOf(resource.kind, resource.id, resource.projectId))
-  return [...new Set(dirs)]
 }

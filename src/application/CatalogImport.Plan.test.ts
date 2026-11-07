@@ -382,6 +382,22 @@ describe('CatalogImportPlanner — compartilhamento (sharedWith)', () => {
     assert.strictEqual(byRef(plan, 'adr/adr-a').op, 'error')
   })
 
+  it('o AGENTE também: o sharedWith do pacote é limpo contra este gateway; o agente global não compartilha (limpa)', async () => {
+    const { planner, reader, projects } = build()
+    projects.insert({ id: 'beta', name: 'Beta', createdAt: at, updatedAt: at })
+    const theo = reader.read('agent', 'theo')!
+    const lia = reader.read('agent', 'lia')!
+
+    const { plan, targets } = await planner.planWithTargets([edit(theo, { sharedWith: ['beta', 'longe'] }), edit(lia, { sharedWith: ['beta'] })], { kind: 'all' })
+
+    assert.strictEqual(byRef(plan, 'agent/theo').op, 'update')
+    assert.deepStrictEqual(targets.get('agent/theo')!.body.sharedWith, ['beta'])
+    assert.deepStrictEqual(targets.get('agent/theo')!.body.importIssues, [
+      { code: 'link-missing', message: 'compartilhado com o projeto longe, que não existe aqui', target: 'longe' },
+    ])
+    assert.strictEqual(byRef(plan, 'agent/lia').op, 'unchanged')
+  })
+
   it('⛔ o agente de beta libera a skill de alfa compartilhada com beta: o dry-run aceita (e recusa sem o compartilhamento)', async () => {
     const { planner, projects, guidance } = build()
     projects.insert({ id: 'beta', name: 'Beta', createdAt: at, updatedAt: at })

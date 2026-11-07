@@ -858,6 +858,21 @@ export class GuidanceService {
     return this.repository.resourcesSharedWith(projectId, kind)
   }
 
+  /**
+   * ⛔ As skills e os commands de OUTRO projeto que uma conversa deste projeto lê (só leitura, a pasta de arquivos deles): os
+   * compartilhados com o projeto e — se o agente é de outro projeto e foi compartilhado com este — os liberados a ele, da origem.
+   */
+  readableElsewhere(projectId: string, agentId?: string): IResource[] {
+    const agent = agentId ? this.agentOf(agentId) : undefined
+    const granted = agent?.projectId && agent.projectId !== projectId ? [...this.usableResources('skill', agentId), ...this.usableResources('command', agentId)] : []
+    const seen = new Set<string>()
+    return [...this.sharedResources(projectId), ...granted].filter((resource) => {
+      if (!resource.projectId || resource.projectId === projectId || seen.has(resource.id)) return false
+      seen.add(resource.id)
+      return true
+    })
+  }
+
   resource(id: string): IResource {
     const resource = this.repository.resource(id)
     if (!resource) throw new GuidanceNotFoundError('resource', id)

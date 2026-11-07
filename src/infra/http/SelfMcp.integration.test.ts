@@ -412,6 +412,38 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.deepStrictEqual(json(await client.callTool({ name: 'get_doc', arguments: { id: 'guia-mcp' } })).sharedWith, ['dest-mcp'])
   })
 
+  it('share_agent chama a rota de compartilhar o agente; o agente (identidade no header) é recusado, a pessoa passa', async () => {
+    const client = await connect(admin)
+    for (const id of ['orig-ag', 'dest-ag']) await client.callTool({ name: 'save_project', arguments: { id, name: id } })
+    const agentBody = {
+      id: 'ag-mcp',
+      name: 'Ag',
+      projectId: 'orig-ag',
+      providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }],
+      systemPrompt: 'x',
+      modes: ['chat'],
+      allowedTools: [],
+    }
+    const saved = (await client.callTool({ name: 'save_agent', arguments: agentBody })) as { isError?: boolean }
+    assert.ok(!saved.isError, JSON.stringify(saved).slice(0, 300))
+    const shared = json(await client.callTool({ name: 'share_agent', arguments: { id: 'ag-mcp', projects: ['dest-ag'] } }))
+    assert.deepStrictEqual(shared.sharedWith, ['dest-ag'])
+    // O que a API manda (`sharedFrom`) é o que list_agents mostra no projeto que recebe.
+    const seen = json(await client.callTool({ name: 'list_agents', arguments: { projectId: 'dest-ag' } }))
+    assert.ok(seen.some((item: { id: string; sharedFrom?: string }) => item.id === 'ag-mcp' && item.sharedFrom === 'orig-ag'))
+
+    // ⛔ O agente da conversa não compartilha agentes.
+    const agent = new Client({ name: 'agente', version: '1.0.0' })
+    await agent.connect(
+      new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+        requestInit: { headers: { 'X-Tool-Authorization': `Bearer ${admin}`, 'x-gateway-agent': 'agent-x', 'x-gateway-project': 'orig-ag' } },
+      }),
+    )
+    const refused = (await agent.callTool({ name: 'share_agent', arguments: { id: 'ag-mcp', projects: [] } })) as { isError?: boolean }
+    assert.strictEqual(refused.isError, true)
+    assert.deepStrictEqual(json(await client.callTool({ name: 'get_agent', arguments: { agentId: 'ag-mcp' } })).sharedWith, ['dest-ag'])
+  })
+
   it('⚖️ save_doc sem teto: 300 KB passa pelo MCP e pela API, e get_doc devolve inteiro', async () => {
     const client = await connect(admin)
     const big = 'x'.repeat(300_000)

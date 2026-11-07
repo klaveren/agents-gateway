@@ -163,4 +163,26 @@ describe('GuidanceService — o agente do projeto que recebe usa o item comparti
     service.deleteResource('skill-alfa', 'root')
     assert.deepStrictEqual(service.usableResources('skill', 'dev-beta'), [])
   })
+
+  it('⛔ AGENTE compartilhado (dev-alfa numa conversa do beta): usa a skill e o command da origem, e a pasta deles é lida só como leitura no beta', () => {
+    const service = seeded()
+    service.createResource({ id: 'skill-so-do-alfa', kind: 'skill', projectId: 'alfa', description: 'Outra', body: 'Outra skill.' }, 'root')
+    service.createResource({ id: 'skill-global', kind: 'skill', description: 'Global', body: 'Global.' }, 'root')
+    // Os liberados ao agente, da origem: o texto vale (a conversa do beta usa o agente do alfa).
+    assert.deepStrictEqual(ids(service.usableResources('skill', 'dev-alfa')), ['skill-alfa', 'skill-global', 'skill-so-do-alfa'])
+    assert.match(service.loadResource('skill', 'skill-alfa', 'dev-alfa')!, /Passos da skill/)
+    assert.match(service.expandCommand('/cmd-alfa limpar', 'dev-alfa', 'beta')!.text, /Faça limpar/)
+    // As pastas que o cerco do beta libera para leitura: as da origem que o agente usa — não as do global, nem de quem ele não usa.
+    assert.deepStrictEqual(ids(service.readableElsewhere('beta', 'dev-alfa')), ['cmd-alfa', 'skill-alfa', 'skill-so-do-alfa'])
+    service.setAgentResources('dev-alfa', { skills: ['skill-alfa'], commands: [] }, 'root')
+    assert.deepStrictEqual(ids(service.readableElsewhere('beta', 'dev-alfa')), ['skill-alfa'])
+    // Na conversa do próprio alfa não há "outro projeto"; o global não ganha nada; o agente de beta vê o que o alfa compartilhou.
+    assert.deepStrictEqual(service.readableElsewhere('alfa', 'dev-alfa'), [])
+    assert.deepStrictEqual(service.readableElsewhere('beta', 'atlas'), [])
+    share(service)
+    assert.deepStrictEqual(ids(service.readableElsewhere('beta', 'dev-beta')), ['cmd-alfa', 'skill-alfa'])
+    // ⛔ Apagada a skill: sai da lista; o que o beta recebe direto segue.
+    service.deleteResource('skill-alfa', 'root')
+    assert.deepStrictEqual(ids(service.readableElsewhere('beta', 'dev-alfa')), ['cmd-alfa'], 'só o command, que segue compartilhado com o beta')
+  })
 })
