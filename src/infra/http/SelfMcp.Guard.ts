@@ -129,6 +129,9 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         if (clean !== '/catalog/history/restore') return refuse('Not available to an agent conversation')
         return inScope(bodyProject(body, 'project'))
       }
+      // ⛔ Configuração do sistema (sequências de modelos): nem o agente do Atlas (admin sem projeto) grava — é da pessoa.
+      case 'settings':
+        return refuse('An agent conversation cannot change the gateway settings')
       default:
         // Provedores, modelos, pacotes e o resto: do gateway, não de uma conversa de projeto.
         return scope.unrestricted ? undefined : refuse('Not available to an agent conversation in a project')

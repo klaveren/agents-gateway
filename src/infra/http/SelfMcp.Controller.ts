@@ -4,6 +4,8 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
 import { CATALOG_KINDS, TCatalogKind } from '@domain/Catalog.Document'
+import { MODEL_GROUP_BOUNDS, MODEL_GROUP_ID, SWITCHABLE_FAILURES } from '@domain/Fallback.Policy'
+import type { TProviderFailure } from '@domain/Provider.Failure'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
 import { ISelfReply, selfApi, selfBase, TSelfApi } from './Self.Api'
 import { agentScopeOf, scopedWrites } from './SelfMcp.Guard'
@@ -506,7 +508,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_model_groups',
     {
       description:
-        'The model groups (Settings → model groups): ordered steps (provider + model) and when to switch. An agent points to one (`modelGroup`; absent = `defaultModelGroup`, `none` = no switching): a conversation opened without a model starts at the first available step, and when a model fails (quota, rate limit, model unavailable…) the conversation moves to the next step and STAYS there. Groups are edited only on the screen.',
+        'The model groups (Settings → model groups): ordered steps (provider + model) and when to switch. An agent points to one (`modelGroup`; absent = `defaultModelGroup`, `none` = no switching): a conversation opened without a model starts at the first available step, and when a model fails (quota, rate limit, model unavailable…) the conversation moves to the next step and STAYS there. Edit them with save_model_group / delete_model_group.',
       annotations: { readOnlyHint: true },
     },
     async () =>
@@ -984,6 +986,57 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       },
     },
     async ({ providerId, modelId, ...price }) => reply(await api('PUT', `/providers/${encodeURIComponent(providerId)}/models`, { body: { modelId, price } })),
+  )
+
+  system.registerTool(
+    'save_model_group',
+    {
+      description:
+        'Create or replace ONE model group by id (the others stay): ordered `steps` (provider + model, both must be enabled and the provider running), `switchOn` (failures that move to the next step; absent = quota, rate_limit, model) and `cooldownMinutes`. Send every field, since an omitted one falls back to its default. Every problem comes back at once.',
+      inputSchema: {
+        id: z.string().trim().regex(MODEL_GROUP_ID, '2–48 lowercase letters, digits or hyphens'),
+        name: z.string().trim().min(1).max(MODEL_GROUP_BOUNDS.name),
+        description: z.string().trim().max(MODEL_GROUP_BOUNDS.description).optional(),
+        steps: z
+          .array(z.object({ provider: z.string().trim().min(1).max(100), model: z.string().trim().min(1).max(200) }))
+          .min(1)
+          .max(MODEL_GROUP_BOUNDS.steps),
+        switchOn: z.array(z.enum(SWITCHABLE_FAILURES as [TProviderFailure, ...TProviderFailure[]])).optional(),
+        cooldownMinutes: z.number().int().min(MODEL_GROUP_BOUNDS.cooldownMinutes.min).max(MODEL_GROUP_BOUNDS.cooldownMinutes.max).optional(),
+      },
+    },
+    async (group) => {
+      // ⚖️ Lê, troca só esta e grava a lista pelo PUT /settings: a validação da tela vale (passo ativo, provider que roda).
+      const current = await api('GET', '/settings')
+      if (!current.ok) return reply(current)
+      const groups = ((current.result as { modelGroups?: Array<{ id: string }> }).modelGroups ?? []).slice()
+      const at = groups.findIndex((item) => item.id === group.id)
+      if (at >= 0) groups[at] = group
+      else groups.push(group)
+      return reply(await api('PUT', '/settings', { body: { modelGroups: groups } }), (result) => ({
+        saved: group.id,
+        modelGroups: (result as { modelGroups?: unknown[] }).modelGroups ?? [],
+      }))
+    },
+  )
+
+  system.registerTool(
+    'delete_model_group',
+    {
+      description: 'Delete one model group by id. Refused while an agent uses it or it is the default group.',
+      inputSchema: { id: z.string().trim().min(1) },
+      annotations: { destructiveHint: true },
+    },
+    async ({ id }) => {
+      const current = await api('GET', '/settings')
+      if (!current.ok) return reply(current)
+      const groups = (current.result as { modelGroups?: Array<{ id: string }> }).modelGroups ?? []
+      if (!groups.some((item) => item.id === id)) return { ...text({ status: 404, code: 'not_found', message: `unknown model group: ${id}` }), isError: true }
+      return reply(await api('PUT', '/settings', { body: { modelGroups: groups.filter((item) => item.id !== id) } }), (result) => ({
+        deleted: id,
+        modelGroups: (result as { modelGroups?: unknown[] }).modelGroups ?? [],
+      }))
+    },
   )
 
   server.registerTool(
