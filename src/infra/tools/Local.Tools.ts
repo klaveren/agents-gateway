@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { networkGate } from '@infra/permissions/Network.Gate'
-import { analyzeShell, opaqueRefusal } from '@infra/permissions/Shell.Parse'
+import { analyzeShell, type IShellCommand, opaqueRefusal } from '@infra/permissions/Shell.Parse'
 import {
   bashPolicy,
   COMMAND_REASONS,
@@ -591,14 +591,28 @@ export async function terminalRefusal(
     if (analysis.commands.some((part) => definesGitAlias(part.argv)) || /\bGIT_CONFIG_KEY_\d+\s*=\s*["']?alias\./i.test(command))
       return 'apelido do git (alias.*) não pode ser criado enquanto há regra que nega comandos do git'
   }
+  const moved = leadingCd(command, analysis.commands)
   for (const part of analysis.commands) {
     // ⚖️ Os embutidos do shell que não fazem nada sozinhos (`echo ---` como separador, `cd`, `pwd`) passam sem regra: o
     // redirecionamento deles é checado abaixo, e uma negação explícita do agente ou do projeto continua valendo.
     if (HARMLESS_BUILTINS.has(part.argv[0] ?? '') && !explicitlyDenied(permissions, asker, part)) continue
     const verdict = permissions.check(asker, { category: 'terminal', value: part.text, argv: part.argv }, { log: true })
+    // ⚖️ Depois de `cd repositories/x && …`, o caminho relativo do comando é o da pasta nova: a regra escrita da pasta do
+    // projeto (`node repositories/x/tools/*`) vale também para `node tools/a.mjs`. Negar, em qualquer das duas formas, vence.
+    const shifted = moved && shiftArgv(part.argv, moved)
+    if (shifted) {
+      const there = permissions.check(asker, { category: 'terminal', value: shifted.join(' '), argv: shifted }, { log: false })
+      if (verdict.rule?.decision === 'deny' || there.rule?.decision === 'deny') {
+        const denied = verdict.rule?.decision === 'deny' ? verdict : there
+        return denied.layer === 'system' ? denied.reason : `${denied.reason}; ${RULE_HINT}`
+      }
+      if (verdict.allowed || there.allowed) continue
+    }
     if (!verdict.allowed) return verdict.layer === 'system' ? verdict.reason : `${verdict.reason}; ${RULE_HINT}`
   }
-  for (const redirect of analysis.redirects) {
+  for (const original of analysis.redirects) {
+    // O redirecionamento depois do `cd` grava na pasta nova (antes, era conferido como se fosse na raiz).
+    const redirect = moved && !isAbsolute(original.target) && !original.target.startsWith('~') ? { ...original, target: posix.join(moved, original.target) } : original
     // ⚖️ `/tmp/**` e `/var/tmp/**` DENTRO do cerco são do próprio comando (vazios, descartados no fim): não tocam o servidor.
     if (options.privateTmp && inPrivateTmp(root, redirect.target)) continue
     // ⚖️ O rascunho do cerco (`$TMPDIR`, `$HOME` do comando): o cerco já o deixa gravar para qualquer agente.
@@ -1366,6 +1380,34 @@ export function policyRefusal(denied: string, command: string): string {
   return /(^|[\s;&|(])ssh\s/.test(command)
     ? `${base} No host remoto, sudo/su/reboot só passam com uma regra de terminal que os libere E cite (ex.: \`ssh 10.10.0.1 sudo k3s kubectl *\`); peça a regra (com save_permission_rules, se você tem a ferramenta; senão, a quem coordena você); uma pessoa aprova.`
     : `${base} Local, isso nunca roda no cerco.`
+}
+
+/**
+ * A pasta do `cd` que abre a linha (`cd repositories/x && …`), relativa à raiz: só quando ela é LITERAL, vem seguida de `&&`
+ * (se o `cd` falha, nada roda na raiz) e é a única troca de pasta da linha (sem `cd`, `pushd` nem `popd` depois). Fora disso,
+ * nada: os caminhos valem a partir da raiz, como antes.
+ */
+function leadingCd(command: string, commands: readonly IShellCommand[]): string | undefined {
+  const first = commands[0]
+  if (!first || first.name !== 'cd' || first.argv.length !== 2 || first.dynamicArgs?.length) return undefined
+  if (commands.slice(1).some((part) => ['cd', 'pushd', 'popd'].includes(part.name))) return undefined
+  if (!/^\s*cd\s+[A-Za-z0-9_@%+=:,./-]+\s*&&/.test(command)) return undefined
+  const dir = posix.normalize(first.argv[1]!)
+  if (isAbsolute(dir) || dir === '.' || dir === '..' || dir.startsWith('../')) return undefined
+  return dir
+}
+
+/** O argv com os caminhos relativos (palavras com `/`, fora opções) vistos da raiz; `undefined` se nenhum muda. */
+function shiftArgv(argv: readonly string[], dir: string): string[] | undefined {
+  let changed = false
+  const shifted = argv.map((word) => {
+    if (!word.includes('/') || /^[-/~$]/.test(word) || word.includes('=') || word.includes('://')) return word
+    const path = posix.normalize(posix.join(dir, word))
+    if (path.startsWith('../')) return word
+    changed = true
+    return path
+  })
+  return changed ? shifted : undefined
 }
 
 /** Embutidos do shell sem efeito fora do próprio comando (a saída e o diretório dele). */

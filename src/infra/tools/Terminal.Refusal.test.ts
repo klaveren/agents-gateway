@@ -273,3 +273,37 @@ describe('embutidos inofensivos do shell', () => {
     assert.match((await refuse('ls', allowGit)) ?? '', /nenhuma regra de terminal permite/)
   })
 })
+
+describe('terminal — o `cd` que abre a linha', () => {
+  const rules = [rule('node repositories/x/tools/check-*', 'allow'), rule('node repositories/x/tools/evil*', 'deny'), rule('node tools/evil2*', 'deny')]
+
+  it('⚖️ a regra escrita da pasta do projeto vale depois de `cd repositories/x &&`', async () => {
+    assert.strictEqual(await refusal('cd repositories/x && node tools/check-a.mjs --help', rules), undefined)
+    assert.strictEqual(await refusal('cd repositories/x && node ./tools/check-a.mjs', rules), undefined)
+    assert.strictEqual(await refusal('node repositories/x/tools/check-a.mjs', rules), undefined)
+  })
+
+  it('⛔ negar, em qualquer das duas formas, vence', async () => {
+    assert.ok(await refusal('cd repositories/x && node tools/evil.mjs', [...rules, rule('node *', 'allow')]))
+    assert.ok(await refusal('cd repositories/x && node tools/evil2.mjs', [...rules, rule('node *', 'allow')]))
+  })
+
+  it('o redirecionamento depois do `cd` é conferido na pasta nova', async () => {
+    const write = (pattern: string): IPermissionRule => ({ category: 'write', pattern, decision: 'allow' })
+    assert.strictEqual(await refusal('cd repositories/x && echo a > out/a.txt', [write('repositories/x/out/**')]), undefined)
+    assert.ok(await refusal('cd repositories/x && echo a > out/a.txt', [write('out/**')]))
+  })
+
+  it('⛔ só com `&&`, pasta literal, sem outra troca de pasta, e sem sair da raiz', async () => {
+    for (const command of [
+      'cd repositories/x; node tools/check-a.mjs',
+      'cd repositories/x || true && node tools/check-a.mjs',
+      'cd "$D" && node tools/check-a.mjs',
+      'cd repositories/x && cd .. && node tools/check-a.mjs',
+      'cd ../x && node tools/check-a.mjs',
+      '(cd repositories/x) && node tools/check-a.mjs',
+    ]) {
+      assert.ok(await refusal(command, rules), command)
+    }
+  })
+})
