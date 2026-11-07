@@ -141,7 +141,7 @@ describe('ProjectSandbox', () => {
   })
 
   it('⛔ socket Unix liberado só no Linux, e lá os sockets do host ficam fora de alcance (docker, bus do systemd, /tmp)', () => {
-    assert.deepStrictEqual(hostSocketDirs('linux'), ['/run', '/var/run', '/tmp'])
+    assert.deepStrictEqual(hostSocketDirs('linux'), ['/run', '/var/run', '/tmp', '/var/tmp'])
     assert.deepStrictEqual(hostSocketDirs('darwin'), [])
     const base = new ProjectSandbox(env, fakeSrt().load).base('/w/p')
     for (const dir of hostSocketDirs()) assert.ok(base.alwaysDeny.includes(dir), dir)

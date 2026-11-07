@@ -343,3 +343,18 @@ export async function analyzeShell(command: string): Promise<IShellAnalysis> {
   analyzer.analyze(command, 0)
   return { commands: analyzer.commands, redirects: analyzer.redirects, opaque: [...analyzer.opaque] }
 }
+
+/** O que fazer em vez do que não se deixa analisar, por motivo (os que o agente mais bate). */
+const OPAQUE_ADVICE: Readonly<Record<string, string>> = {
+  'env:PATH': 'mudar o PATH esconde qual programa roda; chame pelo caminho: ./node_modules/.bin/x (ou packages/…/node_modules/.bin/x)',
+  'dynamic-command': 'o nome do comando vem de variável; escreva o caminho literal (relativo à pasta) no lugar de $VAR',
+  'dynamic-redirect': 'o destino vem de variável; escreva o caminho literal',
+  'heredoc-interpreter': 'o script no heredoc não é analisável; grave-o num arquivo (na pasta tmp do projeto) e rode `python3 arquivo.py`',
+}
+
+/** A recusa por não poder analisar: a saída em uma linha por motivo, com o motivo técnico entre parênteses no fim (o log usa). */
+export function opaqueRefusal(reasons: readonly string[]): string {
+  const advice = [...new Set(reasons.map((reason) => OPAQUE_ADVICE[reason]).filter((line): line is string => !!line))]
+  const detail = `(${reasons.join('; ')})`
+  return advice.length ? `não dá para analisar com segurança: ${advice.join('. ')} ${detail}` : `não dá para analisar com segurança ${detail}`
+}

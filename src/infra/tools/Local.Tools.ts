@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { networkGate } from '@infra/permissions/Network.Gate'
-import { analyzeShell } from '@infra/permissions/Shell.Parse'
+import { analyzeShell, opaqueRefusal } from '@infra/permissions/Shell.Parse'
 import {
   bashPolicy,
   COMMAND_REASONS,
@@ -263,7 +263,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       ...(own ? { agentFolder: { ...own, dir: realOf(own.dir) } } : {}),
       ...(shared.length ? { sharedFolders: shared } : {}),
     }
-    const refusal = await terminalRefusal(command, root, permissions, asker, folder)
+    // O `/tmp` do comando só é privado onde o cerco o monta vazio (Linux, ver `hostSocketDirs`); no Mac é o do host.
+    const refusal = await terminalRefusal(command, root, permissions, asker, folder, { privateTmp: !!sandbox.wrapWith && process.platform === 'linux' })
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
     const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
@@ -569,9 +570,10 @@ export async function terminalRefusal(
   permissions: IPermissionChecker,
   asker: IPermissionAsker,
   folder?: { dir: string; projectDir: string },
+  options: { privateTmp?: boolean } = {},
 ): Promise<string | undefined> {
   const analysis = await analyzeShell(command)
-  if (analysis.opaque.length) return `não dá para analisar com segurança (${analysis.opaque.join('; ')})`
+  if (analysis.opaque.length) return opaqueRefusal(analysis.opaque)
   if (!analysis.commands.length && !analysis.redirects.length) return 'nenhum comando'
   // ⛔ O programa que o transporte do ssh lança (`-o ProxyCommand`, `rsync -e`, `GIT_SSH_COMMAND`…) não passa pela análise: só o `ssh` simples.
   const transport = transportRefusal(analysis.commands, command)
@@ -584,9 +586,11 @@ export async function terminalRefusal(
   }
   for (const part of analysis.commands) {
     const verdict = permissions.check(asker, { category: 'terminal', value: part.text, argv: part.argv }, { log: true })
-    if (!verdict.allowed) return verdict.reason
+    if (!verdict.allowed) return verdict.layer === 'system' ? verdict.reason : `${verdict.reason}; ${RULE_HINT}`
   }
   for (const redirect of analysis.redirects) {
+    // ⚖️ `/tmp/**` e `/var/tmp/**` DENTRO do cerco são do próprio comando (vazios, descartados no fim): não tocam o servidor.
+    if (options.privateTmp && inPrivateTmp(root, redirect.target)) continue
     const aliases = redirect.target.startsWith('~') ? [] : projectAliases(resolve(root, redirect.target), folder)
     const verdict = permissions.check(asker, { category: redirect.kind, value: workPath(root, redirect.target), ...(aliases.length ? { aliases } : {}) }, { log: true })
     if (!verdict.allowed) return verdict.reason
@@ -648,6 +652,18 @@ function cites(pattern: string, word: string): boolean {
 
 /** A palavra remota que o shell de lá lê como está. */
 const REMOTE_PLAIN_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/
+
+/** Pedir a regra: a saída que o agente tem quando o terminal nega (a ferramenta é a do MCP do gateway, quando ele a tem). */
+const RULE_HINT = 'peça a regra com save_permission_rules (uma pessoa aprova)'
+
+/** O alvo do redirecionamento está no `/tmp` ou no `/var/tmp` (caminho já normalizado, sem `..` que escape). */
+function inPrivateTmp(root: string, target: string): boolean {
+  if (target.startsWith('~')) return false
+  const abs = posix.resolve(root, target)
+  return PRIVATE_TMP.some((dir) => abs.startsWith(`${dir}/`))
+}
+
+const PRIVATE_TMP = ['/tmp', '/var/tmp']
 
 function workPath(root: string, target: string): string {
   if (target.startsWith('~')) return target
