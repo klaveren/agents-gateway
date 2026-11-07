@@ -1,5 +1,5 @@
-import { exec } from 'node:child_process'
-import { type Dirent, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { exec, execFileSync } from 'node:child_process'
+import { type Dirent, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -123,6 +123,11 @@ export function localForwards(ports: readonly number[], token: string, bridgePor
   return `${forwards.join(' ')} trap 'kill $(jobs -p) 2>/dev/null' EXIT; sleep 0.2;`
 }
 
+/** O `NO_PROXY` do comando: no Linux o loopback dele (rede própria) vai direto; no Mac, nada escapa do portão. */
+export function noProxyFor(platform: NodeJS.Platform): string {
+  return platform === 'linux' ? 'localhost,127.0.0.1,::1' : ''
+}
+
 export const SANDBOX_UNAVAILABLE = 'cerco indisponível neste servidor'
 
 /** A porta da ponte HTTP que o runtime monta DENTRO do cerco no Linux (`initializeLinuxNetworkBridge`). */
@@ -144,6 +149,10 @@ export const SANDBOX_SHELL = '/bin/bash'
 export class ProjectSandbox implements IProjectSandbox {
   private manager?: Promise<ISandboxManager>
   private probe?: Promise<ISandboxStatus>
+  /** Quantos comandos cercados rodam agora (a varredura dos pontos de montagem só roda com zero: ver `sweepMountPoints`). */
+  private active = 0
+  /** As pastas onde um comando já rodou: a varredura do fim passa por elas. */
+  private readonly sweepDirs = new Set<string>()
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
@@ -193,6 +202,17 @@ export class ProjectSandbox implements IProjectSandbox {
   }
 
   async wrapWith(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string, place: ICercoPlace = {}): Promise<string> {
+    this.begin([root, place.scratchBase])
+    try {
+      return await this.wrapWithPlan(command, root, plan, networkToken, place)
+    } catch (error: unknown) {
+      // Nada embrulhado, ninguém chama `done()`: a conta fecha aqui.
+      this.finish()
+      throw error
+    }
+  }
+
+  private async wrapWithPlan(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string, place: ICercoPlace): Promise<string> {
     const status = await this.status()
     if (!status.available) throw new Error(`${SANDBOX_UNAVAILABLE}: ${status.reason ?? 'sem motivo'}`)
     const manager = await this.ready()
@@ -235,8 +255,11 @@ export class ProjectSandbox implements IProjectSandbox {
       all_proxy: proxy,
       // O `fetch` do Node só segue o proxy com isto (Node 24+).
       NODE_USE_ENV_PROXY: '1',
-      NO_PROXY: '',
-      no_proxy: '',
+      // ⚖️ Linux: o cerco tem rede PRÓPRIA (`--unshare-net`), então o loopback é do comando (o servidor que o teste sobe, o
+      // encaminhador de `localPorts`) e vai DIRETO; pelo proxy, cada `127.0.0.1:<porta efêmera>` caía no portão ("só com a
+      // regra exata"). Mac: o seatbelt divide a rede com o host, o loopback é o do host e só passa pelo portão (`''`).
+      NO_PROXY: noProxyFor(this.platform),
+      no_proxy: noProxyFor(this.platform),
       // SSH e git por SSH: pelo CONNECT da porta, com o auxiliar (o `nc` do Mac não fala o proxy).
       GIT_SSH_COMMAND: `ssh -o ControlMaster=no -o ControlPath=none -o ProxyCommand='${process.execPath} ${connector} %h %p'`,
     }
@@ -258,13 +281,48 @@ export class ProjectSandbox implements IProjectSandbox {
   }
 
   done(): void {
-    void this.manager?.then((manager) => manager.cleanupAfterCommand?.()).catch(() => undefined)
+    this.finish()
+  }
+
+  /**
+   * ⛔ Um comando cercado vai começar: se NENHUM outro roda, varre as sobras de pontos de montagem (do CLI do Claude, de uma
+   * queda, de um reinício). Com outro rodando não se apaga nada: tirar o ponto soltaria a negação de quem ainda está nele.
+   */
+  private begin(dirs: ReadonlyArray<string | undefined>): void {
+    const real = dirs.filter((dir): dir is string => !!dir)
+    if (this.active === 0) for (const dir of real) sweepMountPoints(dir)
+    for (const dir of real) this.sweepDirs.add(dir)
+    this.active += 1
+    trackSweepOnExit(this.sweepDirs)
+  }
+
+  /** O comando cercado saiu (ou nem chegou a ser embrulhado): limpeza do srt e, com o último, a varredura. */
+  private finish(): void {
+    this.active = Math.max(0, this.active - 1)
+    const sweep = () => {
+      if (this.active === 0) for (const dir of this.sweepDirs) sweepMountPoints(dir)
+    }
+    if (!this.manager) return sweep()
+    void this.manager
+      .then((manager) => manager.cleanupAfterCommand?.())
+      .catch(() => undefined)
+      .finally(sweep)
   }
 
   async wrap(command: string, projectId: string): Promise<string> {
     const status = await this.status()
     if (!status.available) throw new Error(`${SANDBOX_UNAVAILABLE}: ${status.reason ?? 'sem motivo'}`)
     const project = projectWorkspace(projectId, this.env)
+    this.begin([project])
+    try {
+      return await this.wrapProject(command, projectId, project)
+    } catch (error: unknown) {
+      this.finish()
+      throw error
+    }
+  }
+
+  private async wrapProject(command: string, projectId: string, project: string): Promise<string> {
     // HOME, TMPDIR e caches DENTRO do projeto: os de fora estão fechados, e sem isto `npm install` falhava.
     const scratch = (name: string) => {
       const dir = join(project, name)
@@ -534,19 +592,23 @@ function listEntries(dir: string): Array<{ name: string; dir: boolean }> {
 }
 
 /** Teto da busca dos modelos: numa árvore maior, o que sobra fica escondido (falha fechada). */
-const FIND_LIMIT = 50_000
+const FIND_LIMIT = 100_000
 
 /**
- * Os arquivos de um padrão relativo dentro da raiz (o casamento é o da regra), sem descer em `node_modules` nem `.git`:
- * lá dentro segue escondido. O `glob` do Node não serve: o `**` dele pula as entradas com ponto.
+ * Os arquivos de um padrão relativo dentro da raiz (o casamento é o da regra), sem descer em `node_modules` nem nas pastas
+ * `.git`: lá dentro segue escondido. O `glob` do Node não serve: o `**` dele pula as entradas com ponto.
+ *
+ * ⚖️ Desce também em repositório ou worktree ANINHADO (`repositories/x`, `repositories/x/_worktrees/EP-1`): é lá que os
+ * `.env.example` do projeto moram, e o cerco os trocava por /dev/null (o lint-staged parava em "Backing up original state").
+ * Em LARGURA: o que está perto da raiz entra antes do teto, e um checkout fundo não gasta a cota dos rasos.
  */
 export function findUnder(root: string, pattern: string): string[] {
   if (isAbsolute(pattern) || pattern.startsWith('~')) return []
   const found: string[] = []
   const pending = ['']
   let seen = 0
-  while (pending.length && seen < FIND_LIMIT) {
-    const dir = pending.pop()!
+  for (let next = 0; next < pending.length && seen < FIND_LIMIT; next += 1) {
+    const dir = pending[next]!
     let entries: Dirent[]
     try {
       entries = readdirSync(join(root, dir), { withFileTypes: true })
@@ -557,10 +619,7 @@ export function findUnder(root: string, pattern: string): string[] {
       seen += 1
       const path = dir ? `${dir}/${entry.name}` : entry.name
       if (entry.isDirectory()) {
-        // ⚖️ Outro checkout dentro da raiz (as worktrees em `_worktrees/`) não é desta pasta: o `git status` daqui não o vê,
-        // e as 4 worktrees da raiz do repositório gastavam o teto antes de a busca chegar a `.agents/`. Lá, o modelo segue
-        // fechado (falha fechada).
-        if (entry.name !== 'node_modules' && entry.name !== '.git' && !existsSync(join(root, path, '.git'))) pending.push(path)
+        if (entry.name !== 'node_modules' && entry.name !== '.git') pending.push(path)
       } else if (entry.isFile() && pathMatches(pattern, path)) found.push(path)
     }
   }
@@ -616,6 +675,128 @@ export function ensureGitProxyAuth(home: string): void {
   const current = existsSync(path) ? readFileSync(path, 'utf8') : ''
   if (/proxyAuthMethod/i.test(current)) return
   writeFileSync(path, `${current}${current && !current.endsWith('\n') ? '\n' : ''}[http]\n\tproxyAuthMethod = basic\n`)
+}
+
+/**
+ * ⛔ PONTOS DE MONTAGEM: o bwrap (o srt, e o CLI do Claude com o dele, que nega `.env*`, `.npmrc`, `bunfig.toml`, `package.json`,
+ * `.claude`, `node_modules/.bin`… na pasta onde roda) cria um arquivo vazio, ou uma pasta, para cada caminho negado que não
+ * existe, como destino do bind de /dev/null. Se o processo cai ou reinicia no meio, o ponto fica: o `package.json` vazio
+ * quebrava a resolução de módulos de tudo abaixo ("Invalid package config"). Esta é a lista EXATA do que se varre.
+ */
+export const MOUNT_POINT_FILES: readonly string[] = [
+  '.env',
+  '.env.local',
+  '.env.development',
+  '.env.development.local',
+  '.env.test',
+  '.env.test.local',
+  '.env.production',
+  '.env.production.local',
+  '.npmrc',
+  '.yarnrc',
+  '.yarnrc.yml',
+  'bunfig.toml',
+  '.bunfig.toml',
+  'package.json',
+  'package-lock.json',
+  'yarn.lock',
+  'pnpm-lock.yaml',
+  '.gitmodules',
+  '.gitconfig',
+  '.bashrc',
+  '.bash_profile',
+  '.zshrc',
+  '.zprofile',
+  '.profile',
+  '.ripgreprc',
+  '.mcp.json',
+  '.claude.json',
+]
+/** As pastas-ponto, de dentro para fora (`node_modules/.bin` antes de `node_modules`): só saem VAZIAS. */
+export const MOUNT_POINT_DIRS: readonly string[] = ['node_modules/.bin', '.claude/commands', '.claude/agents', 'node_modules', '.claude']
+
+/** Dos candidatos, os que o git rastreia (num repositório): esses nunca saem. Sem resposta do git, todos contam como rastreados. */
+function trackedByGit(dir: string, names: readonly string[]): Set<string> {
+  if (!names.length || !existsSync(join(dir, '.git'))) return new Set()
+  try {
+    const out = execFileSync('git', ['-C', dir, 'ls-files', '-z', '--', ...names], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
+    return new Set(out.split('\0').filter(Boolean))
+  } catch {
+    return new Set(names)
+  }
+}
+
+/**
+ * ⛔ Varre os pontos de montagem que sobraram em `dir` (a raiz do projeto, a pasta de trabalho): SÓ arquivo de tamanho 0 e
+ * pasta vazia da lista exata acima, sem seguir link (um link fica, e o alvo também) e nunca arquivo que o git rastreia
+ * (dentro de repositório confere com `git ls-files`; na raiz do projeto não há repositório). Quem chama garante que nenhum
+ * comando cercado roda. Registra no log o que apagou; devolve os caminhos. Falha de apagar não derruba o comando.
+ */
+export function sweepMountPoints(dir: string, log: (message: string) => void = (message) => console.warn(message)): string[] {
+  if (!isRealDirectory(dir)) return []
+  const removed: string[] = []
+  const empties = MOUNT_POINT_FILES.filter((name) => {
+    try {
+      const stat = lstatSync(join(dir, name))
+      return stat.isFile() && stat.size === 0
+    } catch {
+      return false
+    }
+  })
+  const tracked = trackedByGit(dir, empties)
+  for (const name of empties) {
+    if (tracked.has(name)) continue
+    try {
+      unlinkSync(join(dir, name))
+      removed.push(name)
+    } catch {
+      // Fica para a próxima varredura.
+    }
+  }
+  for (const name of MOUNT_POINT_DIRS) {
+    const path = join(dir, name)
+    try {
+      if (!isRealDirectory(path) || readdirSync(path).length) continue
+      rmdirSync(path)
+      removed.push(name)
+    } catch {
+      // Cheia (ou sem permissão): não é ponto de montagem.
+    }
+  }
+  const paths = removed.map((name) => join(dir, name))
+  if (paths.length) log(`[sandbox] sobra de ponto de montagem apagada: ${paths.join(', ')}`)
+  return paths
+}
+
+/** Os projetos e os repositórios deles em `<dados>/projects`: a varredura do boot (o que um processo anterior deixou). */
+export function sweepProjectMountPoints(env: NodeJS.ProcessEnv = process.env): string[] {
+  const base = join(dataDir(env), 'projects')
+  const swept: string[] = []
+  for (const project of listDir(base)) {
+    const dir = join(base, project)
+    swept.push(...sweepMountPoints(dir))
+    for (const repository of listDir(join(dir, 'repositories'))) swept.push(...sweepMountPoints(join(dir, 'repositories', repository)))
+  }
+  return swept
+}
+
+let sweepOnExit: Set<string> | undefined
+/**
+ * No desligamento do gateway (saída normal ou SIGTERM/SIGINT) varre as pastas onde houve comando cercado. Sem o sinal tratado o
+ * processo morria sem rodar nada. O sinal é reenviado depois da varredura: o fim é o de sempre.
+ */
+function trackSweepOnExit(dirs: Set<string>): void {
+  if (sweepOnExit) return
+  sweepOnExit = dirs
+  const sweep = () => {
+    for (const dir of dirs) sweepMountPoints(dir)
+  }
+  process.once('exit', sweep)
+  for (const signal of ['SIGTERM', 'SIGINT'] as const)
+    process.once(signal, () => {
+      sweep()
+      process.kill(process.pid, signal)
+    })
 }
 
 /** A marca da limpeza dos restos de antes da correção M4 (dentro do `.cache` do projeto). */
