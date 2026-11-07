@@ -2,6 +2,7 @@ import { identityHeaders } from '@domain/Agent.Identity'
 import { createSdkMcpServer, tool, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z, type ZodRawShape, type ZodTypeAny } from 'zod'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+import { SEARCH_RESOURCES_TOOL, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
 import { IAgentMcpServer } from '../Tool.Catalog'
 import { ILocalTool } from '../Tool.Types'
 
@@ -21,6 +22,20 @@ export function claudeMcpServerName(serverId: string): string {
   return `mcp_${serverId.replace(/-/g, '_')}`
 }
 
+/** As ferramentas de recurso que o índice de skills e triggers cita pelo nome curto (ver `Guidance.Service`). */
+const RESOURCE_TOOLS = [USE_RESOURCE_TOOL, SEARCH_RESOURCES_TOOL]
+
+/**
+ * ⚠️ O índice de skills e triggers (no prompt e no que o `use_resource` devolve) manda "carregar com use_resource", mas no
+ * Claude ela se chama `mcp__local__use_resource`: o Léo seguia o texto e o CLI respondia "No such tool available:
+ * use_resource" (duas vezes, 07/11). Aqui o texto já cita o nome que existe, se a ferramenta está montada.
+ */
+export function withLocalNames(text: string, local: readonly { name: string }[]): string {
+  const mounted = RESOURCE_TOOLS.filter((name) => local.some((item) => item.name === name))
+  if (!mounted.length) return text
+  return text.replace(new RegExp(`(?<![\\w-])(${mounted.join('|')})(?![\\w-])`, 'g'), `mcp__${LOCAL_SERVER_NAME}__$1`)
+}
+
 export function buildClaudeMcpServers(
   local: ILocalTool[],
   remotes: readonly IAgentMcpServer[] = [],
@@ -37,7 +52,7 @@ export function buildClaudeMcpServers(
       tools: local.map((item) =>
         tool(item.name, item.description, toZodShape(item), async (args: Record<string, unknown>) => {
           const outcome = await item.execute(args, context)
-          return { content: [{ type: 'text' as const, text: outcome.result }], isError: outcome.status === 'error' }
+          return { content: [{ type: 'text' as const, text: withLocalNames(outcome.result, local) }], isError: outcome.status === 'error' }
         }),
       ),
     })

@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
 import { IAgentMcpServer } from '../Tool.Catalog'
-import { buildClaudeMcpServers, claudeHiddenTools } from './Claude.ToolBridge'
+import { buildClaudeMcpServers, claudeHiddenTools, withLocalNames } from './Claude.ToolBridge'
 import { buildOpenAIMcpServers } from './OpenAI.ToolBridge'
 
 const config = (id: string, over: Partial<IMcpServerConfig> = {}): IMcpServerConfig => ({
@@ -77,5 +77,20 @@ describe('pontes MCP com vários servidores', () => {
     const servers = buildClaudeMcpServers([], [self, outside], 'jwt', undefined, 'grant-1') as Record<string, { headers?: Record<string, string> }>
     assert.deepStrictEqual(servers.mcp_gateway.headers, { 'X-Turn-Grant': 'grant-1' })
     assert.deepStrictEqual(servers.mcp_crm.headers, { authorization: 'Bearer jwt' })
+  })
+})
+
+describe('Claude — o índice de recursos cita o nome que existe', () => {
+  const local = [{ name: 'use_resource' }, { name: 'search_resources' }]
+
+  it('use_resource e search_resources viram mcp__local__…; o que já tem prefixo e as palavras vizinhas ficam', () => {
+    assert.strictEqual(
+      withLocalNames('carregue-a com use_resource (tipo skill); ache com `search_resources`. Ex.: mcp__local__use_resource, my_use_resource, use_resources', local),
+      'carregue-a com mcp__local__use_resource (tipo skill); ache com `mcp__local__search_resources`. Ex.: mcp__local__use_resource, my_use_resource, use_resources',
+    )
+  })
+
+  it('sem a ferramenta montada, o texto fica como está', () => {
+    assert.strictEqual(withLocalNames('carregue com use_resource', [{ name: 'run_bash' }]), 'carregue com use_resource')
   })
 })

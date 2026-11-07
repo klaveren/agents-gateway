@@ -28,7 +28,7 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
-import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SERVER_NAME, usesGatewayCredential } from '@infra/tools/bridges/Claude.ToolBridge'
+import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SERVER_NAME, usesGatewayCredential, withLocalNames } from '@infra/tools/bridges/Claude.ToolBridge'
 import { turnGrants } from '@infra/tools/Turn.Grants'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
@@ -214,7 +214,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     const options: Options = {
       model: record.model,
       // ⚖️ No Claude, as do gateway vêm com prefixo: o modelo chamava `use_resource` (sem ele) e inventava `mcp__local__Read`.
-      systemPrompt: local.length ? `${record.systemPrompt}\n\n${CLAUDE_TOOL_NAMES}` : record.systemPrompt,
+      systemPrompt: local.length ? `${withLocalNames(record.systemPrompt, local)}\n\n${CLAUDE_TOOL_NAMES}` : record.systemPrompt,
       // Os built-ins do Claude Code que ESTE agente tem ligados (ferramentas nativas, `sdk:*`) — e só
       // eles. Vazio = nenhum: sem isto o agente ganharia Bash/Read/Edit sobre a máquina do host. As
       // tools nossas (locais e do MCP) chegam por `mcpServers`.

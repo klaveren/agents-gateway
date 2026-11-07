@@ -163,7 +163,8 @@ export class ToolCatalog {
 
   /**
    * O que o SDK que conecta por conta própria pode usar do servidor: a escolha do agente MENOS o que as permissões negam
-   * (`tools` ausente = todas). ⛔ Com permissões e sem conseguir listar o servidor, nenhuma: falha fechada.
+   * (`tools` ausente = todas). ⛔ Com permissões e sem conseguir listar o servidor: só a escolha explícita, nome a nome pelas
+   * permissões; "todas" fica sem nenhuma (falha fechada).
    */
   private async visibleOf(
     id: string,
@@ -176,8 +177,18 @@ export class ToolCatalog {
       if (choice.all) return { hidden: blocked }
       return { tools: [...choice.tools].filter((name) => !blocked.includes(name)), hidden: [...new Set([...(await this.hiddenOf(key, choice.tools, context)), ...blocked])] }
     }
-    const listed = await this.mcp.tools(key, context?.sessionId, context?.token).catch(() => undefined)
-    if (!listed) return { tools: [], hidden: [] }
+    const listed = await this.mcp.tools(key, context?.sessionId, context?.token).catch(() => [])
+    // ⚠️ A listagem falhou (um `socket hang up` do agents-mcp, 07/11 10:40): o servidor subia sem nada liberado, o CLI via as
+    // ferramentas pela conexão dele e o portão recusou toda chamada da Vera por 47 min ("not enabled for this agent").
+    // A escolha EXPLÍCITA do agente, cada nome pelas permissões, segue valendo; "todas" sem a lista fica fechada.
+    if (!listed.length) {
+      if (choice.all) return { tools: [], hidden: [] }
+      const chosen = agentFacing(
+        id,
+        [...choice.tools].map((name) => ({ name })),
+      ).map((tool) => tool.name)
+      return { tools: chosen.filter((name) => this.mcpAllowed(id, name, context)?.allowed !== false), hidden: [] }
+    }
     const facing = new Set(agentFacing(id, listed).map((tool) => tool.name))
     const names = listed.map((tool) => tool.name)
     const tools = names.filter((name) => facing.has(name) && (choice.all || choice.tools.has(name)) && this.mcpAllowed(id, name, context)?.allowed !== false)
