@@ -1,4 +1,5 @@
 import assert from 'node:assert'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,8 +15,10 @@ import {
   withWriteGlobsExpanded,
   hostSocketDirs,
   localForwards,
+  noProxyFor,
   projectPathIssue,
   ProjectSandbox,
+  sweepMountPoints,
   systemReadAllowlist,
   writeFolders,
 } from './Project.Sandbox'
@@ -211,6 +214,65 @@ describe('ProjectSandbox', () => {
     assert.strictEqual(srt.cleanups.count, 2)
   })
 
+  it('⚖️ o prelúdio: no Linux o loopback do cerco vai direto (NO_PROXY); no Mac segue pelo portão (vazio)', async () => {
+    const project = join(root, 'projeto-np')
+    mkdirSync(project, { recursive: true })
+    const preludeOf = async (platform: NodeJS.Platform) => {
+      const srt = fakeSrt()
+      const sandbox = new ProjectSandbox(env, srt.load, platform)
+      await sandbox.wrapWith('ls', project, (base) => cercoPlan({}, { ...base, system: [] }), 'tok-np')
+      return srt.calls.at(-1)!.command
+    }
+    const linux = await preludeOf('linux')
+    assert.match(linux, /export NO_PROXY='localhost,127\.0\.0\.1,::1'/)
+    assert.match(linux, /export no_proxy='localhost,127\.0\.0\.1,::1'/)
+    const mac = await preludeOf('darwin')
+    assert.match(mac, /export NO_PROXY=''/)
+    assert.match(mac, /export no_proxy=''/)
+    assert.deepStrictEqual([noProxyFor('linux'), noProxyFor('darwin')], ['localhost,127.0.0.1,::1', ''])
+  })
+
+  it('⛔ a varredura roda antes de um comando cercado sozinho, e NÃO com outro rodando; e de novo quando o último termina', async () => {
+    const srt = fakeSrt()
+    const sandbox = new ProjectSandbox(env, srt.load)
+    const project = join(root, 'projeto-sweep')
+    mkdirSync(project, { recursive: true })
+    const plan = (base: Parameters<Parameters<ProjectSandbox['wrapWith']>[2]>[0]) => cercoPlan({}, { ...base, system: [] })
+    writeFileSync(join(project, 'package.json'), '')
+    await sandbox.wrapWith('ls', project, plan, 'tok-a')
+    assert.ok(!existsSync(join(project, 'package.json')), 'antes do primeiro comando')
+    // Com o A rodando, o segundo comando não varre (soltaria a negação do A).
+    writeFileSync(join(project, '.npmrc'), '')
+    await sandbox.wrapWith('ls', project, plan, 'tok-b')
+    assert.ok(existsSync(join(project, '.npmrc')), 'com outro rodando, nada se apaga')
+    sandbox.done()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(existsSync(join(project, '.npmrc')), 'ainda há um rodando')
+    sandbox.done()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(!existsSync(join(project, '.npmrc')), 'o último saiu: varre')
+  })
+
+  it('⛔ comando cercado que falha ao embrulhar não deixa a conta aberta (a varredura segue valendo)', async () => {
+    const srt = fakeSrt()
+    const sandbox = new ProjectSandbox(env, srt.load)
+    const project = join(root, 'projeto-falha')
+    mkdirSync(project, { recursive: true })
+    await assert.rejects(() =>
+      sandbox.wrapWith(
+        'ls',
+        project,
+        () => {
+          throw new Error('plano quebrou')
+        },
+        'tok-f',
+      ),
+    )
+    writeFileSync(join(project, 'bunfig.toml'), '')
+    await sandbox.wrapWith('ls', project, (base) => cercoPlan({}, { ...base, system: [] }), 'tok-g')
+    assert.ok(!existsSync(join(project, 'bunfig.toml')))
+  })
+
   it('⛔ a pasta privada do comando (chave SSH, proxychains) fica na pasta de dados, fechada aos outros: só o dono recebe leitura dela', async () => {
     const srt = fakeSrt()
     const sandbox = new ProjectSandbox(env, srt.load)
@@ -313,13 +375,25 @@ describe('findUnder — os modelos de segredo reabertos para leitura', () => {
   const root = mkdtempSync(join(tmpdir(), 'gw-find-'))
   after(() => rmSync(root, { recursive: true, force: true }))
 
-  it('⚖️ pula outro checkout dentro da raiz (as worktrees): o teto da busca não se gasta nelas', () => {
+  it('⚖️ desce em repositório e worktree aninhados (os .env.example de lá ficavam trocados por /dev/null); pula node_modules e .git', () => {
     mkdirSync(join(root, '.agents', 'skills', 'x'), { recursive: true })
     writeFileSync(join(root, '.agents', 'skills', 'x', '.env.example'), 'A=')
-    mkdirSync(join(root, '_worktrees', 'EP-1', 'apps'), { recursive: true })
-    writeFileSync(join(root, '_worktrees', 'EP-1', '.git'), 'gitdir: ../../.git/worktrees/EP-1')
-    writeFileSync(join(root, '_worktrees', 'EP-1', 'apps', '.env.example'), 'A=')
-    assert.deepStrictEqual(findUnder(root, '**/.env.*'), ['.agents/skills/x/.env.example'])
+    // Repositório aninhado (com `.git` de verdade) e a worktree dele (`.git` é arquivo).
+    mkdirSync(join(root, 'repositories', 'logiccus', '.git'), { recursive: true })
+    mkdirSync(join(root, 'repositories', 'logiccus', 'apis', 'logiccus'), { recursive: true })
+    writeFileSync(join(root, 'repositories', 'logiccus', 'apis', 'logiccus', '.env.example'), 'A=')
+    writeFileSync(join(root, 'repositories', 'logiccus', '.git', '.env.example'), 'nunca')
+    mkdirSync(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1', 'apps'), { recursive: true })
+    writeFileSync(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1', '.git'), 'gitdir: ../../.git/worktrees/EP-1')
+    writeFileSync(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1', 'apps', '.env.example'), 'A=')
+    mkdirSync(join(root, 'repositories', 'logiccus', 'node_modules', 'p'), { recursive: true })
+    writeFileSync(join(root, 'repositories', 'logiccus', 'node_modules', 'p', '.env.example'), 'nunca')
+    writeFileSync(join(root, 'repositories', 'logiccus', 'apis', 'logiccus', '.env'), 'SEGREDO=1')
+    assert.deepStrictEqual(findUnder(root, '**/.env.*').sort(), [
+      '.agents/skills/x/.env.example',
+      'repositories/logiccus/_worktrees/EP-1/apps/.env.example',
+      'repositories/logiccus/apis/logiccus/.env.example',
+    ])
   })
 })
 
@@ -381,5 +455,72 @@ describe('CERCO_READ_ALLOWLIST — o cerco lê só o liberado', () => {
     )
     assert.deepStrictEqual(list.sort(), ['/bin', '/etc/hosts', '/etc/ld.so.conf', '/etc/ld.so.conf.d', '/etc/ssh/ssh_config', '/etc/ssl', '/home/u/.nvm/v22', '/usr'])
     assert.ok(!list.includes('/etc/hostname') && !list.includes('/etc/shadow'))
+  })
+})
+
+describe('sweepMountPoints — as sobras de ponto de montagem na pasta do projeto', () => {
+  const base = mkdtempSync(join(tmpdir(), 'gw-sweep-'))
+  after(() => rmSync(base, { recursive: true, force: true }))
+
+  it('⛔ apaga só arquivo VAZIO e pasta vazia da lista exata, e registra o que apagou', () => {
+    const dir = join(base, 'projeto')
+    mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true })
+    mkdirSync(join(dir, '.claude', 'commands'), { recursive: true })
+    for (const name of ['bunfig.toml', '.env', '.env.development.local', '.env.test', '.npmrc', '.gitmodules', 'package.json']) writeFileSync(join(dir, name), '')
+    writeFileSync(join(dir, 'outro-vazio.txt'), '')
+    const log: string[] = []
+    const removed = sweepMountPoints(dir, (message) => log.push(message))
+    for (const name of ['bunfig.toml', '.env', '.env.development.local', '.env.test', '.npmrc', '.gitmodules', 'package.json', 'node_modules', '.claude'])
+      assert.ok(!existsSync(join(dir, name)), name)
+    assert.ok(existsSync(join(dir, 'outro-vazio.txt')), 'fora da lista fica')
+    assert.ok(removed.includes(join(dir, 'package.json')) && removed.includes(join(dir, 'node_modules')))
+    assert.strictEqual(log.length, 1)
+    assert.match(log[0]!, /package\.json/)
+  })
+
+  it('⛔ o que tem conteúdo, a pasta cheia e o link ficam', () => {
+    const dir = join(base, 'cheio')
+    mkdirSync(join(dir, 'node_modules', 'pacote'), { recursive: true })
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(join(dir, '.claude', 'settings.json'), '{}')
+    writeFileSync(join(dir, 'package.json'), '{"name":"x"}')
+    writeFileSync(join(dir, '.env'), 'SEGREDO=1')
+    const alvo = join(base, 'alvo-vazio')
+    writeFileSync(alvo, '')
+    symlinkSync(alvo, join(dir, '.npmrc'))
+    const log: string[] = []
+    assert.deepStrictEqual(
+      sweepMountPoints(dir, (message) => log.push(message)),
+      [],
+    )
+    assert.deepStrictEqual(log, [])
+    for (const name of ['node_modules/pacote', '.claude/settings.json', 'package.json', '.env']) assert.ok(existsSync(join(dir, name)), name)
+    assert.ok(existsSync(alvo), 'o alvo do link fica')
+    assert.ok(readFileSync(join(dir, 'package.json'), 'utf8').includes('"x"'))
+  })
+
+  it('⛔ dentro de repositório, arquivo vazio que o git rastreia nunca sai; o não rastreado sai', () => {
+    const dir = join(base, 'repo')
+    mkdirSync(dir, { recursive: true })
+    const git = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore' })
+    git('init', '-q')
+    writeFileSync(join(dir, '.gitmodules'), '')
+    git('add', '.gitmodules')
+    writeFileSync(join(dir, 'bunfig.toml'), '')
+    assert.deepStrictEqual(
+      sweepMountPoints(dir, () => undefined).map((path) => path.slice(dir.length + 1)),
+      ['bunfig.toml'],
+    )
+    assert.ok(existsSync(join(dir, '.gitmodules')))
+  })
+
+  it('pasta que não existe, ou é link, não quebra nem é seguida', () => {
+    assert.deepStrictEqual(sweepMountPoints(join(base, 'nao-existe')), [])
+    const real = join(base, 'real')
+    mkdirSync(real, { recursive: true })
+    writeFileSync(join(real, 'package.json'), '')
+    symlinkSync(real, join(base, 'link'))
+    assert.deepStrictEqual(sweepMountPoints(join(base, 'link')), [])
+    assert.ok(existsSync(join(real, 'package.json')))
   })
 })

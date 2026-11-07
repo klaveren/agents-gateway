@@ -29,7 +29,7 @@ import { persistInstalls } from '@infra/packages/Persistent.Installs'
 import { migrateToProjects } from '@composition/factories/Projects.Factory'
 import { reconcileCatalogHistory } from '@composition/factories/CatalogHistory.Factory'
 import { syncResourceFiles } from '@composition/factories/ResourceFiles.Factory'
-import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
+import { projectSandbox, sweepProjectMountPoints } from '@infra/sandbox/Project.Sandbox'
 import { bootIssues, bootWarnings } from '@infra/http/Boot.Checks'
 import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
 import { makeTools } from '@composition/factories/Tools.Factory'
@@ -86,6 +86,8 @@ async function bootstrap() {
   const controller = makeController()
   // O cerco dos agentes de projeto: testado agora, para o log dizer cedo se o Bash deles vai ficar bloqueado.
   void projectSandbox().status()
+  // Os pontos de montagem que um processo anterior deixou nas pastas dos projetos (ver `sweepMountPoints`).
+  sweepProjectMountPoints()
   // Uma vez: o que existia antes dos projetos vai para o projeto `geral` (ver `migrateToProjects`).
   await migrateToProjects(controller.conversations)
   // O histórico do catálogo: baseline do que não tem revisão e deriva do que mudou fora dele (semente, migrações, banco).
