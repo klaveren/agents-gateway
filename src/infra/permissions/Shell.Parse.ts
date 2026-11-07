@@ -154,6 +154,15 @@ function resolve(node: Node): IResolved {
 
 const isFlag = (s: string) => s.startsWith('-') && s !== '-'
 
+/**
+ * ⚖️ `while IFS= read -r l` — o `IFS` na frente do `read` vale SÓ para ele (que não roda nada, só lê uma linha): não muda
+ * a divisão de palavras do resto da linha. Em qualquer outro lugar (`IFS=/; …`, `IFS=x cmd`) segue opaco.
+ */
+function ifsOfRead(node: Node, name: string): boolean {
+  if (name !== 'IFS' || node.parent?.type !== 'command') return false
+  return node.parent.childForFieldName('name')?.text === 'read'
+}
+
 /** Pula flags (e seus argumentos) a partir de i; devolve o índice do primeiro não-flag. */
 function skipFlags(argv: string[], i: number, withArg: string[]): number {
   while (i < argv.length && isFlag(argv[i])) {
@@ -352,7 +361,7 @@ class Analyzer {
         break
       case 'variable_assignment': {
         const name = node.childForFieldName('name')?.text ?? ''
-        if (dangerousEnv(name)) this.opaque.add(`env:${name}`)
+        if (dangerousEnv(name) && !ifsOfRead(node, name)) this.opaque.add(`env:${name}`)
         break
       }
       case 'file_redirect':
@@ -469,6 +478,8 @@ class Analyzer {
         break
       }
       if (!/^[-+]/.test(a)) break
+      // `bash --version` (e `--help`) imprime e sai: não lê o stdin nem roda nada.
+      if (a === '--version' || a === '--help') return
       if (['-o', '+o', '-O', '+O', '--rcfile', '--init-file'].includes(a)) i++
       else if (!a.startsWith('--') && a.startsWith('-') && a.includes('c')) hasC = true
     }
