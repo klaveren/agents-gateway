@@ -389,7 +389,7 @@ describe('SqliteConversationRepository', () => {
     const since = new Date('2000-01-01T00:00:00Z')
 
     const all = await repo.errors({ since })
-    assert.deepStrictEqual(all.byKind, { tool: 1, turn: 1, aborted: 1 })
+    assert.deepStrictEqual(all.byKind, { tool: 1, turn: 1, aborted: 1, refused: 0 })
     assert.deepStrictEqual(all.byTool, [{ tool: 'delegate_to_agent', count: 1 }])
     const tool = all.items.find((item) => item.kind === 'tool')!
     assert.deepStrictEqual([tool.conversationId, tool.agentId, tool.tool, tool.message], ['s1', 'maya', 'delegate_to_agent', 'conversation x is no longer live'])
@@ -401,6 +401,29 @@ describe('SqliteConversationRepository', () => {
     )
     await repo.deleteSession('s1')
     assert.strictEqual((await repo.errors({ since })).byKind.tool, 0, 'a conversa apagada sai do registro')
+  })
+
+  it('a recusa de turno entra em errors (recorte por projeto) e some depois de 30 dias, ao gravar', async () => {
+    const repo = repository()
+    const now = Date.now()
+    const base = { status: 409, code: 'session_busy', message: 'busy', origin: 'api' as const }
+    await repo.recordRefusal({ ...base, at: new Date(now - 31 * 86_400_000), agentId: 'maya' })
+    await repo.recordRefusal({ ...base, at: new Date(now), agentId: 'maya', projectId: 'alfa', conversationId: 'nao-existe' })
+    await repo.recordRefusal({ ...base, at: new Date(now), agentId: 'zeus' })
+    const since = new Date(now - 90 * 86_400_000)
+    const all = await repo.errors({ since })
+    assert.strictEqual(all.byKind.refused, 2, 'a de 31 dias foi apagada ao gravar')
+    assert.deepStrictEqual(
+      (await repo.errors({ since, kind: 'refused', scope: { projects: ['alfa'], unscoped: false } })).items.map((item) => item.agentId),
+      ['maya'],
+    )
+    assert.deepStrictEqual(
+      (await repo.errors({ since, scope: { projects: [], unscoped: true } })).items.map((item) => item.agentId),
+      ['zeus'],
+    )
+    assert.strictEqual((await repo.errors({ since, scope: { projects: ['beta'], unscoped: false } })).byKind.refused, 0)
+    assert.strictEqual(all.items.find((item) => item.agentId === 'maya')!.conversationId, undefined, 'conversa que não existe não vira link')
+    assert.strictEqual((await repo.errors({ since, tool: 'x' })).items.length, 0)
   })
 
   it('o painel da conversa grava e lê o documento inteiro; apagar a conversa apaga o painel', async () => {

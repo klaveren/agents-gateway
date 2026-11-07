@@ -4181,12 +4181,12 @@ export const OPENAPI_DOCUMENT = {
     '/errors': {
       get: {
         summary:
-          'The error log of the conversations: tool calls that failed, turns that ended in error, interrupted turns — newest first, with counts by kind and by tool. Administrators only',
+          'The error log of the conversations: tool calls that failed, turns that ended in error, interrupted turns, and `refused` turn starts (409/422/429 or 403 agent_unavailable on POST /sessions, /messages and /turns, kept 30 days; no turn was recorded) — newest first, with counts by kind and by tool. Administrators only',
         parameters: [
           { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 90 }, description: 'Default 7.' },
           { name: 'agentId', in: 'query', schema: { type: 'string' } },
           { name: 'tool', in: 'query', schema: { type: 'string' } },
-          { name: 'kind', in: 'query', schema: { type: 'string', enum: ['tool', 'turn', 'aborted'] } },
+          { name: 'kind', in: 'query', schema: { type: 'string', enum: ['tool', 'turn', 'aborted', 'refused'] } },
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500 } },
         ],
         responses: {
@@ -4202,9 +4202,12 @@ export const OPENAPI_DOCUMENT = {
                       type: 'object',
                       properties: {
                         at: { type: 'string', format: 'date-time' },
-                        kind: { type: 'string', enum: ['tool', 'turn', 'aborted'] },
-                        conversationId: { type: 'string' },
-                        turn: { type: 'integer' },
+                        kind: { type: 'string', enum: ['tool', 'turn', 'aborted', 'refused'] },
+                        conversationId: { type: 'string', description: 'Absent when a refused POST /sessions never had a conversation.' },
+                        turn: { type: 'integer', description: 'Absent on `refused`.' },
+                        status: { type: 'integer', description: '`refused` only: the HTTP status of the refusal (409, 422, 429 or 403 agent_unavailable).' },
+                        code: { type: 'string', description: '`refused` only: the error code of the response.' },
+                        origin: { type: 'string', enum: ['ui', 'api', 'hook', 'schedule'], description: '`refused` only: where the request came from.' },
                         agentId: { type: 'string' },
                         title: { type: 'string' },
                         tool: { type: 'string' },
