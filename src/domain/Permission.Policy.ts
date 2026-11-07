@@ -78,9 +78,8 @@ const SECRET_DATA = ['json', 'yaml', 'yml', 'toml', 'env', 'txt', 'ini'].map((ex
 const SECRETS: readonly { pattern: string; except?: readonly string[] }[] = [
   { pattern: '**/.env' },
   { pattern: '**/.env.*', except: SECRET_TEMPLATES },
-  // ⛔ O arquivo de ambiente com nome (`agents-gateway.env`) e a pasta de credenciais: o env do PRÓPRIO gateway mora num
-  // `.credentials/` do repositório do projeto, e `**/.env*` não o pegava (lido no cerco em 07/11).
-  { pattern: '**/*.env' },
+  // ⛔ A pasta de credenciais: o env do PRÓPRIO gateway mora num `.credentials/` do repositório do projeto (lido no
+  // cerco em 07/11). ⚖️ Não `**/*.env`: o repositório versiona perfis `*.env` sem segredo, e mascará-los suja o git.
   { pattern: '**/.credentials/**' },
   ...['**/*.key', '**/*.pem', '**/id_rsa*', '**/id_ed25519*', ...SECRET_DATA].map((pattern) => ({ pattern })),
 ]
