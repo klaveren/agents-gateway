@@ -11,6 +11,8 @@ import type { TResourceKind } from './models/Resource.Model'
  */
 export const SHAREABLE_RESOURCE_KINDS: readonly TResourceKind[] = ['skill', 'command']
 export const SHAREABLE_DOC_KINDS: readonly TDocKind[] = ['spec', 'knowledge']
+/** O agente também se compartilha: os outros projetos CONVERSAM com ele (só a origem o mantém). */
+export const AGENT_KIND = 'agent'
 
 /** Teto de projetos por item: a lista vai numa coluna e na tela inteira. */
 export const SHARE_MAX_PROJECTS = 100
@@ -40,8 +42,9 @@ export function normalizeShares(projects: readonly string[]): string[] {
 /** O que impede compartilhar o item com estes projetos (vazio = pode). `exists`: o projeto existe. */
 export function shareIssues(item: IShareable, projects: readonly string[], exists: (projectId: string) => boolean): Array<{ field: string; message: string }> {
   const issues: Array<{ field: string; message: string }> = []
-  const shareable = (SHAREABLE_RESOURCE_KINDS as readonly string[]).includes(item.kind) || (SHAREABLE_DOC_KINDS as readonly string[]).includes(item.kind)
-  if (!shareable) issues.push({ field: 'projects', message: `a ${item.kind} is not shared (only skills, commands, specs and knowledge)` })
+  const shareable =
+    (SHAREABLE_RESOURCE_KINDS as readonly string[]).includes(item.kind) || (SHAREABLE_DOC_KINDS as readonly string[]).includes(item.kind) || item.kind === AGENT_KIND
+  if (!shareable) issues.push({ field: 'projects', message: `a ${item.kind} is not shared (only agents, skills, commands, specs and knowledge)` })
   if (!item.projectId && projects.length) issues.push({ field: 'projects', message: 'a global item already serves every project' })
   if (projects.length > SHARE_MAX_PROJECTS) issues.push({ field: 'projects', message: `at most ${SHARE_MAX_PROJECTS} projects` })
   for (const project of projects) {
@@ -49,4 +52,18 @@ export function shareIssues(item: IShareable, projects: readonly string[], exist
     else if (!exists(project)) issues.push({ field: 'projects', message: `no such project: ${project}` })
   }
   return issues
+}
+
+/**
+ * ⛔ A CONVERSA DE UM AGENTE COMPARTILHADO é do projeto que o recebe. O agente de projeto, numa conversa de OUTRO projeto, roda
+ * como o agente global numa conversa de projeto: a pasta, o cerco, as regras, as permissões, as contas e os MCPs são os da
+ * conversa — nunca os da origem. Devolve o projeto sob o qual a conversa roda a parte de projeto do agente (`undefined` = como global).
+ */
+export function runsUnder(agent: { projectId?: string }, conversationProject: string | undefined): string | undefined {
+  return agent.projectId && conversationProject && conversationProject !== agent.projectId ? undefined : agent.projectId
+}
+
+/** O projeto da conversa alcança o agente: é o dele, o agente é global ou ele foi compartilhado com esse projeto. */
+export function reaches(agent: { projectId?: string; sharedWith?: readonly string[] }, conversationProject: string | undefined): boolean {
+  return !agent.projectId || !conversationProject || conversationProject === agent.projectId || !!agent.sharedWith?.includes(conversationProject)
 }

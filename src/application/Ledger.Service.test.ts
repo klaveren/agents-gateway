@@ -9,6 +9,7 @@ const AGENTS: Record<string, ILedgerAgentInfo> = {
   theo: { id: 'theo' },
   ana: { id: 'ana', projectId: 'xpto' },
   rui: { id: 'rui', projectId: 'crm' },
+  ben: { id: 'ben', projectId: 'xpto' },
   zeus: { id: 'zeus', adminOnly: true },
   maya: { id: 'maya', adminOnly: true },
 }
@@ -201,6 +202,10 @@ describe('LedgerService — leitura', () => {
     assert.ok(ledger.canRead({ agentId: 'theo', conversationProjectId: 'xpto' }, 'ana'), 'na conversa do projeto dele, sim')
     assert.ok(!ledger.canRead({ agentId: 'ana', conversationProjectId: 'xpto' }, 'rui'), 'de outro projeto, não')
     assert.ok(!ledger.canRead({ agentId: 'theo' }, 'zeus'), 'só-admin: um agente comum não lê')
+    // ⛔ Agente de projeto numa conversa de OUTRO projeto (compartilhado): os ledgers do projeto de origem ficam de fora.
+    assert.ok(ledger.canRead({ agentId: 'ana' }, 'ben'), 'sem conversa de outro projeto, o projeto do leitor vale')
+    assert.ok(!ledger.canRead({ agentId: 'ana', conversationProjectId: 'outro' }, 'ben'), 'a origem não vai junto')
+    assert.ok(ledger.canRead({ agentId: 'ana', conversationProjectId: 'xpto' }, 'ana'), 'o próprio sempre')
     assert.ok(ledger.canRead({ agentId: 'maya' }, 'zeus'), 'só-admin lê só-admin')
     assert.ok(!ledger.canRead({ agentId: 'theo' }, 'fantasma'))
   })

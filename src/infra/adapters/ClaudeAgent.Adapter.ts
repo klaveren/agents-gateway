@@ -68,9 +68,9 @@ export interface IClaudeAgentAdapterDeps {
   /** O diagnóstico depois de editar (ver `Edit.Diagnostics`): o `PostToolUse` das nativas de edição. Ausente = nenhum. */
   diagnostics?: IEditDiagnostics
   /** ⛔ A pasta privada do agente e o que ele faz nela (ver `agentFolderAccess`): as nativas de arquivo a alcançam. */
-  agentFolder?: (agentId: string) => IOwnFolder | undefined
+  agentFolder?: (agentId: string, conversationProject?: string) => IOwnFolder | undefined
   /** ⛔ As pastas de skills e commands que outro projeto compartilhou com o projeto: o Read e o LS as leem, só leitura. */
-  sharedFolders?: (projectId: string | undefined) => string[]
+  sharedFolders?: (projectId: string | undefined, agentId?: string) => string[]
   /**
    * Pela ASSINATURA (Claude Pro/Max), protocolo `claude-sub`: nenhuma chave de API vai ao CLI, que usa o
    * login do host — ou o `CLAUDE_CODE_OAUTH_TOKEN` (de `claude setup-token`) salvo no lugar da chave.
@@ -96,8 +96,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly permissions?: IPermissionChecker
   private readonly loops?: IClaudeAgentAdapterDeps['loops']
   private readonly diagnostics?: IEditDiagnostics
-  private readonly agentFolder?: (agentId: string) => IOwnFolder | undefined
-  private readonly sharedFolders?: (projectId: string | undefined) => string[]
+  private readonly agentFolder?: (agentId: string, conversationProject?: string) => IOwnFolder | undefined
+  private readonly sharedFolders?: (projectId: string | undefined, agentId?: string) => string[]
 
   private readonly connections?: IConnectionSource
   private readonly protocol: EProvider
@@ -203,10 +203,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       project,
       { asker: askerOf(context), cwd: workDir, ...(context.workFolder ? { folder: context.workFolder } : {}) },
       Object.keys(context.secretEnv ?? {}),
-      this.agentFolder?.(agent.id),
+      this.agentFolder?.(agent.id, context.conversationProjectId),
       agent.adminOnly === true,
       // Lida a cada chamada: parou de compartilhar, a pasta sai na próxima.
-      () => this.sharedFolders?.(askerOf(context).projectId) ?? [],
+      () => this.sharedFolders?.(askerOf(context).projectId, agent.id) ?? [],
     )
     // ⛔ O CLI é um processo filho: o header do MCP do gateway fica no argv dele, ao alcance do agente. Leva a CONCESSÃO do
     // turno (ver `Grant.Credential`), nunca o token de quem conversa.

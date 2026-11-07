@@ -120,6 +120,14 @@ export class ResourceSecretsService {
     for (const scope of ['skill', 'command'] as const) this.deps.store.keepProjects(scope, id, projects)
   }
 
+  /**
+   * ⛔ A lista de projetos com que o AGENTE é compartilhado mudou (ou ele foi apagado): quem saiu perde os valores que
+   * configurou para ele — apagados, não escondidos.
+   */
+  keepAgentProjects(agentId: string, projects: readonly string[]): void {
+    this.deps.store.keepProjects('agent', agentId, projects)
+  }
+
   /** O projeto foi apagado: os valores dele somem. */
   removeProject(project: string): void {
     this.deps.store.removeProject(project)
@@ -136,11 +144,11 @@ export class ResourceSecretsService {
   }
 
   /** As variáveis que valem agora para o agente nesta conversa, só os nomes e de onde vêm. */
-  sources(agentId: string | undefined, sessionId: string | undefined): ISecretSource[] {
+  sources(agentId: string | undefined, sessionId: string | undefined, conversationProject?: string): ISecretSource[] {
     const named = (scope: TSecretScope, scopeId: string, project: string): ISecretSource[] =>
       this.deps.store.list(scope, scopeId, project).map((item) => ({ name: item.name, scope, scopeId, project }))
-    const agent = agentId ? named('agent', agentId, ORIGIN_PROJECT) : []
-    const loaded = (sessionId ? (this.loaded.get(sessionId) ?? []) : []).map((item) => named(item.kind, item.id, this.projectFor(item.id, agentId)))
+    const agent = agentId ? named('agent', agentId, this.agentProjectFor(agentId, conversationProject)) : []
+    const loaded = (sessionId ? (this.loaded.get(sessionId) ?? []) : []).map((item) => named(item.kind, item.id, this.projectFor(item.id, agentId, conversationProject)))
     return effectiveSources(agent, loaded)
   }
 
@@ -148,8 +156,8 @@ export class ResourceSecretsService {
    * ⛔ O AMBIENTE SECRETO de um processo: os valores das variáveis que valem agora. O que sai daqui entra na máscara da
    * conversa ANTES de chegar ao processo — a saída dele já nasce mascarada.
    */
-  envFor(agentId: string | undefined, sessionId: string | undefined): ISecretEnv {
-    const sources = this.sources(agentId, sessionId)
+  envFor(agentId: string | undefined, sessionId: string | undefined, conversationProject?: string): ISecretEnv {
+    const sources = this.sources(agentId, sessionId, conversationProject)
     const env: Record<string, string> = {}
     const known: IKnownSecret[] = []
     for (const source of sources) {
@@ -166,17 +174,30 @@ export class ResourceSecretsService {
    * ⛔ De quem são os valores de um recurso para este agente: agente do projeto dono (ou recurso global) usa os da origem;
    * agente de OUTRO projeto (que recebeu o recurso por compartilhamento) usa os do projeto dele — nunca os da origem.
    */
-  private projectFor(resourceId: string, agentId: string | undefined): string {
+  private projectFor(resourceId: string, agentId: string | undefined, conversationProject?: string): string {
     const owner = this.deps.resourceProject?.(resourceId)
-    const mine = agentId ? this.deps.agentProject?.(agentId) : undefined
+    // ⛔ O projeto da CONVERSA vence o do agente: o agente compartilhado, numa conversa do projeto que o recebe, usa os valores dele.
+    const mine = conversationProject || (agentId ? this.deps.agentProject?.(agentId) : undefined)
     return owner && mine && owner !== mine ? mine : ORIGIN_PROJECT
   }
 
+  /**
+   * ⛔ De quem são os valores do AGENTE: agente de projeto numa conversa de OUTRO projeto (o que recebeu o agente por
+   * compartilhamento) usa os valores do projeto da conversa — nunca os da origem. Agente global e conversa na origem: a origem.
+   */
+  private agentProjectFor(agentId: string, conversationProject?: string): string {
+    const mine = this.deps.agentProject?.(agentId)
+    return mine && conversationProject && conversationProject !== mine ? conversationProject : ORIGIN_PROJECT
+  }
+
   /** O que o prompt diz ao agente: os nomes dele e os das skills e commands que ele pode carregar. Nunca o valor. */
-  ambientFor(agentId: string, usable: ReadonlyArray<{ kind: 'skill' | 'command'; id: string }>): IAmbientSecrets | undefined {
-    const agent = this.deps.store.list('agent', agentId, ORIGIN_PROJECT).map((item) => item.name)
+  ambientFor(agentId: string, usable: ReadonlyArray<{ kind: 'skill' | 'command'; id: string }>, conversationProject?: string): IAmbientSecrets | undefined {
+    const agent = this.deps.store.list('agent', agentId, this.agentProjectFor(agentId, conversationProject)).map((item) => item.name)
     const resources = usable
-      .map((resource) => ({ ...resource, names: this.deps.store.list(resource.kind, resource.id, this.projectFor(resource.id, agentId)).map((item) => item.name) }))
+      .map((resource) => ({
+        ...resource,
+        names: this.deps.store.list(resource.kind, resource.id, this.projectFor(resource.id, agentId, conversationProject)).map((item) => item.name),
+      }))
       .filter((resource) => resource.names.length)
     return agent.length || resources.length ? { agent, resources } : undefined
   }

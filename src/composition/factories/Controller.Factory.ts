@@ -192,6 +192,7 @@ export function makePermissionRequestsController(): PermissionRequestsController
       return makeGuidance().resource(id).projectId ?? null
     },
     resourceSharedWithOf: (id) => (makeGuidance().resourceKindOf(id) ? makeGuidance().resource(id).sharedWith : undefined),
+    agentSharedWithOf: (id) => makeAgents().get(id)?.sharedWith,
   })
 }
 

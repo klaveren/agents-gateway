@@ -359,7 +359,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_agents',
     {
       description:
-        'List the agents: providers, each with its models (with price) and reasoning levels per model, lanes and tools, and `projectId` (absent = global). With `projectId`, only that project agents plus the global ones. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
+        'List the agents: providers, each with its models (with price) and reasoning levels per model, lanes and tools, and `projectId` (absent = global). With `projectId`, only that project agents, the ones other projects shared with it (`sharedFrom`: talk only, the owner project edits) and the global ones. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
       inputSchema: { projectId: z.string().optional() },
       annotations: { readOnlyHint: true },
     },
@@ -1289,6 +1289,16 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'delete_resource',
     { description: 'Delete a skill or a command; agents lose it at once. Confirm with the person first.', inputSchema: { id: z.string() } },
     async ({ id }) => reply(await api('DELETE', `/resources/${encodeURIComponent(id)}`)),
+  )
+
+  server.registerTool(
+    'share_agent',
+    {
+      description:
+        'Share an agent with other projects, whose members then TALK to it (the owner project keeps editing it; the conversation there runs in the receiving project, and the agent secrets stay out: each project sets its own values). Replaces the WHOLE list of projects; [] stops sharing. The person must administer the owner project and each project added. Not available to an agent conversation. Confirm with the person first.',
+      inputSchema: { id: z.string().describe('From list_agents'), projects: z.array(z.string()).describe('Project ids; the full list, [] = none') },
+    },
+    async ({ id, projects }) => reply(await api('PUT', `/agents/${encodeURIComponent(id)}/shares`, { body: { projects } })),
   )
 
   server.registerTool(

@@ -7,6 +7,7 @@ import { describeMatch, IImportProblemMatch, withoutProblem } from '@domain/mode
 import { diagnosticsOn, IAgent, IAgentTarget, IAgentTrigger } from '@domain/models/Agent.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
 import { cleanRules, IPermissionRule, permissionIssues } from '@domain/Permission.Policy'
+import { AGENT_KIND, normalizeShares, shareIssues } from '@domain/Share.Policy'
 import { CatalogHistoryHook, ICatalogChange } from './CatalogHistory.Service'
 
 /** Um agente na lista da tela, com quem mexeu por último. */
@@ -24,6 +25,11 @@ export interface ISaveAgentOptions {
   creating: boolean
   /** Por onde veio, a nota e as ampliações aceitas — vão na revisão (o `patch_agent` e a aprovação na tela). */
   change?: Omit<ICatalogChange, 'by'>
+  /**
+   * ⛔ O `sharedWith` do agente NÃO vem do formulário nem do `save_agent`: só `share` o muda. `replace` (o restaurar e o
+   * importar do catálogo, que já passaram pela trava de quem administra cada destino) grava o do documento.
+   */
+  shares?: 'replace'
 }
 
 /**
@@ -57,6 +63,16 @@ export class AgentCatalog implements IAgentDirectory {
      */
     private readonly core: () => IAgent[] = () => [],
   ) {}
+
+  /**
+   * O compartilhamento (ver `Share.Policy`): o projeto existe e, a cada troca da lista (compartilhar, parar, mudar de dono,
+   * apagar o agente), quem saiu perde os valores secretos que configurou — apagados, não escondidos.
+   */
+  useShares(hooks: { exists: (projectId: string) => boolean; changed: (agentId: string, projects: readonly string[]) => void }): void {
+    this.shareHooks = hooks
+  }
+
+  private shareHooks?: { exists: (projectId: string) => boolean; changed: (agentId: string, projects: readonly string[]) => void }
 
   /** O depósito e as pastas dos arquivos de recurso (ver `ResourceFile.Model`). Sem ele, agente com arquivo é recusado. */
   useFiles(files: IResourceFilesPort): void {
@@ -154,8 +170,15 @@ export class AgentCatalog implements IAgentDirectory {
     if (issues.length) throw new InvalidAgentError(issues)
 
     const before = this.repository.list().find((stored) => stored.id === agent.id)
+    // ⛔ A lista de compartilhamento: a do registro (o corpo não a traz), ajustada se o agente mudou de dono (o projeto novo
+    // sai dela; virou global, a lista some).
+    const wanted = options.shares === 'replace' ? normalizeShares(agent.sharedWith ?? []) : (before?.sharedWith ?? [])
+    const shared = agent.projectId ? wanted.filter((project) => project !== agent.projectId) : []
+    delete agent.sharedWith
+    if (shared.length) agent.sharedWith = shared
     const saved = this.repository.save(agent.files?.length ? { ...agent, files: sortFiles(agent.files) } : agent, options.by)
     this.placeFiles(before ? toAgent(before) : undefined, saved)
+    if (!sameShares(before?.sharedWith, shared)) this.shareHooks?.changed(agent.id, shared)
     this.history.record([{ kind: 'agent', id: agent.id }], { ...options.change, by: options.by })
     return saved
   }
@@ -174,6 +197,40 @@ export class AgentCatalog implements IAgentDirectory {
     const kept = new Set(next.map((file) => file.path))
     const removed = [...new Set([...(before?.files ?? []).map((file) => file.path), ...base])].filter((path) => !kept.has(path))
     this.files.writeAgent(after.id, after.projectId, next, removed)
+  }
+
+  /**
+   * ⛔ Troca a lista INTEIRA de projetos com que o agente é compartilhado (ver `Share.Policy`). Quem pode (admin da origem e
+   * de cada destino novo) o controller decide; aqui, o que o agente aceita. O resto dele fica como está. Vai para o histórico.
+   */
+  share(id: string, projects: readonly string[], by: string): IStoredAgent {
+    const stored = this.repository.list().find((agent) => agent.id === id)
+    if (!stored) throw new AgentNotFoundError(id)
+    const next = normalizeShares(projects)
+    const issues = this.shareIssuesOf(toAgent(stored), next)
+    if (issues.length) throw new InvalidAgentError(issues)
+    const agent: IAgent = { ...toAgent(stored) }
+    delete agent.sharedWith
+    const saved = this.repository.save(next.length ? { ...agent, sharedWith: next } : agent, by)
+    this.history.record([{ kind: 'agent', id }], { by })
+    this.shareHooks?.changed(id, next)
+    return saved
+  }
+
+  /** O que impede compartilhar o agente com estes projetos (vazio = pode). */
+  shareIssuesOf(agent: Pick<IAgent, 'projectId'>, projects: readonly string[]): Array<{ field: string; message: string }> {
+    return shareIssues({ kind: AGENT_KIND, ...(agent.projectId ? { projectId: agent.projectId } : {}) }, projects, (id) => this.shareHooks?.exists(id) ?? true)
+  }
+
+  /** O projeto foi apagado: sai das listas de compartilhamento dos agentes (um projeto novo com o mesmo id não herda). */
+  removeProject(projectId: string, by: string): void {
+    for (const stored of this.repository.list().filter((agent) => agent.sharedWith?.includes(projectId))) {
+      const rest = (stored.sharedWith ?? []).filter((id) => id !== projectId)
+      const agent: IAgent = { ...toAgent(stored) }
+      delete agent.sharedWith
+      this.repository.save(rest.length ? { ...agent, sharedWith: rest } : agent, by)
+      this.history.record([{ kind: 'agent', id: stored.id }], { by, source: 'migration' })
+    }
   }
 
   /**
@@ -272,6 +329,8 @@ export class AgentCatalog implements IAgentDirectory {
     const stored = this.repository.list().find((agent) => agent.id === id)
     if (!this.repository.delete(id)) throw new AgentNotFoundError(id)
     if (stored) this.files?.remove('agent', id, stored.projectId)
+    // ⛔ Apagado: os valores secretos que os projetos que recebiam configuraram vão junto.
+    if (stored?.sharedWith?.length) this.shareHooks?.changed(id, [])
     this.history.record([{ kind: 'agent', id }], { by })
   }
 }
@@ -295,6 +354,7 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.role ? { role: stored.role } : {}),
     ...(stored.adminOnly ? { adminOnly: true } : {}),
     ...(stored.projectId ? { projectId: stored.projectId } : {}),
+    ...(stored.sharedWith?.length ? { sharedWith: [...stored.sharedWith] } : {}),
     ...(stored.tags?.length ? { tags: [...stored.tags] } : {}),
     ...(stored.permissions?.length ? { permissions: stored.permissions } : {}),
     ...(stored.terminal && (stored.terminal.timeoutSeconds || stored.terminal.maxOutputChars) ? { terminal: { ...stored.terminal } } : {}),
@@ -305,4 +365,10 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.importIssues?.length ? { importIssues: stored.importIssues.map((issue) => ({ ...issue })) } : {}),
     ...(stored.modelGroup ? { modelGroup: stored.modelGroup } : {}),
   }
+}
+
+/** A mesma lista de projetos, sem contar a ordem (ausente = vazia). */
+function sameShares(current: readonly string[] | undefined, next: readonly string[]): boolean {
+  const have = [...(current ?? [])].sort()
+  return have.length === next.length && [...next].sort().every((project, index) => project === have[index])
 }

@@ -117,6 +117,7 @@ const fullAgent: Required<IAgent> = {
   role: 'subagent',
   adminOnly: true,
   projectId: 'alfa',
+  sharedWith: ['beta', 'gama'],
   permissions: [
     { category: 'terminal', pattern: 'git *', decision: 'allow' },
     { category: 'read', pattern: 'docs/**', decision: 'deny', note: 'não' },

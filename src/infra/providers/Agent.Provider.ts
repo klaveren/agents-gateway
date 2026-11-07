@@ -1,4 +1,5 @@
 import { freshAnswers, IConversationPanel, PANEL_TOOL, panelMarkdown, panelTurnNote } from '@domain/models/ConversationPanel.Model'
+import { reaches, runsUnder } from '@domain/Share.Policy'
 
 /** O painel para o provider: ler e marcar como vistas as respostas que a pessoa deu nele. */
 export interface IPanelAccess {
@@ -166,6 +167,8 @@ export class AgentProvider implements IAgentProvider {
 
     // Corpo → configuração → padrão do registry. O corpo só vence quando alguém escolheu de propósito.
     const agent = this.getAgent(input.agentId || settings.agentId)
+    // ⛔ O agente de um projeto só conversa num OUTRO projeto se foi compartilhado com ele (parou de compartilhar = sem acesso).
+    if (!reaches(agent, projectOf(input.metadata))) throw new AgentNotFoundError(agent.id)
     const choice = this.chooseTarget(agent, input, settings)
     const protocol = this.protocolOf(choice.provider)
     const mode = resolveSessionMode(agent, input, lanesOf(protocol))
@@ -208,6 +211,8 @@ export class AgentProvider implements IAgentProvider {
   async *sendMessage(sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
     const record = this.requireSession(sessionId)
     const conversationProject = projectOf(record.metadata)
+    // ⛔ A conversa antiga de um projeto com um agente que ele já não recebe fica no histórico, mas não continua.
+    if (!reaches(this.getAgent(record.agentId), conversationProject)) throw new AgentNotFoundError(record.agentId)
     let { agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode)
     // ⚖️ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: a conversa SEGUE no modelo que
     // o agente escolheria hoje (o grupo de modelos, as configurações, o padrão), com aviso no turno. Antes era erro, e a
@@ -311,7 +316,7 @@ export class AgentProvider implements IAgentProvider {
         ...(workFolder ? { workFolder } : {}),
       }
       // ⛔ As variáveis secretas do turno (ver `ResourceSecret.Model`), para os terminais nativos: já entram na máscara.
-      const secretEnv = this.secrets?.envFor(record.agentId, sessionId).env
+      const secretEnv = this.secrets?.envFor(record.agentId, sessionId, conversationProject).env
       if (secretEnv && Object.keys(secretEnv).length) context.secretEnv = secretEnv
 
       // O passo da conversa ficou de lado em outra conversa (cota, modelo fora): este turno já começa no próximo do grupo.
@@ -590,23 +595,32 @@ export class AgentProvider implements IAgentProvider {
   private panels?: IPanelAccess
 
   /** As variáveis secretas (ver `ResourceSecrets.Service`): o ambiente do turno e os nomes do prompt. Ligadas na composição. */
-  useSecrets(secrets: { envFor(agentId: string, sessionId: string): { env: Record<string, string> }; ambientFor(agent: IAgent): IAmbientSecrets | undefined }): void {
+  useSecrets(secrets: {
+    envFor(agentId: string, sessionId: string, conversationProject?: string): { env: Record<string, string> }
+    ambientFor(agent: IAgent, conversationProject?: string): IAmbientSecrets | undefined
+  }): void {
     this.secrets = secrets
   }
 
-  private secrets?: { envFor(agentId: string, sessionId: string): { env: Record<string, string> }; ambientFor(agent: IAgent): IAmbientSecrets | undefined }
+  private secrets?: {
+    envFor(agentId: string, sessionId: string, conversationProject?: string): { env: Record<string, string> }
+    ambientFor(agent: IAgent, conversationProject?: string): IAmbientSecrets | undefined
+  }
 
   private agentFiles?: (agent: IAgent) => string | undefined
 
   /** A pasta privada no "## Ambiente", só para o agente que a alcança (Ler, Escrever arquivos ou Terminal). */
-  private agentFolderOf(agent: IAgent): { files?: { dir: string; write: boolean } } {
+  private agentFolderOf(agent: IAgent, conversationProject?: string): { files?: { dir: string; write: boolean } } {
     const dir = this.agentFiles?.(agent)
     const access = agentFolderAccess(agent.allowedTools)
-    return dir && access.read ? { files: { dir, write: access.write } } : {}
+    // ⛔ Agente compartilhado numa conversa de outro projeto: a pasta dele é só leitura.
+    return dir && access.read ? { files: { dir, write: access.write && runsUnder(agent, conversationProject) === agent.projectId } } : {}
   }
 
   private ambientOf(agent: IAgent, metadata: Record<string, unknown> | undefined): IAmbient {
     const projectId = projectOf(metadata) ?? agent.projectId
+    // ⛔ Agente compartilhado numa conversa de outro projeto: nada da origem (a pasta, o "é o dele") — como o global.
+    const home = runsUnder(agent, projectOf(metadata))
     let folder: IContextWorkFolder | undefined
     try {
       folder = workFolderOf(metadata, projectOf(metadata))
@@ -618,12 +632,12 @@ export class AgentProvider implements IAgentProvider {
     const branch = folder?.repository ? currentBranch(folder) : undefined
     return {
       agentId: agent.id,
-      ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: agent.projectId === projectId } } : {}),
+      ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: home === projectId } } : {}),
       ...(folder?.repository ? { repository: { name: folder.repository, ...(folder.worktree ? { worktree: folder.worktree } : {}), ...(branch ? { branch } : {}) } } : {}),
-      ...(folder ? { directory: folder.dir } : agent.projectId ? { directory: projectWorkspacePath(agent.projectId) } : {}),
-      ...this.agentFolderOf(agent),
+      ...(folder ? { directory: folder.dir } : home ? { directory: projectWorkspacePath(home) } : {}),
+      ...this.agentFolderOf(agent, projectOf(metadata)),
       ...(hasTerminal(agent.allowedTools) ? { terminal: true } : {}),
-      ...(this.secrets?.ambientFor(agent) ? { secrets: this.secrets.ambientFor(agent)! } : {}),
+      ...(this.secrets?.ambientFor(agent, projectOf(metadata)) ? { secrets: this.secrets.ambientFor(agent, projectOf(metadata))! } : {}),
       ...(this.panels ? { panel: true } : {}),
     }
   }
@@ -635,7 +649,11 @@ export class AgentProvider implements IAgentProvider {
   private prepare(agent: IAgent, projectId: string | undefined, providerId: string, protocol: EProvider, mode: EMode): { agent: IAgent; unavailable: string[] } {
     const official = this.providers?.get(providerId)?.official ?? Object.values(EProvider).includes(providerId as EProvider)
     const { allowedTools, unavailable } = resolveCapabilities(this.withDocs(agent, projectId).allowedTools, { protocol, official, mode })
-    return { agent: { ...agent, allowedTools }, unavailable }
+    // ⛔ Agente compartilhado numa conversa do projeto que o recebe: para o adapter ele é como o GLOBAL naquele projeto (a pasta,
+    // o cerco, as regras, as contas e os MCPs são os da conversa); as skills, os commands e as specs dele seguem os da origem
+    // (o guidance lê o agente do cadastro, não este).
+    const { sharedWith: _shared, ...plain } = agent
+    return { agent: runsUnder(agent, projectId) === agent.projectId ? { ...agent, allowedTools } : { ...plain, projectId: undefined, allowedTools }, unavailable }
   }
 
   /**

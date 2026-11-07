@@ -136,7 +136,10 @@ export class LedgerService {
     if (!target || !own) return false
     if (target.adminOnly && !own.adminOnly) return false
     if (!target.projectId) return true
-    return target.projectId === reader.conversationProjectId || target.projectId === own.projectId
+    // ⛔ O agente COMPARTILHADO, numa conversa de outro projeto, não lê os ledgers do projeto de origem (só os da conversa): o
+    // projeto dele não conta quando a conversa é de outro.
+    const home = reader.conversationProjectId && reader.conversationProjectId !== own.projectId ? undefined : own.projectId
+    return target.projectId === reader.conversationProjectId || (!!home && target.projectId === home)
   }
 
   index(agentId: string): ILedgerIndex {

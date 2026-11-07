@@ -13,7 +13,9 @@ import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepositor
 import { targetUnavailable } from '@domain/Agent.Availability'
 import { makeModelCatalog } from './Catalog.Factory'
 import { makeCatalogHistory } from './CatalogHistory.Factory'
+import { makeProjects } from './Projects.Factory'
 import { makeProviders } from './Providers.Factory'
+import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeResourceFiles } from './ResourceFiles.Factory'
 
@@ -54,6 +56,8 @@ export function makeAgents(): AgentCatalog {
   )
   catalog.history.use(() => makeCatalogHistory())
   catalog.useFiles(makeResourceFiles())
+  // ⛔ Toda troca do `sharedWith` (rota, restaurar, import, mudar de dono, apagar) apaga os valores secretos de quem saiu.
+  catalog.useShares({ exists: (projectId) => makeProjects().exists(projectId), changed: (agentId, projects) => makeResourceSecrets().keepAgentProjects(agentId, projects) })
   instance = catalog
   return catalog
 }

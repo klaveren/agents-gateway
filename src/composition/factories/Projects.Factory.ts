@@ -43,6 +43,8 @@ function build() {
       remove: (id) => {
         removeProjectWorkspace(id)
         makeGuidance().removeProject(id)
+        // ⛔ O projeto apagado sai da lista de compartilhamento dos agentes (os valores secretos dele saem em `removeProject` abaixo).
+        makeAgents().removeProject(id, 'sistema')
         makeResourceSecrets().removeProject(id)
         makePermissions().removeProject(id)
         makeProjectAccounts().removeProject(id)
