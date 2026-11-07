@@ -66,7 +66,7 @@ describe('Permission.Policy', () => {
   it('⚖️ segredo de verdade negado; o MODELO (`.env.example`…) e o código `secrets.js` não', () => {
     const agent = [rule('read', '**'), rule('write', '**')]
     const read = (value: string) => decide({ category: 'read', value }, { agent })
-    for (const path of ['.env', '.env.local', 'apps/.env.production', 'conf/secrets.json', 'secrets.yaml', 'secrets.env', 'k.key'])
+    for (const path of ['.env', '.env.local', 'apps/.env.production', 'conf/secrets.json', 'secrets.yaml', 'secrets.env', 'k.key', 'repositories/logiccus/.credentials/automation/agents-gateway.env', 'deploy/prod.env', 'x/.credentials/token.txt'])
       assert.deepStrictEqual([read(path).allowed, read(path).layer], [false, 'system'], path)
     for (const path of ['.env.example', 'apps/.env.local.example', '.env.sample', 'x/.env.template', '.env.dist', 'lib/secrets.js', 'bin/secrets.sh', 'secrets.ts'])
       assert.strictEqual(read(path).allowed, true, path)
