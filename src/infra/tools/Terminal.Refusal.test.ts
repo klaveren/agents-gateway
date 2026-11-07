@@ -129,7 +129,7 @@ describe('terminal — /tmp privado do cerco e recusas com a saída', () => {
 
   it('⛔ projeto que mora dentro de /tmp: o /tmp não é só do comando, vale a regra', async () => {
     const refusal = await terminalRefusal('echo x > ../fora.txt', '/tmp/proj/root', checker(allow), {}, undefined, { privateTmp: true })
-    assert.match(String(refusal), /Not permitted/)
+    assert.match(String(refusal), /nenhuma regra de escrita permite/)
   })
 
   it('no cerco, escrever e ler `/tmp/**` e `/var/tmp/**` passa sem regra', async () => {
