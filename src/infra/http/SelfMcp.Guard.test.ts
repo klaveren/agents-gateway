@@ -92,6 +92,13 @@ describe('SelfMcp.Guard', () => {
     assert.strictEqual(written.length, 4)
   })
 
+  it('⛔ agente não edita as sequências de modelos (PUT /settings), nem o Atlas', async () => {
+    const { api, written } = fakeApi()
+    for (const scope of [{ projectId: 'P', unrestricted: false }, { unrestricted: true }, { unrestricted: false }])
+      assert.ok(refused(await scopedWrites(api, scope)('PUT', '/settings', { body: { modelGroups: [] } })))
+    assert.deepStrictEqual(written, [])
+  })
+
   it('sem projeto e sem ser administrador do gateway, o agente não escreve em lugar nenhum', async () => {
     const { api, written } = fakeApi()
     const guarded = scopedWrites(api, { unrestricted: false })

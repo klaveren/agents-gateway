@@ -181,6 +181,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'attach_resource_files',
       'delete_doc',
       'delete_hook',
+      'delete_model_group',
       'delete_resource',
       'delete_rule',
       'delete_schedule',
@@ -193,6 +194,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'save_agent',
       'save_doc',
       'save_hook',
+      'save_model_group',
       'save_permission_rules',
       'save_project',
       'save_resource',
@@ -234,6 +236,8 @@ describe('MCP do próprio gateway (integração)', () => {
       'remove_package',
       'set_model_enabled',
       'set_model_price',
+      'save_model_group',
+      'delete_model_group',
     ])
       assert.ok(!listed.includes(tool), tool)
     assert.ok((await names(admin)).includes('list_providers'))
@@ -251,6 +255,47 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.ok(Array.isArray(tools.local) && Array.isArray(tools.native) && Array.isArray(tools.mcp))
     assert.ok(tools.capabilities.some((item: { id: string }) => item.id === 'cap:terminal'))
     assert.ok(!tools.local.some((tool: { name: string }) => tool.name === 'run_bash'))
+  })
+
+  it('save_model_group cria e troca UMA sequência sem apagar as outras; delete_model_group recusa a padrão e a que não existe', async () => {
+    const client = await connect(admin)
+    const step = { provider: 'claude', model: 'claude-sonnet-5' }
+    const ok = async (args: Record<string, unknown>) => json(await client.callTool({ name: 'save_model_group', arguments: args }))
+    await ok({ id: 'grupo-a', name: 'A', steps: [step] })
+    const saved = await ok({ id: 'grupo-b', name: 'B', steps: [step, step], switchOn: ['quota'], cooldownMinutes: 30 })
+    assert.deepStrictEqual(
+      saved.modelGroups.map((group: { id: string }) => group.id),
+      ['grupo-a', 'grupo-b'],
+    )
+    await ok({ id: 'grupo-a', name: 'A2', steps: [step] })
+    const listed = json(await client.callTool({ name: 'list_model_groups', arguments: {} }))
+    assert.deepStrictEqual(
+      listed.modelGroups.map((group: { id: string; name: string }) => [group.id, group.name]),
+      [
+        ['grupo-a', 'A2'],
+        ['grupo-b', 'B'],
+      ],
+    )
+    assert.deepStrictEqual([listed.modelGroups[1].switchOn, listed.modelGroups[1].cooldownMinutes], [['quota'], 30])
+
+    // A validação da tela vale: provider que não existe não entra, e nada é gravado.
+    const bad = await client.callTool({ name: 'save_model_group', arguments: { id: 'grupo-c', name: 'C', steps: [{ provider: 'nao-existe', model: 'claude-sonnet-5' }] } })
+    assert.strictEqual(bad.isError, true)
+    assert.strictEqual(json(await client.callTool({ name: 'list_model_groups', arguments: {} })).modelGroups.length, 2)
+
+    // Padrão não sai; a que não existe é recusada; a livre sai.
+    await call('/settings', { method: 'PUT', token: admin, body: { defaultModelGroup: 'grupo-a' } })
+    assert.strictEqual((await client.callTool({ name: 'delete_model_group', arguments: { id: 'grupo-a' } })).isError, true)
+    assert.strictEqual((await client.callTool({ name: 'delete_model_group', arguments: { id: 'zzz-nao' } })).isError, true)
+    const left = json(await client.callTool({ name: 'delete_model_group', arguments: { id: 'grupo-b' } }))
+    assert.deepStrictEqual(
+      left.modelGroups.map((group: { id: string }) => group.id),
+      ['grupo-a'],
+    )
+
+    // Quem não é admin do gateway nem vê a ferramenta.
+    assert.ok(!(await names(member)).includes('save_model_group'))
+    await call('/settings', { method: 'PUT', token: admin, body: { defaultModelGroup: null, modelGroups: null } })
   })
 
   it('list_providers e list_models: só o ativo por padrão; includeDisabled mostra o resto', async () => {
