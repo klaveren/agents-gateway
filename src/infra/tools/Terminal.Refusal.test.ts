@@ -127,6 +127,11 @@ describe('terminal — /tmp privado do cerco e recusas com a saída', () => {
   const allow = [rule('tail *', 'allow'), rule('cmd *', 'allow'), rule('cat *', 'allow'), rule('echo *', 'allow')]
   const inSandbox = (command: string, rules = allow) => terminalRefusal(command, '/w', checker(rules), {}, undefined, { privateTmp: true })
 
+  it('⛔ projeto que mora dentro de /tmp: o /tmp não é só do comando, vale a regra', async () => {
+    const refusal = await terminalRefusal('echo x > ../fora.txt', '/tmp/proj/root', checker(allow), {}, undefined, { privateTmp: true })
+    assert.match(String(refusal), /nenhuma regra de escrita permite/)
+  })
+
   it('no cerco, escrever e ler `/tmp/**` e `/var/tmp/**` passa sem regra', async () => {
     assert.strictEqual(await inSandbox('cmd > /tmp/x.log; tail /tmp/x.log'), undefined)
     assert.strictEqual(await inSandbox('cmd >> /var/tmp/a/x.log 2>&1'), undefined)
