@@ -191,6 +191,15 @@ describe('terminal — $TMPDIR do cerco e variável de laço literal', () => {
     assert.match((await run('node x.mjs > $TMPDIR/val.txt', [])) ?? '', /nenhuma regra de escrita permite/)
   })
 
+  it('no cerco, o rascunho (`$TMPDIR`, `$HOME`) passa sem regra; fora dele, não', async () => {
+    const inCerco = (command: string) =>
+      terminalRefusal(command, '/w', checker(base), {}, undefined, { variables: { TMPDIR: '/w/.tmp', HOME: '/w/.home' }, scratch: ['/w/.tmp', '/w/.home'] })
+    assert.strictEqual(await inCerco('node x.mjs > $TMPDIR/val.txt 2>&1'), undefined)
+    assert.strictEqual(await inCerco('echo x > .home/a.txt'), undefined)
+    assert.match((await inCerco('echo x > .tmpx/a.txt')) ?? '', /nenhuma regra de escrita permite/)
+    assert.match((await inCerco('echo x > ../fora.txt')) ?? '', /nenhuma regra de escrita permite/)
+  })
+
   it('⛔ TMPDIR reatribuído no script, outra variável e expansão com operador seguem dinâmicas', async () => {
     const rules = [wr('**')]
     for (const command of [
