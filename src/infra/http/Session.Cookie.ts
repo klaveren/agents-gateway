@@ -114,9 +114,16 @@ export function cookieCredential(): RequestHandler {
  * `X-CSRF` — valor que só quem tem o token da sessão calcula.
  */
 function browserProof(req: Request, token: string): boolean {
-  if (!sameOrigin(req) || req.headers['sec-fetch-site'] !== 'same-origin') return false
+  if (!sameOrigin(req)) return false
+  // ⚠️ Fora de HTTPS o navegador NÃO manda os `Sec-Fetch-*` (só a origem confiável os recebe): com a tela da .4 em http,
+  // ninguém aprovava pedido de permissão desde 06/11. Lá, a prova é a origem e o CSRF do cookie (que agente nenhum tem);
+  // em HTTPS, ou quando eles vêm, os `Sec-Fetch-*` valem como antes.
+  const site = req.headers['sec-fetch-site']
   const mode = req.headers['sec-fetch-mode']
-  if (mode !== 'cors' && mode !== 'same-origin') return false
+  if (secure(req) || site !== undefined || mode !== undefined) {
+    if (site !== 'same-origin') return false
+    if (mode !== 'cors' && mode !== 'same-origin') return false
+  }
   const sent = req.headers[CSRF_HEADER]
   if (typeof sent !== 'string') return false
   const expected = Buffer.from(csrfOf(token))

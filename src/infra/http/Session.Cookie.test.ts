@@ -7,8 +7,8 @@ import { cookieCredential, csrfCookieName, csrfOf, sessionCookieName, setSession
 const TOKEN = 'header.payload.assinatura'
 
 /** Passa um pedido pelo `cookieCredential` e devolve o que a rota enxergaria. */
-function run(headers: Record<string, string>, method = 'POST') {
-  const req = { method, headers: { host: 'gw.test', cookie: `${sessionCookieName()}=${TOKEN}`, ...headers } } as unknown as Request
+function run(headers: Record<string, string>, method = 'POST', secure = true) {
+  const req = { method, secure, headers: { host: 'gw.test', cookie: `${sessionCookieName()}=${TOKEN}`, ...headers } } as unknown as Request
   const appended: string[] = []
   const res = { locals: {}, append: (_name: string, value: string) => appended.push(value), status: () => res, json: () => res } as unknown as Response
   let passed = false
@@ -26,10 +26,22 @@ describe('Session.Cookie: o "só pela tela"', () => {
 
   it('⛔ o cookie forjado à mão (curl: Origin = Host) não é a tela: falta a prova do navegador', () => {
     assert.strictEqual(run({ origin: 'http://gw.test' }).onScreen, false)
-    assert.strictEqual(run({ origin: 'http://gw.test', 'x-csrf': csrfOf(TOKEN) }).onScreen, false, 'sem Sec-Fetch')
+    assert.strictEqual(run({ origin: 'http://gw.test', 'x-csrf': csrfOf(TOKEN) }).onScreen, false, 'HTTPS sem Sec-Fetch')
     assert.strictEqual(run({ ...browser, 'sec-fetch-site': 'cross-site' }).onScreen, false)
     assert.strictEqual(run({ ...browser, 'sec-fetch-site': 'none' }).onScreen, false)
     assert.strictEqual(run({ ...browser, 'sec-fetch-mode': 'navigate' }).onScreen, false)
+  })
+
+  it('em HTTP o navegador não manda Sec-Fetch: valem a origem e o CSRF do cookie (a tela da .4 não aprovava nada)', () => {
+    const { 'sec-fetch-site': _site, 'sec-fetch-mode': _mode, ...plain } = browser
+    void _site
+    void _mode
+    assert.strictEqual(run(plain, 'POST', false).onScreen, true)
+    assert.strictEqual(run({ origin: 'http://gw.test' }, 'POST', false).onScreen, false, 'sem o CSRF')
+    assert.strictEqual(run({ ...plain, 'x-csrf': csrfOf('outro.token.qualquer') }, 'POST', false).onScreen, false)
+    assert.strictEqual(run({ ...plain, origin: 'http://outro.test' }, 'POST', false).onScreen, false)
+    // Os Sec-Fetch que vierem seguem valendo, em HTTP também.
+    assert.strictEqual(run({ ...browser, 'sec-fetch-site': 'cross-site' }, 'POST', false).onScreen, false)
   })
 
   it('⛔ sem o CSRF certo (derivado do token da sessão) também não', () => {
