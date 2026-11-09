@@ -483,11 +483,7 @@ import { computed, onMounted, ref, watch } from 'vue'
             <label class="field">
               Identificador
               <input v-model="form.id" required pattern="[a-z0-9][a-z0-9-]{1,31}" class="input font-mono" placeholder="crm" />
-              <small class="hint">
-                Nome interno usado nos agentes:
-                <code>mcp:{{ form.id || 'id' }}/…</code>
-                . Não muda depois.
-              </small>
+              <small class="hint">Nome interno usado nos agentes: <code>mcp:{{ form.id || 'id' }}/…</code>. Não muda depois.</small>
               <small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small>
             </label>
             <label class="field">
@@ -505,7 +501,7 @@ import { computed, onMounted, ref, watch } from 'vue'
               </small>
               <small v-for="m in formIssues.projectId" :key="m" class="error">{{ m }}</small>
             </label>
-            <TagsInput v-model="form.tags" label="Tags" :suggestions="knownTags" :issues="formIssues.tags" class="sm:col-span-2" />
+            <TagsInput v-model="form.tags" label="Tags" :suggestions="knownTags" :issues="formIssues.tags" />
             <label v-if="form.kind === 'remote'" class="field sm:col-span-2">
               URL
               <input v-model="form.url" required class="input font-mono" placeholder="https://mcp.exemplo.com/mcp" />
