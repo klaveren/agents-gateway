@@ -14,11 +14,18 @@
   const conversations = useConversationsStore()
   const projects = useProjectsStore()
 
-  const section = computed(() => (String(route.name ?? '').startsWith('agent') ? 'agents' : 'inbox'))
+  const section = computed(() => {
+    const name = String(route.name ?? '')
+    if (name.startsWith('agent')) return 'agents'
+    if (name.startsWith('provider')) return 'providers'
+    return 'inbox'
+  })
 
-  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'agents'; badge: number }>>(() => [
+  // Agentes e Modelos para o admin do gateway também: no gateway que acabou de nascer não há projeto (os agentes são globais).
+  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'agents' | 'key'; badge: number }>>(() => [
     { to: '/', key: 'inbox', label: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
-    ...(projects.manages ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
+    ...(projects.manages || auth.isAdmin ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
+    ...(auth.isAdmin ? [{ to: '/models', key: 'providers', label: 'Modelos', icon: 'key' as const, badge: 0 }] : []),
   ])
 </script>
 
