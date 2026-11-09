@@ -416,6 +416,11 @@ class Analyzer {
     }
     if (name.dynamic || name.glob || name.value === '') this.opaque.add('dynamic-command')
     const resolved = args.map(resolve)
+    // `cd $TMPDIR`: a pasta que o cerco dá à variável, para os caminhos relativos seguintes (ver `leadingCd`). Só no `cd`.
+    if (name.value === 'cd' && args.length === 1 && resolved[0].dynamic) {
+      const known = this.values(args[0], false, false)
+      if (known?.length === 1) resolved[0] = { value: known[0], dynamic: false, glob: false }
+    }
     const argv = [name.value, ...resolved.map((a) => a.value)]
     const index = this.commands.length
     this.register(argv, node.text, depth)
