@@ -4648,6 +4648,56 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope(usageSummary(false))) }, '401': failures['401'] },
       },
     },
+    '/audit': {
+      get: {
+        summary:
+          'The audit trail, newest first: every route that changes something (create, save, delete, sign in, share, approve, send a message) and every view of a conversation shared by link — who (the account, and the agent and conversation when an agent called), the action (method and route), the target (route parameters), the status, the duration and the client IP. Never the request body. Gateway administrators only',
+        parameters: [
+          { name: 'since', in: 'query', schema: { type: 'string', format: 'date-time' }, description: 'From this instant (ISO date-time)' },
+          { name: 'until', in: 'query', schema: { type: 'string', format: 'date-time' }, description: 'Before this instant (ISO date-time)' },
+          { name: 'actor', in: 'query', schema: { type: 'string' }, description: 'Part of the id, e-mail, or the e-mail typed at login' },
+          { name: 'action', in: 'query', schema: { type: 'string' }, description: 'Part of the action (`agents`, `DELETE`, `/auth/login`)' },
+          { name: 'failed', in: 'query', schema: { type: 'boolean' }, description: 'Only refused or failed (status >= 400)' },
+          { name: 'before', in: 'query', schema: { type: 'integer' }, description: 'Cursor: the `next` of the previous page' },
+          { name: 'limit', in: 'query', schema: { type: 'integer' }, description: 'Page size (default 50, at most 200)' },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  events: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        id: { type: 'integer' },
+                        at: { type: 'string', format: 'date-time' },
+                        actorId: { type: 'string' },
+                        actorEmail: { type: 'string' },
+                        agentId: { type: 'string' },
+                        conversationId: { type: 'string' },
+                        action: { type: 'string' },
+                        target: { type: 'object', additionalProperties: { type: 'string' } },
+                        status: { type: 'integer' },
+                        durationMs: { type: 'integer' },
+                        ip: { type: 'string' },
+                        detail: { type: 'string', description: 'The e-mail typed at sign-in or setup' },
+                      },
+                    },
+                  },
+                  next: { type: 'integer', description: 'Cursor for the next page (pass as `before`); absent on the last page' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
     '/usage/cap': {
       get: {
         summary:

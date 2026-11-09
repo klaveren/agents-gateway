@@ -16,6 +16,7 @@
     { to: '/mcp', key: 'mcp', label: 'MCPs', hint: 'Servidores de ferramentas', icon: 'plug' },
     { to: '/catalog/history', key: 'catalog-history', label: 'Histórico do catálogo', hint: 'O que mudou, quem mudou, restaurar e reverter lote', icon: 'clock' },
     { to: '/errors', key: 'errors', label: 'Erros', hint: 'Ferramentas e turnos que falharam, por período', icon: 'warn' },
+    { to: '/audit', key: 'audit', label: 'Auditoria', hint: 'Quem fez o quê, quando e de onde', icon: 'shield' },
     { to: '/packages', key: 'packages', label: 'Pacotes', hint: 'Ferramentas do servidor', icon: 'box' },
     { to: '/security/secrets', key: 'security', label: 'Segurança', hint: 'Segredos: o que a máscara esconde da saída das ferramentas', icon: 'key' },
     { to: '/settings', key: 'settings', label: 'Configuração', hint: 'Operação, limites e implantação', icon: 'settings' },
