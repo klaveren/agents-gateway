@@ -27,6 +27,15 @@ describe('AccountsService', () => {
     assert.throws(() => service.setup({ email: 'outro@x.test', name: 'Outro', password: PASSWORD }, service.setupCode), SetupUnavailableError)
   })
 
+  it('o que nasce com o primeiro admin (o projeto inicial) roda no setup, com a conta criada, e só nele', async () => {
+    const { service } = build()
+    const seen: string[] = []
+    service.afterSetup((user) => seen.push(`${user.email}:${user.role}`))
+    service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode)
+    service.create({ email: 'ana@x.test', name: 'Ana', password: PASSWORD, role: 'admin' }, 'root@x.test')
+    assert.deepStrictEqual(seen, ['root@x.test:admin'])
+  })
+
   it('login: a mesma recusa para e-mail inexistente, senha errada e conta desativada', async () => {
     const { service } = build()
     const root = service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode).user
