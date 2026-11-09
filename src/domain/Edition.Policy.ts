@@ -56,3 +56,8 @@ export const LITE_HIDDEN_MCP_TOOLS: ReadonlySet<string> = new Set([
   'catalog_history',
   'list_errors',
 ])
+
+/** As ferramentas do agente sem as do MCP do gateway que a lite não tem (`mcp:gateway/save_hook`…): o resto fica. */
+export function withoutLiteTools(tools: readonly string[]): string[] {
+  return tools.filter((tool) => !(tool.startsWith('mcp:gateway/') && LITE_HIDDEN_MCP_TOOLS.has(tool.slice('mcp:gateway/'.length))))
+}
