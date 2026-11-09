@@ -297,6 +297,8 @@ export const MCP_SHAPE: TShape<IMcpServerConfig> = {
   auth: 'value',
   headerName: 'value',
   identity: 'value',
+  // O client id e os escopos (o secret e o token de cada pessoa ficam no cofre).
+  oauth: { object: { clientId: 'value', scopes: 'value', authorizationServer: 'value' } },
   enabled: 'value',
   projectId: 'value',
   createdAt: { omit: META },

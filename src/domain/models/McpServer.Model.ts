@@ -8,7 +8,19 @@ import { PROJECT_ID_PATTERN } from './Project.Model'
  * - `header` manda um valor fixo, secreto, guardado cifrado (uma chave de API do serviço);
  * - `none`, nada.
  */
-export type TMcpAuth = 'caller' | 'header' | 'none'
+export type TMcpAuth = 'caller' | 'header' | 'none' | 'oauth'
+
+/**
+ * ⚖️ O LOGIN OAUTH de um MCP remoto (`auth: oauth`): CADA PESSOA conecta a própria conta (o Gmail de quem conversa, não
+ * o de quem cadastrou). O client secret fica no cofre, como o segredo de `header`; o token de cada pessoa também, cifrado.
+ * Os endereços do login saem do próprio MCP (metadados OAuth); `authorizationServer` só quando ele não os publica.
+ */
+export interface IMcpOAuth {
+  clientId: string
+  /** Separados por espaço (`https://www.googleapis.com/auth/drive.readonly …`). Ausente = os que o servidor pedir. */
+  scopes?: string
+  authorizationServer?: string
+}
 export type TMcpTransport = 'auto' | 'http' | 'sse'
 
 /**
@@ -102,6 +114,8 @@ export interface IMcpServerConfig {
   headerName?: string
   /** Envia a identidade de quem chama (agente, conversa, projeto) em cabeçalhos (ver `Agent.Identity`). Ausente = não. */
   identity?: boolean
+  /** Só em `auth: oauth`. */
+  oauth?: IMcpOAuth
   enabled: boolean
   createdAt: Date
   updatedAt: Date
@@ -139,6 +153,9 @@ export const MCP_ALL_TOOLS = '*'
 
 /** A chave do segredo do servidor no cofre de credenciais (o mesmo das chaves dos providers). `serverKey`: ver `mcpServerKey`. */
 export const mcpSecretKey = (serverKey: string) => `mcp:${serverKey}`
+
+/** O token OAuth de UMA pessoa num servidor, no cofre (cifrado). `serverKey`: ver `mcpServerKey`. */
+export const mcpOAuthTokenKey = (serverKey: string, userId: string) => `mcp-oauth:${serverKey}:${userId}`
 
 /** Uma escolha de ferramenta MCP num agente: `mcp:<servidor>/<ferramenta>` ou `mcp:<servidor>/*`. */
 export interface IMcpToolRef {

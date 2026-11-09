@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs'
+import { McpOAuth } from '@infra/mcp/Mcp.OAuth'
 import { agentFolderAccess } from '@domain/Capability.Catalog'
 import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { ImportJobService } from '@application/ImportJob.Service'
@@ -33,6 +34,8 @@ export interface ITools {
   /** Onde a ferramenta `delegate_to_agent` encontra o serviço (preenchido em `makeUsecases`). */
   delegation: DelegationSlot
   mcp: McpRegistry
+  /** O login OAuth de cada pessoa nos MCPs remotos (ver `McpOAuth`). */
+  oauth: McpOAuth
   servers: IMcpServerRepository
   catalog: ToolCatalog
 }
@@ -67,12 +70,16 @@ export function makeTools(): ITools {
     keepSelfUrl(servers)
 
     const mcp = new McpRegistry(servers, makeCredentials())
+    // O login OAuth de cada pessoa nos MCPs remotos: o token vai do cofre para o cliente dela (ver `McpOAuth`).
+    const oauth = new McpOAuth(servers, makeCredentials())
+    mcp.useOAuth(oauth)
     const delegation = new DelegationSlot()
     // Os SDKs agênticos chegam aos MCPs em contêiner pelo proxy do próprio gateway (`/v1/mcp-proxy/<id>`).
     const containerProxy = { base: selfUrl().replace(/\/v1\/mcp$/, '/v1/mcp-proxy') }
     instance = {
       delegation,
       mcp,
+      oauth,
       servers,
       catalog: new ToolCatalog(
         mcp,

@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { IMcpContainer, IMcpProcess, IMcpServerConfig, MCP_SCOPE_SEPARATOR, mcpServerKey, TMcpAuth, TMcpKind, TMcpTransport } from '@domain/models/McpServer.Model'
+import { IMcpContainer, IMcpOAuth, IMcpProcess, IMcpServerConfig, MCP_SCOPE_SEPARATOR, mcpServerKey, TMcpAuth, TMcpKind, TMcpTransport } from '@domain/models/McpServer.Model'
 import { IMcpServerRepository, TMcpServerPatch } from '@domain/ports/McpServerRepository.Port'
 
 const SCHEMA = `
@@ -35,6 +35,8 @@ const ADDED_COLUMNS: Array<{ column: string; definition: string }> = [
   { column: 'project_id', definition: 'TEXT' },
   // As tags (ver `Tag.Policy`), em JSON.
   { column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  // O login OAuth (`auth: oauth`), em JSON: client id, escopos, servidor de autorização.
+  { column: 'oauth', definition: 'TEXT' },
 ]
 
 const COLUMNS: Record<keyof TMcpServerPatch, string> = {
@@ -47,6 +49,7 @@ const COLUMNS: Record<keyof TMcpServerPatch, string> = {
   auth: 'auth',
   headerName: 'header_name',
   identity: 'identity',
+  oauth: 'oauth',
   enabled: 'enabled',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
@@ -85,7 +88,7 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
   insert(server: IMcpServerConfig): void {
     this.db
       .prepare(
-        'INSERT INTO mcp_servers (id, project_id, name, tags, kind, container, process, url, transport, auth, header_name, identity, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO mcp_servers (id, project_id, name, tags, kind, container, process, url, transport, auth, header_name, identity, oauth, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         mcpServerKey(server),
@@ -100,6 +103,7 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
         server.auth,
         server.headerName ?? null,
         server.identity ? 1 : 0,
+        server.oauth ? JSON.stringify(server.oauth) : null,
         server.enabled ? 1 : 0,
         server.createdAt.toISOString(),
         server.updatedAt.toISOString(),
@@ -108,7 +112,7 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
   }
 
   update(key: string, patch: TMcpServerPatch): IMcpServerConfig | undefined {
-    const keys = (Object.keys(patch) as Array<keyof TMcpServerPatch>).filter((key) => key in COLUMNS && (patch[key] !== undefined || key === 'headerName'))
+    const keys = (Object.keys(patch) as Array<keyof TMcpServerPatch>).filter((key) => key in COLUMNS && (patch[key] !== undefined || key === 'headerName' || key === 'oauth'))
     if (keys.length) {
       const values = keys.map((key) => {
         const value = patch[key]
@@ -168,6 +172,7 @@ function toServer(row: TRow): IMcpServerConfig {
     auth: String(row.auth) as TMcpAuth,
     headerName: typeof row.header_name === 'string' ? row.header_name : undefined,
     ...(Number(row.identity) === 1 ? { identity: true } : {}),
+    ...(typeof row.oauth === 'string' && row.oauth ? { oauth: JSON.parse(row.oauth) as IMcpOAuth } : {}),
     enabled: Number(row.enabled) === 1,
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),

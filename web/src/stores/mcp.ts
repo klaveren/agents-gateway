@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed } from 'vue'
 import { api } from '@/lib/api'
 import { keyedResource } from '@/lib/resource'
-import type { IMcpContainer, IMcpProcess, IMcpServer, IMcpTool, TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
+import type { IMcpContainer, IMcpOAuth, IMcpProcess, IMcpServer, IMcpTool, TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
 import { useAgentsStore } from './agents'
 
 export interface INewMcpServer {
@@ -20,6 +20,7 @@ export interface INewMcpServer {
   headerName?: string
   /** Envia a identidade de quem chama (agente, conversa, projeto) em cabeçalhos. */
   identity?: boolean
+  oauth?: IMcpOAuth
   secret?: string
 }
 
@@ -86,7 +87,7 @@ export const useMcpStore = defineStore('mcp', () => {
   /** Devolve o servidor gravado: com `projectId` (ou `null`, global) ele muda de escopo — e de chave. */
   async function update(
     id: string,
-    change: Partial<Pick<IMcpServer, 'name' | 'tags' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled' | 'container' | 'process'>> & {
+    change: Partial<Pick<IMcpServer, 'name' | 'tags' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'oauth' | 'enabled' | 'container' | 'process'>> & {
       projectId?: string | null
     },
   ): Promise<IMcpServer> {
@@ -106,6 +107,15 @@ export const useMcpStore = defineStore('mcp', () => {
 
   async function saveSecret(id: string, secret: string): Promise<void> {
     put(await api<IMcpServer>(`/mcp-servers/${encodeURIComponent(id)}/secret`, { method: 'PUT', body: { secret } }))
+  }
+
+  /** O endereço do login da conta de quem está na tela (ver `McpOAuth`): a tela navega para ele. */
+  async function oauthStart(id: string): Promise<string> {
+    return (await api<{ url: string }>(`/mcp-servers/${encodeURIComponent(id)}/oauth`, { method: 'POST' })).url
+  }
+
+  async function oauthDisconnect(id: string): Promise<void> {
+    await api(`/mcp-servers/${encodeURIComponent(id)}/oauth`, { method: 'DELETE' })
   }
 
   async function clearSecret(id: string): Promise<void> {
@@ -169,6 +179,8 @@ export const useMcpStore = defineStore('mcp', () => {
     update,
     remove,
     saveSecret,
+    oauthStart,
+    oauthDisconnect,
     clearSecret,
     saveEnv,
     stop,

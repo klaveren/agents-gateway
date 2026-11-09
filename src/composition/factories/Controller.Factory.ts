@@ -247,8 +247,8 @@ export function makeUsageController(conversations: AgentController['conversation
 }
 
 export function makeMcpServersController(): McpServersController {
-  const { mcp } = makeTools()
-  return new McpServersController({ service: makeMcpServers(), registry: mcp, proof: makeAuth().proof, projects: makeProjects() })
+  const { mcp, oauth } = makeTools()
+  return new McpServersController({ service: makeMcpServers(), registry: mcp, proof: makeAuth().proof, projects: makeProjects(), oauth })
 }
 
 export function makeMcpProxyController(): McpProxyController {

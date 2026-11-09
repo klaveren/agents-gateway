@@ -15,6 +15,7 @@ import {
   mcpServerKey,
   mcpServesProject,
   mcpUrlIssue,
+  IMcpOAuth,
   TMcpAuth,
   TMcpKind,
   TMcpTransport,
@@ -39,11 +40,13 @@ export interface IMcpServerInput {
   identity?: boolean
   /** As tags (ver `Tag.Policy`). */
   tags?: string[]
-  /** O segredo de `auth: header`, na criação. Depois, por `saveSecret`. */
+  /** O login de `auth: oauth` (client id e escopos). */
+  oauth?: IMcpOAuth
+  /** O segredo de `auth: header` (ou o client secret de `oauth`), na criação. Depois, por `saveSecret`. */
   secret?: string
 }
 
-export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'tags' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled'>> & {
+export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'tags' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'oauth' | 'enabled'>> & {
   container?: Partial<IMcpContainer>
   process?: Partial<IMcpProcess>
   /** Troca o escopo: um projeto, ou `null` para global. Ausente = fica onde está. */
@@ -53,7 +56,7 @@ export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'tags' | 
 const NAME_MAX = 80
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/
 const TRANSPORTS: TMcpTransport[] = ['auto', 'http', 'sse']
-const AUTHS: TMcpAuth[] = ['caller', 'header', 'none']
+const AUTHS: TMcpAuth[] = ['caller', 'header', 'none', 'oauth']
 
 /**
  * O cadastro de servidores MCP: quem existe, como se autentica e quem o usa.
@@ -140,8 +143,9 @@ export class McpServersService {
       // ⛔ `none` por padrão: `caller` manda a sessão de quem conversa (o JWT do gateway) para o servidor,
       // e isso é escolha consciente de quem o cadastra, nunca o default.
       auth: input.auth ?? 'none',
-      headerName: (input.auth ?? 'none') === 'none' ? undefined : input.headerName?.trim() || undefined,
+      headerName: ['none', 'oauth'].includes(input.auth ?? 'none') ? undefined : input.headerName?.trim() || undefined,
       ...(input.identity ? { identity: true } : {}),
+      ...(input.auth === 'oauth' && input.oauth ? { oauth: oauthOf(input.oauth) } : {}),
       enabled: true,
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -180,7 +184,8 @@ export class McpServersService {
       ...(current.kind === 'container' ? { container: containerOf({ ...current.container, ...definedOnly(container ?? {}) }) } : {}),
       ...(current.kind === 'process' ? { process: processOf({ ...current.process, ...definedOnly(proc ?? {}) }) } : {}),
     }
-    next.headerName = next.auth === 'none' ? undefined : next.headerName?.trim() || undefined
+    next.headerName = next.auth === 'none' || next.auth === 'oauth' ? undefined : next.headerName?.trim() || undefined
+    next.oauth = next.auth === 'oauth' && next.oauth ? oauthOf(next.oauth) : undefined
     const issues = [...tagIssues(rest.tags), ...issuesOf(next)]
     // ⛔ O servidor do próprio gateway é este processo: a URL dele não se edita, e a credencial é sempre a de quem
     // conversa (com outra, o MCP do gateway recusa toda chamada e o Atlas fica sem ferramenta).
@@ -212,6 +217,7 @@ export class McpServersService {
       auth: next.auth,
       headerName: next.headerName,
       identity: next.identity === true,
+      oauth: next.oauth,
       enabled: next.enabled,
       ...(next.container ? { container: next.container } : {}),
       ...(next.process ? { process: next.process } : {}),
@@ -413,7 +419,22 @@ function issuesOf(config: IMcpServerConfig): Array<{ field: string; message: str
   if (!TRANSPORTS.includes(config.transport)) issues.push({ field: 'transport', message: `one of ${TRANSPORTS.join(', ')}` })
   if (!AUTHS.includes(config.auth)) issues.push({ field: 'auth', message: `one of ${AUTHS.join(', ')}` })
   if (config.headerName && !HEADER_NAME.test(config.headerName)) issues.push({ field: 'headerName', message: 'letters, digits and hyphens' })
+  if (config.auth === 'oauth') {
+    if (!config.oauth?.clientId) issues.push({ field: 'oauth.clientId', message: 'required' })
+    else if (config.oauth.clientId.length > 300) issues.push({ field: 'oauth.clientId', message: 'at most 300 characters' })
+    if ((config.oauth?.scopes?.length ?? 0) > 2000) issues.push({ field: 'oauth.scopes', message: 'at most 2000 characters' })
+    // ⛔ O login sai do gateway para este endereço com o código da pessoa: só HTTPS.
+    if (config.oauth?.authorizationServer && !/^https:\/\/[^\s]+$/.test(config.oauth.authorizationServer))
+      issues.push({ field: 'oauth.authorizationServer', message: 'an https URL' })
+  }
   return issues
+}
+
+/** O login OAuth limpo: textos aparados, o que veio vazio fica de fora. */
+function oauthOf(oauth: IMcpOAuth): IMcpOAuth {
+  const scopes = oauth.scopes?.trim().split(/\s+/).filter(Boolean).join(' ')
+  const server = oauth.authorizationServer?.trim()
+  return { clientId: oauth.clientId.trim(), ...(scopes ? { scopes } : {}), ...(server ? { authorizationServer: server } : {}) }
 }
 
 function definedOnly<T extends object>(value: T): Partial<T> {

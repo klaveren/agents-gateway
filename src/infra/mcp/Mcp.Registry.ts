@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { caller } from './Caller.Identity'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -71,6 +72,8 @@ export class McpRegistry {
   private readonly instances = new Map<string, IInstance>()
   private readonly starting = new Map<string, Promise<IInstance | undefined>>()
   private sessionLookup: (sessionId: string) => { agentId: string; metadata?: Record<string, unknown> } | undefined = () => undefined
+  /** O token OAuth de cada pessoa (ver `McpOAuth`). Ligado na composição; ausente, `auth: oauth` não tem cliente. */
+  private oauth?: { accessToken(serverKey: string, userId: string): Promise<string | undefined> }
   private reaper?: NodeJS.Timeout
 
   constructor(
@@ -84,6 +87,10 @@ export class McpRegistry {
   /** De onde vem uma conversa viva (agente e `metadata`, para `{meta:chave}` e o proxy). Ligado na composição. */
   setSessionLookup(lookup: (sessionId: string) => { agentId: string; metadata?: Record<string, unknown> } | undefined): void {
     this.sessionLookup = lookup
+  }
+
+  useOAuth(oauth: { accessToken(serverKey: string, userId: string): Promise<string | undefined> }): void {
+    this.oauth = oauth
   }
 
   session(sessionId: string): { agentId: string; metadata?: Record<string, unknown> } | undefined {
@@ -242,11 +249,25 @@ export class McpRegistry {
       return undefined
     }
 
-    const fingerprint = [config.url, config.transport, config.auth, config.headerName ?? '', config.identity ? 'identity' : ''].join('\u0000')
-    const current = this.clients.get(key)
+    // ⛔ OAUTH: UM CLIENTE POR PESSOA. A sessão MCP aberta com o token de uma pessoa nunca atende outra; quem chama é
+    // a pessoa do escopo da credencial (a da tela, ou a dona do turno). Sem pessoa, não há cliente.
+    const person = config.auth === 'oauth' ? caller()?.id : undefined
+    if (config.auth === 'oauth' && (!person || !this.oauth)) return undefined
+    const slot = person ? `${key}\u0000${person}` : key
+    const fingerprint = [
+      config.url,
+      config.transport,
+      config.auth,
+      config.headerName ?? '',
+      config.identity ? 'identity' : '',
+      config.oauth?.clientId ?? '',
+      config.oauth?.scopes ?? '',
+    ].join('\u0000')
+    const current = this.clients.get(slot)
     if (current?.fingerprint === fingerprint) return current.client
 
     if (current) void current.client.close()
+    const oauth = this.oauth
     const client = this.make(config, {
       auth: config.auth,
       transport: config.transport,
@@ -254,9 +275,10 @@ export class McpRegistry {
       callerHeader: config.auth === 'caller' ? config.headerName : undefined,
       ...(config.identity ? { identity: true } : {}),
       header: () => this.header(key),
+      ...(person && oauth ? { bearer: () => oauth.accessToken(key, person) } : {}),
       fixedHeaders: () => this.fixedHeaders(this.servers.get(key) ?? config),
     })
-    this.clients.set(key, { fingerprint, client })
+    this.clients.set(slot, { fingerprint, client })
     return client
   }
 
@@ -309,6 +331,7 @@ export class McpRegistry {
       }
     }
     const client = this.client(key)
+    if (!client && config?.auth === 'oauth' && config.enabled) return { ok: false, tools: [], message: 'connect your account first (Connect, on this server)' }
     if (!client) return { ok: false, tools: [], message: 'server is disabled or does not exist' }
     const caller = config?.auth === 'caller' ? token : undefined
     await client.close()
@@ -341,10 +364,13 @@ export class McpRegistry {
     })
   }
 
-  forget(key: string): void {
-    const current = this.clients.get(key)
-    if (!current) return
-    this.clients.delete(key)
-    void current.client.close()
+  /** Fecha o cliente do servidor — e, no `oauth`, o de cada pessoa. `person`: só o dessa pessoa (desconectou). */
+  forget(key: string, person?: string): void {
+    for (const [slot, current] of this.clients) {
+      const mine = person ? slot === `${key}\u0000${person}` : slot === key || slot.startsWith(`${key}\u0000`)
+      if (!mine) continue
+      this.clients.delete(slot)
+      void current.client.close()
+    }
   }
 }

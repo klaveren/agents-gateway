@@ -1,4 +1,5 @@
 import { IMcpServerInput, McpServersService } from '@application/McpServers.Service'
+import { McpOAuth } from '@infra/mcp/Mcp.OAuth'
 import type { IProjectCaller } from '@application/Projects.Service'
 import { IMcpServerConfig, isLaunchedMcp, mcpServerKey, parseMcpServerKey } from '@domain/models/McpServer.Model'
 import { installPackage, installStatus, moveInstall, removeInstall } from '@infra/mcp/Mcp.Install'
@@ -19,10 +20,13 @@ export interface IMcpServersControllerDeps {
   proof?: ICallerProof
   /** Quem é membro de quê (a regra única dos projetos). Ausente = sem projetos: só o admin vê a lista. */
   projects?: { canUse(caller: IProjectCaller, projectId: string): boolean; exists?(projectId: string): boolean }
+  /** O login OAuth de cada pessoa (`auth: oauth`). Ausente = os MCPs OAuth não conectam. */
+  oauth?: McpOAuth
 }
 
 const transport = z.enum(['auto', 'http', 'sse'])
-const auth = z.enum(['caller', 'header', 'none'])
+const auth = z.enum(['caller', 'header', 'none', 'oauth'])
+const oauthSchema = z.object({ clientId: z.string().max(300), scopes: z.string().max(2000).optional(), authorizationServer: z.string().max(500).optional() })
 const containerSchema = z.object({
   image: z.string().max(300).optional(),
   args: z.array(z.string().max(300)).max(32).optional(),
@@ -55,6 +59,7 @@ const createSchema = z.object({
   auth: auth.optional(),
   headerName: z.string().max(64).optional(),
   identity: z.boolean().optional(),
+  oauth: oauthSchema.optional(),
   secret: z.string().max(4000).optional(),
 })
 const updateSchema = z.object({
@@ -70,6 +75,7 @@ const updateSchema = z.object({
   auth: auth.optional(),
   headerName: z.string().max(64).optional(),
   identity: z.boolean().optional(),
+  oauth: oauthSchema.optional(),
   enabled: z.boolean().optional(),
 })
 const secretSchema = z.object({ secret: z.string().max(4000) })
@@ -87,8 +93,84 @@ const envSchema = z.object({ value: z.string().max(8000) })
  */
 export class McpServersController {
   constructor(private readonly deps: IMcpServersControllerDeps) {
-    for (const name of ['list', 'create', 'update', 'remove', 'saveSecret', 'clearSecret', 'test', 'tools', 'saveEnv', 'stopInstances', 'install'] as const)
+    for (const name of [
+      'list',
+      'create',
+      'update',
+      'remove',
+      'saveSecret',
+      'clearSecret',
+      'test',
+      'tools',
+      'saveEnv',
+      'stopInstances',
+      'install',
+      'oauthStart',
+      'oauthDisconnect',
+      'oauthCallback',
+    ] as const)
       this[name] = this[name].bind(this)
+  }
+
+  /**
+   * ⚖️ CONECTAR A PRÓPRIA CONTA num MCP com login OAuth: quem pode usar o servidor (o global, qualquer conta; o de
+   * projeto, os membros dele) recebe o endereço do login. O token fica para ESTA pessoa (ver `McpOAuth`).
+   */
+  async oauthStart(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { key, userId } = await this.oauthCaller(req)
+      if (!this.deps.oauth) throw new HttpError(404, 'not_found', 'OAuth is not available')
+      return { url: await this.deps.oauth.start(key, userId, redirectUri(req)) }
+    })
+  }
+
+  /** Desconecta a conta de quem chama (o token sai do cofre; a conexão dela com o MCP fecha). */
+  async oauthDisconnect(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { key, userId } = await this.oauthCaller(req)
+      this.deps.oauth?.disconnect(key, userId)
+      this.deps.registry.forget(key, userId)
+      return null
+    })
+  }
+
+  /**
+   * O retorno do login (rota PÚBLICA: quem chega é o navegador vindo do provedor). Troca o código e volta para a tela
+   * do MCP. ⛔ Sem `state` válido, nada é gravado (ver `McpOAuth.finish`).
+   */
+  async oauthCallback(req: Request, res: Response) {
+    const text = (value: unknown) => (typeof value === 'string' ? value : '')
+    const state = text(req.query.state)
+    const denied = text(req.query.error)
+    try {
+      if (denied || !state || !text(req.query.code)) throw new Error(denied ? `the provider refused: ${denied}` : 'missing code or state')
+      const { serverKey } = await this.deps.oauth!.finish(state, text(req.query.code))
+      this.deps.registry.forget(serverKey)
+      res.redirect(302, `/mcp/${encodeURIComponent(serverKey)}?oauth=ok`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('[mcp-oauth] o retorno do login falhou:', message)
+      res.redirect(302, `/mcp?oauth=error&message=${encodeURIComponent(message.slice(0, 200))}`)
+    }
+  }
+
+  /** Quem chama (com conta) e o servidor OAuth que ele pode usar; 404 para o resto. */
+  private async oauthCaller(req: Request): Promise<{ key: string; userId: string }> {
+    const key = this.idOf(req)
+    const server = this.deps.service.list().find((item) => mcpServerKey(item) === key)
+    const resolved = await resolveCaller(this.deps.proof)
+    const userId = resolved?.identity?.id
+    if (!server || server.auth !== 'oauth' || !userId) throw new HttpError(404, 'not_found', 'Not found')
+    if (server.projectId && this.deps.projects && !this.deps.projects.canUse({ userId, admin: !!(await adminView(this.deps.proof))?.gateway }, server.projectId))
+      throw new HttpError(404, 'not_found', 'Not found')
+    return { key, userId }
+  }
+
+  /** Se a pessoa da tela já conectou a conta, e o endereço de retorno que o provedor precisa ter cadastrado. */
+  private oauthStatus(server: IMcpServerConfig, req?: Request): { oauthConnected?: boolean; oauthRedirectUri?: string } {
+    if (server.auth !== 'oauth') return {}
+    const userId = caller()?.id
+    return { oauthConnected: !!userId && !!this.deps.oauth?.connected(mcpServerKey(server), userId), ...(req ? { oauthRedirectUri: redirectUri(req) } : {}) }
   }
 
   /**
@@ -105,17 +187,20 @@ export class McpServersController {
         return this.deps.service
           .list()
           .filter((server) => (project ? !server.projectId || server.projectId === project : !server.projectId || administers(view, server.projectId)))
-          .map((server) => this.toDto(server, true, view))
+          .map((server) => this.toDto(server, true, view, req))
       }
       const resolved = project && this.deps.projects ? await resolveCaller(this.deps.proof) : undefined
       if (!project || !resolved || !this.deps.projects?.canUse({ userId: resolved.identity?.id, admin: false }, project)) {
         console.warn('[admin] acesso negado a listMcpServers:', 'not an administrator or a member of the project')
         throw new HttpError(404, 'not_found', 'Not found')
       }
-      return this.deps.service
-        .list()
-        .filter((server) => server.projectId === project)
-        .map((server) => this.toDto(server, false))
+      return (
+        this.deps.service
+          .list()
+          // O global com login OAuth também: cada pessoa conecta a própria conta (sem ver como ele foi cadastrado).
+          .filter((server) => server.projectId === project || (!server.projectId && server.auth === 'oauth'))
+          .map((server) => this.toDto(server, false, undefined, req))
+      )
     })
   }
 
@@ -282,7 +367,7 @@ export class McpServersController {
    * ⛔ O MEMBRO (não administra o projeto) só vê QUE o MCP existe e se está de pé: nada de URL, cabeçalho, comando,
    * contêiner, variáveis, nem o fim do segredo — é a configuração de quem administra.
    */
-  private memberDto(server: IMcpServerConfig) {
+  private memberDto(server: IMcpServerConfig, req?: Request) {
     const key = mcpServerKey(server)
     const status = this.deps.registry.status().find((entry) => entry.key === key)
     return {
@@ -292,6 +377,9 @@ export class McpServersController {
       name: server.name,
       ...(server.tags?.length ? { tags: server.tags } : {}),
       kind: server.kind ?? 'remote',
+      // ⛔ Como o servidor autentica não é do membro; só que ele pede a conta de cada um (o botão Conectar).
+      ...(server.auth === 'oauth' ? { auth: server.auth } : {}),
+      ...this.oauthStatus(server, req),
       enabled: server.enabled,
       // A mesma forma da tela (que lê `secret.configured` e `agents`), sem o que é de quem administra.
       secret: { configured: this.deps.service.secretStatus(key).configured },
@@ -300,8 +388,8 @@ export class McpServersController {
     }
   }
 
-  private toDto(server: IMcpServerConfig, full = true, view?: IAdminView) {
-    if (!full) return this.memberDto(server)
+  private toDto(server: IMcpServerConfig, full = true, view?: IAdminView, req?: Request) {
+    if (!full) return this.memberDto(server, req)
     const key = mcpServerKey(server)
     const secret = this.deps.service.secretStatus(key)
     const status = this.deps.registry.status().find((entry) => entry.key === key)
@@ -319,6 +407,8 @@ export class McpServersController {
       auth: server.auth,
       headerName: server.headerName,
       identity: server.identity === true,
+      ...(server.oauth ? { oauth: server.oauth } : {}),
+      ...this.oauthStatus(server, req),
       enabled: server.enabled,
       secret: {
         configured: secret.configured,
@@ -370,6 +460,15 @@ export class McpServersController {
       res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
     }
   }
+}
+
+/**
+ * O endereço de retorno do login OAuth: `PUBLIC_URL` (o endereço público do gateway), senão o da própria requisição
+ * (atrás de um proxy confiável, o `X-Forwarded-*` dele). ⚠️ O provedor só aceita o que estiver cadastrado nele.
+ */
+export function redirectUri(req: Request): string {
+  const base = process.env.PUBLIC_URL?.trim().replace(/\/+$/, '') || `${req.protocol}://${req.get('host') ?? 'localhost'}`
+  return `${base}/v1/oauth/callback`
 }
 
 /** O escopo de uma chave (`cliente-a.n8n` = o projeto; `n8n` = global, `null`). */

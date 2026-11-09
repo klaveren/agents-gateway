@@ -112,7 +112,7 @@ const ARCHIVE_TYPES = ['application/gzip', 'application/x-gzip', 'application/x-
 export const THROTTLED_PATHS = ['/auth/login', '/auth/setup', '/auth/password']
 
 /** ⚠️ O hook é público: a credencial dele é a chave do hook (ver `Hooks.Controller`), não uma conta. */
-export const PUBLIC_PATHS: readonly string[] = ['/health', '/health/drain', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login', HOOK_PATH]
+export const PUBLIC_PATHS: readonly string[] = ['/health', '/health/drain', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login', HOOK_PATH, '/oauth/callback']
 
 export type TRouteMethod = 'get' | 'post' | 'put' | 'patch' | 'delete'
 
@@ -485,6 +485,10 @@ function buildRoutes(
     { method: 'put', path: '/mcp-servers/:id/env/:name', handler: mcpServers.saveEnv },
     { method: 'post', path: '/mcp-servers/:id/stop', handler: mcpServers.stopInstances },
     { method: 'post', path: '/mcp-servers/:id/install', handler: mcpServers.install },
+    // O login OAuth de cada pessoa num MCP remoto (ver `McpOAuth`): conectar, desconectar e o retorno do provedor.
+    { method: 'post', path: '/mcp-servers/:id/oauth', handler: mcpServers.oauthStart },
+    { method: 'delete', path: '/mcp-servers/:id/oauth', handler: mcpServers.oauthDisconnect },
+    { method: 'get', path: '/oauth/callback', handler: mcpServers.oauthCallback },
     // O gateway como servidor MCP (ver `SelfMcp.Controller`): só POST; sem estado, GET e DELETE são 405.
     { method: 'post', path: '/mcp', handler: handleSelfMcp },
     { method: 'get', path: '/mcp', handler: rejectSelfMcp },
