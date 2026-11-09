@@ -1,5 +1,5 @@
 import { AgentCatalog } from '@application/Agent.Catalog'
-import { AGENT_SEED } from '@domain/Agent.Seed'
+import { AGENT_SEED, atlasLitePrompt } from '@domain/Agent.Seed'
 import { gatewayEdition, withoutLiteTools } from '@domain/Edition.Policy'
 import { AGENT_MIGRATIONS } from '@domain/Agent.Migrations'
 import { builderAgent, importBuilderAgent, PROTOCOLS } from '@domain/Builder.Agents'
@@ -46,7 +46,7 @@ export function makeAgents(): AgentCatalog {
   // ⚖️ Na lite, a semente (o Atlas) perde uma vez as ferramentas do MCP do gateway que a lite não registra: na tela e na
   // conversa, ele só tem o que existe. Vale para a instalação nova e para a que passou a ser lite.
   if (gatewayEdition() === 'lite')
-    for (const { id } of AGENT_SEED)
+    for (const { id } of AGENT_SEED) {
       repository.migrateOnce(
         'lite-tools',
         id,
@@ -56,6 +56,17 @@ export function makeAgents(): AgentCatalog {
         },
         'seed',
       )
+      // E o prompt: o da lite, só no que ainda é o da semente (o que quem administra editou fica como está).
+      repository.migrateOnce(
+        'lite-prompt',
+        id,
+        (agent) => {
+          const systemPrompt = atlasLitePrompt(agent)
+          return systemPrompt ? { ...agent, systemPrompt } : undefined
+        },
+        'seed',
+      )
+    }
 
   // ⚠️ O catálogo é pedido NA HORA, não aqui: ele próprio lê os agentes ao nascer (para ativar os
   // modelos que eles já usam), e pedi-lo agora seria uma volta sem fim entre as duas fábricas.
