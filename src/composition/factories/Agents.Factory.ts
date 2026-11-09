@@ -39,8 +39,10 @@ export function makeAgents(): AgentCatalog {
 
   const repository = build()
   stored = repository
-  // Na lite, o Assistente vem junto (o agente de conversa geral); a PRO não ganha agente novo.
-  repository.seedOnce(gatewayEdition() === 'lite' ? [ASSISTANT, ...AGENT_SEED] : AGENT_SEED, 'seed')
+  // ⚖️ Na LITE, duas personas: o Assistente (conversa geral, para todos) e o Atlas Admin (opera o gateway, só admin). O
+  // Atlas dos usuários fica de fora: ele se apresenta como quem opera o gateway, e quem não administra não opera nada.
+  // A PRO segue com a semente de sempre.
+  repository.seedOnce(gatewayEdition() === 'lite' ? [ASSISTANT, ...AGENT_SEED.filter((agent) => agent.id !== 'atlas')] : AGENT_SEED, 'seed')
   for (const migration of AGENT_MIGRATIONS)
     for (const id of migration.agentIds === '*' ? repository.list().map((agent) => agent.id) : migration.agentIds)
       repository.migrateOnce(migration.key, id, migration.change, 'seed')
@@ -112,7 +114,8 @@ function coreAgents(catalog: AgentCatalog): IAgent[] {
       .catch(() => undefined)
     store.subscribe((stored) => (settings = stored))
   }
-  const atlas = catalog.list().find((agent) => agent.id === 'atlas')
+  // O do Atlas; na lite, que não tem o Atlas dos usuários, o do Atlas Admin.
+  const atlas = catalog.list().find((agent) => agent.id === 'atlas') ?? catalog.list().find((agent) => agent.id === 'atlas-admin')
   const fallback = atlas ? targetFor(atlas, undefined, undefined, (target) => catalog.isTargetRunnable(atlas, target)) : undefined
   const chosen = settings?.builderProvider && settings.builderModel ? { provider: settings.builderProvider, model: settings.builderModel } : fallback
   if (!chosen) return []
