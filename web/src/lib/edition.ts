@@ -20,3 +20,6 @@ export const LITE_ROUTES: ReadonlySet<string> = new Set([
   'login',
   'setup',
 ])
+
+/** As guias do agente que a lite esconde (ver `AgentForm`): o resto do formulário é o mesmo. */
+export const LITE_HIDDEN_AGENT_TABS: ReadonlySet<string> = new Set(['triggers', 'recursos', 'arquivos', 'contexto', 'hooks', 'agendamentos'])
