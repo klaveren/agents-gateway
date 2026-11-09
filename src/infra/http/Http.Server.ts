@@ -1,4 +1,6 @@
 import { PermissionsService } from '@application/Permissions.Service'
+import { AuditController } from './Audit.Controller'
+import { SqliteAuditRepository } from '@infra/persistence/Sqlite.AuditRepository'
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
 import { ProjectAccountsService } from '@application/ProjectAccounts.Service'
 import { SqliteProjectAccountRepository } from '@infra/persistence/Sqlite.ProjectAccountRepository'
@@ -144,6 +146,8 @@ export class HttpServer {
     catalog?: CatalogController,
     permissionRequests?: PermissionRequestsController,
     ledger?: LedgerController,
+    /** A auditoria (ver `Audit.Controller`): grava as rotas que mudam algo e mostra em `GET /audit`. */
+    private readonly audit: AuditController = new AuditController({ repository: new SqliteAuditRepository() }),
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -199,6 +203,7 @@ export class HttpServer {
       permissionRequests ?? new PermissionRequestsController({}),
       ledger ?? new LedgerController({}),
     )
+    this.routes.push({ method: 'get', path: '/audit', handler: this.audit.list })
     this.setupRoutes()
     this.setupFrontend()
   }
@@ -271,7 +276,10 @@ export class HttpServer {
     // ⛔ Hook: a cota fica no `HooksController.receive` — a de sucesso por hook (`HOOK_RATE_LIMIT`), a de falha por IP
     // (`HOOK_FAIL_LIMIT`), contadas DEPOIS de conferir a chave: um anônimo não esgota a cota do webhook legítimo.
     for (const { method, path: routePath, handler } of this.routes) {
-      const open = PUBLIC_PATHS.includes(routePath) ? [exchange, callerScope, handler] : [exchange, identity, callerScope, handler]
+      // A auditoria anota a rota DENTRO do escopo da credencial (quem fez), e no fim da resposta (como terminou).
+      const trail = this.audit.trail(method, routePath)
+      const done = trail ? [trail, handler] : [handler]
+      const open = PUBLIC_PATHS.includes(routePath) ? [exchange, callerScope, ...done] : [exchange, identity, callerScope, ...done]
       const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : open
       this.app[method](`${API_PREFIX}${routePath}`, ...chain)
     }

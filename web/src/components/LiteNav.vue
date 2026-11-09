@@ -21,17 +21,19 @@
     if (name === 'usage') return 'usage'
     if (name.startsWith('mcp')) return 'mcp'
     if (name === 'settings') return 'settings'
+    if (name === 'audit') return 'audit'
     return 'inbox'
   })
 
   // Agentes e Modelos para o admin do gateway também: no gateway que acabou de nascer não há projeto (os agentes são globais).
-  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'chart' | 'agents' | 'key' | 'plug' | 'settings'; badge: number }>>(() => [
+  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'chart' | 'agents' | 'key' | 'plug' | 'settings' | 'shield'; badge: number }>>(() => [
     { to: '/', key: 'inbox', label: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
     ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
     ...(projects.manages || auth.isAdmin ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
     ...(auth.isAdmin ? [{ to: '/models', key: 'providers', label: 'Modelos', icon: 'key' as const, badge: 0 }] : []),
     // MCPs como na PRO: o membro do projeto vê (só leitura), o admin edita.
     ...(auth.isAdmin || (auth.user && projects.current) ? [{ to: '/mcp', key: 'mcp', label: 'MCPs', icon: 'plug' as const, badge: 0 }] : []),
+    ...(auth.isAdmin ? [{ to: '/audit', key: 'audit', label: 'Auditoria', icon: 'shield' as const, badge: 0 }] : []),
     ...(auth.isAdmin ? [{ to: '/settings', key: 'settings', label: 'Configuração', icon: 'settings' as const, badge: 0 }] : []),
   ])
 </script>

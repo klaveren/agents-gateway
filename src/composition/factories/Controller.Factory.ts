@@ -1,4 +1,7 @@
 import { RESOURCE_KINDS } from '@domain/models/Resource.Model'
+import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
+import { AuditController } from '@infra/http/Audit.Controller'
+import { SqliteAuditRepository } from '@infra/persistence/Sqlite.AuditRepository'
 import type { UsageCapService } from '@application/UsageCap.Service'
 import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { makeCatalogEvents } from './CatalogEvents.Factory'
@@ -464,4 +467,10 @@ export function makeImportController(): ImportController {
     scope: { get: (projectId) => projects.importScope(projectId), set: (projectId, scope, by) => projects.setImportScope(projectId, scope, by) },
     proof: makeAuth().proof,
   })
+}
+
+/** A auditoria: os eventos no mesmo arquivo das conversas (`CONVERSATIONS_DB`; `off` = só em memória). */
+export function makeAuditController(): AuditController {
+  const configured = process.env.CONVERSATIONS_DB?.trim()
+  return new AuditController({ repository: new SqliteAuditRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH), proof: makeAuth().proof })
 }
