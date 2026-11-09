@@ -1,6 +1,8 @@
 import { Request, Response } from 'express'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
+import { gatewayEdition } from '@domain/Edition.Policy'
+import { DEFAULT_PROJECT_ID } from '@domain/models/Project.Model'
 import { TURN_GRANT_LOCAL } from './Security.Middleware'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { ISelfReply, TSelfApi } from './Self.Api'
@@ -9,6 +11,9 @@ import { AGENT_PATCH_FIELDS } from '@domain/AgentPatch.Policy'
 /**
  * Onde um AGENTE pode escrever pelo MCP do gateway: o projeto da conversa dele (`projectId`), e nada mais. `unrestricted` =
  * administrador do gateway numa conversa SEM projeto (o Atlas): escreve onde a conta dele escreve.
+ * ⚖️ NA LITE, o projeto padrão (`geral`) vale como "sem projeto" para o administrador do gateway: lá tudo nasce e vive
+ * nele, e não há conversa fora de projeto — a trava só barrava o administrador (preços, modelos) sem proteger nada.
+ * O membro comum continua preso ao projeto, e a PRO não muda.
  */
 export interface IAgentWriteScope {
   projectId?: string
@@ -24,7 +29,7 @@ export function agentScopeOf(req: Pick<Request, 'headers'>, res: Pick<Response, 
   const grant = res.locals[TURN_GRANT_LOCAL] as IExecutionContext | undefined
   if (grant) {
     const projectId = grant.conversationProjectId ?? grant.projectId
-    return { ...(projectId ? { projectId } : {}), unrestricted: gateway && !projectId }
+    return { ...(projectId ? { projectId } : {}), unrestricted: gateway && openProject(projectId) }
   }
   const header = (name: string) => {
     const value = req.headers[name]
@@ -32,7 +37,12 @@ export function agentScopeOf(req: Pick<Request, 'headers'>, res: Pick<Response, 
   }
   if (!header(IDENTITY_HEADERS.agent) && !header(IDENTITY_HEADERS.conversation) && !header(IDENTITY_HEADERS.project)) return undefined
   const projectId = header(IDENTITY_HEADERS.project)
-  return { ...(projectId ? { projectId } : {}), unrestricted: gateway && !projectId }
+  return { ...(projectId ? { projectId } : {}), unrestricted: gateway && openProject(projectId) }
+}
+
+/** Sem projeto; ou, na lite, o projeto padrão (ver acima). */
+function openProject(projectId: string | undefined): boolean {
+  return !projectId || (gatewayEdition() === 'lite' && projectId === DEFAULT_PROJECT_ID)
 }
 
 const segment = (path: string, index: number) => decodeURIComponent(path.split('?')[0].split('/')[index + 1] ?? '')

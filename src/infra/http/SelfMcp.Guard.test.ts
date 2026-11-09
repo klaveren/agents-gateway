@@ -222,6 +222,16 @@ describe('SelfMcp.Guard', () => {
 
     it('sem concessão, os cabeçalhos de identidade do gateway marcam o agente; sem nenhum, é uma pessoa (conta inteira)', () => {
       assert.deepStrictEqual(agentScopeOf({ headers: { 'x-gateway-agent': 'a', 'x-gateway-project': 'P' } }, res(), true), { projectId: 'P', unrestricted: false })
+      // Na lite, o projeto padrão vale como "sem projeto" para o administrador do gateway (só ele, e só o padrão).
+      process.env.GATEWAY_EDITION = 'lite'
+      try {
+        assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'geral' }), true), { projectId: 'geral', unrestricted: true })
+        assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'geral' }), false), { projectId: 'geral', unrestricted: false })
+        assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'outro' }), true), { projectId: 'outro', unrestricted: false })
+      } finally {
+        delete process.env.GATEWAY_EDITION
+      }
+      assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'geral' }), true), { projectId: 'geral', unrestricted: false })
       assert.deepStrictEqual(agentScopeOf({ headers: { 'x-gateway-conversation': 'c' } }, res(), true), { unrestricted: true })
       assert.strictEqual(agentScopeOf({ headers: {} }, res(), true), undefined)
     })
