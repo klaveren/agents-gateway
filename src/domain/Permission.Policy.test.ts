@@ -186,6 +186,13 @@ describe('Permission.Policy', () => {
     assert.strictEqual(decide({ category: 'network', value: 'api.github.com:443' }, { agent }).rule?.pattern, '*')
   })
 
+  it('MCP sem regra é liberado (a escolha na guia MCPs é a liberação); a regra de negar ainda restringe', () => {
+    const open = decide({ category: 'mcp', value: 'playwright/browser_navigate' }, {})
+    assert.deepStrictEqual([open.allowed, open.layer], [true, 'default'])
+    assert.ok(!decide({ category: 'mcp', value: 'playwright/browser_navigate' }, { agent: [rule('mcp', 'playwright/browser_*', 'deny')] }).allowed)
+    assert.ok(!decide({ category: 'terminal', value: 'ls' }, {}).allowed)
+  })
+
   it('MCP, skill e delegação por glob no nome', () => {
     assert.ok(decide({ category: 'mcp', value: 'logiccus/ticket_get' }, { project: [rule('mcp', 'logiccus/ticket_*')] }).allowed)
     assert.ok(!decide({ category: 'mcp', value: 'logiccus/meeting_create' }, { project: [rule('mcp', 'logiccus/*'), rule('mcp', 'logiccus/meeting_create', 'deny')] }).allowed)
