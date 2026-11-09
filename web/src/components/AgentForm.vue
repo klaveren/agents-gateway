@@ -970,7 +970,8 @@
     </fieldset>
     <!-- Duas guias: os modelos do agente (o que a pessoa escolhe) e a troca automática (a sequência de modelos quando um falha). -->
     <fieldset v-show="tab === 'modelos'" class="flex flex-col gap-3">
-      <nav class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" role="tablist">
+      <!-- A lite não tem troca automática de modelo: sobra só "Do agente", e as guias somem. -->
+      <nav v-if="!lite" class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" role="tablist">
         <button
           v-for="item in [
             { id: 'agente', label: 'Do agente' },
@@ -1100,7 +1101,7 @@
         </div>
       </section>
       </div>
-      <div v-show="modelsTab === 'grupo'" role="tabpanel">
+      <div v-if="!lite" v-show="modelsTab === 'grupo'" role="tabpanel">
         <AgentModelGroup ref="groupPart" v-model="groupChoice" />
       </div>
     </fieldset>
