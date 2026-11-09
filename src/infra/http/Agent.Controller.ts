@@ -233,6 +233,16 @@ function projectKeyOf(metadata: Record<string, unknown> | undefined): string | u
   return typeof project === 'string' && project ? project : undefined
 }
 
+/**
+ * ⛔ Delegar só para quem pode abrir conversa agora; um alvo inativo devolvia erro ao modelo-pai.
+ * ⚖️ Os construtores do core (`builder-*`) valem sempre: rodam no modelo do construtor ou no do Atlas, e o Atlas sem
+ * modelo ativo travava o próprio salvamento (para trocar o modelo, delegava a quem dependia do modelo velho).
+ */
+export function delegable(id: string, agents: Pick<AgentCatalog, 'get' | 'isRunnable'>): boolean {
+  const target = agents.get(id)
+  return !!target && (CORE_AGENT_IDS.includes(id) || agents.isRunnable(target))
+}
+
 export class AgentController {
   /** Os turnos assíncronos rodando (por conversa) e o resultado do último de cada uma, até o gravado chegar. */
   private readonly liveTurns = new Map<string, ILiveTurn>()
@@ -974,11 +984,7 @@ export class AgentController {
       // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar. E só o do escopo do agente:
       // o global ou o do projeto dele — nunca o de outro projeto.
       mcpServerExists: (id, projectId) => this.usecases.catalog.mcp.resolve(id, projectId)?.enabled === true,
-      // ⛔ Delegar só para quem pode abrir conversa agora; um alvo inativo devolvia erro ao modelo-pai.
-      agentExists: (id) => {
-        const target = this.agents.get(id)
-        return !!target && this.agents.isRunnable(target)
-      },
+      agentExists: (id) => delegable(id, this.agents),
       modelEnabled: this.usecases.models ? (provider, model) => this.usecases.models!.isEnabled(provider, model) : undefined,
       protocolOf: (id) => this.usecases.providers?.get(id)?.protocol ?? Object.values(EProvider).find((value) => value === id),
       promptIssue: (agent) => {
