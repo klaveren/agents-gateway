@@ -6,7 +6,7 @@
   import { useRouter } from 'vue-router'
   import { coreAgentName } from '@/lib/builder'
   import { useAgentCommands } from '@/lib/commands'
-  import { COMPACT_OFFER_PERCENT, contextMeter } from '@/lib/contextMeter'
+  import { contextMeter } from '@/lib/contextMeter'
   import { effortLabel, fullTime } from '@/lib/format'
   import { useAgentsStore } from '@/stores/agents'
   import { useProtocolsStore } from '@/stores/protocols'
@@ -189,11 +189,12 @@
     if (created) await router.replace(`/c/${created}`)
   }
 
-  /** Compactar à mão: só com a conversa viva, da metade da janela em diante, numa lane que o gateway compacta (Codex e Antigravity compactam sozinhos). */
+  /**
+   * Compactar à mão: com a conversa viva e já com um turno, numa lane que o gateway compacta (Codex e Antigravity compactam
+   * sozinhos). ⚖️ A QUALQUER MOMENTO, não só da metade da janela em diante: dá para testar (e mostrar) antes do limite.
+   */
   const compacting = ref(false)
-  const canCompact = computed(
-    () => thread.liveSession === true && !thread.session?.compactsItself && (!!thread.session?.compactNext || (context.value?.percent ?? 0) >= COMPACT_OFFER_PERCENT),
-  )
+  const canCompact = computed(() => thread.liveSession === true && !thread.session?.compactsItself && (!!thread.session?.compactNext || thread.turns.length > 0))
   async function compactNow() {
     compacting.value = true
     actionError.value = undefined
