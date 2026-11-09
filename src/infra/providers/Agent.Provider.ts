@@ -1,4 +1,5 @@
 import { freshAnswers, IConversationPanel, PANEL_TOOL, panelMarkdown, panelTurnNote } from '@domain/models/ConversationPanel.Model'
+import { autoToolOff, isAutoToolOff, withoutOffMarks } from '@domain/Auto.Tools'
 import { reaches, runsUnder } from '@domain/Share.Policy'
 
 /** O painel para o provider: ler e marcar como vistas as respostas que a pessoa deu nele. */
@@ -689,8 +690,11 @@ export class AgentProvider implements IAgentProvider {
       ...(this.guidance?.hasLedger?.() ? LEDGER_TOOLS : []),
       // O painel da conversa: todo agente mantém o da conversa em que está.
       ...(this.panels ? [PANEL_TOOL] : []),
-    ].filter((tool) => !agent.allowedTools.includes(tool))
-    return extra.length ? { ...agent, allowedTools: [...agent.allowedTools, ...extra] } : agent
+      // ⚖️ Desligada no cadastro (`off:<ferramenta>`, ver `Auto.Tools`): não vem.
+    ].filter((tool) => !agent.allowedTools.includes(tool) && !autoToolOff(agent.allowedTools, tool))
+    const marks = agent.allowedTools.some(isAutoToolOff)
+    if (!extra.length && !marks) return agent
+    return { ...agent, allowedTools: [...withoutOffMarks(agent.allowedTools), ...extra] }
   }
 
   /**

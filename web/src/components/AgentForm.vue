@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { lite, LITE_HIDDEN_AGENT_TABS } from '@/lib/edition'
+  import { lite, LITE_HIDDEN_AGENT_TABS, LITE_HIDDEN_TOOLS } from '@/lib/edition'
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
   import { ApiError } from '@/lib/api'
@@ -375,7 +375,7 @@
 
   /** Entradas `sdk:`/`agent:`/`mcp:` que nenhuma lista oferece: sem checkbox, mas o servidor recusa o salvamento. */
   const orphans = computed(() =>
-    findOrphans(form.value.allowedTools, {
+    findOrphans(form.value.allowedTools.filter((entry) => !entry.startsWith(AUTO_TOOL_OFF)), {
       natives: agents.toolsLoaded && protocols.loaded ? new Set(natives.value.map((tool) => tool.id)) : undefined,
       agents: agents.loaded
         ? new Set([...agents.list.filter((candidate) => candidate.id !== form.value.id).map((candidate) => candidate.id), ...CORE_BUILDERS.map((builder) => builder.id)])
@@ -424,6 +424,35 @@
     agent_trigger: 'Editar triggers',
     ssh_sign: 'Assinar SSH',
     conversation_panel: 'Painel da conversa',
+    ledger_read: 'Memória: ler',
+    ledger_write: 'Memória: gravar',
+  }
+  /**
+   * ⚖️ AS AUTOMÁTICAS (ver `Auto.Tools` no servidor): o gateway as liga sozinho — a memória e o painel sempre, os
+   * documentos e os recursos quando há o que ler. Aqui aparecem LIGADAS, e desligar grava `off:<ferramenta>`.
+   */
+  const AUTO_TOOL_OFF = 'off:'
+  const AUTO_TOOLS: readonly string[] = ['ledger_read', 'ledger_write', 'conversation_panel', 'read_doc', 'search_docs', 'use_resource', 'search_resources']
+  const LEDGER_TOOLS = [
+    { name: 'ledger_read', description: 'Lê a memória do agente: o que ele aprendeu de como agir.' },
+    { name: 'ledger_write', description: 'Grava na memória do agente o que ele aprendeu.' },
+  ]
+  /** As do gateway na tela: as do servidor (menos o que a lite não tem) e as da memória, que o servidor não lista. */
+  const gatewayTools = computed(() => {
+    const listed = agents.tools.filter((tool) => !(lite.value && LITE_HIDDEN_TOOLS.has(tool.name)))
+    return [...listed, ...LEDGER_TOOLS.filter((ledger) => !listed.some((tool) => tool.name === ledger.name)).map((tool) => ({ ...tool, dangerous: false }))]
+  })
+  /** As capacidades que só o gateway executa (nenhum provedor tem a sua): vão no grupo "Do gateway". */
+  const GATEWAY_CAPABILITIES: readonly string[] = ['cap:todos', 'cap:triggers']
+  const serverCapabilities = computed(() => agents.capabilities.filter((item) => !GATEWAY_CAPABILITIES.includes(item.id)))
+  // Editar triggers fica de fora da lite, que não tem triggers.
+  const gatewayCapabilities = computed(() => agents.capabilities.filter((item) => GATEWAY_CAPABILITIES.includes(item.id) && !(lite.value && item.id === 'cap:triggers')))
+  const toolOn = (name: string) => (AUTO_TOOLS.includes(name) ? !form.value.allowedTools.includes(`${AUTO_TOOL_OFF}${name}`) : form.value.allowedTools.includes(name))
+  function toggleTool(name: string) {
+    if (!AUTO_TOOLS.includes(name)) return toggle(form.value.allowedTools, name)
+    // A automática não é escolha: some do `allowedTools` e vira (ou deixa de ser) a marca de desligada.
+    form.value.allowedTools = form.value.allowedTools.filter((entry) => entry !== name)
+    toggle(form.value.allowedTools, `${AUTO_TOOL_OFF}${name}`)
   }
 
   const initialHash = useRoute().hash
@@ -521,7 +550,7 @@
       {
         id: 'ferramentas',
         label: 'Ferramentas',
-        count: tools.filter((entry) => !entry.startsWith('mcp:') && !entry.startsWith('sdk:')).length,
+        count: tools.filter((entry) => !entry.startsWith('mcp:') && !entry.startsWith('sdk:') && !entry.startsWith(AUTO_TOOL_OFF)).length,
         alert: alert('ferramentas') ?? (orphans.value.length ? 'Há ferramentas indisponíveis' : undefined),
       },
       { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
@@ -1096,13 +1125,14 @@
       <div v-show="toolsTab === 'gateway'" class="flex flex-col gap-3" role="tabpanel">
       <section class="tool-card">
         <header>
-          <h3>Capacidades</h3>
-          <span class="count">{{ agents.capabilities.filter((item) => form.allowedTools.includes(item.id)).length || 'nenhuma' }}</span>
+          <h3>O que o agente pode fazer</h3>
+          <span class="count">{{ [...serverCapabilities, ...gatewayCapabilities].filter((item) => form.allowedTools.includes(item.id)).length + gatewayTools.filter((tool) => toolOn(tool.name)).length || 'nada' }}</span>
         </header>
-        <p class="hint px-3 pt-2">O que o agente pode fazer. O gateway decide como roda em cada provedor.</p>
+        <h4 class="px-3 pt-3 text-xs font-medium text-zinc-300">No servidor e na web</h4>
+        <p class="hint px-3">Cada provedor executa do jeito dele (a tabela mostra como); as regras de permissão e o isolamento são os mesmos.</p>
         <div class="flex flex-wrap gap-1.5 p-3">
           <button
-            v-for="item in agents.capabilities"
+            v-for="item in serverCapabilities"
             :key="item.id"
             type="button"
             class="chip"
@@ -1119,27 +1149,34 @@
             <dd class="text-zinc-500">{{ row.runs }}</dd>
           </template>
         </dl>
-      </section>
-
-      <section v-if="agents.tools.length" class="tool-card">
-        <header>
-          <h3>Ferramentas do gateway</h3>
-          <span class="count">{{ agents.tools.filter((tool) => form.allowedTools.includes(tool.name)).length || 'nenhuma' }}</span>
-        </header>
-        <p class="hint px-3 pt-2">Documentos, recursos, o painel da conversa e a assinatura SSH: rodam no gateway, em qualquer provedor.</p>
-        <div class="flex flex-wrap gap-1.5 p-3">
-          <button
-            v-for="tool in agents.tools"
-            :key="tool.name"
-            type="button"
-            class="chip"
-            :class="{ on: form.allowedTools.includes(tool.name), danger: tool.dangerous }"
-            :title="`${tool.name} — ${tool.description}`"
-            @click="toggle(form.allowedTools, tool.name)"
-          >
-            {{ LOCAL_TOOL_LABEL[tool.name] ?? tool.name }}
-          </button>
-        </div>
+        <template v-if="gatewayTools.length || gatewayCapabilities.length">
+          <h4 class="border-t border-zinc-800/80 px-3 pt-3 text-xs font-medium text-zinc-300">Do gateway</h4>
+          <p class="hint px-3">Rodam no gateway, iguais em qualquer provedor. A memória, o painel, os documentos e os recursos já vêm ligados: desligue o que este agente não deve usar.</p>
+          <div class="flex flex-wrap gap-1.5 p-3">
+            <button
+              v-for="item in gatewayCapabilities"
+              :key="item.id"
+              type="button"
+              class="chip"
+              :class="{ on: form.allowedTools.includes(item.id), danger: item.dangerous }"
+              :title="item.description"
+              @click="toggle(form.allowedTools, item.id)"
+            >
+              {{ item.label }}
+            </button>
+            <button
+              v-for="tool in gatewayTools"
+              :key="tool.name"
+              type="button"
+              class="chip"
+              :class="{ on: toolOn(tool.name), danger: tool.dangerous }"
+              :title="`${tool.name} — ${tool.description}`"
+              @click="toggleTool(tool.name)"
+            >
+              {{ LOCAL_TOOL_LABEL[tool.name] ?? tool.name }}
+            </button>
+          </div>
+        </template>
       </section>
 
       <p v-if="dangerousChosen.length" class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">

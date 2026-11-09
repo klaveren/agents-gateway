@@ -783,6 +783,19 @@ describe('AgentProvider — rules e documentos', () => {
     const withLedger = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), adapter]]), store, undefined, SEED, undefined, { ...guidance, hasLedger: () => true })
     await withLedger.createSession({ agentId: SEED.list()[0].id, metadata: { project: 'crm' } })
     assert.ok(seen.created.includes('ledger_read') && seen.created.includes('ledger_write'))
+
+    // ⚖️ Desligada no cadastro (`off:`), a automática não vem — e a marca não chega ao adapter.
+    const base = SEED.list()[0]
+    const off = { ...base, allowedTools: [...base.allowedTools, 'off:ledger_write', 'off:read_doc'] }
+    const directory = { list: () => [off], get: (id: string) => (id === off.id ? off : undefined) }
+    const withOff = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), adapter]]), store, undefined, directory, undefined, {
+      ...guidance,
+      hasLedger: () => true,
+    })
+    await withOff.createSession({ agentId: off.id, metadata: { project: 'xpto' } })
+    assert.ok(seen.created.includes('ledger_read') && !seen.created.includes('ledger_write'))
+    assert.ok(seen.created.includes('search_docs') && !seen.created.includes('read_doc'))
+    assert.ok(!seen.created.some((tool) => tool.startsWith('off:')))
   })
 })
 
