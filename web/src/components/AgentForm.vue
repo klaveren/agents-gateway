@@ -1335,8 +1335,8 @@
               <span v-if="agents.list.length <= 1" class="text-xs text-zinc-500">Nenhum outro agente ainda.</span>
             </div>
           </div>
-          <!-- Os construtores do core: não estão na lista de agentes, mas recebem delegação (o Atlas cria conteúdo por eles). -->
-          <div class="flex flex-col gap-1.5">
+          <!-- Os construtores do core: não estão na lista de agentes, mas recebem delegação (o Atlas cria conteúdo por eles). A lite não os mostra. -->
+          <div v-if="!lite" class="flex flex-col gap-1.5">
             <span class="text-xs text-zinc-500">Do sistema · só para administradores</span>
             <div class="flex flex-wrap gap-1.5">
               <button
@@ -1356,9 +1356,12 @@
         </div>
       </section>
 
-      <!-- As regras de delegação do agente (padrões de id), antes na guia Permissões: moram aqui, junto da escolha. -->
-      <p class="hint">Marcar acima dá a ferramenta; a regra libera a chamada. Precisa dos dois: a regra pode estar aqui ou nas permissões do projeto.</p>
-      <PermissionRules v-model="form.permissions!" only="delegate" />
+      <!-- As regras de delegação do agente (padrões de id), antes na guia Permissões: moram aqui, junto da escolha.
+           ⚖️ A lite não tem regra de delegação: marcar o agente já libera (ver `Permission.Policy`). -->
+      <template v-if="!lite">
+        <p class="hint">Marcar acima dá a ferramenta; a regra libera a chamada. Precisa dos dois: a regra pode estar aqui ou nas permissões do projeto.</p>
+        <PermissionRules v-model="form.permissions!" only="delegate" />
+      </template>
     </fieldset>
     <fieldset v-show="tab === 'mcps'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">

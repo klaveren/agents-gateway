@@ -186,6 +186,17 @@ describe('Permission.Policy', () => {
     assert.strictEqual(decide({ category: 'network', value: 'api.github.com:443' }, { agent }).rule?.pattern, '*')
   })
 
+  it('na lite, delegar sem regra é liberado (marcar o agente basta); na PRO, segue pedindo regra; negar vence nas duas', () => {
+    assert.ok(!decide({ category: 'delegate', value: 'pesquisa' }, {}).allowed)
+    process.env.GATEWAY_EDITION = 'lite'
+    try {
+      assert.ok(decide({ category: 'delegate', value: 'pesquisa' }, {}).allowed)
+      assert.ok(!decide({ category: 'delegate', value: 'pesquisa' }, { agent: [rule('delegate', 'pesquisa', 'deny')] }).allowed)
+    } finally {
+      delete process.env.GATEWAY_EDITION
+    }
+  })
+
   it('MCP sem regra é liberado (a escolha na guia MCPs é a liberação); a regra de negar ainda restringe', () => {
     const open = decide({ category: 'mcp', value: 'playwright/browser_navigate' }, {})
     assert.deepStrictEqual([open.allowed, open.layer], [true, 'default'])
