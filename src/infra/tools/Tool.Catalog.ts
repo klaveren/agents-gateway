@@ -154,11 +154,15 @@ export class ToolCatalog {
     return { ...config, kind: 'remote', url: `${this.containerProxy.base}/${mcpServerKey(config)}`, transport: 'http', auth: 'caller', headerName: 'X-Tool-Authorization' }
   }
 
-  /** O servidor remoto levaria credencial no header de um SDK que conecta por conta própria (e não é o do próprio gateway)? */
+  /**
+   * O servidor remoto levaria credencial no header de um SDK que conecta por conta própria (e não é o do próprio gateway)?
+   * ⚖️ O `oauth` também: o token é da pessoa e só o gateway o tem (e renova). Conectando sozinho, o SDK leva 401 e tenta
+   * o registro dinâmico de cliente, que o Google recusa ("does not support dynamic client registration").
+   */
   private leavesCredentialInArgv(config: IMcpServerConfig, fixed: Record<string, string> | undefined): boolean {
     if (!this.containerProxy) return false
     if (config.id === SELF_MCP_SERVER_ID && !config.projectId) return false
-    return config.auth === 'caller' || config.auth === 'header' || !!(fixed && Object.keys(fixed).length)
+    return config.auth === 'caller' || config.auth === 'header' || config.auth === 'oauth' || !!(fixed && Object.keys(fixed).length)
   }
 
   /**

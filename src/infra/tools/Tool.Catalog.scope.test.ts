@@ -92,6 +92,19 @@ describe('MCP de projeto — isolamento em tempo de execução', () => {
     }
   })
 
+  it('OAuth: o SDK chega pelo proxy (o token é da pessoa, só o gateway o tem); sem conta conectada, o servidor não vai', async () => {
+    const mcp = fakeMcpRegistry([{ id: 'gmail', auth: 'oauth', tools: [mcpTool('search_threads')] }])
+    mcp.useOAuth({ accessToken: async (_key, userId) => (userId === 'ana' ? 'token-da-ana' : undefined) })
+    const catalog = new ToolCatalog(mcp, [], undefined, { base: 'http://127.0.0.1:3000/v1/mcp-proxy' })
+    const urls = await withCaller({ id: 'ana' }, () => catalog.mcpServersFor(['mcp:gmail/*'], GLOBAL))
+    assert.deepStrictEqual(
+      urls.map((remote) => remote.config.url),
+      ['http://127.0.0.1:3000/v1/mcp-proxy/gmail'],
+    )
+    // Sem pessoa no escopo, nenhum cliente: o SDK nem recebe o servidor (não tenta conectar sozinho).
+    assert.deepStrictEqual(await catalog.mcpServersFor(['mcp:gmail/*'], GLOBAL), [])
+  })
+
   it('contêiner de projeto: o SDK chega pelo proxy com a CHAVE na URL', async () => {
     const mcp = registry()
     const now = new Date()
