@@ -1,5 +1,6 @@
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { AGENT_SEED } from '@domain/Agent.Seed'
+import { gatewayEdition, withoutLiteTools } from '@domain/Edition.Policy'
 import { AGENT_MIGRATIONS } from '@domain/Agent.Migrations'
 import { builderAgent, importBuilderAgent, PROTOCOLS } from '@domain/Builder.Agents'
 import { IAgentSettings } from '@domain/models/Settings.Model'
@@ -42,6 +43,19 @@ export function makeAgents(): AgentCatalog {
   for (const migration of AGENT_MIGRATIONS)
     for (const id of migration.agentIds === '*' ? repository.list().map((agent) => agent.id) : migration.agentIds)
       repository.migrateOnce(migration.key, id, migration.change, 'seed')
+  // ⚖️ Na lite, a semente (o Atlas) perde uma vez as ferramentas do MCP do gateway que a lite não registra: na tela e na
+  // conversa, ele só tem o que existe. Vale para a instalação nova e para a que passou a ser lite.
+  if (gatewayEdition() === 'lite')
+    for (const { id } of AGENT_SEED)
+      repository.migrateOnce(
+        'lite-tools',
+        id,
+        (agent) => {
+          const allowedTools = withoutLiteTools(agent.allowedTools)
+          return allowedTools.length === agent.allowedTools.length ? undefined : { ...agent, allowedTools }
+        },
+        'seed',
+      )
 
   // ⚠️ O catálogo é pedido NA HORA, não aqui: ele próprio lê os agentes ao nascer (para ativar os
   // modelos que eles já usam), e pedi-lo agora seria uma volta sem fim entre as duas fábricas.
