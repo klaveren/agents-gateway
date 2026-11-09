@@ -42,9 +42,7 @@
   <div class="flex flex-col gap-3">
     <div class="flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
       <span class="min-w-0 flex-1">
-        Roda
-        <strong>direto no servidor</strong>
-        , sem isolamento: quem usa o agente tem o mesmo acesso que o servidor.
+        Roda <strong>direto no servidor</strong>, sem isolamento: quem usa o agente tem o mesmo acesso que o servidor.
       </span>
       <button type="button" class="btn btn-sm btn-secondary" @click="playwright">Preencher com Playwright</button>
     </div>
@@ -56,35 +54,23 @@
         <small v-for="m in issues?.package" :key="m" class="error">{{ m }}</small>
       </label>
       <label class="field">
-        Comando
-        <span class="hint">opcional</span>
+        <span>Comando <span class="hint">(opcional)</span></span>
         <input v-model="model.command" class="input font-mono" placeholder="comando do pacote" />
-        <small class="hint">
-          Com pacote: só se ele tiver vários comandos. Sem pacote: o comando a rodar (
-          <code>npx</code>
-          ,
-          <code>uvx</code>
-          , caminho absoluto).
-        </small>
+        <small class="hint">Com pacote: só se ele tiver vários comandos. Sem pacote: o comando a rodar (<code>npx</code>, <code>uvx</code>, caminho absoluto).</small>
         <small v-for="m in issues?.command" :key="m" class="error">{{ m }}</small>
       </label>
     </div>
     <label class="field">
-      Argumentos
-      <span class="hint">um por linha</span>
+      <span>Argumentos <span class="hint">(um por linha)</span></span>
       <textarea v-model="args" rows="4" class="input font-mono text-xs" placeholder="--headless" />
-      <small class="hint">
-        No Mac ou Windows, remova a linha
-        <code>--executable-path=/usr/bin/chromium</code>
-        para usar o Chrome instalado.
-      </small>
+      <small class="hint">No Mac ou Windows, remova a linha <code>--executable-path=/usr/bin/chromium</code> para usar o Chrome instalado.</small>
       <small v-for="m in issues?.args" :key="m" class="error">{{ m }}</small>
     </label>
     <div class="grid gap-3 sm:grid-cols-2">
       <label class="field">
         Variáveis secretas
-        <span class="hint">só os nomes — os valores você coloca depois de salvar</span>
         <input v-model="env" class="input font-mono text-xs" placeholder="API_TOKEN" />
+        <small class="hint">Só os nomes: os valores você coloca depois de salvar.</small>
         <small v-for="m in issues?.env" :key="m" class="error">{{ m }}</small>
       </label>
       <div class="field">
