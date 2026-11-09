@@ -200,6 +200,18 @@ describe('terminal — $TMPDIR do cerco e variável de laço literal', () => {
     assert.match((await inCerco('echo x > ../fora.txt')) ?? '', /nenhuma regra de escrita permite/)
   })
 
+  it('`cd $TMPDIR && … > x` grava no rascunho; o `cd` com `;`, outra variável ou fora do rascunho segue da raiz', async () => {
+    const inCerco = (command: string) =>
+      terminalRefusal(command, '/w', checker(base), {}, undefined, { variables: { TMPDIR: '/w/.tmp', HOME: '/w/.home' }, scratch: ['/w/.tmp', '/w/.home'] })
+    assert.strictEqual(await inCerco('cd $TMPDIR && echo x > d/a.dump'), undefined)
+    assert.strictEqual(await inCerco('cd "${HOME}/sub" && echo x > a.txt'), undefined)
+    assert.match((await inCerco('cd $TMPDIR; echo x > a.txt')) ?? '', /nenhuma regra de escrita permite/)
+    assert.match((await inCerco('cd $TMPDIR && echo x > ../../fora.txt')) ?? '', /nenhuma regra de escrita permite/)
+    assert.match((await inCerco('cd $OUTRA && echo x > a.txt')) ?? '', /nenhuma regra de escrita permite|dynamic/)
+    assert.match((await inCerco('cd $TMPDIR/.. && echo x > a.txt')) ?? '', /nenhuma regra de escrita permite/)
+    assert.match((await inCerco('TMPDIR=/etc; cd $TMPDIR && echo x > a.txt')) ?? '', /nenhuma regra de escrita permite|dynamic/)
+  })
+
   it('⛔ TMPDIR reatribuído no script, outra variável e expansão com operador seguem dinâmicas', async () => {
     const rules = [wr('**')]
     for (const command of [

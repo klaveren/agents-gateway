@@ -599,7 +599,7 @@ export async function terminalRefusal(
     if (analysis.commands.some((part) => definesGitAlias(part.argv)) || /\bGIT_CONFIG_KEY_\d+\s*=\s*["']?alias\./i.test(command))
       return 'apelido do git (alias.*) não pode ser criado enquanto há regra que nega comandos do git'
   }
-  const moved = leadingCd(command, analysis.commands)
+  const moved = leadingCd(command, analysis.commands, [...(options.scratch ?? []), ...(options.own?.dirs ?? [])])
   for (const part of analysis.commands) {
     // ⚖️ Os embutidos do shell que não fazem nada sozinhos (`echo ---` como separador, `cd`, `pwd`) passam sem regra: o
     // redirecionamento deles é checado abaixo, e uma negação explícita do agente ou do projeto continua valendo.
@@ -1408,12 +1408,16 @@ export function policyRefusal(denied: string, command: string): string {
 /**
  * A pasta do `cd` que abre a linha (`cd repositories/x && …`), relativa à raiz: só quando ela é LITERAL, vem seguida de `&&`
  * (se o `cd` falha, nada roda na raiz) e é a única troca de pasta da linha (sem `cd`, `pushd` nem `popd` depois). Fora disso,
- * nada: os caminhos valem a partir da raiz, como antes.
+ * nada: os caminhos valem a partir da raiz, como antes. A exceção é o rascunho do cerco (`cd $TMPDIR && … > x`, o Argos em
+ * 09/11): a variável que o cerco define vira a pasta absoluta, e só quando cai dentro de `places`.
  */
-function leadingCd(command: string, commands: readonly IShellCommand[]): string | undefined {
+function leadingCd(command: string, commands: readonly IShellCommand[], places: readonly string[] = []): string | undefined {
   const first = commands[0]
   if (!first || first.name !== 'cd' || first.argv.length !== 2 || first.dynamicArgs?.length) return undefined
   if (commands.slice(1).some((part) => ['cd', 'pushd', 'popd'].includes(part.name))) return undefined
+  const scratch = posix.normalize(first.argv[1]!)
+  if (/^\s*cd\s+"?\$\{?(TMPDIR|HOME)\}?[A-Za-z0-9_@%+=:,./-]*"?\s*&&/.test(command) && isAbsolute(scratch))
+    return places.some((dir) => scratch === posix.resolve(dir) || scratch.startsWith(`${posix.resolve(dir)}/`)) ? scratch : undefined
   if (!/^\s*cd\s+[A-Za-z0-9_@%+=:,./-]+\s*&&/.test(command)) return undefined
   const dir = posix.normalize(first.argv[1]!)
   if (isAbsolute(dir) || dir === '.' || dir === '..' || dir.startsWith('../')) return undefined
