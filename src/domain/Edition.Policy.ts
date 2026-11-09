@@ -1,0 +1,58 @@
+/**
+ * ⚖️ A EDIÇÃO da instalação: nasce com o deploy (`GATEWAY_EDITION=lite`) e não muda. A lite mostra menos (a tela e o MCP
+ * do gateway); o que ela não tem não é barrado na API — é apresentação, não plano.
+ */
+export type TEdition = 'pro' | 'lite'
+
+export function gatewayEdition(env: NodeJS.ProcessEnv = process.env): TEdition {
+  return env.GATEWAY_EDITION?.trim().toLowerCase() === 'lite' ? 'lite' : 'pro'
+}
+
+/** As ferramentas do MCP do gateway que a lite não registra: o que a tela da lite também não tem. */
+export const LITE_HIDDEN_MCP_TOOLS: ReadonlySet<string> = new Set([
+  // Projetos
+  'list_projects',
+  'save_project',
+  'set_project_members',
+  // Hooks e agendamentos
+  'list_hooks',
+  'save_hook',
+  'delete_hook',
+  'hook_deliveries',
+  'list_schedules',
+  'save_schedule',
+  'delete_schedule',
+  // Recursos, arquivos e contexto inicial
+  'list_resources',
+  'save_resource',
+  'delete_resource',
+  'get_agent_resources',
+  'set_agent_resources',
+  'attach_resource_files',
+  'get_initial_context',
+  'set_initial_context',
+  'get_agent_initial_context',
+  'set_agent_initial_context',
+  // Docs, rules e protocolos
+  'list_docs',
+  'get_doc',
+  'save_doc',
+  'delete_doc',
+  'list_rules',
+  'save_rule',
+  'delete_rule',
+  'move_rule',
+  'get_protocol',
+  // Pacotes, importação, troca automática de modelo, histórico do catálogo e erros
+  'list_packages',
+  'search_packages',
+  'install_package',
+  'remove_package',
+  'import_items',
+  'resolve_import_issue',
+  'list_model_groups',
+  'save_model_group',
+  'delete_model_group',
+  'catalog_history',
+  'list_errors',
+])

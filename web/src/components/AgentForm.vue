@@ -552,7 +552,7 @@
       ...(importIssues.value.length ? [{ id: 'problemas' as const, label: 'Problemas da importação', count: importIssues.value.length }] : []),
     ]
     // A guia Permissões aparece sempre: as regras do agente moram nela, haja ou não nível de acesso ou extras.
-    return lite ? all.filter((item) => !LITE_HIDDEN_AGENT_TABS.has(item.id)) : all
+    return lite.value ? all.filter((item) => !LITE_HIDDEN_AGENT_TABS.has(item.id)) : all
   })
   // A guia que sumiu (tirou o provider das nativas) não fica aberta vazia.
   watch(tabs, (list) => {

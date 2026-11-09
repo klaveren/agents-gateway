@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { lite, LITE_ROUTES } from './lib/edition'
+import { editionKnown, lite, LITE_ROUTES } from './lib/edition'
 import AgentsView from './views/AgentsView.vue'
 import InboxView from './views/InboxView.vue'
 import ConversationPanelView from './views/ConversationPanelView.vue'
@@ -120,4 +120,7 @@ export const router = createRouter({
 })
 
 // Na lite, a rota fora da lista volta para as conversas (o endereço colado da PRO não abre tela escondida).
-if (lite) router.beforeEach((to) => (LITE_ROUTES.has(String(to.name ?? '')) ? true : { path: '/', replace: true }))
+router.beforeEach(async (to) => {
+  await editionKnown()
+  return !lite.value || LITE_ROUTES.has(String(to.name ?? '')) ? true : { path: '/', replace: true }
+})

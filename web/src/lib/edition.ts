@@ -1,8 +1,28 @@
+import { computed, ref } from 'vue'
+
 /**
- * ⚖️ A EDIÇÃO nasce no build e não muda: `VITE_EDITION=lite npm run dev` (ou `vite build`) monta a tela reduzida. Só
- * a tela: o servidor é o mesmo e não barra nada (a lite é para apresentação).
+ * ⚖️ A EDIÇÃO vem do servidor (`GATEWAY_EDITION`, no `/auth/status`) e não muda: a instalação nasce lite ou PRO. Uma
+ * variável só, para a tela e o MCP do gateway. Só apresentação: a API não barra nada.
  */
-export const lite = import.meta.env.VITE_EDITION === 'lite'
+export type TEdition = 'pro' | 'lite'
+
+const edition = ref<TEdition>()
+let settle!: () => void
+const known = new Promise<void>((resolve) => (settle = resolve))
+
+export const lite = computed(() => edition.value === 'lite')
+
+/** Gravada uma vez, pelo `auth.scan` (sem resposta, PRO). */
+export function setEdition(value: TEdition | undefined): void {
+  if (edition.value) return
+  edition.value = value === 'lite' ? 'lite' : 'pro'
+  settle()
+}
+
+/** Resolve quando a edição chegou: o router espera antes de decidir a primeira rota. */
+export function editionKnown(): Promise<void> {
+  return known
+}
 
 /** As rotas da lite: o resto volta para `/`. As telas são as da PRO, sem mudança; o que a lite mostra mora aqui e no `LiteNav`. */
 export const LITE_ROUTES: ReadonlySet<string> = new Set([

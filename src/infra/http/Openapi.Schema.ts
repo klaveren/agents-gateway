@@ -1453,7 +1453,17 @@ export const OPENAPI_DOCUMENT = {
       get: {
         summary: 'Whether local accounts exist and whether the first administrator still has to be created. Public',
         security: [],
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { localAccounts: { type: 'boolean' }, setupRequired: { type: 'boolean' } } })) } },
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: { localAccounts: { type: 'boolean' }, setupRequired: { type: 'boolean' }, edition: { type: 'string', enum: ['pro', 'lite'] } },
+              }),
+            ),
+          },
+        },
       },
     },
     '/auth/setup': {
