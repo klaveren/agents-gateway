@@ -4,6 +4,7 @@
   import { useRoute, useRouter } from 'vue-router'
   import UsageSummaryView from '@/components/UsageSummaryView.vue'
   import UsageTiles from '@/components/UsageTiles.vue'
+  import UsageCapBar from '@/components/UsageCapBar.vue'
   import ListPager from '@/components/ListPager.vue'
   import { usePaged } from '@/composables/usePaged'
   import { tokens, usd } from '@/lib/format'
@@ -135,6 +136,7 @@
         </div>
       </header>
 
+      <UsageCapBar />
       <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
       <p v-if="loading && !mine && !users && !detail && !groups && !valueDetail" class="text-sm text-zinc-500">Carregando…</p>
 

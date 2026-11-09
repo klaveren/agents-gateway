@@ -62,6 +62,14 @@ export class AgentUnavailableError extends DomainError {
   }
 }
 
+/** O teto de uso do mês foi alcançado (ver `Usage.Cap`): o turno novo não começa. A mensagem já diz qual e o que fazer. */
+export class UsageCapReachedError extends DomainError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'UsageCapReachedError'
+  }
+}
+
 /**
  * Uma alteração de configuração que não faz sentido — por exemplo, apagar um campo obrigatório.
  * É erro de quem pediu (422), e não do serviço.

@@ -1,5 +1,6 @@
 import { AccountsService } from '@application/Accounts.Service'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
+import { UsageCapService } from '@application/UsageCap.Service'
 import { IUsageFigure, IUsageSummary, usageDays, UsageService } from '@application/Usage.Service'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
@@ -12,7 +13,7 @@ import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { metadataFilter } from './Monitor.Query'
-import { administers, IAdminView, requireAnyAdmin, requireProjectAdmin } from './Project.Access'
+import { administers, adminView, IAdminView, requireAnyAdmin, requireProjectAdmin } from './Project.Access'
 
 export interface IUsageControllerDeps {
   conversations: IConversationRepository
@@ -21,6 +22,8 @@ export interface IUsageControllerDeps {
   models?: ModelCatalogService
   /** Para pôr o NOME da conta local ao lado do e-mail, na visão do admin. */
   accounts?: AccountsService
+  /** O teto de uso do mês (o mesmo que trava o turno). Ausente = a rota diz que não há teto. */
+  cap?: UsageCapService
   now?: () => Date
 }
 
@@ -62,7 +65,7 @@ export class UsageController {
   private readonly service = new UsageService()
 
   constructor(private readonly deps: IUsageControllerDeps) {
-    for (const name of ['mine', 'users', 'user', 'byKey', 'byKeyValue'] as const) this[name] = this[name].bind(this)
+    for (const name of ['mine', 'users', 'user', 'byKey', 'byKeyValue', 'cap'] as const) this[name] = this[name].bind(this)
   }
 
   /** O meu uso. Exige identidade: o anônimo não tem "meu". */
@@ -76,6 +79,29 @@ export class UsageController {
       const rows = await this.deps.conversations.usage(query)
       const byTool = await this.toolsOf(query)
       return { period, ...withoutCost(this.service.summarize(rows, { days })), ...(byTool ? { byTool } : {}) }
+    })
+  }
+
+  /**
+   * O teto de uso do mês contra o consumo: o meu e, para quem administra o gateway, o do gateway.
+   * ⚖️ Quem não administra não vê custo (como no resto do Uso): do teto em US$, só a porcentagem.
+   */
+  async cap(_req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const resolved = await resolveCaller(this.deps.proof)
+      const identity = resolved?.identity
+      if (!identity?.id) throw new HttpError(401, 'unauthorized', 'Sign in to see your usage')
+      if (!this.deps.cap) return { caps: {} }
+      const status = await this.deps.cap.status(identity.id)
+      if ((await adminView(this.deps.proof))?.gateway) return status
+      const { caps, since, user, reached } = status
+      const percent = (used: number | undefined, cap: number | undefined) => (cap && used !== undefined ? Math.min(Math.round((used / cap) * 100), 100) : undefined)
+      return {
+        caps: { userMonthlyTokens: caps.userMonthlyTokens, monthlyTokens: caps.monthlyTokens },
+        since,
+        user: { tokens: user?.tokens ?? 0, costPercent: percent(user?.costUsd, caps.userMonthlyCostUsd) },
+        ...(reached ? { reached: { scope: reached.scope, kind: reached.kind } } : {}),
+      }
     })
   }
 

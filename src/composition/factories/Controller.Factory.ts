@@ -1,4 +1,5 @@
 import { RESOURCE_KINDS } from '@domain/models/Resource.Model'
+import type { UsageCapService } from '@application/UsageCap.Service'
 import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { makeCatalogEvents } from './CatalogEvents.Factory'
 import { readFileSync } from 'node:fs'
@@ -108,6 +109,7 @@ export function makeController(): AgentController {
     models: makeModelCatalog(),
     sessionContext: sessionContextFromEnv(),
     conversations: usecases.conversations,
+    usageCap: usecases.usageCap,
     events: usecases.events,
     catalogEvents: makeCatalogEvents(),
     live: usecases.live,
@@ -237,8 +239,8 @@ export function makeProvidersController(): ProvidersController {
   })
 }
 
-export function makeUsageController(conversations: AgentController['conversations']): UsageController {
-  return new UsageController({ conversations, proof: makeAuth().proof, models: makeModelCatalog(), accounts: makeAuth().accounts })
+export function makeUsageController(conversations: AgentController['conversations'], cap?: UsageCapService): UsageController {
+  return new UsageController({ conversations, proof: makeAuth().proof, models: makeModelCatalog(), accounts: makeAuth().accounts, cap })
 }
 
 export function makeMcpServersController(): McpServersController {
