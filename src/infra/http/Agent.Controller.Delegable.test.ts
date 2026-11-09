@@ -5,7 +5,8 @@ import { delegable } from './Agent.Controller'
 
 describe('delegable', () => {
   const agents = (runnable: boolean) => ({
-    get: (id: string) => (['builder-skill', 'pesquisa'].includes(id) ? ({ id } as IAgent) : undefined),
+    // O construtor não aparece: sem modelo que rode, ele nem existe.
+    get: (id: string) => (id === 'pesquisa' ? ({ id } as IAgent) : undefined),
     isRunnable: () => runnable,
   })
 

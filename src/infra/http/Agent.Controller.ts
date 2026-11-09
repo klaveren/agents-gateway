@@ -236,11 +236,14 @@ function projectKeyOf(metadata: Record<string, unknown> | undefined): string | u
 /**
  * ⛔ Delegar só para quem pode abrir conversa agora; um alvo inativo devolvia erro ao modelo-pai.
  * ⚖️ Os construtores do core (`builder-*`) valem sempre: rodam no modelo do construtor ou no do Atlas, e o Atlas sem
- * modelo ativo travava o próprio salvamento (para trocar o modelo, delegava a quem dependia do modelo velho).
+ * modelo ativo travava o próprio salvamento (para trocar o modelo, delegava a quem dependia do modelo velho — e que, sem
+ * modelo que rode, nem existe).
  */
 export function delegable(id: string, agents: Pick<AgentCatalog, 'get' | 'isRunnable'>): boolean {
+  // O construtor nem existe sem modelo que rode (ver `coreAgents`): vale pelo id.
+  if (CORE_AGENT_IDS.includes(id)) return true
   const target = agents.get(id)
-  return !!target && (CORE_AGENT_IDS.includes(id) || agents.isRunnable(target))
+  return !!target && agents.isRunnable(target)
 }
 
 export class AgentController {
