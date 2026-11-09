@@ -51,6 +51,8 @@ export class AccountsService {
    * servidor, obrigatório no setup. Quem lê o log é quem opera a máquina — e não "quem chega primeiro".
    */
   readonly setupCode: string
+  /** O que nasce junto com o primeiro admin (o projeto inicial; ver `Projects.Factory`). Ligado depois: os projetos dependem das contas. */
+  private setupHooks: Array<(user: IUser) => void> = []
 
   constructor(
     private readonly users: IUserRepository,
@@ -61,6 +63,11 @@ export class AccountsService {
   ) {
     this.decoy = hasher.hash(randomBytes(16).toString('hex'))
     this.setupCode = setupCode
+  }
+
+  /** Roda depois de criar o primeiro admin, antes de devolver a sessão. */
+  afterSetup(hook: (user: IUser) => void): void {
+    this.setupHooks.push(hook)
   }
 
   setupRequired(): boolean {
@@ -78,6 +85,7 @@ export class AccountsService {
     if (!this.setupRequired() || !sameCode(code, this.setupCode)) throw new SetupUnavailableError()
 
     const user = this.insert({ ...input, role: 'admin' }, 'setup')
+    for (const hook of this.setupHooks) hook(user)
     // O setup já entra: conta como o primeiro acesso.
     this.users.update(user.id, { lastLoginAt: new Date(this.now()) })
     return this.sessionFor(user.id)

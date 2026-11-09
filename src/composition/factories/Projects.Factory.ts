@@ -1,6 +1,7 @@
 import { makePermissions } from './Permissions.Factory'
 import { migrateLegacyToProjects, migrateProjectRoles, ProjectsService } from '@application/Projects.Service'
 import { AGENT_SEED } from '@domain/Agent.Seed'
+import { DEFAULT_PROJECT_ID } from '@domain/models/Project.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { projectWorkspace, removeProjectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
@@ -61,6 +62,10 @@ function build() {
       const agent = makeAgents().get(agentId)
       return agent ? (agent.projectId ?? null) : undefined
     },
+  })
+  // ⚖️ O gateway nasce com um projeto: o primeiro admin já administra o `geral` (sem projeto, a tela não deixava criar agente).
+  makeAuth().accounts?.afterSetup((user) => {
+    if (!service.exists(DEFAULT_PROJECT_ID)) service.create({ id: DEFAULT_PROJECT_ID, name: 'Geral', description: 'O projeto inicial do gateway.' }, user.name, 'boot', user.id)
   })
   instance = { service, repository }
   return instance
