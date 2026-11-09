@@ -1,3 +1,4 @@
+import { gatewayEdition } from './Edition.Policy'
 import { basename } from 'node:path'
 
 /**
@@ -117,7 +118,7 @@ export function decide(subject: IPermissionSubject, layers: IPermissionLayers, s
     const where = layer === 'agent' ? 'do agente' : 'do projeto'
     return { allowed: rule.decision === 'allow', layer, rule, reason: `${rule.decision === 'allow' ? 'permitido' : 'negado'} pela regra ${where} "${rule.pattern}"` }
   }
-  if (OPEN_BY_DEFAULT.includes(subject.category))
+  if (OPEN_BY_DEFAULT.includes(subject.category) || (subject.category === 'delegate' && gatewayEdition() === 'lite'))
     return { allowed: true, layer: 'default', reason: `permitido: sem regra, ${CATEGORY_LABEL[subject.category]} do projeto vale para os agentes dele` }
   return { allowed: false, layer: 'default', reason: `negado: nenhuma regra de ${CATEGORY_LABEL[subject.category]} permite "${subject.value}"` }
 }
@@ -129,6 +130,8 @@ export function decide(subject: IPermissionSubject, layers: IPermissionLayers, s
  * a liberação. Exigir ainda uma regra fazia o MCP marcado não funcionar. A regra `mcp` serve para RESTRINGIR (Negar).
  */
 const OPEN_BY_DEFAULT: readonly TPermissionCategory[] = ['repository', 'mcp']
+// ⚖️ Na LITE, a delegação também: a tela dela não tem regra de delegação — marcar o agente na guia Delegação já libera.
+// Negar continua valendo (regra de negar vence), e a PRO segue pedindo a regra.
 
 export const CATEGORY_LABEL: Readonly<Record<TPermissionCategory, string>> = {
   terminal: 'terminal',
