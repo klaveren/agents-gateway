@@ -39,9 +39,9 @@
     ...(auth.isAdmin ? [{ to: '/settings', key: 'settings', label: 'Configuração', icon: 'settings' as const, badge: 0 }] : []),
   ])
 
-  /** A auditoria e os erros num menu só (o que aconteceu, e o que falhou): só de quem administra. */
+  /** Os logs num menu só (o que aconteceu, e o que falhou): só de quem administra. */
   const AUDIT_ITEMS: IRailMenuItem[] = [
-    { to: '/audit', key: 'audit', label: 'Auditoria', hint: 'Quem fez o quê, quando e de onde', icon: 'shield' },
+    { to: '/audit', key: 'audit', label: 'Logs', hint: 'Quem fez o quê, quando e de onde', icon: 'shield' },
     { to: '/errors', key: 'errors', label: 'Erros', hint: 'Ferramentas e turnos que falharam, por período', icon: 'warn' },
   ]
 </script>
@@ -76,8 +76,8 @@
         {{ link.badge > 99 ? '99+' : link.badge }}
       </span>
     </RouterLink>
-    <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><RailMenu title="Auditoria" icon="shield" :items="AUDIT_ITEMS" placement="up" :active="section" /></div>
-    <div v-if="auth.isAdmin" class="hidden md:block"><RailMenu title="Auditoria" icon="shield" :items="AUDIT_ITEMS" placement="side" :active="section" /></div>
+    <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><RailMenu title="Logs" icon="shield" :items="AUDIT_ITEMS" placement="up" :active="section" /></div>
+    <div v-if="auth.isAdmin" class="hidden md:block"><RailMenu title="Logs" icon="shield" :items="AUDIT_ITEMS" placement="side" :active="section" /></div>
     <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />
     <RouterLink v-else-if="auth.localAccounts" to="/login" class="flex flex-1 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden">
       Entrar
