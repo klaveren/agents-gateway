@@ -18,12 +18,14 @@
     const name = String(route.name ?? '')
     if (name.startsWith('agent')) return 'agents'
     if (name.startsWith('provider')) return 'providers'
+    if (name === 'usage') return 'usage'
     return 'inbox'
   })
 
   // Agentes e Modelos para o admin do gateway também: no gateway que acabou de nascer não há projeto (os agentes são globais).
-  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'agents' | 'key'; badge: number }>>(() => [
+  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'chart' | 'agents' | 'key'; badge: number }>>(() => [
     { to: '/', key: 'inbox', label: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
+    ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
     ...(projects.manages || auth.isAdmin ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
     ...(auth.isAdmin ? [{ to: '/models', key: 'providers', label: 'Modelos', icon: 'key' as const, badge: 0 }] : []),
   ])
