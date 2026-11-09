@@ -1,4 +1,5 @@
 import { CLI_ARG_MAX_BYTES, CLI_ARG_WARN_RATIO, cliArgumentBytes } from '@domain/CliArgument.Policy'
+import { autoToolOff, withoutOffMarks } from '@domain/Auto.Tools'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { ambientSection } from '@domain/Ambient.Policy'
 import { IAgent } from '@domain/models/Agent.Model'
@@ -114,8 +115,8 @@ export async function agentFootprint(agent: IAgent, projectId: string | undefine
     ...(deps.guidance?.hasDocs(projectId, agent.id) ? [READ_DOC_TOOL, SEARCH_DOCS_TOOL] : []),
     ...(deps.guidance?.hasResources?.(agent.id) ? [USE_RESOURCE_TOOL, SEARCH_RESOURCES_TOOL] : []),
     ...(deps.guidance?.hasLedger?.() ? LEDGER_TOOLS : []),
-  ]
-  const allowed = [...agent.allowedTools, ...automatic.filter((tool) => !agent.allowedTools.includes(tool))]
+  ].filter((tool) => !autoToolOff(agent.allowedTools, tool))
+  const allowed = [...withoutOffMarks(agent.allowedTools), ...automatic.filter((tool) => !agent.allowedTools.includes(tool))]
   const local = deps.localFor(allowed)
   if (local.length) sections.push(toolSection('local', 'Ferramentas locais', local))
 

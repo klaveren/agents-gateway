@@ -24,6 +24,13 @@ describe('agentIssues', () => {
 
   const fields = (issues: Array<{ field: string }>) => issues.map((issue) => issue.field)
 
+  it('desligar ferramenta automática (`off:`) só vale para as automáticas', () => {
+    const rules = { takenIds: [], knownTools: ['run_bash'] }
+    const base = { id: 'a1', name: 'A', providers: [{ provider: EProvider.CLAUDE, models: ['m'] }], systemPrompt: 'p', modes: [EMode.AGENT] }
+    assert.deepStrictEqual(agentIssues({ ...base, allowedTools: ['off:ledger_write', 'off:conversation_panel'] }, rules), [])
+    assert.match(agentIssues({ ...base, allowedTools: ['off:run_bash'] }, rules)[0]?.message ?? '', /only automatic tools can be turned off/)
+  })
+
   it('um agente certo não tem problema nenhum', () => {
     assert.deepStrictEqual(agentIssues(agent(), rules), [])
   })
