@@ -16,6 +16,8 @@ export interface IUsageCaps {
 export interface IUsageSpent {
   costUsd: number
   tokens: number
+  /** Algum modelo usado não tem preço: o custo é um PISO (o de verdade é maior) e o teto em US$ pode não disparar. */
+  costIsFloor?: boolean
 }
 
 /** O teto que bateu: de quem (o gateway ou a pessoa), do quê, quanto é e quanto já foi. */

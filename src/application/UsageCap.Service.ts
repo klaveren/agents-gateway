@@ -56,10 +56,13 @@ export class UsageCapService {
   private spent(rows: readonly IUsageRow[]): IUsageSpent {
     let costUsd = 0
     let tokens = 0
+    let costIsFloor = false
     for (const row of rows) {
-      costUsd += costOf(row.model, row.usage, this.pricingOf(row.provider)) ?? 0
+      const cost = costOf(row.model, row.usage, this.pricingOf(row.provider))
+      if (cost === undefined) costIsFloor = true
+      costUsd += cost ?? 0
       tokens += (row.usage.inputTokens ?? 0) + (row.usage.outputTokens ?? 0)
     }
-    return { costUsd, tokens }
+    return { costUsd, tokens, ...(costIsFloor ? { costIsFloor } : {}) }
   }
 }
