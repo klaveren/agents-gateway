@@ -123,6 +123,45 @@ describe('AgentProvider — compactação do contexto', () => {
     assert.strictEqual(provider.describe(session.id).compactNext, undefined)
   })
 
+  it('o turno só de compactação resume na hora, não chama o modelo de novo, e a próxima mensagem já começa com o resumo', async () => {
+    const { provider, seen } = setup({ context: 500, summary: 'ok' })
+    const session = await provider.createSession({ agentId: 'longo' })
+    await run(provider.sendMessage(session.id, { text: 'um' }))
+    const events = await run(provider.sendMessage(session.id, { text: '', compactOnly: true }))
+    assert.deepStrictEqual(
+      seen.map((call) => call.text === COMPACT_REQUEST),
+      [false, true],
+    )
+    const said = events
+      .filter((event) => event.type === 'text.delta')
+      .map((event) => event.payload.text)
+      .join('')
+    assert.match(said, /^Contexto compactado: de ~500 para ~\d+ tokens\. A próxima mensagem já começa com o resumo\.$/)
+    assert.ok(events.some((event) => event.type === 'message.completed'))
+    assert.ok(provider.describe(session.id).handoff, 'o resumo fica para a próxima mensagem')
+
+    await run(provider.sendMessage(session.id, { text: 'dois' }))
+    assert.strictEqual(seen.length, 3)
+    assert.strictEqual(seen[2].native, undefined)
+    assert.match(seen[2].text, /## Resumo/)
+    assert.match(seen[2].text, /dois$/)
+    assert.strictEqual(provider.describe(session.id).handoff, undefined, 'entregue')
+  })
+
+  it('o turno só de compactação sem histórico no modelo diz que não há o que compactar', async () => {
+    const { provider, seen } = setup({ context: 500, summary: 'ok' })
+    const session = await provider.createSession({ agentId: 'longo' })
+    const events = await run(provider.sendMessage(session.id, { text: '', compactOnly: true }))
+    assert.strictEqual(seen.length, 0)
+    assert.match(
+      events
+        .filter((event) => event.type === 'text.delta')
+        .map((event) => event.payload.text)
+        .join(''),
+      /^Nada para compactar agora/,
+    )
+  })
+
   it('⛔ resumo que chama ferramenta é abandonado: vale a transcrição recortada', async () => {
     const { provider, seen } = setup({ context: 900, summary: 'tool' })
     const session = await provider.createSession({ agentId: 'longo' })

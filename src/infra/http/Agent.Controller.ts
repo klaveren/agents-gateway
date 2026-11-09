@@ -1810,17 +1810,24 @@ export class AgentController {
     )
   }
 
-  /** Compacta o contexto da conversa no início do próximo turno (ver `Compaction.Policy`). Mesma regra de dono. */
+  /**
+   * Compacta o contexto da conversa (ver `Compaction.Policy`). Mesma regra de dono.
+   * ⚖️ Com `{ now: true }` e a conversa PARADA, compacta NA HORA: um turno só de compactação (gravado no histórico como
+   * "Compactar o contexto", com o resultado). Rodando, ou sem `now`, fica para o começo do próximo turno, como antes.
+   */
   async compactSession(req: Request, res: Response) {
-    await this.respond(
-      res,
-      async () => {
-        const id = req.params.id as string
-        await this.requireOwnedSession(id)
-        return toSessionDto(this.usecases.reconfigureSession.compact(id))
-      },
-      { message: 'Context compacts at the start of the next turn' },
-    )
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      await this.requireOwnedSession(id)
+      const now = (req.body as { now?: unknown } | undefined)?.now === true
+      const running = (await this.usecases.getSession.execute(id)).status === 'running'
+      const scheduled = toSessionDto(this.usecases.reconfigureSession.compact(id))
+      if (!now || running) return { ...scheduled, compaction: 'next-turn' as const }
+      let text = ''
+      for await (const event of this.usecases.sendMessage.execute(id, { text: '', recordAs: 'Compactar o contexto', compactOnly: true }))
+        if (event.type === 'text.delta') text += event.payload.text
+      return { ...toSessionDto(await this.usecases.getSession.execute(id)), compaction: 'done' as const, message: text }
+    })
   }
 
   async cancelSession(req: Request, res: Response) {

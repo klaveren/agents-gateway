@@ -195,11 +195,15 @@
    */
   const compacting = ref(false)
   const canCompact = computed(() => thread.liveSession === true && !thread.session?.compactsItself && (!!thread.session?.compactNext || thread.turns.length > 0))
+  /** O aviso de quando a compactação ficou para a próxima rodada (a conversa estava respondendo). */
+  const compactNotice = ref<string>()
   async function compactNow() {
     compacting.value = true
     actionError.value = undefined
+    compactNotice.value = undefined
     try {
-      await thread.compact()
+      const outcome = await thread.compact()
+      if (outcome === 'next-turn') compactNotice.value = 'A conversa está respondendo: o contexto é compactado no começo da próxima rodada.'
     } catch (error) {
       actionError.value = `Não foi possível compactar: ${error instanceof Error ? error.message : String(error)}`
     } finally {
@@ -451,6 +455,10 @@
     </div>
     <DelegationsPanel v-if="children.length" :items="children" :show-cost="projects.manages" />
 
+    <div v-if="compactNotice && thread.session?.compactNext" class="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">
+      {{ compactNotice }}
+      <button class="ml-auto hover:text-white" title="Fechar" @click="compactNotice = undefined"><Icon name="x" class="h-4 w-4" /></button>
+    </div>
     <div v-if="actionError" class="flex items-center gap-2 border-b border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
       {{ actionError }}
       <button class="ml-auto hover:text-white" title="Fechar" @click="actionError = undefined"><Icon name="x" class="h-4 w-4" /></button>
