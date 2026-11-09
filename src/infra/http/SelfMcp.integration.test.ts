@@ -125,6 +125,15 @@ describe('MCP do próprio gateway (integração)', () => {
     await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'claude-sonnet-5' } })
     await call('/providers/claude/models', { method: 'PUT', token: admin, body: { modelId: 'claude-sonnet-5', enabled: true } })
     await call('/providers/claude/key', { method: 'PUT', token: admin, body: { key: 'sk-ant-teste-00000000' } })
+    // O Atlas nasce sem modelo (quem instala escolhe): o daqui é o ativado acima.
+    for (const id of ['atlas', 'atlas-admin']) {
+      const patched = await call(`/agents/${id}`, {
+        method: 'PATCH',
+        token: admin,
+        body: { patch: { providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }] }, reason: 'o modelo do teste' },
+      })
+      assert.ok(patched.ok, JSON.stringify(patched))
+    }
   })
 
   after(() => {

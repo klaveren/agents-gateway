@@ -35,12 +35,11 @@ describe('AGENT_SEED', () => {
     assert.match(admin.systemPrompt, /search_packages/)
   })
 
-  it('o Atlas é um agente Claude da lane agent, com raciocínio e a busca na web', () => {
+  it('o Atlas nasce sem modelo (quem instala escolhe), na lane agent, com raciocínio e a busca na web', () => {
     const [atlas] = AGENT_SEED
 
-    assert.strictEqual(atlas.providers[0].provider, EProvider.CLAUDE)
+    assert.deepStrictEqual(atlas.providers, [])
     assert.deepStrictEqual(atlas.modes, [EMode.AGENT])
-    assert.ok(atlas.providers[0].models.includes('claude-sonnet-5'))
     assert.ok(atlas.reasoningEfforts?.includes('high'))
     assert.ok(atlas.allowedTools.includes('cap:web.search'))
   })
@@ -60,7 +59,7 @@ describe('AGENT_SEED', () => {
     }
   })
 
-  it('os dois passam pela regra de agente (as tools do próprio gateway vêm do servidor MCP `gateway`)', () => {
+  it('os dois passam pela regra de agente, salvo o modelo (as tools do próprio gateway vêm do servidor MCP `gateway`)', () => {
     for (const agent of AGENT_SEED) {
       const issues = agentIssues(agent, {
         takenIds: [],
@@ -70,7 +69,12 @@ describe('AGENT_SEED', () => {
         agentExists: (id) => id.startsWith('builder-'),
       })
 
-      assert.deepStrictEqual(issues, [], agent.id)
+      // O único problema é o esperado: nasce sem modelo (quem instala escolhe).
+      assert.deepStrictEqual(
+        issues.map((issue) => issue.field),
+        ['providers'],
+        agent.id,
+      )
     }
   })
 
