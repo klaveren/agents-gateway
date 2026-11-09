@@ -49,6 +49,17 @@ describe('UsageCapService', () => {
     assert.ok(Math.abs((status.user?.costUsd ?? 0) - 0.0002) < 1e-12)
   })
 
+  it('modelo sem preço: o custo vira piso (marcado), e os tokens contam igual', async () => {
+    const service = new UsageCapService(
+      async () => [row('ana', 1_000, 0), { ...row('ana', 500, 0), model: 'sem-preco' }],
+      () => pricing,
+      () => new Date('2026-11-09T12:00:00Z'),
+      () => ({ monthlyCostUsd: 1 }),
+    )
+    const status = await service.status('ana')
+    assert.deepStrictEqual([status.gateway.tokens, status.gateway.costIsFloor], [1_500, true])
+  })
+
   it('o teto do gateway em US$ recusa todo mundo; as linhas do mês ficam em cache entre os turnos', async () => {
     const { service, reads } = build({ monthlyCostUsd: 1 }, [row('ana', 600_000, 400_000)])
     assert.match((await service.refusal('bia')) ?? '', /^O gateway atingiu o teto de uso do mês \(US\$ 1\)/)

@@ -99,7 +99,7 @@ export class UsageController {
       return {
         caps: { userMonthlyTokens: caps.userMonthlyTokens, monthlyTokens: caps.monthlyTokens },
         since,
-        user: { tokens: user?.tokens ?? 0, costPercent: percent(user?.costUsd, caps.userMonthlyCostUsd) },
+        user: { tokens: user?.tokens ?? 0, costPercent: percent(user?.costUsd, caps.userMonthlyCostUsd), ...(user?.costIsFloor ? { costIsFloor: true } : {}) },
         ...(reached ? { reached: { scope: reached.scope, kind: reached.kind } } : {}),
       }
     })
