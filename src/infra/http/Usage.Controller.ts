@@ -78,6 +78,9 @@ export class UsageController {
       const { query, days, period } = this.range(req, { id: identity.id, account: identity.account })
       const rows = await this.deps.conversations.usage(query)
       const byTool = await this.toolsOf(query)
+      // ⚖️ Quem administra o gateway já vê o custo de todos: o seu também aparece aqui, com ou sem teto. Os outros, sem custo.
+      if ((await adminView(this.deps.proof))?.gateway)
+        return { period, ...this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider)), ...(byTool ? { byTool } : {}) }
       return { period, ...withoutCost(this.service.summarize(rows, { days })), ...(byTool ? { byTool } : {}) }
     })
   }

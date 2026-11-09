@@ -141,8 +141,8 @@
       <p v-if="loading && !mine && !users && !detail && !groups && !valueDetail" class="text-sm text-zinc-500">Carregando…</p>
 
       <template v-if="tab === 'mine' && mine">
-        <p class="text-xs text-zinc-500">Quanto você usou nas suas conversas. O custo aparece só para quem administra.</p>
-        <UsageSummaryView :summary="mine" :show-cost="false" />
+        <p class="text-xs text-zinc-500">Quanto você usou nas suas conversas.{{ auth.isAdmin ? '' : ' O custo aparece só para quem administra.' }}</p>
+        <UsageSummaryView :summary="mine" :show-cost="auth.isAdmin" />
       </template>
 
       <template v-else-if="tab === 'keys' && selectedValue && valueDetail">

@@ -12,6 +12,7 @@ describe('uso (integração)', () => {
   let base: string
   let stop: () => void
   let admin = ''
+  let conversations: ReturnType<typeof makeController>['conversations']
   let member = ''
   let memberId = ''
 
@@ -28,6 +29,7 @@ describe('uso (integração)', () => {
   before(async () => {
     process.env.MCP_SERVER_URL = 'http://127.0.0.1:1/mcp'
     const controller = makeController()
+    conversations = controller.conversations
     const server = new HttpServer(controller, makeAuthController(), makeProvidersController(), makeUsageController(controller.conversations)).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
@@ -178,5 +180,38 @@ describe('uso (integração)', () => {
     assert.deepStrictEqual([recent.status, recent.body.result.period.days, recent.body.result.totals.conversations], [200, 1, 0])
     for (const days of ['0', '401', 'abc', '1.5']) assert.strictEqual((await call(`/usage/by/epicCode/EP-OLD?days=${days}`, { token: admin })).status, 422, days)
     assert.strictEqual((await call('/usage/me?days=1', { token: member })).body.result.period.days, 30, 'a tela segue 7, 30 ou 90')
+  })
+
+  // Por último: a conversa do root entra nos totais dos outros testes.
+  it('o administrador do gateway vê o custo também no próprio uso (com ou sem teto)', async () => {
+    const rootId = makeAuth()
+      .accounts!.list()
+      .find((user) => user.email === 'root@x.test')!.id
+    const now = new Date()
+    const repository = conversations
+    await repository.saveSession({
+      id: 'do-root',
+      agentId: 'operador-teste',
+      provider: 'claude',
+      mode: 'agent',
+      model: 'claude-sonnet-5',
+      createdAt: now,
+      updatedAt: now,
+      turns: 1,
+      usage: {},
+      metadata: { owner: { id: rootId, email: 'root@x.test' } },
+    })
+    await repository.appendTurn({
+      sessionId: 'do-root',
+      index: 0,
+      at: now,
+      request: 'oi',
+      text: 'olá',
+      toolCalls: [],
+      usage: { inputTokens: 1_000_000, outputTokens: 0, totalTokens: 1_000_000 },
+    })
+    const mine = await call('/usage/me?days=7&tz=-180', { token: admin })
+    assert.strictEqual(mine.status, 200)
+    assert.strictEqual(mine.body.result.totals.costUsd, 2, mine.text)
   })
 })
