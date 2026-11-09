@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { BUILD_KINDS, type TBuildKind } from '@/lib/builder'
+import { lite } from '@/lib/edition'
 
 /** As guias de Rules, Specs, ADRs, Skills e Commands: a lista (o cadastro), o construtor e o protocolo. */
 defineProps<{ kind: TBuildKind; active: 'list' | 'build' | 'protocol' }>()
@@ -12,7 +13,8 @@ const TABS = [
 </script>
 
 <template>
-  <nav class="flex gap-1 text-sm" aria-label="Guias">
+  <!-- A lite não tem o construtor nem o protocolo: sobrava só "Lista", e a guia some. -->
+  <nav v-if="!lite" class="flex gap-1 text-sm" aria-label="Guias">
     <RouterLink
       v-for="tab in TABS"
       :key="tab.key"
