@@ -17,6 +17,7 @@ export const LITE_ROUTES: ReadonlySet<string> = new Set([
   'provider-new',
   'provider',
   'profile',
+  'usage',
   'login',
   'setup',
 ])
