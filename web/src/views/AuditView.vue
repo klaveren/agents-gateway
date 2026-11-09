@@ -67,7 +67,8 @@
     'POST /projects': 'Criou um projeto',
     'PUT /projects/:id/members': 'Alterou os membros de um projeto',
   }
-  const label = (event: IAuditEvent) => ACTIONS[event.action] ?? event.action
+  // O login recusado não "entrou": é uma tentativa.
+  const label = (event: IAuditEvent) => (event.action === 'POST /auth/login' && event.status >= 400 ? 'Tentou entrar' : (ACTIONS[event.action] ?? event.action))
   const target = (event: IAuditEvent) =>
     Object.values(event.target ?? {})
       .filter(Boolean)
