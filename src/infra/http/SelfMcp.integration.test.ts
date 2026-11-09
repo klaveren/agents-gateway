@@ -1,4 +1,5 @@
 import assert from 'node:assert'
+import { ATLAS_AGENTS } from '@domain/Agent.Seed'
 import { LITE_HIDDEN_MCP_TOOLS } from '@domain/Edition.Policy'
 import { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
@@ -22,7 +23,7 @@ import { MicromambaAdapter } from '@infra/packages/Micromamba.Adapter'
 import { HttpServer } from './Http.Server'
 import { randomBytes } from 'node:crypto'
 import { AgentHooksService } from '@application/AgentHooks.Service'
-import { makeAgents } from '@composition/factories/Agents.Factory'
+import { agentRepository, makeAgents } from '@composition/factories/Agents.Factory'
 import { SqliteAgentHookRepository } from '@infra/persistence/Sqlite.AgentHookRepository'
 import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
@@ -79,6 +80,8 @@ describe('MCP do próprio gateway (integração)', () => {
     delete process.env.SELF_MCP_WRITE
     const controller = makeController()
     conversations = controller.conversations
+    // O Atlas dos usuários saiu da semente (09/11), mas estes testes conversam com ele: entra à mão, como numa instalação de antes.
+    agentRepository().seedOnce(ATLAS_AGENTS, 'seed')
     mambaDir = mkdtempSync(join(tmpdir(), 'gw-selfmcp-mamba-'))
     writeFileSync(join(mambaDir, 'micromamba'), FAKE_MAMBA)
     chmodSync(join(mambaDir, 'micromamba'), 0o755)

@@ -1,6 +1,6 @@
 import { makePermissions } from './Permissions.Factory'
 import { migrateLegacyToProjects, migrateProjectRoles, ProjectsService } from '@application/Projects.Service'
-import { AGENT_SEED } from '@domain/Agent.Seed'
+import { AGENT_SEED, ATLAS_AGENTS } from '@domain/Agent.Seed'
 import { DEFAULT_PROJECT_ID } from '@domain/models/Project.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { projectWorkspace, removeProjectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
@@ -86,7 +86,7 @@ export async function migrateToProjects(conversations: IConversationRepository):
     conversations,
     userIds: () => (makeAuth().accounts?.list() ?? []).map((user) => user.id),
     adminIds: gatewayAdminIds,
-    seedIds: AGENT_SEED.map((agent) => agent.id),
+    seedIds: [...new Set([...AGENT_SEED, ...ATLAS_AGENTS].map((agent) => agent.id))],
   })
   migrateProjectRoles({ repository, adminIds: gatewayAdminIds })
 }

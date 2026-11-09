@@ -234,10 +234,10 @@ ${ATLAS_INSTALL_SECTION}`,
 }
 
 /**
- * A semente: o Atlas e o Atlas Admin. ⚖️ Os outros agentes nascem conversando com ele (`save_agent`), com o provider e os
- * modelos que quem administra ativou — e não de uma lista no código.
+ * O Atlas e o Atlas Admin: a família que as migrações e o prompt da lite reconhecem — inclusive o Atlas dos usuários,
+ * aposentado da semente (ver `AGENT_SEED`) mas ainda presente nas instalações de antes.
  */
-export const AGENT_SEED: readonly IAgent[] = [ATLAS, ATLAS_ADMIN]
+export const ATLAS_AGENTS: readonly IAgent[] = [ATLAS, ATLAS_ADMIN]
 
 /**
  * ⚖️ O ATLAS DA LITE (`GATEWAY_EDITION=lite`): só o que a lite tem — o projeto da conversa, os agentes e os preços dos
@@ -263,7 +263,7 @@ export function atlasLitePrompt(agent: Pick<IAgent, 'id' | 'systemPrompt'>): str
 }
 
 /**
- * ⚖️ O ASSISTENTE (só na LITE, ver `Agents.Factory`): o agente de conversa do dia a dia — pergunta e resposta, pesquisa
+ * ⚖️ O ASSISTENTE: o agente de conversa do dia a dia — pergunta e resposta, pesquisa
  * na web, leitura de páginas —, sem nada de operar o gateway (isso é do Atlas). Nasce sem modelo, como a semente: quem
  * instala escolhe.
  */
@@ -286,3 +286,11 @@ Nunca inventa um fato, um número ou uma fonte: o que afirma vem do que você sa
   modes: [EMode.AGENT],
   allowedTools: ['cap:web.search', 'cap:web.fetch', 'cap:todos'],
 }
+
+/**
+ * ⚖️ A SEMENTE: duas personas — o Assistente (conversa geral, para todos) e o Atlas Admin (opera o gateway, só para quem
+ * administra). O Atlas dos usuários se APOSENTOU (09/11): ele se apresentava como quem opera o gateway, e quem não
+ * administra não opera nada. Instalação nova não o recebe; onde ele já existe, fica até alguém apagá-lo na tela. Os outros
+ * agentes nascem conversando com o Atlas Admin, com o provider e os modelos que quem administra ativou.
+ */
+export const AGENT_SEED: readonly IAgent[] = [ASSISTANT, ATLAS_ADMIN]

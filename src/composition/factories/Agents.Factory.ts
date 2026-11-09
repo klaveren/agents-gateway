@@ -1,5 +1,5 @@
 import { AgentCatalog } from '@application/Agent.Catalog'
-import { AGENT_SEED, ASSISTANT, atlasLitePrompt } from '@domain/Agent.Seed'
+import { AGENT_SEED, ATLAS_AGENTS, atlasLitePrompt } from '@domain/Agent.Seed'
 import { gatewayEdition, withoutLiteTools } from '@domain/Edition.Policy'
 import { AGENT_MIGRATIONS } from '@domain/Agent.Migrations'
 import { builderAgent, importBuilderAgent, PROTOCOLS } from '@domain/Builder.Agents'
@@ -39,17 +39,16 @@ export function makeAgents(): AgentCatalog {
 
   const repository = build()
   stored = repository
-  // ⚖️ Na LITE, duas personas: o Assistente (conversa geral, para todos) e o Atlas Admin (opera o gateway, só admin). O
-  // Atlas dos usuários fica de fora: ele se apresenta como quem opera o gateway, e quem não administra não opera nada.
-  // A PRO segue com a semente de sempre.
-  repository.seedOnce(gatewayEdition() === 'lite' ? [ASSISTANT, ...AGENT_SEED.filter((agent) => agent.id !== 'atlas')] : AGENT_SEED, 'seed')
+  // As duas personas (ver `AGENT_SEED`): o Assistente e o Atlas Admin, em toda edição.
+  repository.seedOnce(AGENT_SEED, 'seed')
   for (const migration of AGENT_MIGRATIONS)
     for (const id of migration.agentIds === '*' ? repository.list().map((agent) => agent.id) : migration.agentIds)
       repository.migrateOnce(migration.key, id, migration.change, 'seed')
   // ⚖️ Na lite, a semente (o Atlas) perde uma vez as ferramentas do MCP do gateway que a lite não registra: na tela e na
   // conversa, ele só tem o que existe. Vale para a instalação nova e para a que passou a ser lite.
   if (gatewayEdition() === 'lite')
-    for (const { id } of AGENT_SEED) {
+    // A família Atlas (o dos usuários ainda existe nas instalações de antes): as marcas da lite valem para os dois.
+    for (const { id } of ATLAS_AGENTS) {
       repository.migrateOnce(
         'lite-tools',
         id,
