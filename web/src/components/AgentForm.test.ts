@@ -27,7 +27,7 @@ afterEach(() => {
   vi.mocked(api).mockReset()
 })
 
-const AGENT: IAgentDetail = { id: 'a1', name: 'Agente', providers: [], modes: ['chat'], allowedTools: [], systemPrompt: 'Oi', ...({} as object) }
+const AGENT: IAgentDetail = { id: 'a1', name: 'Agente', providers: [{ id: 'claude', name: 'Anthropic', models: ['m'], pricing: {} }], modes: ['chat'], allowedTools: [], systemPrompt: 'Oi', ...({} as object) }
 
 async function mount(agent: IAgentDetail) {
   const pinia = createPinia()
@@ -89,6 +89,14 @@ describe('AgentForm — grupo de modelos', () => {
     expect(select(host).value).toBe('rapido')
     await saveWith(host, '')
     expect(put(calls).modelGroup).toBeNull()
+  })
+
+  it('sem nenhum modelo, não envia: diz em português que falta modelo e onde ativar', async () => {
+    const { host, calls } = await mount({ ...AGENT, providers: [] })
+    await saveWith(host, '')
+    expect(put(calls)).toBeUndefined()
+    expect(host.textContent).toContain('marque ao menos um modelo')
+    expect(host.textContent).not.toContain('Too small')
   })
 
   it('Nenhum vai como "none", e um grupo vai com o id', async () => {

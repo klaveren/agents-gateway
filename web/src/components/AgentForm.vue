@@ -748,6 +748,14 @@
       saving.value = false
       return
     }
+    // Sem modelo marcado (o catálogo tira os desativados), o servidor recusaria com a mensagem crua da validação.
+    if (!form.value.providers.some((target) => target.models.length)) {
+      issues.value = { providers: ['marque ao menos um modelo. Nenhum aparece? Ative um no menu Modelos.'] }
+      failure.value = 'O agente precisa de ao menos um modelo.'
+      tab.value = 'modelos'
+      saving.value = false
+      return
+    }
     try {
       const input: IAgentInput = {
         ...form.value,
