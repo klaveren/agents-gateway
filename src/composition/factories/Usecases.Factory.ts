@@ -7,6 +7,8 @@ import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
 import { GetSessionUseCase } from '@application/GetSession.Usecase'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
+import { UsageCapService } from '@application/UsageCap.Service'
+import { makeModelCatalog } from './Catalog.Factory'
 import { InMemoryConversationEvents } from '@infra/events/InMemory.ConversationEvents'
 import { TurnLive } from '@infra/events/Turn.Live'
 import { NotifyingConversationRepository } from '@infra/persistence/Notifying.ConversationRepository'
@@ -29,7 +31,12 @@ export function makeUsecases() {
   const live = new TurnLive(events)
 
   const createSession = new CreateSessionUseCase(agentProvider)
-  const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier(), makeSecretMasker(), live)
+  // O teto de uso do mês: as linhas da tela Uso, precificadas pelo catálogo na hora (o catálogo lê os agentes ao nascer).
+  const usageCap = new UsageCapService(
+    (query) => conversations.usage(query),
+    (provider) => makeModelCatalog().pricing(provider),
+  )
+  const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier(), makeSecretMasker(), live, usageCap)
   // A delegação usa os MESMOS casos de uso: a conversa filha é gravada e avisada como qualquer outra.
   makeTools().delegation.bind(
     new DelegationService(
@@ -77,6 +84,8 @@ export function makeUsecases() {
     events,
     /** O MESMO barramento em que o `SendMessageUseCase` publica o turno: a rota `/live` assina este. */
     live,
+    /** O MESMO teto que trava o turno: a tela Uso mostra o consumo contra ele. */
+    usageCap,
     createSessionUseCase: createSession,
     sendMessageUseCase: sendMessage,
     cancelSessionUseCase: new CancelSessionUseCase(agentProvider),

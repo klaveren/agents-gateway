@@ -102,7 +102,7 @@ async function bootstrap() {
     controller,
     makeAuthController(),
     makeProvidersController(),
-    makeUsageController(controller.conversations),
+    makeUsageController(controller.conversations, controller.usageCap),
     makeMcpServersController(),
     makeMcpProxyController(),
     makePackagesController(),

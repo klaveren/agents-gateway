@@ -70,6 +70,35 @@ const stubProvider = (overrides: Partial<IAgentProvider> = {}): IAgentProvider =
 })
 
 describe('SendMessageUseCase', () => {
+  it('⛔ o teto de uso alcançado recusa ANTES do turno: o provider não roda e nada é gravado; o dono é o da conversa', async () => {
+    const repository = new RecordingRepository()
+    let ran = false
+    const asked: Array<string | undefined> = []
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => session({ metadata: { owner: { id: 'ana' } } }),
+        sendMessage: async function* (sessionId) {
+          ran = true
+          yield { type: 'message.completed', sessionId, timestamp: new Date() }
+        },
+      }),
+      repository,
+      undefined,
+      undefined,
+      undefined,
+      { refusal: async (ownerId) => (asked.push(ownerId), 'Você atingiu o teto de uso do mês (US$ 10).') },
+    )
+    await assert.rejects(
+      async () => {
+        for await (const _event of usecase.execute('s', { text: 'oi' })) void _event
+      },
+      { name: 'UsageCapReachedError', message: /teto de uso do mês/ },
+    )
+    assert.strictEqual(ran, false)
+    assert.deepStrictEqual(asked, ['ana'])
+    assert.strictEqual(repository.sessions.length + repository.turns.length, 0)
+  })
+
   it('⛔ com a máscara, o que a tela recebe e o que se grava saem mascarados (inclusive o segredo partido entre pedaços)', async () => {
     const repository = new RecordingRepository()
     const mask = {

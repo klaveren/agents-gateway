@@ -1,4 +1,6 @@
 import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
+import type { UsageCapService } from '@application/UsageCap.Service'
+import { usageCaps } from '@domain/Usage.Cap'
 import { ERROR_KINDS, REFUSAL_STATUSES, type TRefusalOrigin } from '@domain/models/ErrorLog.Model'
 import { maskText } from '@domain/Secret.Mask'
 import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
@@ -140,6 +142,8 @@ export interface IAgentControllerDeps {
    * leria um arquivo e o turno seria gravado no outro.
    */
   conversations: IConversationRepository
+  /** O teto de uso do mês (o mesmo do `SendMessageUseCase`): a tela Uso lê dele. */
+  usageCap?: UsageCapService
   /** A tabela de preços ativa (de fábrica + `MODEL_PRICING_FILE`). Ausente = a de fábrica. */
   pricing?: TModelPricing
   /** Por onde chegam as mudanças nas conversas gravadas. Ausente = `/conversations/events` só mantém a conexão. */
@@ -291,6 +295,11 @@ export class AgentController {
   /** O repositório das conversas — o mesmo do `SendMessageUseCase`; o uso (`UsageController`) lê dele. */
   get conversations(): IConversationRepository {
     return this.usecases.conversations
+  }
+
+  /** O teto de uso do mês — o mesmo que trava o turno; o `UsageController` mostra o consumo contra ele. */
+  get usageCap(): UsageCapService | undefined {
+    return this.usecases.usageCap
   }
 
   async health(req: Request, res: Response) {
@@ -1160,6 +1169,7 @@ export class AgentController {
 
       const bash = bashPolicy()
       const loop = loopLimits()
+      const caps = usageCaps()
 
       return {
         ...(await this.usecases.settings.read()),
@@ -1177,6 +1187,11 @@ export class AgentController {
           loopRefuseAt: loop.refuseAt,
           loopStopAt: loop.stopAt,
           loopMaxErrors: loop.maxErrors,
+          // O teto de uso do mês (ver `Usage.Cap`): -1 = sem teto.
+          monthlyCostCapUsd: caps.monthlyCostUsd ?? UNLIMITED,
+          userMonthlyCostCapUsd: caps.userMonthlyCostUsd ?? UNLIMITED,
+          monthlyTokenCap: caps.monthlyTokens ?? UNLIMITED,
+          userMonthlyTokenCap: caps.userMonthlyTokens ?? UNLIMITED,
         },
         limitBounds: LIMIT_BOUNDS,
         // Os provedores sem cota agora (ver `Provider.Bench`) e quando voltam.

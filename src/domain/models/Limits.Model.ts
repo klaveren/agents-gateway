@@ -19,6 +19,10 @@ export type TLimitName =
   | 'loopRefuseAt'
   | 'loopStopAt'
   | 'loopMaxErrors'
+  | 'monthlyCostCapUsd'
+  | 'userMonthlyCostCapUsd'
+  | 'monthlyTokenCap'
+  | 'userMonthlyTokenCap'
 
 export type ILimits = Partial<Record<TLimitName, number>>
 
@@ -40,6 +44,11 @@ export const LIMIT_BOUNDS: Readonly<Record<TLimitName, { min: number; max: numbe
   loopRefuseAt: { min: 2, max: 50, env: 'LOOP_REFUSE_AT' },
   loopStopAt: { min: 3, max: 100, env: 'LOOP_STOP_AT' },
   loopMaxErrors: { min: 3, max: 100, env: 'LOOP_MAX_ERRORS' },
+  // O teto de uso do mês (ver `Usage.Cap`): do gateway inteiro e de cada pessoa, em US$ e em tokens. Ausente ou -1 = sem teto.
+  monthlyCostCapUsd: { min: 1, max: 1_000_000, env: 'MONTHLY_COST_CAP_USD', unlimited: true },
+  userMonthlyCostCapUsd: { min: 1, max: 1_000_000, env: 'USER_MONTHLY_COST_CAP_USD', unlimited: true },
+  monthlyTokenCap: { min: 1_000, max: 100_000_000_000, env: 'MONTHLY_TOKEN_CAP', unlimited: true },
+  userMonthlyTokenCap: { min: 1_000, max: 100_000_000_000, env: 'USER_MONTHLY_TOKEN_CAP', unlimited: true },
 }
 
 export const LIMIT_NAMES = Object.keys(LIMIT_BOUNDS) as TLimitName[]

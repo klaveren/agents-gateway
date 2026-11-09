@@ -31,6 +31,7 @@ const failureEnvelope = {
         'tools_not_supported',
         'adapter_not_found',
         'agent_unavailable',
+        'usage_cap_reached',
         'agent_admin_only',
         'unauthorized',
         'not_found',
@@ -4645,6 +4646,46 @@ export const OPENAPI_DOCUMENT = {
         summary: "The signed-in caller's own usage: tokens per day, agent and model, and the heaviest conversations. Never carries cost",
         parameters: usageParams,
         responses: { '200': { description: 'OK', ...json(envelope(usageSummary(false))) }, '401': failures['401'] },
+      },
+    },
+    '/usage/cap': {
+      get: {
+        summary:
+          "The monthly usage cap against this month's consumption (from the 1st, UTC; tokens = input + output). A gateway administrator sees the gateway and their own figures with cost; anyone else sees their own tokens and only the percentage of their cost cap. When a cap is reached, new turns are refused with 429 `usage_cap_reached`",
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  caps: {
+                    type: 'object',
+                    properties: {
+                      monthlyCostUsd: { type: 'number' },
+                      userMonthlyCostUsd: { type: 'number' },
+                      monthlyTokens: { type: 'integer' },
+                      userMonthlyTokens: { type: 'integer' },
+                    },
+                  },
+                  since: { type: 'string', format: 'date-time' },
+                  gateway: { type: 'object', properties: { costUsd: { type: 'number' }, tokens: { type: 'integer' } } },
+                  user: { type: 'object', properties: { costUsd: { type: 'number' }, tokens: { type: 'integer' }, costPercent: { type: 'integer' } } },
+                  reached: {
+                    type: 'object',
+                    properties: {
+                      scope: { type: 'string', enum: ['gateway', 'user'] },
+                      kind: { type: 'string', enum: ['cost', 'tokens'] },
+                      cap: { type: 'number' },
+                      used: { type: 'number' },
+                    },
+                  },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+        },
       },
     },
     '/usage/users': {

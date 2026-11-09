@@ -46,6 +46,10 @@ const LIMITS: Array<{ name: TLimitName; label: string }> = [
   { name: 'loopRefuseAt', label: 'Laço: recusa a chamada repetida na vez' },
   { name: 'loopStopAt', label: 'Laço: para o turno na chamada repetida' },
   { name: 'loopMaxErrors', label: 'Laço: para o turno com erros seguidos' },
+  { name: 'monthlyCostCapUsd', label: 'Teto do mês do gateway (US$)' },
+  { name: 'userMonthlyCostCapUsd', label: 'Teto do mês por pessoa (US$)' },
+  { name: 'monthlyTokenCap', label: 'Teto do mês do gateway (tokens)' },
+  { name: 'userMonthlyTokenCap', label: 'Teto do mês por pessoa (tokens)' },
 ]
 
 const DEPLOYMENT: Array<{ key: 'localToolsEnabled' | 'allowAnonymous'; label: string }> = [

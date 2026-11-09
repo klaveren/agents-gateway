@@ -1,3 +1,4 @@
+import { UsageCapReachedError } from '@domain/errors/Domain.Error'
 import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IStoredUsage } from '@domain/models/Conversation.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
@@ -79,6 +80,8 @@ export class SendMessageUseCase {
     private mask?: ITurnMask,
     /** O turno ao vivo (ver `Turn.Live`): quem abre a conversa o vê andando, venha da tela ou da API. */
     private live?: ITurnLive,
+    /** O teto de uso do mês (ver `UsageCap.Service`): bateu, o turno não começa. */
+    private cap?: IUsageCapGate,
   ) {}
 
   /**
@@ -109,6 +112,10 @@ export class SendMessageUseCase {
      * store (cancelada ou perdida virava 0) e de nenhum turno concorrente ter andado o contador.
      */
     const described = this.describeQuietly(sessionId)
+    // ⛔ O TETO vem antes de tudo: nem o turno ao vivo nem o cabeçalho nascem para o que não vai rodar. Vale para todo
+    // turno (tela, API, delegação, hook, agendamento): todos passam por aqui. O dono é o da conversa.
+    const refused = await this.cap?.refusal((described?.metadata?.owner as { id?: string } | undefined)?.id)
+    if (refused) throw new UsageCapReachedError(refused)
     const index = described?.turns
     const ticket = this.live?.start(sessionId, recorded.recordAs ?? recorded.text ?? '', described?.metadata)
     // O turno ao vivo acaba quando o turno está GRAVADO (a tela relê o histórico nesse aviso), antes do rótulo.
@@ -286,6 +293,11 @@ export class SendMessageUseCase {
       return undefined
     }
   }
+}
+
+/** Quem confere o teto de uso antes do turno (ver `UsageCap.Service`). */
+export interface IUsageCapGate {
+  refusal(ownerId?: string): Promise<string | undefined>
 }
 
 /** Quem mascara o turno (ver `Secret.Masker`). */

@@ -358,6 +358,10 @@ export type TLimitName =
   | 'loopRefuseAt'
   | 'loopStopAt'
   | 'loopMaxErrors'
+  | 'monthlyCostCapUsd'
+  | 'userMonthlyCostCapUsd'
+  | 'monthlyTokenCap'
+  | 'userMonthlyTokenCap'
 
 export type TAudience = 'off' | 'restricted' | 'all'
 

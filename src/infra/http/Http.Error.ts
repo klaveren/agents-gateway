@@ -3,6 +3,7 @@ import {
   AdapterNotFoundError,
   AgentNotFoundError,
   AgentUnavailableError,
+  UsageCapReachedError,
   AgentWithoutModelError,
   InvalidAgentError,
   InvalidModelError,
@@ -91,6 +92,7 @@ export type TErrorCode =
   | 'tools_not_supported'
   | 'adapter_not_found'
   | 'agent_unavailable'
+  | 'usage_cap_reached'
   | 'unauthorized'
   | 'forbidden'
   | 'not_found'
@@ -185,6 +187,11 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof SessionNotFoundError) {
     return { status: 404, code: 'session_not_found', message: error.message }
+  }
+
+  if (error instanceof UsageCapReachedError) {
+    // 429: é um limite (de uso), e o código diz qual — quem lê não procura defeito nem pede acesso.
+    return { status: 429, code: 'usage_cap_reached', message: error.message }
   }
 
   if (error instanceof AgentUnavailableError) {
