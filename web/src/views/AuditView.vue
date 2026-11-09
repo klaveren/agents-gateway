@@ -20,6 +20,7 @@
     durationMs?: number
     ip?: string
     detail?: string
+    error?: string
   }
 
   /** As ações conhecidas, em português; a que não está aqui aparece como veio (método e rota). */
@@ -157,6 +158,7 @@
             <span v-if="event.ip">{{ event.ip }}</span>
             <span v-if="event.action !== label(event)" class="font-mono">{{ event.action }}</span>
           </div>
+          <p v-if="event.error" class="mt-1 font-mono text-xs break-words whitespace-pre-wrap text-rose-300">{{ event.error }}</p>
         </li>
       </ul>
       <button v-if="next" type="button" class="btn btn-secondary self-center" :disabled="loading" @click="load(true)">{{ loading ? 'Carregando…' : 'Carregar mais' }}</button>

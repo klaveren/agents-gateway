@@ -24,6 +24,27 @@ const EMAIL_ROUTES: ReadonlySet<string> = new Set(['/auth/login', '/auth/setup']
 
 /** O status de verdade de uma resposta em stream (a recusa sai como evento depois do 200): quem responde grava aqui. */
 export const AUDIT_STATUS_LOCAL = 'auditStatus'
+/** E a mensagem dessa recusa (o corpo do stream não é JSON). */
+export const AUDIT_ERROR_LOCAL = 'auditError'
+/** O tamanho máximo da mensagem de erro guardada. */
+const ERROR_MAX = 500
+
+/**
+ * A mensagem de uma resposta de erro da API (`{ ok: false, message, details }`): a mensagem e, num 422, cada campo com o
+ * problema dele. ⛔ Só o envelope de erro — o corpo de quem deu certo nunca entra.
+ */
+export function errorOf(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object' || (body as { ok?: unknown }).ok !== false) return undefined
+  const { message, details } = body as { message?: unknown; details?: unknown }
+  const fields = Array.isArray(details)
+    ? details
+        .filter((item): item is { field?: unknown; message?: unknown } => !!item && typeof item === 'object')
+        .map((item) => `${typeof item.field === 'string' ? `${item.field}: ` : ''}${String(item.message ?? '')}`)
+        .filter(Boolean)
+    : []
+  const text = [typeof message === 'string' ? message : '', ...fields].filter(Boolean).join(' — ')
+  return text ? text.slice(0, ERROR_MAX) : undefined
+}
 
 export interface IAuditControllerDeps {
   repository: IAuditRepository
@@ -48,6 +69,13 @@ export class AuditController {
       const header = (name: string) => (typeof req.headers[name] === 'string' && req.headers[name] ? String(req.headers[name]).slice(0, 120) : undefined)
       const agentId = header(IDENTITY_HEADERS.agent)
       const conversationId = header(IDENTITY_HEADERS.conversation)
+      // A resposta de erro da API passa por aqui: a mensagem fica para o registro (a de sucesso, não).
+      let failure: string | undefined
+      const json = res.json.bind(res)
+      res.json = (body: unknown) => {
+        if (res.statusCode >= 400) failure = errorOf(body)
+        return json(body)
+      }
       res.on('finish', () => {
         const email = EMAIL_ROUTES.has(routePath) && typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase().slice(0, 200) : undefined
         const target = Object.fromEntries(Object.entries(req.params ?? {}).map(([key, value]) => [key, String(value).slice(0, 200)]))
@@ -63,6 +91,11 @@ export class AuditController {
           durationMs: Date.now() - started,
           ip: clientIp(req),
           ...(email ? { detail: email } : {}),
+          ...(() => {
+            const streamed = typeof res.locals[AUDIT_ERROR_LOCAL] === 'string' ? (res.locals[AUDIT_ERROR_LOCAL] as string).slice(0, ERROR_MAX) : undefined
+            const error = streamed ?? failure
+            return error ? { error } : {}
+          })(),
         })
       })
       next()

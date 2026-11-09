@@ -1,5 +1,5 @@
 import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
-import { AUDIT_STATUS_LOCAL } from './Audit.Controller'
+import { AUDIT_ERROR_LOCAL, AUDIT_STATUS_LOCAL } from './Audit.Controller'
 import type { UsageCapService } from '@application/UsageCap.Service'
 import { usageCaps } from '@domain/Usage.Cap'
 import { ERROR_KINDS, REFUSAL_STATUSES, type TRefusalOrigin } from '@domain/models/ErrorLog.Model'
@@ -2140,6 +2140,7 @@ export class AgentController {
       const failure = toHttpFailure(error)
       // A auditoria anota o status da recusa, não o 200 do stream que já tinha começado (ver `Audit.Controller`).
       res.locals[AUDIT_STATUS_LOCAL] = failure.status
+      res.locals[AUDIT_ERROR_LOCAL] = failure.message
       console.error('[AgentController.sendMessage] Error:', failure.message)
       stream.send({ type: 'error', sessionId, timestamp: new Date(), payload: { message: failure.message } })
     } finally {
