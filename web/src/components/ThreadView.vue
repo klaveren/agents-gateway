@@ -106,7 +106,7 @@
   /** O nome do agente — o do core (o construtor) não está na lista de agentes. */
   const agentName = computed(() => agent.value?.name ?? coreAgentName(header.value?.agentId ?? thread.agentId ?? props.agentId) ?? header.value?.agentId)
   const owner = computed(() => header.value?.metadata?.owner)
-  const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/v1/shared/${header.value.shareId}` : ''))
+  const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/s/${header.value.shareId}` : ''))
   /** Os `/commands` que a pessoa pode usar com este agente (o autocompletar da caixa). */
   // ⚠️ Pelo agente da CONVERSA (o cabeçalho), não só pela lista de agentes: ela vem recortada pelo projeto atual, e a
   // conversa pode ser de outro projeto. Quem diz o que a pessoa pode usar é o servidor.

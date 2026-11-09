@@ -16,6 +16,7 @@ import CatalogHistoryView from './views/CatalogHistoryView.vue'
 import RulesView from './views/RulesView.vue'
 import ErrorsView from './views/ErrorsView.vue'
 import AuditView from './views/AuditView.vue'
+import SharedView from './views/SharedView.vue'
 import EnvironmentView from './views/EnvironmentView.vue'
 import SchedulesView from './views/SchedulesView.vue'
 import NotificationsView from './views/NotificationsView.vue'
@@ -115,6 +116,8 @@ export const router = createRouter({
     { path: '/model-groups/new', name: 'model-group-new', component: ModelGroupsView },
     { path: '/model-groups/:id', name: 'model-group', component: ModelGroupsView, props: true },
     { path: '/providers/:rest(.*)*', redirect: (to) => ({ path: `/models${to.path.slice('/providers'.length)}`, query: to.query }) },
+    // A conversa compartilhada por link: pública, só leitura, sem o menu (ver `App`, `meta.bare`).
+    { path: '/s/:shareId', name: 'shared', component: SharedView, props: true, meta: { bare: true } },
     { path: '/login', name: 'login', component: AuthView },
     { path: '/setup', name: 'setup', component: AuthView },
     { path: '/:pathMatch(.*)*', redirect: '/' },

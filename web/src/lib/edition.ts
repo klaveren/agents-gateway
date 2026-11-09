@@ -43,6 +43,7 @@ export const LITE_ROUTES: ReadonlySet<string> = new Set([
   'mcp-server',
   'settings',
   'audit',
+  'shared',
   'login',
   'setup',
 ])

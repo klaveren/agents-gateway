@@ -73,7 +73,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <component :is="layout">
+  <!-- A conversa compartilhada por link: a página sozinha, sem o menu nem o aviso de agentes (quem abre pode não ter conta). -->
+  <RouterView v-if="route.meta.bare" />
+  <component :is="layout" v-else>
     <!-- No celular a navegação é uma barra fixa embaixo: o conteúdo para antes dela. -->
     <main class="relative min-h-0 min-w-0 flex-1 pb-[calc(3.25rem+env(safe-area-inset-bottom))] md:pb-0">
       <div v-if="agentsError" role="alert" class="absolute inset-x-0 top-0 z-40 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rose-500/30 bg-rose-950 px-4 py-2 text-sm text-rose-200">
