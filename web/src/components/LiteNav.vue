@@ -1,0 +1,65 @@
+<script setup lang="ts">
+  import { computed } from 'vue'
+  import { useRoute } from 'vue-router'
+  import { useAuthStore } from '@/stores/auth'
+  import { useConversationsStore } from '@/stores/conversations'
+  import { useProjectsStore } from '@/stores/projects'
+  import AccountMenu from './AccountMenu.vue'
+  import Icon from './Icon.vue'
+  import ProjectSwitcher from './ProjectSwitcher.vue'
+
+  /** O menu da lite: independente do `NavRail` (nada de condição de edição lá). Mesmo visual: trilho no desktop, barra no celular. */
+  const route = useRoute()
+  const auth = useAuthStore()
+  const conversations = useConversationsStore()
+  const projects = useProjectsStore()
+
+  const section = computed(() => (String(route.name ?? '').startsWith('agent') ? 'agents' : 'inbox'))
+
+  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'agents'; badge: number }>>(() => [
+    { to: '/', key: 'inbox', label: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
+    ...(projects.manages ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
+  ])
+</script>
+
+<template>
+  <nav
+    class="fixed inset-x-0 bottom-0 z-30 flex shrink-0 items-stretch border-t border-zinc-800/80 bg-zinc-900/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:static md:w-[68px] md:flex-col md:items-center md:gap-1 md:border-t-0 md:border-r md:bg-zinc-900/60 md:py-3 md:pb-3 md:backdrop-blur-none"
+  >
+    <div v-if="auth.user" class="flex min-w-0 flex-1 md:hidden"><ProjectSwitcher placement="up" /></div>
+    <div v-if="auth.user" class="mb-3 hidden md:block"><ProjectSwitcher placement="side" /></div>
+    <div
+      v-else
+      class="mb-3 hidden h-10 w-10 place-items-center rounded-xl md:grid bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950"
+      title="Agents Gateway"
+    >
+      AG
+    </div>
+    <RouterLink
+      v-for="link in links"
+      :key="link.key"
+      :to="link.to"
+      :title="link.label"
+      class="relative flex min-w-0 flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-medium transition-colors md:w-14 md:flex-none md:gap-1 md:rounded-xl md:py-2"
+      :class="section === link.key ? 'bg-zinc-800 text-emerald-300' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'"
+    >
+      <Icon :name="link.icon" class="h-[22px] w-[22px]" />
+      <span>{{ link.label }}</span>
+      <span
+        v-if="link.badge"
+        class="absolute top-0.5 right-[calc(50%-20px)] md:top-1 md:right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950"
+      >
+        {{ link.badge > 99 ? '99+' : link.badge }}
+      </span>
+    </RouterLink>
+    <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />
+    <RouterLink v-else-if="auth.localAccounts" to="/login" class="flex flex-1 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden">
+      Entrar
+    </RouterLink>
+    <div class="mt-auto hidden flex-col items-center gap-2 pb-1 text-[10px] text-zinc-500 md:flex">
+      <span class="h-2 w-2 rounded-full" :class="conversations.live ? 'bg-emerald-400' : 'bg-zinc-600'" :title="conversations.live ? 'Ao vivo' : 'Sem conexão ao vivo'" />
+      <AccountMenu v-if="auth.user" placement="side" />
+      <RouterLink v-else-if="auth.localAccounts" to="/login" class="rounded-lg px-2 py-1 text-zinc-300 hover:bg-zinc-800">Entrar</RouterLink>
+    </div>
+  </nav>
+</template>
