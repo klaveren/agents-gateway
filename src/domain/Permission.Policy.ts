@@ -125,8 +125,10 @@ export function decide(subject: IPermissionSubject, layers: IPermissionLayers, s
 /**
  * ⚖️ O que vale SEM regra. O repositório é escopo, não ação: o projeto já delimita onde o agente trabalha, e o que ele
  * faz lá dentro (ler, gravar, rodar) segue negado sem regra. A regra `repository` só serve para RESTRINGIR (Negar).
+ * ⚖️ O MCP também: a ferramenta só chega ao agente se foi MARCADA na guia MCPs dele (`allowedTools`), e essa escolha é
+ * a liberação. Exigir ainda uma regra fazia o MCP marcado não funcionar. A regra `mcp` serve para RESTRINGIR (Negar).
  */
-const OPEN_BY_DEFAULT: readonly TPermissionCategory[] = ['repository']
+const OPEN_BY_DEFAULT: readonly TPermissionCategory[] = ['repository', 'mcp']
 
 export const CATEGORY_LABEL: Readonly<Record<TPermissionCategory, string>> = {
   terminal: 'terminal',
