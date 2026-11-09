@@ -2,6 +2,7 @@
 import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
+import { lite } from '@/lib/edition'
 import type { IProviderStatus, TAudience, TLimitName } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
@@ -183,6 +184,8 @@ async function saveSettings() {
               </optgroup>
             </select>
           </label>
+          <!-- A lite não tem o classificador nem o construtor. -->
+          <template v-if="!lite">
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Modelo de classificação
             <select v-model="classifier" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
@@ -204,6 +207,7 @@ async function saveSettings() {
             </select>
             <small class="text-xs text-zinc-500">Redige skills e commands na guia Construir. Prefira um modelo forte.</small>
           </label>
+          </template>
         </div>
 
         <div v-if="settings.current.limitBounds" class="flex flex-col gap-2">
@@ -235,7 +239,7 @@ async function saveSettings() {
         <p v-if="settings.current.updatedBy" class="text-xs text-zinc-500">Última alteração por {{ settings.current.updatedBy }} em {{ new Date(settings.current.updatedAt ?? '').toLocaleString('pt-BR') }}</p>
       </section>
 
-      <section v-if="auth.isAdmin && settings.current" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+      <section v-if="!lite && auth.isAdmin && settings.current" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
         <h2 class="font-medium">Troca automática de modelo</h2>
         <p class="text-xs text-zinc-400">
           A sequência dos agentes que não escolheram uma: a conversa começa no primeiro modelo disponível dela e, se o modelo falha (cota, limite de uso…), segue no próximo e fica nele.
@@ -254,7 +258,7 @@ async function saveSettings() {
         </p>
       </section>
 
-      <section v-if="auth.isAdmin && settings.current?.deployment" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+      <section v-if="!lite && auth.isAdmin && settings.current?.deployment" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
         <h2 class="font-medium">Implantação</h2>
         <p class="text-xs text-zinc-400">Só leitura. Para mudar, edite o <code>.env</code> do servidor e reinicie.</p>
         <dl class="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
