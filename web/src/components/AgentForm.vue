@@ -124,6 +124,8 @@
       .filter((entry) => entry.startsWith(`mcp:${server.id}/`) && !entry.endsWith('/*'))
       .map((entry) => entry.slice(`mcp:${server.id}/`.length))
       .filter((name) => !listed.some((tool) => tool.name === name))
+    // A lite mostra só o que o servidor lista: a escolhida que ele não oferece (a semente tem as da PRO) não aparece.
+    if (lite.value) return listed
     return [...listed, ...chosen.map((name) => ({ name, unlisted: true }))]
   }
   /** O peso, por chamada ao modelo, das ferramentas deste servidor que o agente tem (todas, com `*`). */
