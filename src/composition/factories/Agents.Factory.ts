@@ -1,5 +1,5 @@
 import { AgentCatalog } from '@application/Agent.Catalog'
-import { AGENT_SEED, atlasLitePrompt } from '@domain/Agent.Seed'
+import { AGENT_SEED, ASSISTANT, atlasLitePrompt } from '@domain/Agent.Seed'
 import { gatewayEdition, withoutLiteTools } from '@domain/Edition.Policy'
 import { AGENT_MIGRATIONS } from '@domain/Agent.Migrations'
 import { builderAgent, importBuilderAgent, PROTOCOLS } from '@domain/Builder.Agents'
@@ -39,7 +39,8 @@ export function makeAgents(): AgentCatalog {
 
   const repository = build()
   stored = repository
-  repository.seedOnce(AGENT_SEED, 'seed')
+  // Na lite, o Assistente vem junto (o agente de conversa geral); a PRO não ganha agente novo.
+  repository.seedOnce(gatewayEdition() === 'lite' ? [ASSISTANT, ...AGENT_SEED] : AGENT_SEED, 'seed')
   for (const migration of AGENT_MIGRATIONS)
     for (const id of migration.agentIds === '*' ? repository.list().map((agent) => agent.id) : migration.agentIds)
       repository.migrateOnce(migration.key, id, migration.change, 'seed')
