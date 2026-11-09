@@ -18,7 +18,8 @@ const SCHEMA = `
     status           INTEGER NOT NULL,
     duration_ms      INTEGER,
     ip               TEXT,
-    detail           TEXT
+    detail           TEXT,
+    error            TEXT
   );
   CREATE INDEX IF NOT EXISTS audit_events_at ON audit_events (at);
   CREATE INDEX IF NOT EXISTS audit_events_actor ON audit_events (actor_id);
@@ -35,13 +36,16 @@ export class SqliteAuditRepository implements IAuditRepository {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    // A coluna que um arquivo de antes ainda não tem.
+    const columns = this.db.prepare('PRAGMA table_info(audit_events)').all() as TRow[]
+    if (!columns.some((column) => column.name === 'error')) this.db.exec('ALTER TABLE audit_events ADD COLUMN error TEXT')
   }
 
   append(event: TNewAuditEvent): void {
     try {
       this.db
         .prepare(
-          'INSERT INTO audit_events (at, actor_id, actor_email, agent_id, conversation_id, action, target, status, duration_ms, ip, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO audit_events (at, actor_id, actor_email, agent_id, conversation_id, action, target, status, duration_ms, ip, detail, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )
         .run(
           event.at.toISOString(),
@@ -55,6 +59,7 @@ export class SqliteAuditRepository implements IAuditRepository {
           event.durationMs ?? null,
           event.ip ?? null,
           event.detail ?? null,
+          event.error ?? null,
         )
     } catch (error) {
       // ⚖️ Perder um evento é melhor que derrubar a rota que ele descreve.
@@ -103,5 +108,6 @@ function toEvent(row: TRow): IAuditEvent {
     ...(typeof row.duration_ms === 'number' ? { durationMs: row.duration_ms } : {}),
     ...(text(row.ip) ? { ip: text(row.ip) } : {}),
     ...(text(row.detail) ? { detail: text(row.detail) } : {}),
+    ...(text(row.error) ? { error: text(row.error) } : {}),
   }
 }

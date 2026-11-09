@@ -4737,6 +4737,7 @@ export const OPENAPI_DOCUMENT = {
                         durationMs: { type: 'integer' },
                         ip: { type: 'string' },
                         detail: { type: 'string', description: 'The e-mail typed at sign-in or setup' },
+                        error: { type: 'string', description: 'Refused or failed: the message the API returned (and, on a 422, the fields), cut short' },
                       },
                     },
                   },

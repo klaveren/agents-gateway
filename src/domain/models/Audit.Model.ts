@@ -24,6 +24,8 @@ export interface IAuditEvent {
   ip?: string
   /** O e-mail que tentou entrar (login e setup): a conta ainda não existe na credencial. */
   detail?: string
+  /** Recusado ou com falha: a mensagem que a API devolveu (e, num 422, os campos), cortada. */
+  error?: string
 }
 
 export type TNewAuditEvent = Omit<IAuditEvent, 'id'>
