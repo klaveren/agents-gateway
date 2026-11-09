@@ -236,7 +236,7 @@ export class AgentProvider implements IAgentProvider {
     let handoff = record.handoff
     // O contexto do sistema que não foi na mensagem (ver `SendMessageUseCase.withContext`): volta com o repasse feito
     // no meio do turno, quando o modelo recomeça do zero. O adapter nunca o recebe solto.
-    const { context: systemContext, ...asked } = input
+    const { context: systemContext, compactOnly, ...asked } = input
     // ⚖️ O PAINEL DA CONVERSA no começo de cada turno (ver `ConversationPanel.Model`): a rota — objetivo, em andamento,
     // fila, perguntas —, e o aviso quando o turno anterior não o atualizou. Só na entrada do modelo, nunca no turno gravado.
     const panelNow = this.panels ? await this.panels.get(record.id).catch(() => undefined) : undefined
@@ -333,7 +333,11 @@ export class AgentProvider implements IAgentProvider {
       // O contexto passou do gatilho, ou a compactação foi pedida: o turno começa com o resumo (ver `Compaction.Policy`).
       // Com repasse pendente não: o provedor novo já recomeça só com a transcrição.
       const window = this.contextOf?.(record.provider, record.model)
+      if (compactOnly) record.compactNext = true
+      const before = record.usage.contextTokens
+      let compacted = false
       if (!handoff && !adapter.compactsItself && record.native !== undefined && (record.compactNext || shouldCompact(record.usage.contextTokens, window))) {
+        compacted = true
         const share = window && record.usage.contextTokens ? ` (${Math.round((record.usage.contextTokens / window) * 100)}% da janela de ${window} tokens)` : ''
         yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Compactando o contexto${share}…` } }
         const summary = yield* this.summarize(record, agent, adapter, context)
@@ -362,6 +366,22 @@ export class AgentProvider implements IAgentProvider {
       // O que o agente tem e não roda neste provedor: avisa no primeiro turno e quando a conversa troca de provedor.
       if (unavailable.length && (record.turns === 1 || handoff))
         yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Indisponível em ${record.provider}: ${unavailable.join(', ')}.` } }
+
+      // ⚖️ O TURNO SÓ DE COMPACTAÇÃO acaba aqui: o resumo fica como repasse para a próxima mensagem (o `finally` o mantém,
+      // porque este turno não "concluiu" um turno do modelo). O medidor cai para o tamanho do resumo.
+      if (compactOnly) {
+        record.compactNext = false
+        const after = compacted && record.handoff ? Math.ceil(record.handoff.length / 4) : undefined
+        if (after !== undefined) record.usage.contextTokens = after
+        const text = !compacted
+          ? record.native === undefined
+            ? 'Nada para compactar agora: o modelo ainda não tem histórico desta conversa (ou ela já recomeça com um resumo).'
+            : 'Esta conversa não pode ser compactada aqui.'
+          : `Contexto compactado${before ? `: de ~${before.toLocaleString('pt-BR')} para ~${(after ?? 0).toLocaleString('pt-BR')} tokens` : ''}. A próxima mensagem já começa com o resumo.`
+        yield { type: 'text.delta', sessionId, timestamp: new Date(), payload: { text } }
+        yield { type: 'message.completed', sessionId, timestamp: new Date() }
+        return
+      }
 
       for (;;) {
         let exhausted: { message: string; resetsAt?: string; kind: TProviderFailure; next: IFallbackStep } | undefined

@@ -5304,8 +5304,9 @@ export const OPENAPI_DOCUMENT = {
     '/sessions/{id}/compact': {
       post: {
         summary:
-          'Compact the context at the start of the next turn: the model summarizes the conversation, which restarts with the summary and the last turns. It also runs on its own when the context passes `compactAtPercent` of the model window. Lanes that compact themselves answer 422',
+          'Compact the context: the model summarizes the conversation, which restarts with the summary and the last turns. With `now: true` and the conversation idle, it compacts right away in a compaction-only turn (recorded as "Compactar o contexto", `compaction: done`, `message` with the result); while a turn runs, or without `now`, it happens at the start of the next turn (`compaction: next-turn`). It also runs on its own when the context passes `compactAtPercent` of the model window. Lanes that compact themselves answer 422',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: false, ...json({ type: 'object', properties: { now: { type: 'boolean' } } }) },
         responses: { '200': { description: 'OK', ...json(envelope(sessionSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },

@@ -132,7 +132,7 @@ describe('MCP do próprio gateway (integração)', () => {
         token: admin,
         body: { patch: { providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }] }, reason: 'o modelo do teste' },
       })
-      assert.ok(patched.ok, JSON.stringify(patched))
+      assert.ok(patched.result, JSON.stringify(patched))
     }
   })
 

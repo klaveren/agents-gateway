@@ -421,11 +421,17 @@ export const useThreadStore = defineStore('thread', () => {
   }
 
   /** Compacta o contexto da conversa no início da próxima mensagem (o servidor resume e recomeça). */
-  async function compact(): Promise<void> {
+  /**
+   * Compacta: parada, NA HORA (o turno "Compactar o contexto" entra no histórico); respondendo, no começo da próxima
+   * rodada. Devolve qual dos dois aconteceu.
+   */
+  async function compact(): Promise<'done' | 'next-turn' | undefined> {
     const id = sessionId.value
-    if (!id) return
-    const updated = await api<ISessionState>(`/sessions/${encodeURIComponent(id)}/compact`, { method: 'POST' })
+    if (!id) return undefined
+    const updated = await api<ISessionState & { compaction?: 'done' | 'next-turn' }>(`/sessions/${encodeURIComponent(id)}/compact`, { method: 'POST', body: { now: true } })
     if (id === sessionId.value) session.value = { ...sessionState(updated), place: session.value?.place }
+    if (updated.compaction === 'done') await refresh()
+    return updated.compaction
   }
 
   /** Logout: esquece tudo da conversa aberta e derruba o stream, para a próxima conta não herdar nada. */

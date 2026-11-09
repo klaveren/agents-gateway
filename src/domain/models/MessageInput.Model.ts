@@ -27,4 +27,9 @@ export interface IMessageInput {
    * modelo) chama; a que não tem, não — o que sobrar vira mais uma rodada no fim do turno. Quem preenche é o provider.
    */
   interjections?: () => string[]
+  /**
+   * Um turno SÓ DE COMPACTAÇÃO (o botão, com a conversa parada): o modelo resume o contexto e o turno acaba, sem mensagem
+   * da pessoa. A próxima mensagem já começa com o resumo (ver `Compaction.Policy`).
+   */
+  compactOnly?: boolean
 }
