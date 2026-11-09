@@ -7,6 +7,7 @@
   import AccountMenu from './AccountMenu.vue'
   import Icon from './Icon.vue'
   import ProjectSwitcher from './ProjectSwitcher.vue'
+  import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 
   /** O menu da lite: independente do `NavRail` (nada de condição de edição lá). Mesmo visual: trilho no desktop, barra no celular. */
   const route = useRoute()
@@ -21,21 +22,28 @@
     if (name === 'usage') return 'usage'
     if (name.startsWith('mcp')) return 'mcp'
     if (name === 'settings') return 'settings'
-    if (name === 'audit') return 'audit'
+    if (name === 'audit' || name === 'errors') return name
+    if (name === 'user' || name.startsWith('user')) return 'users'
     return 'inbox'
   })
 
   // Agentes e Modelos para o admin do gateway também: no gateway que acabou de nascer não há projeto (os agentes são globais).
-  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'chart' | 'agents' | 'key' | 'plug' | 'settings' | 'shield'; badge: number }>>(() => [
+  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'chart' | 'agents' | 'users' | 'key' | 'plug' | 'settings'; badge: number }>>(() => [
     { to: '/', key: 'inbox', label: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
     ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
     ...(projects.manages || auth.isAdmin ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
+    ...(auth.isAdmin ? [{ to: '/users', key: 'users', label: 'Usuários', icon: 'users' as const, badge: 0 }] : []),
     ...(auth.isAdmin ? [{ to: '/models', key: 'providers', label: 'Modelos', icon: 'key' as const, badge: 0 }] : []),
     // MCPs como na PRO: o membro do projeto vê (só leitura), o admin edita.
     ...(auth.isAdmin || (auth.user && projects.current) ? [{ to: '/mcp', key: 'mcp', label: 'MCPs', icon: 'plug' as const, badge: 0 }] : []),
-    ...(auth.isAdmin ? [{ to: '/audit', key: 'audit', label: 'Auditoria', icon: 'shield' as const, badge: 0 }] : []),
     ...(auth.isAdmin ? [{ to: '/settings', key: 'settings', label: 'Configuração', icon: 'settings' as const, badge: 0 }] : []),
   ])
+
+  /** A auditoria e os erros num menu só (o que aconteceu, e o que falhou): só de quem administra. */
+  const AUDIT_ITEMS: IRailMenuItem[] = [
+    { to: '/audit', key: 'audit', label: 'Auditoria', hint: 'Quem fez o quê, quando e de onde', icon: 'shield' },
+    { to: '/errors', key: 'errors', label: 'Erros', hint: 'Ferramentas e turnos que falharam, por período', icon: 'warn' },
+  ]
 </script>
 
 <template>
@@ -68,6 +76,8 @@
         {{ link.badge > 99 ? '99+' : link.badge }}
       </span>
     </RouterLink>
+    <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><RailMenu title="Auditoria" icon="shield" :items="AUDIT_ITEMS" placement="up" :active="section" /></div>
+    <div v-if="auth.isAdmin" class="hidden md:block"><RailMenu title="Auditoria" icon="shield" :items="AUDIT_ITEMS" placement="side" :active="section" /></div>
     <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />
     <RouterLink v-else-if="auth.localAccounts" to="/login" class="flex flex-1 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden">
       Entrar
