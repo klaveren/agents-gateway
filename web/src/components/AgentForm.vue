@@ -993,12 +993,8 @@
         <p class="hint px-3 pt-2">Os que a pessoa escolhe na conversa. O padrão é o usado quando ninguém escolhe.</p>
         <div class="flex flex-col gap-3 p-3">
         <p v-if="dropped.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-normal text-amber-200">
-          Estes modelos foram desligados e saem ao salvar:
-          <template v-for="([providerId, models], index) in dropped" :key="providerId">
-            {{ index ? '; ' : '' }}{{ protocols.providerName(providerId) }}:
-            <code>{{ models.join(', ') }}</code>
-          </template>
-          . Para manter, ative em Modelos.
+          <!-- Aviso, não erro: o agente salva sem eles. Numa linha só, para não sobrar espaço antes da pontuação. -->
+          Não estão ativos no menu Modelos e saem do agente ao salvar: <template v-for="([providerId, models], index) in dropped" :key="providerId">{{ index ? '; ' : '' }}{{ protocols.providerName(providerId) }}: <code>{{ models.join(', ') }}</code></template>. Para manter, ative-os no menu Modelos.
         </p>
         <input v-if="manyModels" v-model="modelSearch" type="search" placeholder="Buscar modelo…" class="input text-sm" />
         <div v-for="(target, index) in form.providers" :key="target.provider" class="flex flex-col gap-1.5">
