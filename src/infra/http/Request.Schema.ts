@@ -117,13 +117,12 @@ export const updateSettingsSchema = z.object({
     .object(
       Object.fromEntries(
         LIMIT_NAMES.map((name) => {
-          const { min, max, unlimited } = LIMIT_BOUNDS[name]
-          const range = `${min} to ${max}${unlimited ? `, or ${UNLIMITED} for no limit` : ''}`
+          const { min, max, unlimited, cents } = LIMIT_BOUNDS[name]
+          const range = `${min} to ${max}${cents ? ' (cents allowed)' : ''}${unlimited ? `, or ${UNLIMITED} for no limit` : ''}`
           return [
             name,
             z
               .number()
-              .int()
               .refine((value) => limitInBounds(name, value), `must be ${range}`)
               .nullable()
               .optional(),

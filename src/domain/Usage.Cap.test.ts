@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { afterEach, describe, it } from 'node:test'
-import { applyLimits } from './models/Limits.Model'
+import { applyLimits, limitInBounds } from './models/Limits.Model'
 import { capMessage, capReached, hasCaps, monthStart, usageCaps } from './Usage.Cap'
 
 describe('Usage.Cap', () => {
@@ -13,6 +13,16 @@ describe('Usage.Cap', () => {
     applyLimits({ monthlyCostCapUsd: 20, userMonthlyTokenCap: -1 })
     assert.strictEqual(usageCaps({ MONTHLY_COST_CAP_USD: '50' }).monthlyCostUsd, 20)
     assert.strictEqual(usageCaps({ USER_MONTHLY_TOKEN_CAP: '5000' }).userMonthlyTokens, undefined)
+  })
+
+  it('os tetos em US$ aceitam centavos (duas casas); os de tokens, só inteiros', () => {
+    assert.ok(limitInBounds('userMonthlyCostCapUsd', 2.5))
+    assert.ok(limitInBounds('monthlyCostCapUsd', 0.01))
+    assert.ok(!limitInBounds('monthlyCostCapUsd', 2.555))
+    assert.ok(limitInBounds('monthlyCostCapUsd', -1))
+    assert.ok(!limitInBounds('monthlyTokenCap', 1500.5))
+    applyLimits({ userMonthlyCostCapUsd: 2.5 })
+    assert.strictEqual(usageCaps({}).userMonthlyCostUsd, 2.5)
   })
 
   it('o do gateway vem antes do da pessoa; alcançar (>=) já bate', () => {
