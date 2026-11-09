@@ -50,7 +50,11 @@ import { computed, onMounted, ref, watch } from 'vue'
     caller: { label: 'Login de quem conversa', hint: 'O MCP recebe o login da pessoa e decide o que ela vê.' },
     header: { label: 'Chave fixa', hint: 'Uma chave só, usada por todos que falam com o agente.' },
     none: { label: 'Nenhuma', hint: 'Sem autenticação.' },
+    oauth: { label: 'Conta de cada pessoa (OAuth)', hint: 'Cada pessoa conecta a própria conta (Google, por exemplo); o agente usa a conta de quem conversa.' },
   }
+  /** O endereço de retorno que o provedor precisa ter cadastrado (o do servidor, quando ele já informou). */
+  const callbackUri = computed(() => selected.value?.oauthRedirectUri ?? `${location.origin}/v1/oauth/callback`)
+  const blankOAuth = () => ({ clientId: '', scopes: '', authorizationServer: '' })
   const TRANSPORT_LABEL: Record<TMcpTransport, string> = { auto: 'Automático', http: 'Streamable HTTP', sse: 'SSE' }
 
   /** Mexe nos MCPs: o admin do gateway (os globais) ou o admin do projeto atual (os dele). */
@@ -92,6 +96,7 @@ import { computed, onMounted, ref, watch } from 'vue'
     auth: 'none',
     headerName: 'Authorization',
     identity: false,
+    oauth: blankOAuth(),
     secret: '',
     tags: [],
   })
@@ -119,6 +124,7 @@ import { computed, onMounted, ref, watch } from 'vue'
     auth: TMcpAuth
     headerName: string
     identity: boolean
+    oauth: { clientId: string; scopes: string; authorizationServer: string }
     tags: string[]
   }
   const edit = ref<IEdit>()
@@ -169,6 +175,7 @@ import { computed, onMounted, ref, watch } from 'vue'
     auth: server.auth,
     headerName: server.headerName ?? 'Authorization',
     identity: server.identity === true,
+    oauth: { clientId: server.oauth?.clientId ?? '', scopes: server.oauth?.scopes ?? '', authorizationServer: server.oauth?.authorizationServer ?? '' },
     tags: [...(server.tags ?? [])],
   })
 
@@ -211,7 +218,8 @@ import { computed, onMounted, ref, watch } from 'vue'
       draft.auth !== server.auth ||
       draft.identity !== (server.identity === true) ||
       tagsChanged.value ||
-      (draft.auth === 'header' && draft.headerName !== (server.headerName ?? 'Authorization'))
+      (draft.auth === 'header' && draft.headerName !== (server.headerName ?? 'Authorization')) ||
+      (draft.auth === 'oauth' && JSON.stringify(draft.oauth) !== JSON.stringify(editOf(server).oauth))
     )
   })
   /** As tags do formulário diferem das gravadas? (vale também nos MCPs de processo e contêiner, que salvam à parte.) */
@@ -292,7 +300,12 @@ import { computed, onMounted, ref, watch } from 'vue'
                 transport: 'auto',
                 auth: 'none',
               })
-            : await mcp.create({ ...rest, ...(rest.auth === 'header' ? { headerName, secret: value?.trim() || undefined } : {}) })
+            : await mcp.create({
+                ...rest,
+                oauth: rest.auth === 'oauth' ? oauthPayload(rest.oauth) : undefined,
+                ...(rest.auth === 'header' ? { headerName, secret: value?.trim() || undefined } : {}),
+                ...(rest.auth === 'oauth' ? { secret: value?.trim() || undefined } : {}),
+              })
       form.value = blank()
       await router.push(`/mcp/${created.key}`)
     } catch (error) {
@@ -317,8 +330,35 @@ import { computed, onMounted, ref, watch } from 'vue'
 
   const save = () =>
     run(async () => {
-      await mcp.update(selected.value!.key, { ...edit.value!, headerName: edit.value!.auth === 'header' ? edit.value!.headerName : undefined })
+      await mcp.update(selected.value!.key, {
+        ...edit.value!,
+        headerName: edit.value!.auth === 'header' ? edit.value!.headerName : undefined,
+        oauth: edit.value!.auth === 'oauth' ? oauthPayload(edit.value!.oauth) : undefined,
+      })
     })
+  /** Sem os campos vazios (o servidor descobre o que faltar). */
+  function oauthPayload(oauth?: { clientId: string; scopes?: string; authorizationServer?: string }) {
+    if (!oauth) return undefined
+    return {
+      clientId: oauth.clientId.trim(),
+      ...(oauth.scopes?.trim() ? { scopes: oauth.scopes.trim() } : {}),
+      ...(oauth.authorizationServer?.trim() ? { authorizationServer: oauth.authorizationServer.trim() } : {}),
+    }
+  }
+  /** Conectar a própria conta: o servidor devolve o login do provedor, e a tela vai para ele (volta em `?oauth=`). */
+  const connectAccount = () =>
+    run(async () => {
+      location.href = await mcp.oauthStart(selected.value!.key)
+    })
+  const disconnectAccount = () =>
+    run(async () => {
+      await mcp.oauthDisconnect(selected.value!.key)
+      await mcp.load()
+    })
+  /** O que voltou do login (`?oauth=ok` ou `?oauth=error&message=…`). */
+  const oauthNotice = computed(() =>
+    route.query.oauth === 'ok' ? 'Conta conectada.' : route.query.oauth === 'error' ? `O login não foi concluído: ${String(route.query.message ?? 'sem motivo')}` : undefined,
+  )
   const toggle = () =>
     run(async () => {
       await mcp.update(selected.value!.key, { enabled: !selected.value!.enabled })
@@ -544,6 +584,26 @@ import { computed, onMounted, ref, watch } from 'vue'
               <input v-model="form.secret" type="password" autocomplete="off" spellcheck="false" class="input font-mono" placeholder="Bearer …" />
             </label>
           </div>
+          <div v-if="form.kind === 'remote' && form.auth === 'oauth' && form.oauth" class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              Client ID
+              <input v-model="form.oauth.clientId" required class="input font-mono" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="field">
+              Client secret
+              <input v-model="form.secret" type="password" autocomplete="off" spellcheck="false" class="input font-mono" />
+            </label>
+            <label class="field">
+              <span>Escopos <span class="hint">(opcional)</span></span>
+              <input v-model="form.oauth.scopes" class="input font-mono" placeholder="https://www.googleapis.com/auth/drive.readonly" />
+            </label>
+            <label class="field">
+              <span>Servidor de autorização <span class="hint">(opcional)</span></span>
+              <input v-model="form.oauth.authorizationServer" class="input font-mono" placeholder="https://accounts.google.com" />
+              <small class="hint">Só se o MCP não publica onde é o login.</small>
+            </label>
+            <p class="hint sm:col-span-2">Cadastre no provedor o endereço de retorno: <code>{{ callbackUri }}</code></p>
+          </div>
           <label v-if="form.kind === 'remote'" class="flex items-start gap-2 text-sm">
             <input id="mcp-new-identity" v-model="form.identity" type="checkbox" class="mt-1 accent-emerald-500" />
             <span>
@@ -712,6 +772,20 @@ import { computed, onMounted, ref, watch } from 'vue'
               Cabeçalho
               <input v-model="edit.headerName" class="input font-mono" />
             </label>
+            <div v-if="edit.auth === 'oauth'" class="grid gap-3 sm:grid-cols-2">
+              <label class="field">
+                Client ID
+                <input v-model="edit.oauth.clientId" class="input font-mono" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="field">
+                <span>Escopos <span class="hint">(opcional)</span></span>
+                <input v-model="edit.oauth.scopes" class="input font-mono" />
+              </label>
+              <label class="field">
+                <span>Servidor de autorização <span class="hint">(opcional)</span></span>
+                <input v-model="edit.oauth.authorizationServer" class="input font-mono" />
+              </label>
+            </div>
             <label v-if="selected.kind === 'remote' || !selected.kind" class="flex items-start gap-2 text-sm">
               <input id="mcp-edit-identity" v-model="edit.identity" type="checkbox" class="mt-1 accent-emerald-500" />
               <span>
@@ -721,13 +795,25 @@ import { computed, onMounted, ref, watch } from 'vue'
             </label>
           </form>
 
-          <div v-if="selected.kind === 'remote' && selected.auth === 'header'" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
+          <div v-if="selected.auth === 'oauth'" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
+            <p class="text-sm" :class="selected.oauthConnected ? 'text-emerald-300' : 'text-zinc-300'">
+              {{ selected.oauthConnected ? '✓ Sua conta está conectada.' : 'Sua conta não está conectada: as ferramentas deste MCP não funcionam nas suas conversas até você conectar.' }}
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <button v-if="!selected.oauthConnected" type="button" class="btn btn-primary" :disabled="busy || !selected.enabled" @click="connectAccount">Conectar minha conta</button>
+              <button v-else type="button" class="btn btn-secondary" :disabled="busy" @click="disconnectAccount">Desconectar</button>
+            </div>
+            <p v-if="!locked" class="hint">Endereço de retorno a cadastrar no provedor: <code>{{ callbackUri }}</code></p>
+          </div>
+          <p v-if="oauthNotice" class="text-sm" :class="route.query.oauth === 'ok' ? 'text-emerald-300' : 'text-rose-300'">{{ oauthNotice }}</p>
+
+          <div v-if="selected.kind === 'remote' && (selected.auth === 'header' || selected.auth === 'oauth')" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
             <p class="text-xs" :class="selected.secret.configured ? 'text-zinc-400' : 'text-amber-300'">
               <template v-if="selected.secret.configured">
                 Chave salva · termina em …{{ selected.secret.last4 }}
                 <template v-if="selected.secret.updatedAt">· {{ fullTime(selected.secret.updatedAt) }}</template>
               </template>
-              <template v-else>Sem chave salva: nada é enviado.</template>
+              <template v-else>{{ selected.auth === 'oauth' ? 'Sem client secret salvo (o provedor pode exigir).' : 'Sem chave salva: nada é enviado.' }}</template>
             </p>
             <form class="flex flex-wrap items-center gap-2" @submit.prevent="saveSecret">
               <input
@@ -735,7 +821,7 @@ import { computed, onMounted, ref, watch } from 'vue'
                 type="password"
                 autocomplete="off"
                 spellcheck="false"
-                :placeholder="selected.secret.configured ? 'Colar nova chave para trocar' : 'Colar a chave'"
+                :placeholder="selected.auth === 'oauth' ? 'Colar o client secret' : selected.secret.configured ? 'Colar nova chave para trocar' : 'Colar a chave'"
                 class="input min-w-0 flex-1 font-mono text-sm"
               />
               <button type="submit" :disabled="busy || !secret.trim()" class="btn btn-secondary">Gravar segredo</button>

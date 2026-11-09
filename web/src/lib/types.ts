@@ -538,7 +538,14 @@ export interface IUserUsage extends IUsageFigure {
   name?: string
 }
 
-export type TMcpAuth = 'caller' | 'header' | 'none'
+export type TMcpAuth = 'caller' | 'header' | 'none' | 'oauth'
+
+/** O login OAuth de um MCP remoto: cada pessoa conecta a própria conta (o secret fica no cofre, como a chave). */
+export interface IMcpOAuth {
+  clientId: string
+  scopes?: string
+  authorizationServer?: string
+}
 export type TMcpTransport = 'auto' | 'http' | 'sse'
 
 /** Um servidor MCP cadastrado. ⛔ O segredo nunca vem: só se está configurado e o final dele. */
@@ -586,6 +593,10 @@ export interface IMcpServer {
   headerName?: string
   /** Envia a identidade de quem chama em cabeçalhos (`x-gateway-agent`, `-conversation`, `-project`). */
   identity?: boolean
+  oauth?: IMcpOAuth
+  /** `auth: oauth`: quem está na tela já conectou a conta, e o endereço de retorno a cadastrar no provedor. */
+  oauthConnected?: boolean
+  oauthRedirectUri?: string
   enabled: boolean
   secret: { configured: boolean; last4?: string; unreadable?: boolean; updatedAt?: string; updatedBy?: string }
   status: { connected: boolean; lastError?: string; instances?: number }

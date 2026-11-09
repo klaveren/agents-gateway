@@ -29,7 +29,7 @@
 
   const KIND_LABEL: Record<TMcpKind, string> = { process: 'Local (npm)', remote: 'Remoto (URL)', container: 'Contêiner isolado' }
   const TRANSPORT_LABEL: Record<TMcpTransport, string> = { auto: 'Automático', http: 'Streamable HTTP', sse: 'SSE' }
-  const AUTH_LABEL: Record<TMcpAuth, string> = { caller: 'Login de quem conversa', header: 'Chave fixa', none: 'Nenhuma' }
+  const AUTH_LABEL: Record<TMcpAuth, string> = { caller: 'Login de quem conversa', header: 'Chave fixa', none: 'Nenhuma', oauth: 'Conta de cada pessoa (OAuth)' }
 
   // A lista do projeto atual, da store (por projeto): trocar de projeto mostra a do novo — a de antes não aparece nele.
   const current = useResource(mcp.byProject, () => projects.current)
@@ -39,6 +39,28 @@
     return error === undefined ? undefined : error instanceof Error ? error.message : String(error)
   })
   const selected = computed(() => (props.id ? list.value.find((server) => server.key === props.id) : undefined))
+
+  /** ⚖️ O membro conecta a PRÓPRIA conta num MCP com login OAuth (o resto do servidor segue só leitura). */
+  const busy = ref(false)
+  const accountError = ref<string>()
+  async function account(connect: boolean) {
+    busy.value = true
+    accountError.value = undefined
+    try {
+      if (connect) location.href = await mcp.oauthStart(selected.value!.key)
+      else {
+        await mcp.oauthDisconnect(selected.value!.key)
+        await current.refresh()
+      }
+    } catch (error) {
+      accountError.value = error instanceof Error ? error.message : String(error)
+    } finally {
+      busy.value = false
+    }
+  }
+  const oauthNotice = computed(() =>
+    route.query.oauth === 'ok' ? 'Conta conectada.' : route.query.oauth === 'error' ? `O login não foi concluído: ${String(route.query.message ?? 'sem motivo')}` : undefined,
+  )
 </script>
 
 <template>
@@ -127,6 +149,17 @@
             <dd class="text-zinc-200">{{ selected.agents.length ? selected.agents.map((agent) => agent.name).join(', ') : 'nenhum ainda' }}</dd>
           </dl>
 
+          <div v-if="selected.auth === 'oauth'" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
+            <p class="text-sm" :class="selected.oauthConnected ? 'text-emerald-300' : 'text-zinc-300'">
+              {{ selected.oauthConnected ? '✓ Sua conta está conectada.' : 'Sua conta não está conectada: as ferramentas deste MCP não funcionam nas suas conversas até você conectar.' }}
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <button v-if="!selected.oauthConnected" type="button" class="btn btn-primary" :disabled="busy || !selected.enabled" @click="account(true)">Conectar minha conta</button>
+              <button v-else type="button" class="btn btn-secondary" :disabled="busy" @click="account(false)">Desconectar</button>
+            </div>
+            <p v-if="accountError" class="text-sm text-rose-300">{{ accountError }}</p>
+          </div>
+          <p v-if="oauthNotice" class="text-sm" :class="route.query.oauth === 'ok' ? 'text-emerald-300' : 'text-rose-300'">{{ oauthNotice }}</p>
           <p class="text-xs text-zinc-500">As ferramentas que este servidor expõe, e o teste de conexão, ficam com quem administra.</p>
         </template>
       </section>

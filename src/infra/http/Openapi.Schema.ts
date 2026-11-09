@@ -511,7 +511,20 @@ const mcpServerBody = {
     },
     url: { type: 'string', description: 'http(s) URL of the MCP endpoint.' },
     transport: { type: 'string', enum: ['auto', 'http', 'sse'] },
-    auth: { type: 'string', enum: ['caller', 'header', 'none'], description: 'caller = forward the conversing caller credential; header = a fixed secret header.' },
+    auth: {
+      type: 'string',
+      enum: ['caller', 'header', 'none', 'oauth'],
+      description:
+        'caller = forward the conversing caller credential; header = a fixed secret header; oauth = each person signs in with their own account (the secret is the client secret).',
+    },
+    oauth: {
+      type: 'object',
+      properties: {
+        clientId: { type: 'string' },
+        scopes: { type: 'string', description: 'Space-separated' },
+        authorizationServer: { type: 'string', description: 'Only when the MCP server does not publish its OAuth metadata' },
+      },
+    },
     headerName: { type: 'string', description: 'Header for auth: header (default Authorization).' },
     identity: { type: 'boolean', description: 'Send who calls (x-gateway-agent, x-gateway-conversation, x-gateway-project headers). Default false' },
     secret: { type: 'string', description: 'Only on create; later via /secret.' },
@@ -528,7 +541,17 @@ const mcpServerSchema = {
     name: { type: 'string' },
     url: { type: 'string' },
     transport: { type: 'string', enum: ['auto', 'http', 'sse'] },
-    auth: { type: 'string', enum: ['caller', 'header', 'none'] },
+    auth: { type: 'string', enum: ['caller', 'header', 'none', 'oauth'] },
+    oauth: {
+      type: 'object',
+      properties: {
+        clientId: { type: 'string' },
+        scopes: { type: 'string', description: 'Space-separated' },
+        authorizationServer: { type: 'string', description: 'Only when the MCP server does not publish its OAuth metadata' },
+      },
+    },
+    oauthConnected: { type: 'boolean', description: 'auth oauth: the caller already connected their account' },
+    oauthRedirectUri: { type: 'string', description: 'auth oauth: the redirect URI to register at the provider' },
     headerName: { type: 'string' },
     identity: { type: 'boolean' },
     enabled: { type: 'boolean' },
@@ -4566,6 +4589,35 @@ export const OPENAPI_DOCUMENT = {
           '404': failures['404'],
           '422': failures['422'],
         },
+      },
+    },
+    '/mcp-servers/{id}/oauth': {
+      post: {
+        summary:
+          "Connect the caller's own account to a remote MCP server with `auth: oauth`: returns the provider's sign-in URL (PKCE, single-use state, 10 minutes). After the sign-in, the provider returns to `/oauth/callback` and the token is stored for this person only, encrypted. Anyone who can use the server (global: any account; project: its members)",
+        parameters: idParam,
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { url: { type: 'string', format: 'uri' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+      delete: {
+        summary: "Disconnect the caller's own account from the server: the stored token is deleted and this person's connection closes",
+        parameters: idParam,
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/oauth/callback': {
+      get: {
+        summary:
+          'Where the OAuth provider returns after the sign-in (public): exchanges the code for the token of the person who started it, then redirects to the MCP screen (`/mcp/<server>?oauth=ok`, or `/mcp?oauth=error&message=…`). Register `<PUBLIC_URL or this host>/v1/oauth/callback` at the provider',
+        parameters: [
+          { name: 'code', in: 'query', schema: { type: 'string' } },
+          { name: 'state', in: 'query', schema: { type: 'string' } },
+          { name: 'error', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: { '302': { description: 'Back to the screen' } },
       },
     },
     '/mcp-servers/{id}/install': {

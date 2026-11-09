@@ -31,6 +31,8 @@ export interface IMcpClientOptions {
   auth?: TMcpAuth
   /** O header fixo de `auth: header`, LIDO A CADA REQUISIÇÃO: trocar o segredo vale sem reconectar. */
   header?: () => { name: string; value: string } | undefined
+  /** O token de `auth: oauth` (o da pessoa deste cliente), LIDO A CADA REQUISIÇÃO: renovado sem reconectar. */
+  bearer?: () => Promise<string | undefined>
   transport?: TMcpTransport
   /** Em que header vai a credencial de `auth: caller`. Padrão `authorization`. */
   callerHeader?: string
@@ -318,6 +320,7 @@ export class McpServerClient {
    * O `fetch` com a credencial DESTE servidor:
    * - `caller`: a de quem chamou, pelo escopo da chamada (ver `CallerTokenScope`);
    * - `header`: o segredo fixo, lido na hora;
+   * - `oauth`: o token da pessoa deste cliente (ver `McpOAuth`), lido e renovado na hora;
    * - `none`: nada.
    */
   private credentialFetch(): typeof fetch {
@@ -335,6 +338,14 @@ export class McpServerClient {
       : plain
     if (auth === 'caller') return this.tokenScope.wrap(base, this.options.callerHeader)
     if (auth === 'none') return base
+    if (auth === 'oauth')
+      return async (input, init) => {
+        const token = await this.options.bearer?.()
+        if (!token) return base(input, init)
+        const headers = new Headers(init?.headers)
+        headers.set('Authorization', `Bearer ${token}`)
+        return base(input, { ...init, headers })
+      }
 
     return (input, init) => {
       const header = this.options.header?.()
