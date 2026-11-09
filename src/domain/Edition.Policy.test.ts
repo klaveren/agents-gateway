@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { AGENT_SEED, atlasLitePrompt } from './Agent.Seed'
+import { ATLAS_AGENTS, atlasLitePrompt } from './Agent.Seed'
 import { gatewayEdition, LITE_HIDDEN_MCP_TOOLS, withoutLiteTools } from './Edition.Policy'
 
 describe('Edition.Policy', () => {
@@ -16,7 +16,7 @@ describe('Edition.Policy', () => {
   })
 
   it('a semente na lite fica sem nenhuma ferramenta escondida', () => {
-    for (const agent of AGENT_SEED) {
+    for (const agent of ATLAS_AGENTS) {
       const left = withoutLiteTools(agent.allowedTools)
       assert.ok(
         left.every((tool) => !(tool.startsWith('mcp:gateway/') && LITE_HIDDEN_MCP_TOOLS.has(tool.slice(12)))),
@@ -27,14 +27,14 @@ describe('Edition.Policy', () => {
   })
 
   it('o prompt lite da semente não cita ferramenta que a lite não tem; prompt editado não é trocado', () => {
-    for (const agent of AGENT_SEED) {
+    for (const agent of ATLAS_AGENTS) {
       const lite = atlasLitePrompt(agent)
       assert.ok(lite, agent.id)
       for (const tool of LITE_HIDDEN_MCP_TOOLS) assert.ok(!new RegExp(`\\b${tool}\\b`).test(lite), `${agent.id}: ${tool}`)
       assert.match(lite, /builder-agent/)
       assert.strictEqual(atlasLitePrompt({ ...agent, systemPrompt: `${agent.systemPrompt}\nmeu ajuste` }), undefined)
     }
-    assert.match(atlasLitePrompt(AGENT_SEED[1]) ?? '', /## Sistema operacional/)
-    assert.strictEqual(atlasLitePrompt({ id: 'outro', systemPrompt: AGENT_SEED[0].systemPrompt }), undefined)
+    assert.match(atlasLitePrompt(ATLAS_AGENTS[1]) ?? '', /## Sistema operacional/)
+    assert.strictEqual(atlasLitePrompt({ id: 'outro', systemPrompt: ATLAS_AGENTS[0].systemPrompt }), undefined)
   })
 })
