@@ -2,6 +2,7 @@
   import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
+  import { lite } from '@/lib/edition'
   import ConfirmDialog from '@/components/ConfirmDialog.vue'
   import HistoryPanel from '@/components/HistoryPanel.vue'
   import HistoryTabs from '@/components/HistoryTabs.vue'
@@ -99,6 +100,8 @@ import { computed, onMounted, ref, watch } from 'vue'
     remote: { label: 'Remoto (URL)', hint: 'Um MCP que já está no ar, acessado por URL.' },
     container: { label: 'Contêiner isolado', hint: 'Roda isolado, um contêiner por conversa. Precisa de Docker.' },
   }
+  /** Os tipos que se pode criar: a lite não tem o contêiner isolado. */
+  const kindOptions = computed(() => (lite.value ? { process: KIND_LABEL.process, remote: KIND_LABEL.remote } : KIND_LABEL))
   /** O rascunho do contêiner na edição (a cópia do que está gravado). */
   const containerDraft = ref<IMcpContainer>(blankContainer())
   const processDraft = ref<IMcpProcess>(blankProcess())
@@ -456,7 +459,7 @@ import { computed, onMounted, ref, watch } from 'vue'
             Tipo
             <div class="flex flex-wrap gap-1.5">
               <button
-                v-for="(option, value) in KIND_LABEL"
+                v-for="(option, value) in kindOptions"
                 :key="value"
                 type="button"
                 class="chip disabled:cursor-not-allowed disabled:opacity-40"
