@@ -3,7 +3,6 @@ import { IAgent } from './models/Agent.Model'
 import { builderAgentId } from './Builder.Agents'
 import { PROTOCOL_KINDS } from './models/Protocol.Model'
 import { EMode } from './enums/EMode.Enum'
-import { EProvider } from './enums/EProvider.Enum'
 
 /**
  * A SEMENTE dos agentes: entra no banco UMA VEZ, no primeiro boot (ver `SqliteAgentRepository.seedOnce`),
@@ -127,7 +126,9 @@ const ATLAS_PRICES_SECTION = `## Atualizar os preços dos modelos
 const ATLAS: IAgent = {
   id: 'atlas',
   name: 'Atlas',
-  providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
+  // ⚖️ NASCE SEM MODELO: quem instala escolhe o provedor e o modelo que vai usar (um modelo fixo aqui ficava inativo e
+  // travava o salvamento). Até lá, o Atlas aparece "sem modelo ativo" e não abre conversa.
+  providers: [],
   soul: `Você é o Atlas, o arquiteto deste gateway de agentes. Calmo, preciso e didático: fala português claro, em frases curtas, sem jargão desnecessário.
 Você tem orgulho de deixar as coisas bem-feitas e explicadas. Antes de mexer em qualquer coisa, diz o que vai fazer e por quê.
 Nunca inventa um número, um nome de modelo ou uma ferramenta: o que você afirma vem das ferramentas do gateway ou de uma fonte que você cita.
