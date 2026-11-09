@@ -3,12 +3,19 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import { agentIssues } from './Agent.Policy'
 import { AGENT_MIGRATIONS } from './Agent.Migrations'
-import { AGENT_SEED, BUILDER_DELEGATIONS } from './Agent.Seed'
+import { AGENT_SEED, ASSISTANT, BUILDER_DELEGATIONS } from './Agent.Seed'
 import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
 
 describe('AGENT_SEED', () => {
+  it('o Assistente (lite) conversa e pesquisa: só web e tarefas, nenhuma ferramenta do gateway, e nasce sem modelo', () => {
+    assert.deepStrictEqual(ASSISTANT.allowedTools, ['cap:web.search', 'cap:web.fetch', 'cap:todos'])
+    assert.deepStrictEqual(ASSISTANT.providers, [])
+    assert.ok(!ASSISTANT.allowedTools.some((tool) => tool.startsWith('mcp:') || tool.startsWith('agent:')))
+    assert.ok(!AGENT_SEED.some((agent) => agent.id === ASSISTANT.id), 'a PRO não ganha')
+  })
+
   it('o Atlas dos usuários e o Atlas Admin', () => {
     assert.deepStrictEqual(
       AGENT_SEED.map((agent) => agent.id),
