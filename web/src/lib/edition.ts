@@ -5,4 +5,18 @@
 export const lite = import.meta.env.VITE_EDITION === 'lite'
 
 /** As rotas da lite: o resto volta para `/`. As telas são as da PRO, sem mudança; o que a lite mostra mora aqui e no `LiteNav`. */
-export const LITE_ROUTES: ReadonlySet<string> = new Set(['inbox', 'conversation', 'conversation-panel', 'new', 'agents', 'agent-new', 'agent', 'profile', 'login', 'setup'])
+export const LITE_ROUTES: ReadonlySet<string> = new Set([
+  'inbox',
+  'conversation',
+  'conversation-panel',
+  'new',
+  'agents',
+  'agent-new',
+  'agent',
+  'providers',
+  'provider-new',
+  'provider',
+  'profile',
+  'login',
+  'setup',
+])
