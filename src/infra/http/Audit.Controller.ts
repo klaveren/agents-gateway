@@ -22,6 +22,9 @@ const SKIPPED: ReadonlySet<string> = new Set(['/mcp', '/mcp-proxy/:serverId', '/
 /** As rotas em que o e-mail digitado é o que identifica a tentativa (a conta ainda não está na credencial). */
 const EMAIL_ROUTES: ReadonlySet<string> = new Set(['/auth/login', '/auth/setup'])
 
+/** O status de verdade de uma resposta em stream (a recusa sai como evento depois do 200): quem responde grava aqui. */
+export const AUDIT_STATUS_LOCAL = 'auditStatus'
+
 export interface IAuditControllerDeps {
   repository: IAuditRepository
   proof?: ICallerProof
@@ -56,7 +59,7 @@ export class AuditController {
           ...(conversationId ? { conversationId } : {}),
           action,
           ...(Object.keys(target).length ? { target } : {}),
-          status: res.statusCode,
+          status: typeof res.locals[AUDIT_STATUS_LOCAL] === 'number' ? (res.locals[AUDIT_STATUS_LOCAL] as number) : res.statusCode,
           durationMs: Date.now() - started,
           ip: clientIp(req),
           ...(email ? { detail: email } : {}),
