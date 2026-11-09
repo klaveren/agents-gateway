@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ApiError } from './lib/api'
 import DefaultLayout from './layouts/DefaultLayout.vue'
@@ -19,7 +19,7 @@ const protocols = useProtocolsStore()
 const route = useRoute()
 const router = useRouter()
 /** A casca da edição (ver `lib/edition`): o conteúdo é o mesmo nas duas. */
-const layout = lite ? LiteLayout : DefaultLayout
+const layout = computed(() => (lite.value ? LiteLayout : DefaultLayout))
 
 /** Sem nenhuma conta ainda, tudo leva ao setup do primeiro admin. */
 watch(

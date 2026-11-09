@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { gatewayEdition, LITE_HIDDEN_MCP_TOOLS, TEdition } from '@domain/Edition.Policy'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Request, Response } from 'express'
 import { z } from 'zod'
@@ -330,6 +331,15 @@ const permissionRuleShape = z.object({
   note: z.string().optional(),
 })
 
+/** O servidor que ignora o registro das ferramentas fora da lite. */
+function withoutLiteHidden(server: McpServer): McpServer {
+  const register = server.registerTool.bind(server) as (name: string, ...rest: unknown[]) => unknown
+  return new Proxy(server, {
+    get: (target, prop, receiver) =>
+      prop === 'registerTool' ? (name: string, ...rest: unknown[]) => (LITE_HIDDEN_MCP_TOOLS.has(name) ? undefined : register(name, ...rest)) : Reflect.get(target, prop, receiver),
+  })
+}
+
 /** Onde as ferramentas de sistema caem para quem não administra o gateway. */
 const NO_TOOLS = { registerTool: () => undefined } as unknown as McpServer
 
@@ -340,7 +350,9 @@ const NO_TOOLS = { registerTool: () => undefined } as unknown as McpServer
  * `SELF_MCP_WRITE=0` desligando — o cliente não vê o que não pode usar. A API, por baixo, recusaria de qualquer jeito.
  * ⛔ Chave de API e senha não passam por aqui: não há ferramenta para elas.
  */
-function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolean; gateway?: boolean; write: boolean; agentId?: string; streaming?: boolean }) {
+function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean; gateway?: boolean; write: boolean; agentId?: string; streaming?: boolean; edition?: TEdition }) {
+  // A lite não registra o que ela não tem (ver `LITE_HIDDEN_MCP_TOOLS`): o cliente nem vê.
+  const server = access.edition === 'lite' ? withoutLiteHidden(full) : full
   // ⛔ As ferramentas de SISTEMA (providers, modelos, grupos de modelos, pacotes) são só do admin do gateway: `system` as
   // registra, e para o admin só de projeto vira um nada. Todas as demais ferramentas de admin valem para quem administra
   // QUALQUER coisa — e a rota que cada uma chama, com a credencial de quem chama, decide o escopo (404 fora dele).
@@ -1391,6 +1403,7 @@ async function serve(req: Request, res: Response): Promise<void> {
     gateway,
     write: process.env.SELF_MCP_WRITE !== '0',
     streaming,
+    edition: gatewayEdition(),
     ...(typeof agentId === 'string' && agentId.trim() ? { agentId: agentId.trim() } : {}),
   })
 

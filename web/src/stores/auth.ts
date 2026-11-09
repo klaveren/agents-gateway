@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, ApiError, authHeaders, CALLER_TOKEN_KEY, setUnauthorizedHandler } from '@/lib/api'
 import { clearResources } from '@/lib/resource'
+import { setEdition, type TEdition } from '@/lib/edition'
 import { readLocal, writeLocal } from '@/lib/storage'
 import type { ISession, ISettings, IUser } from '@/lib/types'
 import { useAgentsStore } from './agents'
@@ -101,7 +102,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function scan(): Promise<void> {
     try {
       // ⚖️ As três de uma vez: o gateway pode estar longe (~220 ms de ida e volta), e cada espera em fila soma isso.
-      const status = api<{ localAccounts: boolean; setupRequired: boolean }>('/auth/status').catch(() => ({ localAccounts: false, setupRequired: false }))
+      const status = api<{ localAccounts: boolean; setupRequired: boolean; edition?: TEdition }>('/auth/status').catch(() => ({ localAccounts: false, setupRequired: false, edition: undefined }))
       // O token antigo vira cookie ANTES de perguntar quem é (só quando há um no navegador).
       await migrateStoredSession()
       const [found, me, admin] = await Promise.all([
@@ -115,10 +116,13 @@ export const useAuthStore = defineStore('auth', () => {
       ])
       localAccounts.value = found.localAccounts
       setupRequired.value = found.setupRequired
+      setEdition(found.edition)
       user.value = me
       isAdmin.value = admin === undefined
       unauthorized.value = admin instanceof ApiError && admin.status === 401
     } finally {
+      // Sem resposta do status, PRO: o router não fica esperando.
+      setEdition(undefined)
       checked.value = true
     }
   }

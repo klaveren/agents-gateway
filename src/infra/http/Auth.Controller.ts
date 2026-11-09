@@ -1,4 +1,5 @@
 import { clientIp } from './Security.Middleware'
+import { gatewayEdition } from '@domain/Edition.Policy'
 import { clearSessionCookie, setSessionCookie, wantsCookieOnly } from './Session.Cookie'
 import { identityFromToken, tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
 import { AccessTokensService } from '@application/AccessTokens.Service'
@@ -142,9 +143,9 @@ export class AuthController {
     )
   }
 
-  /** Público: a tela pergunta se precisa mostrar o setup. Só isso — nada sobre quem são as contas. */
+  /** Público: a tela pergunta se precisa mostrar o setup e qual é a edição (a casca da tela). Nada sobre quem são as contas. */
   async status(_req: Request, res: Response) {
-    await this.respond(res, async () => ({ localAccounts: !!this.deps.accounts, setupRequired: this.deps.accounts?.setupRequired() ?? false }))
+    await this.respond(res, async () => ({ localAccounts: !!this.deps.accounts, setupRequired: this.deps.accounts?.setupRequired() ?? false, edition: gatewayEdition() }))
   }
 
   async setup(req: Request, res: Response) {

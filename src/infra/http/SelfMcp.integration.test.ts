@@ -1,4 +1,5 @@
 import assert from 'node:assert'
+import { LITE_HIDDEN_MCP_TOOLS } from '@domain/Edition.Policy'
 import { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -219,6 +220,24 @@ describe('MCP do próprio gateway (integração)', () => {
     } finally {
       delete process.env.SELF_MCP_WRITE
     }
+  })
+
+  it('GATEWAY_EDITION=lite: o MCP não registra o que a lite não tem; o resto fica igual', async () => {
+    const pro = await names(admin)
+    process.env.GATEWAY_EDITION = 'lite'
+    try {
+      const lite = await names(admin)
+      assert.deepStrictEqual(
+        lite,
+        pro.filter((tool) => !LITE_HIDDEN_MCP_TOOLS.has(tool)),
+      )
+      for (const tool of ['save_hook', 'list_schedules', 'list_projects', 'save_doc', 'install_package']) assert.ok(!lite.includes(tool), tool)
+      for (const tool of ['save_agent', 'list_models', 'my_usage', 'save_permission_rules', 'start_conversation']) assert.ok(lite.includes(tool), tool)
+      assert.strictEqual((await call('/auth/status')).result.edition, 'lite')
+    } finally {
+      delete process.env.GATEWAY_EDITION
+    }
+    assert.strictEqual((await call('/auth/status')).result.edition, 'pro')
   })
 
   it('⛔ o admin só de projeto vê as ferramentas de admin, menos as de sistema (providers, modelos, pacotes)', async () => {
