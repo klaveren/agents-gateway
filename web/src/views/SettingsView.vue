@@ -223,7 +223,7 @@ async function saveSettings() {
               <input
                 v-model="limitDrafts[limit.name]"
                 type="number"
-                step="1"
+                :step="settings.current.limitBounds[limit.name]?.cents ? '0.01' : '1'"
                 :min="settings.current.limitBounds[limit.name]?.unlimited ? -1 : settings.current.limitBounds[limit.name]?.min"
                 :max="settings.current.limitBounds[limit.name]?.max"
                 :placeholder="settings.current.limitsInEffect?.[limit.name] === -1 ? 'sem teto' : String(settings.current.limitsInEffect?.[limit.name] ?? '')"
