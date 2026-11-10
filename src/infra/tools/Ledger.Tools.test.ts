@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import { ILedgerAgentInfo, LedgerService } from '@application/Ledger.Service'
 import { SqliteLedgerRepository } from '@infra/persistence/Sqlite.LedgerRepository'
 import { makeLedgerTools } from './Ledger.Tools'
+import { strictable } from './bridges/OpenAI.ToolBridge'
 
 const AGENTS: Record<string, ILedgerAgentInfo> = { theo: { id: 'theo' }, ana: { id: 'ana', projectId: 'xpto' }, zeus: { id: 'zeus', adminOnly: true } }
 
@@ -24,6 +25,11 @@ describe('ledger_read / ledger_write', () => {
     assert.deepStrictEqual(write.inputSchema.properties.acao.enum, ['criar', 'gatilho', 'playbook', 'linha_nova', 'linha_editar', 'linha_apagar', 'excluir'])
     assert.deepStrictEqual(write.inputSchema.required, ['tema', 'acao'])
     assert.ok(!('agente' in write.inputSchema.properties), 'a escrita não tem campo de agente')
+  })
+
+  it('o schema fecha no modo estrito da OpenAI (o lote `linhas` com os campos da linha)', () => {
+    const { read, write } = setup()
+    assert.ok(strictable(read.inputSchema) && strictable(write.inputSchema))
   })
 
   it('⛔ o dono é o agente do TURNO: grava no ledger dele, com a conversa na revisão', async () => {

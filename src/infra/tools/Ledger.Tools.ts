@@ -161,7 +161,18 @@ export function makeLedgerTools(desk: TLedgerDesk): ILocalTool[] {
         linhas: {
           type: 'array',
           description: 'linha_nova: several lines at once (migrating, a batch of learnings): each { tipo, situacao, aprendizado, ref?, data? }.',
-          items: { type: 'object' },
+          items: {
+            type: 'object',
+            properties: {
+              tipo: { type: 'string', enum: [...LEDGER_LINE_TYPES] },
+              situacao: { type: 'string' },
+              aprendizado: { type: 'string' },
+              ref: { type: 'string' },
+              data: { type: 'string' },
+            },
+            required: ['tipo', 'situacao', 'aprendizado'],
+            additionalProperties: false,
+          },
         },
         situacao: { type: 'string', description: 'The trigger/context of the line: when it applies (one line).' },
         aprendizado: { type: 'string', description: 'The learning, in one sentence (≤ 300 characters).' },
