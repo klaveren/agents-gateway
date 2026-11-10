@@ -1,7 +1,9 @@
 import { makePermissions } from './Permissions.Factory'
 import { migrateLegacyToProjects, migrateProjectRoles, ProjectsService } from '@application/Projects.Service'
 import { AGENT_SEED, ATLAS_AGENTS } from '@domain/Agent.Seed'
+import { gatewayEdition } from '@domain/Edition.Policy'
 import { DEFAULT_PROJECT_ID } from '@domain/models/Project.Model'
+import { IUser } from '@domain/models/User.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { projectWorkspace, removeProjectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
@@ -67,8 +69,30 @@ function build() {
   makeAuth().accounts?.afterSetup((user) => {
     if (!service.exists(DEFAULT_PROJECT_ID)) service.create({ id: DEFAULT_PROJECT_ID, name: 'Geral', description: 'O projeto inicial do gateway.' }, user.name, 'boot', user.id)
   })
+  // ⚖️ Na lite, todo usuário é membro do `geral` (o projeto dela): o criado agora e, no boot, o que já existia sem ser.
+  if (gatewayEdition() === 'lite') {
+    makeAuth().accounts?.afterCreate((user, by) => joinDefaultProject(service, [user], by))
+    joinDefaultProject(service, makeAuth().accounts?.list() ?? [], 'boot')
+  }
   instance = { service, repository }
   return instance
+}
+
+/** Põe no `geral` quem ainda não é membro: o admin do gateway como admin do projeto, os outros como membros. */
+function joinDefaultProject(service: ProjectsService, users: readonly IUser[], by: string): void {
+  if (!service.exists(DEFAULT_PROJECT_ID)) return
+  const members = service.members(DEFAULT_PROJECT_ID)
+  const missing = users.filter((user) => !members.some((member) => member.userId === user.id))
+  if (!missing.length) return
+  try {
+    service.setMembers(
+      DEFAULT_PROJECT_ID,
+      [...members, ...missing.map((user) => ({ userId: user.id, role: user.role === 'admin' ? ('admin' as const) : ('member' as const) }))],
+      by,
+    )
+  } catch (error) {
+    console.warn('[lite] não foi possível pôr as contas no projeto geral', error)
+  }
 }
 
 /** O repositório dos projetos, para o leitor do catálogo (o histórico). */

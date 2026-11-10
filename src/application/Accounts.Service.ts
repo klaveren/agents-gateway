@@ -53,6 +53,7 @@ export class AccountsService {
   readonly setupCode: string
   /** O que nasce junto com o primeiro admin (o projeto inicial; ver `Projects.Factory`). Ligado depois: os projetos dependem das contas. */
   private setupHooks: Array<(user: IUser) => void> = []
+  private createHooks: Array<(user: IUser, by: string) => void> = []
 
   constructor(
     private readonly users: IUserRepository,
@@ -68,6 +69,11 @@ export class AccountsService {
   /** Roda depois de criar o primeiro admin, antes de devolver a sessão. */
   afterSetup(hook: (user: IUser) => void): void {
     this.setupHooks.push(hook)
+  }
+
+  /** Roda depois de o admin criar uma conta (não no setup). */
+  afterCreate(hook: (user: IUser, by: string) => void): void {
+    this.createHooks.push(hook)
   }
 
   setupRequired(): boolean {
@@ -144,7 +150,9 @@ export class AccountsService {
   }
 
   create(input: INewUser, by: string): IUser {
-    return this.insert(input, by)
+    const user = this.insert(input, by)
+    for (const hook of this.createHooks) hook(user, by)
+    return user
   }
 
   update(id: string, change: { name?: string; role?: TUserRole; disabled?: boolean }, actorId: string, by: string): IUser {
