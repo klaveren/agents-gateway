@@ -7,14 +7,17 @@ import { ILocalTool } from '../Tool.Types'
 /**
  * O `@openai/agents` aceita JSON Schema direto quando `strict: true`, então as tools
  * locais entram sem precisar de zod. As remotas entram como MCP server nativo.
+ *
+ * ⚠️ O modo estrito da OpenAI recusa a CHAMADA INTEIRA (400 "additionalProperties is required…") se um objeto do
+ * schema for aberto (`{ type: 'object' }` sem `properties`). A ferramenta assim vai sem estrito, e o turno roda.
  */
 export function buildOpenAITools(local: ILocalTool[], context?: IExecutionContext): Tool[] {
   return local.map((item) =>
     tool({
       name: item.name,
       description: item.description,
-      strict: true,
-      parameters: item.inputSchema,
+      strict: strictable(item.inputSchema),
+      parameters: item.inputSchema as never,
       // A política de segurança vive no executor local, que vale para as três lanes.
       needsApproval: false,
       async execute(args: unknown) {
@@ -49,4 +52,16 @@ export function buildOpenAIMcpServers(remotes: readonly IAgentMcpServer[] = [], 
 
 function toArgs(args: unknown): Record<string, unknown> {
   return typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {}
+}
+
+/** O schema fecha no modo estrito? Todo objeto com `properties` (o SDK os fecha) ou já `additionalProperties: false`. */
+export function strictable(schema: unknown): boolean {
+  if (Array.isArray(schema)) return schema.every(strictable)
+  if (typeof schema !== 'object' || schema === null) return true
+  const node = schema as Record<string, unknown>
+  const isObject = node.type === 'object' || (Array.isArray(node.type) && node.type.includes('object'))
+  if (isObject && typeof node.properties !== 'object' && node.additionalProperties !== false) return false
+  if (node.additionalProperties !== undefined && typeof node.additionalProperties !== 'boolean') return false
+  const nested = [node.items, node.anyOf, ...Object.values((node.properties as object) ?? {}), ...Object.values((node.$defs as object) ?? {})]
+  return nested.every(strictable)
 }
