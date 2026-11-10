@@ -2,6 +2,15 @@ import { constants as fsc, existsSync, realpathSync } from 'node:fs'
 import { FileHandle, glob, lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import {
+  DELIVER_FILE_TOOL,
+  DELIVERED_FILE_MAX_BYTES,
+  DELIVERED_FILES_PER_CONVERSATION,
+  deliveredNote,
+  fileName,
+  IConversationFile,
+  mimeOf,
+} from '@domain/models/ConversationFile.Model'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
 import { ILocalTool, IToolResult } from './Tool.Types'
@@ -484,4 +493,75 @@ function editFileTool(deps: IFileToolDeps): ILocalTool {
  */
 export function makeFileTools(deps: IFileToolDeps): ILocalTool[] {
   return [readFileTool(deps), listFilesTool(deps), searchFilesTool(deps), writeFileTool(deps), editFileTool(deps)]
+}
+
+/** Onde ficam os arquivos entregues (o repositório de conversas) e o turno em curso de cada conversa. */
+export interface IFileDeliveries {
+  files(sessionId: string): Promise<IConversationFile[]>
+  saveFile(file: IConversationFile, data: Buffer): Promise<void>
+  turnOf?(sessionId: string): number | undefined
+}
+
+/**
+ * `deliver_file`: o agente passa à pessoa um arquivo que criou (ver `ConversationFile.Model`); a tela mostra o botão de
+ * baixar. ⛔ Lê pelas mesmas travas do `read_file` (raiz, lista protegida, pasta de outro agente, regra de leitura). A
+ * pasta da PRÓPRIA conversa (`conversationDir`, onde o agente sem projeto trabalha) entra sem regra: só ela grava ali.
+ */
+export function deliverFileTool(deps: IFileToolDeps, deliveries: IFileDeliveries, conversationDir: (sessionId: string) => string): ILocalTool {
+  return {
+    origin: 'local',
+    name: DELIVER_FILE_TOOL,
+    description:
+      'Hands a file you created to the person: it shows up in the chat as a download button, and stays there while the conversation exists. Use it whenever the person should get a file (CSV, report, image, PDF…) — the conversation folder is temporary and they cannot open it. Pass the path of the file (relative to your working folder, or absolute); at most 20 MB.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'The file to deliver: relative to your working folder, or absolute' },
+        name: { type: 'string', description: 'The name the person downloads it as. Default: the file name' },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+    async execute(args, context): Promise<IToolResult> {
+      const sessionId = context?.sessionId
+      if (!sessionId) return fail(`${DELIVER_FILE_TOOL} only works inside a conversation.`)
+      if (typeof args.path !== 'string' || !args.path.trim()) return fail('path is required.')
+      const own = realOf(resolve(conversationDir(sessionId)))
+      const place = placeOf(deps, context, args.path, true)
+      // A pasta da conversa: pelo caminho absoluto, ou porque é ela a raiz de trabalho.
+      const inConversation = isAbsolute(args.path) ? isInside(own, realOf(resolve(args.path))) : realOf(resolve(place.root)) === own
+      const checked = inConversation
+        ? guard(own, args.path, undefined, false, place.own)
+        : guard(place.root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, place.own, !!place.shared)
+      if ('error' in checked) return checked.error
+      try {
+        if ((await deliveries.files(sessionId)).length >= DELIVERED_FILES_PER_CONVERSATION)
+          return fail(`this conversation already has ${DELIVERED_FILES_PER_CONVERSATION} delivered files: put the rest in one archive (zip)`)
+        const { handle, size } = await openChecked(checked.abs, fsc.O_RDONLY)
+        let data: Buffer
+        try {
+          if (size > DELIVERED_FILE_MAX_BYTES) return fail(`file is larger than 20 MB (${size} bytes): compress it or split it`)
+          data = await handle.readFile()
+        } finally {
+          await handle.close()
+        }
+        const name = fileName(typeof args.name === 'string' && args.name.trim() ? args.name : basename(checked.abs))
+        const turn = deliveries.turnOf?.(sessionId)
+        const file: IConversationFile = {
+          id: `f_${randomBytes(9).toString('hex')}`,
+          conversationId: sessionId,
+          name,
+          mime: mimeOf(name),
+          size: data.length,
+          ...(turn !== undefined ? { turn } : {}),
+          ...(context?.agentId ? { agentId: context.agentId } : {}),
+          createdAt: new Date(),
+        }
+        await deliveries.saveFile(file, data)
+        return { status: 'success', result: deliveredNote(file) }
+      } catch (error: unknown) {
+        return fail(`Could not deliver ${place.show(checked.abs)}: ${toMessage(error)}`)
+      }
+    },
+  }
 }

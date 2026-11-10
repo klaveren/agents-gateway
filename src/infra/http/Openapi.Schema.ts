@@ -4334,6 +4334,23 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'The panel', ...json(envelope({ type: 'object' })) }, '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/conversations/{id}/files': {
+      get: {
+        summary: 'The files the agent DELIVERED in a conversation (the deliver_file tool): id, name, type, size and turn, without the content. Who can see the conversation',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: { type: 'object' } })) }, '404': failures['404'] },
+      },
+    },
+    '/conversations/{id}/files/{fileId}': {
+      get: {
+        summary: 'Downloads a delivered file, always as an attachment (never rendered by the gateway). Who can see the conversation',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'fileId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'The file', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, '404': failures['404'] },
+      },
+    },
     '/secret-requests': {
       post: {
         summary:

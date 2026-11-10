@@ -115,6 +115,7 @@ export function makeTools(): ITools {
             repositoryBrowse: makeRepositoryBrowse(),
             todos: todoStore(),
             panels: panelStore(),
+            deliveries: deliveryStore(),
             permissions: lazyPermissions,
             agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
             agentFolder: (agentId, conversationProject) => agentFolderOf(agentId, conversationProject),
@@ -180,6 +181,20 @@ function panelStore(): NonNullable<ILocalToolDeps['panels']> {
       const turns = makeSessionStore().get(sessionId)?.turns
       return turns !== undefined ? Math.max(turns - 1, 0) : undefined
     },
+  }
+}
+
+/** Onde o `deliver_file` guarda a cópia: o mesmo banco das conversas; o turno, o mesmo do painel. */
+function deliveryStore(): NonNullable<ILocalToolDeps['deliveries']> {
+  const store = () => {
+    todos ??= makeConversationRepository()
+    if (!todos.files || !todos.saveFile) throw new Error('Conversations are not being recorded on this gateway')
+    return todos as Required<Pick<IConversationRepository, 'files' | 'saveFile'>>
+  }
+  return {
+    files: (sessionId) => store().files(sessionId),
+    saveFile: (file, data) => store().saveFile(file, data),
+    turnOf: panelStore().turnOf,
   }
 }
 

@@ -1,7 +1,8 @@
 <script setup lang="ts">
   import { computed, onBeforeUnmount, ref } from 'vue'
   import { copyText } from '@/lib/clipboard'
-  import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
+  import { url } from '@/lib/api'
+  import { bytes, CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
   import { renderMarkdown } from '@/lib/markdown'
   import type { ITurn } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
@@ -72,6 +73,19 @@
   })
   const finishedTools = computed(() => tools.value.filter((tool) => tool.status !== 'running').length)
   const toolErrors = computed(() => tools.value.filter((tool) => tool.status === 'error').length)
+  /**
+   * Os arquivos que o agente entregou neste turno (`deliver_file`): viram botões de baixar. O resultado vem como o SDK o
+   * entregou (texto, blocos ou JSON aninhado), então os dados são procurados no texto serializado, como na delegação.
+   */
+  const deliveredFiles = computed(() =>
+    (props.turn?.toolCalls ?? []).flatMap((call) => {
+      if (!call.tool.endsWith('deliver_file') || call.error) return []
+      const serialized = JSON.stringify(call.result ?? '').replace(/\\+"/g, '"')
+      const found = /"deliveredFile"\s*:\s*\{"id"\s*:\s*"(f_[a-f0-9]+)"\s*,\s*"name"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"size"\s*:\s*(\d+)/.exec(serialized)
+      return found ? [{ id: found[1]!, name: found[2]!, size: Number(found[3]) }] : []
+    }),
+  )
+  const fileUrl = (id: string) => url(`/conversations/${encodeURIComponent(props.turn!.sessionId)}/files/${encodeURIComponent(id)}`)
   const warnings = computed(() => props.turn?.warnings ?? props.pending?.warnings ?? [])
   const aborted = computed(() => props.turn?.aborted ?? props.pending?.aborted ?? false)
   const error = computed(() => props.turn?.error ?? props.pending?.error)
@@ -185,6 +199,20 @@
         </div>
         <p v-if="error" class="mt-1 text-sm text-rose-300">Algo deu errado: {{ error }}</p>
         <p v-if="aborted" class="mt-1 text-xs text-zinc-400 italic">Interrompido.</p>
+        <div v-if="deliveredFiles.length" class="mt-2 flex flex-wrap gap-1.5" data-test="delivered-files">
+          <a
+            v-for="file in deliveredFiles"
+            :key="file.id"
+            :href="fileUrl(file.id)"
+            :download="file.name"
+            class="flex max-w-full items-center gap-1.5 rounded-lg bg-zinc-900/70 px-2.5 py-1.5 text-xs text-zinc-200 ring-1 ring-zinc-700 hover:bg-zinc-900 hover:ring-emerald-600"
+            :title="`Baixar ${file.name}`"
+          >
+            <Icon name="doc" class="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            <span class="min-w-0 truncate">{{ file.name }}</span>
+            <span class="shrink-0 text-zinc-500">{{ bytes(file.size) }}</span>
+          </a>
+        </div>
         <div v-if="turn" class="mt-1 flex items-center justify-end gap-2 text-[11px] text-zinc-500">
           <span v-if="turn.classification" class="flex items-center gap-1" :title="CLASSIFICATION_LABEL[turn.classification]">
             <span class="h-2 w-2 rounded-full" :class="CLASSIFICATION_COLOR[turn.classification]" />

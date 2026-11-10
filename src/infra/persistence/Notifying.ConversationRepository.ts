@@ -1,3 +1,4 @@
+import { IConversationFile } from '@domain/models/ConversationFile.Model'
 import { emptyPanel, IConversationPanel } from '@domain/models/ConversationPanel.Model'
 import type { IErrorLog, IErrorLogQuery, ITurnRefusal } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
@@ -146,6 +147,19 @@ export class NotifyingConversationRepository implements IConversationRepository 
   async savePanel(sessionId: string, panel: IConversationPanel): Promise<void> {
     if (!this.inner.savePanel) throw new Error('This conversation store has no panel')
     await this.inner.savePanel(sessionId, panel)
+  }
+
+  async files(sessionId: string): Promise<IConversationFile[]> {
+    return (await this.inner.files?.(sessionId)) ?? []
+  }
+
+  async file(sessionId: string, id: string): Promise<{ file: IConversationFile; data: Buffer } | undefined> {
+    return this.inner.file?.(sessionId, id)
+  }
+
+  async saveFile(file: IConversationFile, data: Buffer): Promise<void> {
+    if (!this.inner.saveFile) throw new Error('This conversation store keeps no files')
+    await this.inner.saveFile(file, data)
   }
 
   findByShareId(shareId: string): Promise<IConversationSession | undefined> {

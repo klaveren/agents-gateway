@@ -424,15 +424,16 @@
     agent_trigger: 'Editar triggers',
     ssh_sign: 'Assinar SSH',
     conversation_panel: 'Painel da conversa',
+    deliver_file: 'Entregar arquivo',
     ledger_read: 'Memória: ler',
     ledger_write: 'Memória: gravar',
   }
   /**
-   * ⚖️ AS AUTOMÁTICAS (ver `Auto.Tools` no servidor): o gateway as liga sozinho — a memória e o painel sempre, os
+   * ⚖️ AS AUTOMÁTICAS (ver `Auto.Tools` no servidor): o gateway as liga sozinho — a memória, o painel e a entrega de arquivo sempre, os
    * documentos e os recursos quando há o que ler. Aqui aparecem LIGADAS, e desligar grava `off:<ferramenta>`.
    */
   const AUTO_TOOL_OFF = 'off:'
-  const AUTO_TOOLS: readonly string[] = ['ledger_read', 'ledger_write', 'conversation_panel', 'read_doc', 'search_docs', 'use_resource', 'search_resources']
+  const AUTO_TOOLS: readonly string[] = ['ledger_read', 'ledger_write', 'conversation_panel', 'deliver_file', 'read_doc', 'search_docs', 'use_resource', 'search_resources']
   const LEDGER_TOOLS = [
     { name: 'ledger_read', description: 'Lê a memória do agente: o que ele aprendeu de como agir.' },
     { name: 'ledger_write', description: 'Grava na memória do agente o que ele aprendeu.' },

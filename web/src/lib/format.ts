@@ -75,3 +75,10 @@ export function redactUrl(raw: string): string {
     return raw.replace(/[?#].*$/, '').replace(/\/\/[^/@]*@/, '//')
   }
 }
+
+/** O tamanho de um arquivo: 820 B, 12,3 KB, 4,1 MB. */
+export function bytes(value: number): string {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} KB`
+  return `${(value / 1024 / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB`
+}

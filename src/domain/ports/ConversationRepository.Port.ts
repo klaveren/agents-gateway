@@ -1,3 +1,4 @@
+import type { IConversationFile } from '@domain/models/ConversationFile.Model'
 import type { IConversationPanel } from '@domain/models/ConversationPanel.Model'
 import type { IErrorLog, IErrorLogQuery, ITurnRefusal } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
@@ -110,6 +111,12 @@ export interface IConversationRepository {
   /** O painel da conversa (ver `ConversationPanel.Model`). */
   panel?(sessionId: string): Promise<IConversationPanel>
   savePanel?(sessionId: string, panel: IConversationPanel): Promise<void>
+  /** Os arquivos que o agente entregou (ver `ConversationFile.Model`): os dados, sem o conteúdo. */
+  files?(sessionId: string): Promise<IConversationFile[]>
+  /** Um arquivo entregue, com o conteúdo. */
+  file?(sessionId: string, id: string): Promise<{ file: IConversationFile; data: Buffer } | undefined>
+  /** ⛔ Grava ou falha: a entrega É o que a ferramenta pediu. */
+  saveFile?(file: IConversationFile, data: Buffer): Promise<void>
 
   /**
    * Abre ou fecha a conversa por link. `shareId` só entra quando vem: fechar não o apaga, para
