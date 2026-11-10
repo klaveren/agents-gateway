@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { lite, LITE_HIDDEN_AGENT_TABS, LITE_HIDDEN_TOOLS } from '@/lib/edition'
+  import { lite, LITE_HIDDEN_AGENT_TABS, LITE_HIDDEN_PERMISSIONS, LITE_HIDDEN_TOOLS } from '@/lib/edition'
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
   import { ApiError } from '@/lib/api'
@@ -1415,7 +1415,7 @@
         <p class="text-xs text-zinc-500">
           Valem antes das do projeto: liberam o que o projeto fechou, ou fecham mais. Sem regra no agente nem no projeto, negado. As do sistema valem sempre.
         </p>
-        <PermissionCategoryTabs v-model="permissionSection" :rules="form.permissions ?? []" :exclude="['delegate']" :active="permissionPane === 'rules'" @pick="permissionPane = 'rules'">
+        <PermissionCategoryTabs v-model="permissionSection" :rules="form.permissions ?? []" :exclude="lite ? ['delegate', ...LITE_HIDDEN_PERMISSIONS] : ['delegate']" :active="permissionPane === 'rules'" @pick="permissionPane = 'rules'">
           <!-- O nível de acesso dos CLIs por assinatura (o sandbox deles): só quando algum provedor do agente o tem. -->
           <button
             v-if="accessSections.length"
