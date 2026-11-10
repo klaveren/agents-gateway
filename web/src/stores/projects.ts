@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
+import { lite, LITE_PROJECT } from '@/lib/edition'
 import { keyedResource } from '@/lib/resource'
 import { readLocal, writeLocal } from '@/lib/storage'
 import type { IProject, IProjectMember, TProjectRole } from '@/lib/types'
@@ -53,6 +54,8 @@ export const useProjectsStore = defineStore('projects', () => {
 
   function put(projects: IProject[]): void {
     list.value = projects
+    // A lite fica no projeto padrão, quando a pessoa está nele.
+    if (lite.value && list.value.some((project) => project.id === LITE_PROJECT)) return setCurrent(LITE_PROJECT)
     // O guardado sumiu (apagado, ou a pessoa saiu dele): vale o primeiro que ela tem.
     if (!list.value.some((project) => project.id === current.value)) setCurrent(list.value[0]?.id)
   }

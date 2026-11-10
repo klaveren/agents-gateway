@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { lite } from '@/lib/edition'
 import { initials } from '@/lib/format'
 import { useAboveBar, usePopover } from '@/lib/popover'
 import { useAuthStore } from '@/stores/auth'
@@ -7,6 +8,7 @@ import { useProjectsStore } from '@/stores/projects'
 
 /**
  * O seletor de PROJETO, no topo do trilho: o projeto atual recorta Conversas, Agentes e a conversa nova.
+ * A lite não troca de projeto: só mostra o atual (o padrão).
  * `placement`: no trilho (desktop) abre para o lado; na barra do celular, para cima.
  */
 defineProps<{ placement: 'side' | 'up' }>()
@@ -30,7 +32,8 @@ async function choose(id: string) {
       class="flex flex-col items-center gap-0.5 text-[10px] font-medium"
       :class="placement === 'up' ? 'w-full py-1.5 text-zinc-400' : ''"
       :aria-expanded="open"
-      aria-haspopup="menu"
+      :aria-haspopup="lite ? undefined : 'menu'"
+      :disabled="lite"
       :title="`Projeto: ${label}`"
       @click="open = !open"
     >

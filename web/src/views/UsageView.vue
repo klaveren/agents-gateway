@@ -10,6 +10,7 @@
   import { tokens, usd } from '@/lib/format'
   import type { IUsageFigure } from '@/lib/types'
   import { useAuthStore } from '@/stores/auth'
+  import { lite } from '@/lib/edition'
   import { useProjectsStore } from '@/stores/projects'
   import { useUsageStore } from '@/stores/usage'
 
@@ -25,8 +26,8 @@
 
   const PERIODS = [7, 30, 90]
   const days = ref(30)
-  /** O projeto do recorte (`?project=`, na URL para o link levar junto). Ausente = todos. */
-  const selectedProject = computed(() => (typeof route.query.project === 'string' && route.query.project ? route.query.project : undefined))
+  /** O projeto do recorte (`?project=`, na URL para o link levar junto). Ausente = todos. A lite fica no projeto atual (o padrão). */
+  const selectedProject = computed(() => (lite.value ? projects.current : typeof route.query.project === 'string' && route.query.project ? route.query.project : undefined))
   const tab = computed(() => (auth.isAdmin && (route.query.tab === 'users' || route.query.tab === 'keys') ? route.query.tab : 'mine'))
   const selectedUser = computed(() => (typeof route.query.user === 'string' ? route.query.user : undefined))
 
@@ -112,6 +113,7 @@
           v-if="projects.list.length > 1 || selectedProject"
           class="ml-auto h-9 rounded-full bg-zinc-900 px-3 text-sm text-zinc-200 ring-1 ring-zinc-800"
           aria-label="Projeto"
+          :disabled="lite"
           :value="selectedProject ?? ''"
           @change="go({ project: ($event.target as HTMLSelectElement).value || undefined })"
         >
