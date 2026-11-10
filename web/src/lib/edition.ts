@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import type { TPermissionCategory } from '@/lib/types'
 
 /**
  * ⚖️ A EDIÇÃO vem do servidor (`GATEWAY_EDITION`, no `/auth/status`) e não muda: a instalação nasce lite ou PRO. Uma
@@ -57,3 +58,6 @@ export const LITE_HIDDEN_AGENT_TABS: ReadonlySet<string> = new Set(['triggers', 
 
 /** As ferramentas do gateway que a lite esconde (ver `AgentForm`): triggers, documentos e recursos, que ela não tem. */
 export const LITE_HIDDEN_TOOLS: ReadonlySet<string> = new Set(['agent_trigger', 'read_doc', 'search_docs', 'use_resource', 'search_resources'])
+
+/** As categorias de permissão do agente que a lite esconde (ver `AgentForm`): contas, repositórios e triggers, que ela não usa. */
+export const LITE_HIDDEN_PERMISSIONS: readonly TPermissionCategory[] = ['account', 'repository', 'trigger']
