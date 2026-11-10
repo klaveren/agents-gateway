@@ -26,8 +26,12 @@
 
   const PERIODS = [7, 30, 90]
   const days = ref(30)
-  /** O projeto do recorte (`?project=`, na URL para o link levar junto). Ausente = todos. A lite fica no projeto atual (o padrão). */
-  const selectedProject = computed(() => (lite.value ? projects.current : typeof route.query.project === 'string' && route.query.project ? route.query.project : undefined))
+  /**
+   * O projeto do recorte (`?project=`, na URL para o link levar junto). Ausente = todos. ⚖️ A lite NÃO recorta: o seletor só
+   * mostra o projeto dela, e a conversa de quem não é membro dele (sem projeto) também conta.
+   */
+  const selectedProject = computed(() => (!lite.value && typeof route.query.project === 'string' && route.query.project ? route.query.project : undefined))
+  const shownProject = computed(() => (lite.value ? projects.current : selectedProject.value))
   const tab = computed(() => (auth.isAdmin && (route.query.tab === 'users' || route.query.tab === 'keys') ? route.query.tab : 'mine'))
   const selectedUser = computed(() => (typeof route.query.user === 'string' ? route.query.user : undefined))
 
@@ -110,11 +114,11 @@
           </button>
         </div>
         <select
-          v-if="projects.list.length > 1 || selectedProject"
+          v-if="projects.list.length > 1 || shownProject"
           class="ml-auto h-9 rounded-full bg-zinc-900 px-3 text-sm text-zinc-200 ring-1 ring-zinc-800"
           aria-label="Projeto"
           :disabled="lite"
-          :value="selectedProject ?? ''"
+          :value="shownProject ?? ''"
           @change="go({ project: ($event.target as HTMLSelectElement).value || undefined })"
         >
           <option value="">Todos os projetos</option>
@@ -122,7 +126,7 @@
         </select>
         <div
           class="flex shrink-0 gap-1 rounded-full bg-zinc-900 p-1 text-sm whitespace-nowrap"
-          :class="projects.list.length > 1 || selectedProject ? '' : 'ml-auto'"
+          :class="projects.list.length > 1 || shownProject ? '' : 'ml-auto'"
           role="group"
           aria-label="Período"
         >
