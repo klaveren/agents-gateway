@@ -34,8 +34,8 @@
     ...(projects.manages || auth.isAdmin ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
     ...(auth.isAdmin ? [{ to: '/users', key: 'users', label: 'Usuários', icon: 'users' as const, badge: 0 }] : []),
     ...(auth.isAdmin ? [{ to: '/models', key: 'providers', label: 'Modelos', icon: 'key' as const, badge: 0 }] : []),
-    // MCPs como na PRO: o membro do projeto vê (só leitura), o admin edita.
-    ...(auth.isAdmin || (auth.user && projects.current) ? [{ to: '/mcp', key: 'mcp', label: 'MCPs', icon: 'plug' as const, badge: 0 }] : []),
+    // MCPs só para quem administra: na lite, todo usuário é membro do Geral, e o membro não tem o que fazer ali.
+    ...(auth.isAdmin || projects.manages ? [{ to: '/mcp', key: 'mcp', label: 'MCPs', icon: 'plug' as const, badge: 0 }] : []),
     ...(auth.isAdmin ? [{ to: '/settings', key: 'settings', label: 'Configuração', icon: 'settings' as const, badge: 0 }] : []),
   ])
 
