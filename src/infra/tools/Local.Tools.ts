@@ -39,7 +39,7 @@ import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ITodoItem, todoIssues, todoText, UPDATE_TODOS_TOOL } from '@domain/models/ConversationTodo.Model'
-import { type IOwnFolder, makeFileTools, realOf } from './File.Tools'
+import { deliverFileTool, type IFileDeliveries, type IFileToolDeps, type IOwnFolder, makeFileTools, realOf } from './File.Tools'
 import type { IEditDiagnostics } from './Edit.Diagnostics'
 import type { IAgentDiagnostics } from '@domain/models/Agent.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
@@ -127,6 +127,8 @@ export interface ILocalToolDeps {
     save(sessionId: string, panel: IConversationPanel): Promise<void>
     turnOf?(sessionId: string): number | undefined
   }
+  /** Os arquivos entregues à pessoa (ver `ConversationFile.Model`). Ausente = sem `deliver_file`. */
+  deliveries?: IFileDeliveries
   /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
   permissions?: IPermissionChecker
   /** As variáveis de ambiente fixas de cada agente (o campo `env` dele). Ausente = nenhuma. */
@@ -435,6 +437,22 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     }
   }
 
+  // As travas dos arquivos: as mesmas no `read_file` e no `deliver_file`.
+  const fileDeps: IFileToolDeps = {
+    rootFor: fileRoot,
+    ownFolder: (context) => (context?.agentId ? deps.agentFolder?.(context.agentId, context.conversationProjectId) : undefined),
+    ...(deps.sharedFolders ? { sharedFolders: (context) => deps.sharedFolders!(askerOf(context).projectId, context?.agentId) } : {}),
+    ...(deps.permissions
+      ? {
+          access: (context, kind, path, log) => {
+            // Numa worktree, o mesmo arquivo também a partir da pasta do projeto (ver `projectAliases`).
+            const aliases = projectAliases(resolve(fileRoot(context), path), context?.workFolder)
+            const verdict = deps.permissions!.check(askerOf(context), { category: kind, value: path, ...(aliases.length ? { aliases } : {}) }, { log })
+            return verdict.allowed ? undefined : verdict.reason
+          },
+        }
+      : {}),
+  }
   const tools: ILocalTool[] = [
     {
       origin: 'local',
@@ -523,21 +541,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     },
     ...(deps.permissions && !deps.exec ? backgroundTools(processes, (command, name, context) => startBackground(command, name, context, deps.permissions!), guardRefusal) : []),
     ...(deps.accounts?.sign && deps.permissions ? [sshSignTool(deps.accounts.sign.bind(deps.accounts), deps.permissions)] : []),
-    ...makeFileTools({
-      rootFor: fileRoot,
-      ownFolder: (context) => (context?.agentId ? deps.agentFolder?.(context.agentId, context.conversationProjectId) : undefined),
-      ...(deps.sharedFolders ? { sharedFolders: (context) => deps.sharedFolders!(askerOf(context).projectId, context?.agentId) } : {}),
-      ...(deps.permissions
-        ? {
-            access: (context, kind, path, log) => {
-              // Numa worktree, o mesmo arquivo também a partir da pasta do projeto (ver `projectAliases`).
-              const aliases = projectAliases(resolve(fileRoot(context), path), context?.workFolder)
-              const verdict = deps.permissions!.check(askerOf(context), { category: kind, value: path, ...(aliases.length ? { aliases } : {}) }, { log })
-              return verdict.allowed ? undefined : verdict.reason
-            },
-          }
-        : {}),
-    }),
+    ...makeFileTools(fileDeps),
     ...(deps.docs ? [readDocTool(deps.docs, deps.permissions)] : []),
     ...(deps.docs?.searchDocs ? [searchDocsTool(deps.docs)] : []),
     ...(deps.resources ? [useResourceTool(deps.resources, deps.permissions, deps.secrets)] : []),
@@ -547,6 +551,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.imports ? makeImportTools(deps.imports, deps.repositoryBrowse) : []),
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
     ...(deps.panels ? [conversationPanelTool(deps.panels)] : []),
+    ...(deps.deliveries ? [deliverFileTool(fileDeps, deps.deliveries, (sessionId) => workspaceFor(undefined, sessionId))] : []),
   ]
   // ⛔ A chamada repetida é recusada antes de rodar (ver `Loop.Policy`); a edição que deu certo ganha o diagnóstico do
   // pacote (ver `Edit.Diagnostics`); e toda saída passa pela máscara (ver `Secret.Mask`): o `read_file` de uma config, a

@@ -96,3 +96,21 @@ describe('TurnBubbles — ferramentas no celular', () => {
     expect(host.querySelector('[data-test="tools-toggle"]')).toBeNull()
   })
 })
+
+describe('TurnBubbles — arquivo entregue', () => {
+  it('o deliver_file vira um botão de baixar, também com o resultado aninhado do SDK; o que falhou, não', async () => {
+    const note = 'Delivered x. {"deliveredFile":{"id":"f_ab12","name":"teste.csv","size":2048}}'
+    const host = await mount({
+      sessionId: 'gw_1',
+      toolCalls: [
+        { tool: 'mcp__gateway__deliver_file', args: { path: 'teste.csv' }, result: [{ type: 'text', text: note }] },
+        { tool: 'deliver_file', args: { path: 'outro.csv' }, error: 'file is larger than 20 MB' },
+      ] as ITurn['toolCalls'],
+    })
+    const links = host.querySelectorAll<HTMLAnchorElement>('[data-test="delivered-files"] a')
+    expect(links).toHaveLength(1)
+    expect(links[0]!.getAttribute('href')).toBe('/v1/conversations/gw_1/files/f_ab12')
+    expect(links[0]!.getAttribute('download')).toBe('teste.csv')
+    expect(links[0]!.textContent).toContain('2 KB')
+  })
+})

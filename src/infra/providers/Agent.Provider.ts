@@ -1,3 +1,4 @@
+import { DELIVER_FILE_TOOL } from '@domain/models/ConversationFile.Model'
 import { freshAnswers, IConversationPanel, PANEL_TOOL, panelMarkdown, panelTurnNote } from '@domain/models/ConversationPanel.Model'
 import { autoToolOff, isAutoToolOff, withoutOffMarks } from '@domain/Auto.Tools'
 import { reaches, runsUnder } from '@domain/Share.Policy'
@@ -690,6 +691,8 @@ export class AgentProvider implements IAgentProvider {
       ...(this.guidance?.hasLedger?.() ? LEDGER_TOOLS : []),
       // O painel da conversa: todo agente mantém o da conversa em que está.
       ...(this.panels ? [PANEL_TOOL] : []),
+      // A entrega de arquivo: guarda no mesmo banco do painel.
+      ...(this.panels ? [DELIVER_FILE_TOOL] : []),
       // ⚖️ Desligada no cadastro (`off:<ferramenta>`, ver `Auto.Tools`): não vem.
     ].filter((tool) => !agent.allowedTools.includes(tool) && !autoToolOff(agent.allowedTools, tool))
     const marks = agent.allowedTools.some(isAutoToolOff)

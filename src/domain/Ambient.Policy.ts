@@ -47,6 +47,10 @@ export function ambientSection(ambient: IAmbient): string {
   if (ambient.terminal) lines.push(TEMP_LINE)
   if (ambient.panel)
     lines.push(
+      '- Arquivo para a pessoa (CSV, relatório, imagem, PDF): entregue com `deliver_file` — ela baixa pelo botão na conversa. Ela não abre a sua pasta; não mande o caminho.',
+    )
+  if (ambient.panel)
+    lines.push(
       '',
       '## Painel da conversa',
       'A pessoa vê, ao lado da conversa, o painel que VOCÊ mantém com `conversation_panel`, sem precisar pedir. O resumo dele vem no começo de cada turno: siga a rota, não se desvie.',

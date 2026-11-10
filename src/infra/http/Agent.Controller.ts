@@ -287,6 +287,8 @@ export class AgentController {
     this.listErrors = this.listErrors.bind(this)
     this.getConversationPanel = this.getConversationPanel.bind(this)
     this.updateConversationPanel = this.updateConversationPanel.bind(this)
+    this.listConversationFiles = this.listConversationFiles.bind(this)
+    this.downloadConversationFile = this.downloadConversationFile.bind(this)
     this.getSharedConversation = this.getSharedConversation.bind(this)
     this.conversationEvents = this.conversationEvents.bind(this)
     this.sessionLive = this.sessionLive.bind(this)
@@ -1740,6 +1742,37 @@ export class AgentController {
       await this.usecases.conversations.savePanel(id, next.panel)
       return next.panel
     })
+  }
+
+  /** `GET /conversations/:id/files`: os arquivos que o agente entregou (ver `ConversationFile.Model`), sem o conteúdo. */
+  async listConversationFiles(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      await this.requireConversationAccess(id)
+      return (await this.usecases.conversations.files?.(id)) ?? []
+    })
+  }
+
+  /**
+   * `GET /conversations/:id/files/:fileId`: o download. ⛔ Quem pode é quem vê a conversa. Sempre como ANEXO e sem
+   * interpretar (`nosniff`, CSP fechada): um HTML ou SVG entregue não roda na origem do gateway.
+   */
+  async downloadConversationFile(req: Request, res: Response) {
+    try {
+      const id = req.params.id as string
+      await this.requireConversationAccess(id)
+      const found = await this.usecases.conversations.file?.(id, req.params.fileId as string)
+      if (!found) throw new HttpError(404, 'not_found', 'File not found')
+      const ascii = found.file.name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')
+      res.setHeader('Content-Type', found.file.mime)
+      res.setHeader('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(found.file.name)}`)
+      res.setHeader('X-Content-Type-Options', 'nosniff')
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox")
+      res.setHeader('Cache-Control', 'private, no-store')
+      res.send(found.data)
+    } catch (error: unknown) {
+      this.sendFailure(res, error, '[AgentController.downloadConversationFile]')
+    }
   }
 
   async deleteConversation(req: Request, res: Response) {

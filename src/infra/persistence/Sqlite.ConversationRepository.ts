@@ -1,3 +1,4 @@
+import { IConversationFile } from '@domain/models/ConversationFile.Model'
 import { emptyPanel, IConversationPanel, normalizePanel } from '@domain/models/ConversationPanel.Model'
 import type { IErrorLog, IErrorLogQuery, ITurnRefusal, TErrorKind, TRefusalOrigin } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
@@ -109,6 +110,20 @@ const SCHEMA = `
     document        TEXT NOT NULL,
     updated_at      TEXT NOT NULL
   );
+  -- Os arquivos que o agente entregou (ver ConversationFile.Model): a cópia, com o conteúdo. Sem FK, como o painel;
+  -- quem apaga a conversa apaga os arquivos (deleteSession).
+  CREATE TABLE IF NOT EXISTS conversation_files (
+    id              TEXT    NOT NULL PRIMARY KEY,
+    conversation_id TEXT    NOT NULL,
+    name            TEXT    NOT NULL,
+    mime            TEXT    NOT NULL,
+    size            INTEGER NOT NULL,
+    turn            INTEGER,
+    agent_id        TEXT,
+    created_at      TEXT    NOT NULL,
+    data            BLOB    NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_conversation_files ON conversation_files (conversation_id, created_at);
   -- O turno que nem começou (ver ErrorLog.Model, ITurnRefusal): início recusado com 409/422/429. Sem FK: a recusa de
   -- POST /sessions não tem conversa, e a conversa só é gravada depois do primeiro turno. Retenção: 30 dias, ao gravar.
   CREATE TABLE IF NOT EXISTS turn_refusals (
@@ -693,6 +708,32 @@ export class SqliteConversationRepository implements IConversationRepository {
       .run(sessionId, JSON.stringify(panel), new Date().toISOString())
   }
 
+  async files(sessionId: string): Promise<IConversationFile[]> {
+    return (
+      this.guard('files', () =>
+        (
+          this.db
+            .prepare('SELECT id, conversation_id, name, mime, size, turn, agent_id, created_at FROM conversation_files WHERE conversation_id = ? ORDER BY created_at')
+            .all(sessionId) as TFileRow[]
+        ).map(toFile),
+      ) ?? []
+    )
+  }
+
+  async file(sessionId: string, id: string): Promise<{ file: IConversationFile; data: Buffer } | undefined> {
+    return this.guard('file', () => {
+      const row = this.db.prepare('SELECT * FROM conversation_files WHERE conversation_id = ? AND id = ?').get(sessionId, id) as (TFileRow & { data: Uint8Array }) | undefined
+      return row ? { file: toFile(row), data: Buffer.from(row.data) } : undefined
+    })
+  }
+
+  /** ⛔ Não engole o erro: a entrega é a ação pedida (como `savePanel`). */
+  async saveFile(file: IConversationFile, data: Buffer): Promise<void> {
+    this.db
+      .prepare('INSERT INTO conversation_files (id, conversation_id, name, mime, size, turn, agent_id, created_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(file.id, file.conversationId, file.name, file.mime, file.size, file.turn ?? null, file.agentId ?? null, file.createdAt.toISOString(), data)
+  }
+
   async findSession(sessionId: string): Promise<IConversationSession | undefined> {
     return this.guard('findSession', () => {
       const row = this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(sessionId) as TRow | undefined
@@ -760,6 +801,7 @@ export class SqliteConversationRepository implements IConversationRepository {
         .run(new Date().toISOString(), by ?? null, sessionId)
       this.db.prepare('DELETE FROM conversation_todos WHERE conversation_id = ?').run(sessionId)
       this.db.prepare('DELETE FROM conversation_panels WHERE conversation_id = ?').run(sessionId)
+      this.db.prepare('DELETE FROM conversation_files WHERE conversation_id = ?').run(sessionId)
     })
   }
 
@@ -1116,4 +1158,19 @@ function usageFilter(query: IUsageQuery): { where: string[]; params: Array<strin
 function metadataPath(key: string): string {
   if (metadataKeyIssue(key)) throw new Error(`metadata key not allowed: ${key}`)
   return `CAST(json_extract(c.metadata, '$.${key}') AS TEXT)`
+}
+
+type TFileRow = { id: string; conversation_id: string; name: string; mime: string; size: number; turn: number | null; agent_id: string | null; created_at: string }
+
+function toFile(row: TFileRow): IConversationFile {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    name: row.name,
+    mime: row.mime,
+    size: Number(row.size),
+    ...(row.turn !== null ? { turn: Number(row.turn) } : {}),
+    ...(row.agent_id ? { agentId: row.agent_id } : {}),
+    createdAt: new Date(row.created_at),
+  }
 }
