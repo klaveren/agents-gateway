@@ -878,7 +878,7 @@
 
       <label class="field sm:col-span-2">
         <span>Projeto</span>
-        <select v-model="form.projectId" class="input">
+        <select v-model="form.projectId" class="input" :disabled="lite">
           <option :value="null" :disabled="!auth.isAdmin">Global — aparece em todos os projetos</option>
           <!-- Só o projeto escolhido no topo (ou o do agente, se for outro): sem lista de projetos aqui. -->
           <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === (agent?.projectId ?? form.projectId))" :key="project.id" :value="project.id">{{ project.name }}</option>
@@ -1582,7 +1582,7 @@
     </fieldset>
 
     <section v-if="tab === 'compartilhar' && canShare && agent" class="flex flex-col gap-3">
-      <ShareProjects :owner="agent.projectId ?? ''" :shared="sharedNow" :save="saveShares" description="O outro projeto conversa com o agente, sem editar. A conversa roda na pasta e nas regras do projeto de lá. Segredos não vão junto: cada projeto configura os seus." />
+      <ShareProjects :readonly="lite" :owner="agent.projectId ?? ''" :shared="sharedNow" :save="saveShares" description="O outro projeto conversa com o agente, sem editar. A conversa roda na pasta e nas regras do projeto de lá. Segredos não vão junto: cada projeto configura os seus." />
     </section>
 
     <!-- As variáveis secretas também têm o próprio cadastro: fora do Salvar do agente. -->

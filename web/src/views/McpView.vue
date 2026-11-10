@@ -528,7 +528,7 @@ import { computed, onMounted, ref, watch } from 'vue'
             </label>
             <label class="field">
               Escopo
-              <select v-model="form.projectId" class="input">
+              <select v-model="form.projectId" class="input" :disabled="lite">
                 <option v-if="auth.isAdmin" :value="undefined">Global — qualquer agente</option>
                 <option v-for="project in projects.list.filter((item) => item.role === 'admin' && (item.id === projects.current || item.id === form.projectId))" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
               </select>
@@ -866,11 +866,11 @@ import { computed, onMounted, ref, watch } from 'vue'
             <label class="field">
               Escopo
               <div class="flex flex-wrap items-center gap-2">
-                <select v-model="moveTo" class="input sm:w-1/2">
+                <select v-model="moveTo" class="input sm:w-1/2" :disabled="lite">
                   <option value="" :disabled="!auth.isAdmin">Global — qualquer agente</option>
                   <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === selected?.projectId)" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
                 </select>
-                <button v-if="moveDirty" type="button" class="btn btn-secondary" :disabled="busy" @click="move">Mover</button>
+                <button v-if="moveDirty && !lite" type="button" class="btn btn-secondary" :disabled="busy" @click="move">Mover</button>
               </div>
               <small class="hint">
                 Mover leva junto a chave e as variáveis. ⛔ Recusado se algum agente ficaria sem o MCP — tire dele antes.

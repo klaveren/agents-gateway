@@ -17,6 +17,8 @@ const props = defineProps<{
   save: (projects: string[]) => Promise<unknown>
   /** O texto de cima (o padrão é o dos recursos e documentos). */
   description?: string
+  /** Só mostra: sem marcar nem salvar (a lite). */
+  readonly?: boolean
 }>()
 const projects = useProjectsStore()
 
@@ -61,7 +63,7 @@ async function submit() {
     <ul v-else class="flex flex-col divide-y divide-zinc-800 rounded-xl border border-zinc-800">
       <li v-for="project in options" :key="project.id">
         <label class="flex items-center gap-3 px-3 py-2 text-sm">
-          <input type="checkbox" class="accent-emerald-500" :checked="selected.includes(project.id)" :data-project="project.id" @change="toggle(project.id)" />
+          <input type="checkbox" class="accent-emerald-500" :checked="selected.includes(project.id)" :disabled="readonly" :data-project="project.id" @change="toggle(project.id)" />
           <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
           <span class="shrink-0 font-mono text-xs text-zinc-500">{{ project.id }}</span>
         </label>
@@ -69,6 +71,6 @@ async function submit() {
     </ul>
     <p v-if="error" class="text-sm text-rose-300" data-test="share-error">{{ error }}</p>
     <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
-    <SaveFooter label="Salvar compartilhamento" :busy="busy" :disabled="!dirty" :pending="dirty" @save="submit" />
+    <SaveFooter v-if="!readonly" label="Salvar compartilhamento" :busy="busy" :disabled="!dirty" :pending="dirty" @save="submit" />
   </div>
 </template>
