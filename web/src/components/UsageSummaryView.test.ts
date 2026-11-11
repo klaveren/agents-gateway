@@ -73,6 +73,18 @@ describe('UsageSummaryView', () => {
     expect(host.querySelector('[data-test="pager"]')).toBeNull()
   })
 
+  it('por provedor: soma os modelos de cada um, maior primeiro, com o custo para o admin', async () => {
+    const model = (provider: string, model: string, totalTokens: number, costUsd: number) => ({ ...figure, provider, model, usage: { ...figure.usage, totalTokens }, costUsd })
+    const byModel = [model('openai', 'gpt-a', 100, 0.5), model('claude', 'sonnet', 300, 1), model('openai', 'gpt-b', 400, 0.25)]
+    const host = await mount({ summary: summary({ byModel }), showCost: true })
+    const rows = [...host.querySelectorAll('[data-test="by-provider"] li')].map((row) => row.textContent?.replace(/\s+/g, ' ').trim())
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toContain('500')
+    expect(rows[0]).toContain('$0.75')
+    expect(rows[1]).toContain('300')
+    expect(rows[1]).toContain('$1.00')
+  })
+
   it('sem dados por ferramenta, o bloco não aparece', async () => {
     const host = await mount({ summary: summary(), showCost: false })
     expect(host.querySelector('[data-test="by-tool"]')).toBeNull()
