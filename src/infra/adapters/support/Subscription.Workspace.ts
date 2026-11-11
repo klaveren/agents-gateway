@@ -1,4 +1,4 @@
-import { accessSync, constants, mkdirSync, rmSync } from 'node:fs'
+import { accessSync, constants, mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
@@ -98,9 +98,16 @@ export function isWritable(dir: string | undefined): boolean {
   }
 }
 
-/** A pasta dos dados do gateway: a do banco (no pod, `/app/data`, o PVC). */
+/**
+ * A pasta dos dados do gateway: a do banco (no pod, `/app/data`, o PVC).
+ *
+ * ⚖️ Banco em memória (`:memory:`, os testes) não tem pasta: os dados vão para uma do temporário do sistema, uma por
+ * processo — antes iam para a pasta de onde rodou (a raiz do repositório ganhava `projects/`, `files/`, `global/`).
+ */
 export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
   const db = env.CONVERSATIONS_DB?.trim()
+  // O caminho REAL do temporário (no Mac, `/var` é link para `/private/var`): as travas de pasta comparam caminhos reais.
+  if (db === ':memory:') return join(realpathSync(tmpdir()), `agents-gateway-memory-${process.pid}`)
   return dirname(resolve(db && db !== 'off' ? db : DEFAULT_DB_PATH))
 }
 
