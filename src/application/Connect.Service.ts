@@ -3,6 +3,9 @@ import type { TCatalogScope } from '@application/Catalog.Reader'
 import type { ICatalogDocument, TCatalogKind } from '@domain/Catalog.Document'
 import type { ICatalogHistoryRepository, TRevisionOp } from '@domain/ports/CatalogHistoryRepository.Port'
 import type { TSecretScope } from '@domain/models/ResourceSecret.Model'
+import type { ILedgerWrite } from '@domain/models/Ledger.Model'
+import { LedgerNotFoundError } from '@domain/errors/Domain.Error'
+import type { LedgerService } from './Ledger.Service'
 
 /** Quantas revisões o "o que mudou" junta de uma vez (o aviso diz quando passou disso). */
 export const CONNECT_CHANGES_LIMIT = 500
@@ -15,6 +18,10 @@ export interface IConnectDeps {
   files: { read(sha256: string): Buffer | undefined }
   /** Os NOMES das variáveis de um recurso ou agente (nunca o valor). */
   secrets?: { list(scope: TSecretScope, scopeId: string): ReadonlyArray<{ name: string; description?: string }> }
+  /** O ledger dos agentes (o MESMO serviço das ferramentas daqui). */
+  ledger?: Pick<LedgerService, 'index' | 'context' | 'search' | 'write' | 'promptSection'>
+  /** O projeto do agente (`null` = global; `undefined` = não existe). */
+  agentProject?: (agentId: string) => string | null | undefined
 }
 
 /** Uma mudança no aviso: um item, a última operação e quantas revisões ele teve desde a versão local. */
@@ -84,6 +91,22 @@ export class ConnectService {
     const version = this.deps.history.versionOf(projectId)
     const revisions = this.deps.history.since(projectId, since, CONNECT_CHANGES_LIMIT)
     return { version, changes: collapse(revisions), ...(revisions.length >= CONNECT_CHANGES_LIMIT ? { truncated: true } : {}) }
+  }
+
+  /**
+   * 🔌 O LEDGER DE UM AGENTE DO PROJETO, pela conexão: o ledger é UM só, o daqui — o gateway do dev lê e escreve nele
+   * ao vivo. ⛔ Só agente do projeto da conexão; o resto responde como inexistente.
+   */
+  ledger(projectId: string, agentId: string) {
+    const ledger = this.deps.ledger
+    if (!ledger || this.deps.agentProject?.(agentId) !== projectId) throw new LedgerNotFoundError('agent', agentId)
+    return {
+      index: () => ({ index: ledger.index(agentId), prompt: ledger.promptSection(agentId) ?? null }),
+      context: (topic: string) => ledger.context(agentId, topic),
+      search: (query: string) => ledger.search(agentId, query),
+      write: (change: ILedgerWrite, author: { via: string; conversationId?: string }) =>
+        ledger.write(agentId, change, { kind: 'agent', agentId, via: author.via, ...(author.conversationId ? { conversationId: author.conversationId } : {}) }),
+    }
   }
 
   /** ⛔ Só um arquivo que um documento do projeto cita; o resto responde como inexistente. */

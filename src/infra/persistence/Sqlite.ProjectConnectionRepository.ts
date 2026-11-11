@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IProjectConnection } from '@domain/models/ProjectConnection.Model'
-import { IProjectConnectionRepository, TConnectionPatch } from '@domain/ports/ProjectConnectionRepository.Port'
+import { ILedgerOutboxEntry, IProjectConnectionRepository, TConnectionPatch } from '@domain/ports/ProjectConnectionRepository.Port'
 
 /** ⛔ O token da conexão fica SELADO (`SecretBox`, dono `connect:<projeto>`): com o banco nas mãos, ninguém o usa. */
 const SCHEMA = `
@@ -25,6 +25,15 @@ const SCHEMA = `
     last_checked_at    TEXT,
     last_synced_at     TEXT
   );
+  CREATE TABLE IF NOT EXISTS ledger_outbox (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id       TEXT NOT NULL,
+    agent_id         TEXT NOT NULL,
+    change           TEXT NOT NULL,
+    conversation_id  TEXT,
+    created_at       TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS ledger_outbox_project ON ledger_outbox (project_id, id);
 `
 
 type TRow = Record<string, unknown>
@@ -94,6 +103,28 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
 
   remove(projectId: string): void {
     this.db.prepare('DELETE FROM project_connections WHERE project_id = ?').run(projectId)
+    this.db.prepare('DELETE FROM ledger_outbox WHERE project_id = ?').run(projectId)
+  }
+
+  enqueueLedger(entry: Omit<ILedgerOutboxEntry, 'id'>): void {
+    this.db
+      .prepare('INSERT INTO ledger_outbox (project_id, agent_id, change, conversation_id, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(entry.projectId, entry.agentId, JSON.stringify(entry.change), entry.conversationId ?? null, entry.createdAt.toISOString())
+  }
+
+  pendingLedger(projectId: string): ILedgerOutboxEntry[] {
+    return (this.db.prepare('SELECT * FROM ledger_outbox WHERE project_id = ? ORDER BY id').all(projectId) as TRow[]).map((row) => ({
+      id: Number(row.id),
+      projectId: String(row.project_id),
+      agentId: String(row.agent_id),
+      change: JSON.parse(String(row.change)),
+      ...(typeof row.conversation_id === 'string' ? { conversationId: row.conversation_id } : {}),
+      createdAt: new Date(String(row.created_at)),
+    }))
+  }
+
+  dropLedger(id: number): void {
+    this.db.prepare('DELETE FROM ledger_outbox WHERE id = ?').run(id)
   }
 }
 

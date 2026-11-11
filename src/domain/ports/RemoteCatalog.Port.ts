@@ -2,6 +2,7 @@ import type { TCatalogFiles } from '../Catalog.Files'
 import type { TCatalogKind } from '../Catalog.Document'
 import type { IConnectionSecret } from '../models/ProjectConnection.Model'
 import type { TRevisionOp } from './CatalogHistoryRepository.Port'
+import type { ILedgerWrite } from '../models/Ledger.Model'
 
 /** A origem respondeu que o token não vale (revogado, vencido, a conta saiu do projeto, outro projeto). */
 export class RemoteUnauthorizedError extends Error {
@@ -16,6 +17,18 @@ export class RemoteUnavailableError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'RemoteUnavailableError'
+  }
+}
+
+/** A origem recusou o pedido (não é credencial nem queda): o motivo dela, e os campos quando há. */
+export class RemoteRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly details?: unknown,
+  ) {
+    super(message)
+    this.name = 'RemoteRequestError'
   }
 }
 
@@ -53,4 +66,14 @@ export interface IRemoteCatalog {
   file(sha256: string): Promise<Buffer>
   /** O aviso ao vivo: chama `onVersion` a cada versão; resolve quando o stream fecha. */
   events(onVersion: (version: number) => void, signal: AbortSignal): Promise<void>
+  /** 🔌 O ledger do agente, que mora na origem (as datas já como `Date`). */
+  ledger(agentId: string): IRemoteLedger
+}
+
+/** O ledger de um agente na origem: as mesmas respostas do `LedgerService` de lá. */
+export interface IRemoteLedger {
+  index(): Promise<{ index: unknown; prompt: string | null }>
+  context(topic: string): Promise<unknown>
+  search(query: string): Promise<unknown>
+  write(change: ILedgerWrite, conversationId?: string): Promise<unknown>
 }

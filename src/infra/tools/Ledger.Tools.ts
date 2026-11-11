@@ -1,12 +1,24 @@
-import type { ILedgerContextDetail, ILedgerContextSummary, ILedgerIndex, ILedgerReader, LedgerService } from '@application/Ledger.Service'
-import { InvalidLedgerError, LedgerNotFoundError } from '@domain/errors/Domain.Error'
+import type { ILedgerContextDetail, ILedgerContextSummary, ILedgerIndex, ILedgerReader, ILedgerSearchResult, ILedgerWriteResult } from '@application/Ledger.Service'
+import { InvalidLedgerError, LedgerNotFoundError, LedgerQueuedError } from '@domain/errors/Domain.Error'
 import { authorLabel, lineText } from '@domain/Ledger.Policy'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
-import { ILedgerWarning, LEDGER_ACTIONS, LEDGER_LINE_TYPES, LEDGER_READ_TOOL, LEDGER_WRITE_TOOL, TLedgerAction } from '@domain/models/Ledger.Model'
+import { ILedgerWarning, ILedgerWrite, LEDGER_ACTIONS, LEDGER_LINE_TYPES, LEDGER_READ_TOOL, LEDGER_WRITE_TOOL, TLedgerAction, TLedgerAuthor } from '@domain/models/Ledger.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
-/** O que as ferramentas usam do serviço (o `LedgerService`). */
-export type TLedgerDesk = Pick<LedgerService, 'index' | 'context' | 'search' | 'write' | 'canRead' | 'requireAgent'>
+type TMaybe<T> = T | Promise<T>
+
+/**
+ * O que as ferramentas usam do ledger: o `LedgerService` daqui, ou — no agente de projeto conectado — a origem, pela rede
+ * (por isso a resposta pode ser uma promessa). Quem existe e quem lê quem é do catálogo daqui (o espelho da origem).
+ */
+export interface TLedgerDesk {
+  requireAgent(agentId: string): unknown
+  canRead(reader: ILedgerReader, targetId: string): boolean
+  index(agentId: string): TMaybe<ILedgerIndex>
+  context(agentId: string, topic: string): TMaybe<ILedgerContextDetail>
+  search(agentId: string, query: string): TMaybe<ILedgerSearchResult>
+  write(agentId: string, change: ILedgerWrite, by: TLedgerAuthor): TMaybe<ILedgerWriteResult>
+}
 
 /** O nome do campo da regra → o do argumento da ferramenta (a mensagem fala a língua de quem chamou). */
 const ARGUMENT: Record<string, string> = {
@@ -72,6 +84,8 @@ function failure(error: unknown): IToolResult {
   if (error instanceof InvalidLedgerError)
     return { status: 'error', result: `Não gravado: ${error.issues.map((issue) => `${ARGUMENT[issue.field] ?? issue.field}: ${issue.message}`).join('; ')}` }
   if (error instanceof LedgerNotFoundError) return { status: 'error', result: error.message }
+  // A origem do projeto conectado caiu: a escrita espera na fila — não é erro do agente.
+  if (error instanceof LedgerQueuedError) return { status: 'success', result: error.message }
   return { status: 'error', result: error instanceof Error ? error.message : String(error) }
 }
 
@@ -119,7 +133,7 @@ export function makeLedgerTools(desk: TLedgerDesk): ILocalTool[] {
         const topic = str(args.tema)?.trim()
         const query = str(args.busca)?.trim()
         if (query) {
-          const found = desk.search(target, query)
+          const found = await desk.search(target, query)
           const lines = topic ? found.lines.filter((line) => line.topic === topic) : found.lines
           const contexts = topic ? found.contexts.filter((item) => item.topic === topic) : found.contexts
           if (!lines.length && !contexts.length) return { status: 'success', result: `Nada no ledger de ${target} para "${query}".` }
@@ -132,8 +146,8 @@ export function makeLedgerTools(desk: TLedgerDesk): ILocalTool[] {
             ].join('\n'),
           }
         }
-        if (topic) return { status: 'success', result: contextText(desk.context(target, topic), target, readOnly) }
-        return { status: 'success', result: indexText(desk.index(target), target, readOnly) }
+        if (topic) return { status: 'success', result: contextText(await desk.context(target, topic), target, readOnly) }
+        return { status: 'success', result: indexText(await desk.index(target), target, readOnly) }
       } catch (error: unknown) {
         return failure(error)
       }
@@ -210,11 +224,11 @@ export function makeLedgerTools(desk: TLedgerDesk): ILocalTool[] {
       const batch = action === 'linha_nova' && Array.isArray(args.linhas) ? (args.linhas as Array<Record<string, unknown>>) : undefined
       const lines = batch ? batch.map(lineOf) : [line]
       const written: string[] = []
-      let last: ReturnType<typeof desk.write> | undefined
+      let last: ILedgerWriteResult | undefined
       try {
         for (const [index, one] of lines.entries()) {
           try {
-            last = desk.write(
+            last = await desk.write(
               reader.agentId,
               {
                 action,

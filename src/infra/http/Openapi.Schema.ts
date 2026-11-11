@@ -5016,6 +5016,76 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/connect/{projectId}/ledger/{agentId}': {
+      get: {
+        summary:
+          'Connected projects: the ledger index of an agent of the project and its system-prompt section. The ledger lives HERE (one ledger, used by every gateway connected to the project). Agents outside the project answer 404',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { index: { type: 'object' }, prompt: { type: 'string', nullable: true } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/connect/{projectId}/ledger/{agentId}/contexts/{topic}': {
+      get: {
+        summary: 'Connected projects: one ledger context in full (trigger, lines, playbook)',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'topic', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/connect/{projectId}/ledger/{agentId}/search': {
+      get: {
+        summary: 'Connected projects: search the lines and contexts of the agent ledger',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'q', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/connect/{projectId}/ledger/{agentId}/write': {
+      post: {
+        summary:
+          'Connected projects: one ledger write by the agent (the same rules as `ledger_write`). The revision records the agent as author, the conversation of the other gateway and the connection account (`via`)',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: {
+              change: {
+                type: 'object',
+                properties: {
+                  action: { type: 'string' },
+                  topic: { type: 'string' },
+                  trigger: { type: 'string' },
+                  playbook: { type: 'string' },
+                  lineId: { type: 'integer' },
+                  line: { type: 'object' },
+                },
+                required: ['action', 'topic'],
+              },
+              conversationId: { type: 'string' },
+            },
+            required: ['change'],
+          }),
+        },
+        responses: { '200': { description: 'Written', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/connect/{projectId}/version': {
       get: {
         summary:

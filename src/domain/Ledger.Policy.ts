@@ -183,7 +183,13 @@ export function lineText(line: Pick<ILedgerLine, 'date' | 'type' | 'trigger' | '
 }
 
 export function authorLabel(author: TLedgerAuthor): string {
-  return author.kind === 'admin' ? author.email : `${author.agentId}${author.conversationId ? ` (conversa ${author.conversationId})` : ''}`
+  if (author.kind === 'admin') return author.email
+  const conversation = author.conversationId
+    ? ` (conversa ${author.conversationId}${author.via ? `, via gateway de ${author.via}` : ''})`
+    : author.via
+      ? ` (via gateway de ${author.via})`
+      : ''
+  return `${author.agentId}${conversation}`
 }
 
 const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim()
