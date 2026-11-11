@@ -241,6 +241,10 @@ describe('CatalogImportPlanner (dry-run)', () => {
     assert.strictEqual(banco.entersDisabled, true)
     assert.match(banco.diff!.unified, /"enabled": false/)
     assert.deepStrictEqual(plan.missingSecrets, [{ ref: 'mcp/alfa.banco', id: 'banco', projectId: 'alfa', secrets: ['env:DB_PASSWORD'] }])
+    // 🔌 Na cópia do projeto conectado o segredo nunca viaja: o MCP entra como na origem (desligar derrubaria os agentes).
+    const mirrored = byRef(await planner.planDocuments([novo], { kind: 'all' }, { mirror: true }), 'mcp/alfa.banco')
+    assert.deepStrictEqual(mirrored.missingSecrets, ['env:DB_PASSWORD'])
+    assert.ok(!mirrored.entersDisabled)
 
     const withSecret = await planner.planDocuments([header], { kind: 'all' })
     configured.delete('alfa.busca:header')
@@ -333,7 +337,7 @@ describe('CatalogImportPlanner (dry-run)', () => {
     const accepted = await planner.planDocuments(
       [edit(reader.read('skill', 'skill-a')!, { body: 'token [segredo:token do GitHub]' })],
       { kind: 'project', projectId: 'alfa' },
-      { acceptMasked: true },
+      { mirror: true },
     )
     assert.strictEqual(byRef(accepted, 'skill/skill-a').op, 'update')
 
