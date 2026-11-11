@@ -49,6 +49,7 @@ plist="$(cat <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$LABEL</string>
+  <key>AssociatedBundleIdentifiers</key><string>com.agents-gateway.app</string>
   <key>ProgramArguments</key>
   <array><string>/bin/zsh</string><string>$RES/run-server.sh</string></array>
   <key>RunAtLoad</key><true/>
@@ -75,9 +76,9 @@ elif [ "$restart" = 1 ]; then
 fi
 
 for _ in {1..90}; do
-  status="$(curl -sf "http://127.0.0.1:$PORT/v1/auth/status")"
-  if [ -n "$status" ]; then
-    case "$status" in
+  reply="$(curl -sf "http://127.0.0.1:$PORT/v1/auth/status")"
+  if [ -n "$reply" ]; then
+    case "$reply" in
       *'"setupRequired":true'*) print -r -- "http://localhost:$PORT/setup?code=$SETUP_CODE" ;;
       *) print -r -- "http://localhost:$PORT/" ;;
     esac
