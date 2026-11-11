@@ -254,6 +254,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
   """
 }
 
+// `--server`: o LaunchAgent roda o PRÓPRIO executável do app (não o `zsh`), para os Itens de Início do macOS mostrarem o
+// nome e o ícone do app; daqui, vira o `run-server.sh` (o processo é substituído, sem janela).
+if CommandLine.arguments.contains("--server") {
+  let script = Bundle.main.resourceURL!.appendingPathComponent("run-server.sh").path
+  let args = ["/bin/zsh", script].map { strdup($0) } + [nil]
+  execv("/bin/zsh", args)
+  perror("execv")
+  exit(1)
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

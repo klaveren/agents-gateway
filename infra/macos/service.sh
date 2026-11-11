@@ -51,7 +51,7 @@ plist="$(cat <<PLIST
   <key>Label</key><string>$LABEL</string>
   <key>AssociatedBundleIdentifiers</key><string>com.agents-gateway.app</string>
   <key>ProgramArguments</key>
-  <array><string>/bin/zsh</string><string>$RES/run-server.sh</string></array>
+  <array><string>$CONTENTS/MacOS/Agents Gateway</string><string>--server</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>5</integer>
