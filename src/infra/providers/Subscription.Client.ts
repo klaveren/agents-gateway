@@ -414,11 +414,15 @@ function loginCommand(protocol: EProvider): { command: string; args: string[]; h
  * Um comando num PSEUDO-TERMINAL, largo (400 colunas, para link e token não quebrarem de linha).
  * macOS: o `script` não aceita socket como entrada (o `stdin` do Node é um), então o `cat` põe um pipe no
  * meio. Linux: o `script` do util-linux, com `-e` para devolver o código de saída do comando.
+ *
+ * ⚠️ No macOS o `cat` só acaba quando a entrada fecha — e o gateway a deixa aberta (é por ela que o código vai). Sem
+ * matá-lo quando o comando sai, o processo nunca terminava: o `agy` já logado (ou que desistiu aos 60 s) deixava a tela
+ * em "aguardando o link" para sempre. O `$$` é o shell de fora (o pai do `cat`); a saída é a do comando.
  */
 export function inTerminal(argv: readonly string[], platform: string = process.platform): { command: string; args: string[] } {
   const wide = `stty cols 400 rows 50 2>/dev/null; exec ${argv.map(shellQuote).join(' ')}`
   return platform === 'darwin'
-    ? { command: '/bin/sh', args: ['-c', 'cat | script -q /dev/null /bin/sh -c "$1"', 'sh', wide] }
+    ? { command: '/bin/sh', args: ['-c', 'cat | { script -q /dev/null /bin/sh -c "$1"; code=$?; pkill -P "$$" -x cat; exit "$code"; }', 'sh', wide] }
     : { command: 'script', args: ['-qfec', wide, '/dev/null'] }
 }
 
