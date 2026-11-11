@@ -44,9 +44,17 @@ async function revParse(place: IGitPlace, ref: string): Promise<string | undefin
   return (await git(place, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).catch(() => '')).trim() || undefined
 }
 
-/** A base do branch: `origin/HEAD`, senão o primeiro de `main`, `master`, `automation` (local ou do origin). */
+/** 🌿 A base desta instalação (as Configurações): de onde as worktrees nascem. Ausente = a busca de sempre. */
+let configuredBase: () => string | undefined = () => undefined
+
+export function useBaseBranch(base: () => string | undefined): void {
+  configuredBase = base
+}
+
+/** A base do branch: a desta instalação, senão `origin/HEAD`, senão o primeiro de `main`, `master`, `automation` (local ou do origin). */
 async function branchBase(place: IGitPlace): Promise<string | undefined> {
-  for (const ref of ['origin/HEAD', 'origin/main', 'main', 'origin/master', 'master', 'origin/automation', 'automation']) {
+  const base = configuredBase()
+  for (const ref of [...(base ? [`origin/${base}`, base] : []), 'origin/HEAD', 'origin/main', 'main', 'origin/master', 'master', 'origin/automation', 'automation']) {
     const sha = await revParse(place, ref)
     if (!sha) continue
     const base = (await git(place, ['merge-base', 'HEAD', sha]).catch(() => '')).trim()

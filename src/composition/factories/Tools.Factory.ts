@@ -22,6 +22,8 @@ import { DelegationSlot, makeDelegateTool } from '@infra/tools/Delegate.Tool'
 import { ILocalToolDeps, ITodoStore, makeLocalTools } from '@infra/tools/Local.Tools'
 import { makeSessionStore } from './Orchestrator.Factory'
 import { connectedLedgerDesk } from './Connected.Ledger'
+import { gitGuardOptions, installationSettings } from './Installation.Settings'
+import { useBaseBranch } from '@infra/workspace/Git.Changes'
 import { makeLedgerTools } from '@infra/tools/Ledger.Tools'
 import { makeLedger } from './Ledger.Factory'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
@@ -65,6 +67,8 @@ export function editDiagnostics(): IEditDiagnostics {
  */
 export function makeTools(): ITools {
   if (!instance) {
+    // 🌿 A base das worktrees desta instalação (as Configurações), lida na hora de cada comparação.
+    useBaseBranch(() => installationSettings()?.baseBranch)
     const configured = process.env.CONVERSATIONS_DB?.trim()
     const servers = new SqliteMcpServerRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH)
     servers.seedOnce([...seedFromEnv(), selfServer()])
@@ -86,6 +90,7 @@ export function makeTools(): ITools {
         mcp,
         [
           ...makeLocalTools({
+            gitGuard: gitGuardOptions,
             docs: makeGuidance(),
             resources: makeGuidance(),
             triggers: {

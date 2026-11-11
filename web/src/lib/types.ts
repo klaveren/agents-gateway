@@ -380,6 +380,13 @@ export interface ISettings {
   modelGroups?: IModelGroup[]
   /** O grupo dos agentes que não escolheram um. Ausente = nenhum. */
   defaultModelGroup?: string
+  /** 🌿 Esta instalação no git: o nome, o prefixo das branches, a base das worktrees e as branches que só recebem por PR. */
+  installationName?: string
+  branchPrefix?: string
+  baseBranch?: string
+  protectedBranches?: string[]
+  /** Trocar de branch na pasta principal do repositório. Ausente = travado. */
+  lockMainCheckout?: boolean
   /** Os provedores sem cota agora, e quando voltam (só leitura). */
   benched?: Array<{ provider: string; until: string }>
   updatedAt?: string

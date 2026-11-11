@@ -137,6 +137,32 @@ export const updateSettingsSchema = z.object({
   modelGroups: z.array(modelGroup).max(MODEL_GROUP_BOUNDS.groups).nullable().optional(),
   /** O grupo dos agentes que não apontam para um; `null` = nenhum. */
   defaultModelGroup: modelGroupRef.nullable().optional(),
+  /** 🌿 Esta instalação no git (ver `Git.Guard`); `null` volta ao padrão. */
+  installationName: z.string().max(60).nullable().optional(),
+  branchPrefix: z
+    .string()
+    .max(40)
+    .regex(/^[A-Za-z0-9._/-]*$/, 'letters, digits, . _ / -')
+    .nullable()
+    .optional(),
+  baseBranch: z
+    .string()
+    .max(100)
+    .regex(/^[A-Za-z0-9._/-]*$/, 'letters, digits, . _ / -')
+    .nullable()
+    .optional(),
+  protectedBranches: z
+    .array(
+      z
+        .string()
+        .min(1)
+        .max(100)
+        .regex(/^[A-Za-z0-9._/-]+$/),
+    )
+    .max(20)
+    .nullable()
+    .optional(),
+  lockMainCheckout: z.boolean().nullable().optional(),
 })
 
 /**
