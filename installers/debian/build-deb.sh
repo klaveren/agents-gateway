@@ -14,6 +14,10 @@ NODE_IMAGE=node:24.12.0-bookworm
 MICROMAMBA_VERSION=2.9.0-0
 MAMBA_SHA_AMD64=366cd9cd8be14df1ab8ed50352a82111082a36686b2d389fdb79a92c3fafb3e3
 MAMBA_SHA_ARM64=9f93b974adcb4d166996af969b6cd371287d1a3e52733704727884d9b74cb7a7
+# O Antigravity CLI (`agy`): a MESMA versão e os mesmos checksums da imagem.
+AGY_VERSION=1.4.9
+AGY_SHA_AMD64=3d84e3a461b9cbf9ffc9deede155a01921380e964f51a82c0bc505db80ae8525
+AGY_SHA_ARM64=0e75190d5aa48b0f7623b201cfef542cd36a1279b3d28afa7fa099983a073493
 TARGET="${1:-all}"
 case "$TARGET" in amd64 | arm64) ARCHES=("$TARGET") ;; all) ARCHES=(amd64 arm64) ;; *) echo "uso: $0 [amd64|arm64|all]" >&2; exit 1 ;; esac
 VERSION="$(node -p "require('$ROOT/package.json').version")"
@@ -30,7 +34,7 @@ for ARCH in $ARCHES; do
   cp -R "$HERE/package" "$WORK/package"
 
   echo "▶ $ARCH: build no contêiner ($NODE_IMAGE)"
-  docker run --rm --platform "linux/$ARCH" -v "$WORK:/work" -w /work/src -e DEB_VERSION="$DEB_VERSION" -e ARCH="$ARCH" -e MICROMAMBA_VERSION="$MICROMAMBA_VERSION" -e MAMBA_SHA_AMD64="$MAMBA_SHA_AMD64" -e MAMBA_SHA_ARM64="$MAMBA_SHA_ARM64" "$NODE_IMAGE" bash -euc '
+  docker run --rm --platform "linux/$ARCH" -v "$WORK:/work" -w /work/src -e DEB_VERSION="$DEB_VERSION" -e ARCH="$ARCH" -e MICROMAMBA_VERSION="$MICROMAMBA_VERSION" -e MAMBA_SHA_AMD64="$MAMBA_SHA_AMD64" -e MAMBA_SHA_ARM64="$MAMBA_SHA_ARM64" -e AGY_VERSION="$AGY_VERSION" -e AGY_SHA_AMD64="$AGY_SHA_AMD64" -e AGY_SHA_ARM64="$AGY_SHA_ARM64" "$NODE_IMAGE" bash -euc '
     corepack enable >/dev/null 2>&1
     pnpm install --frozen-lockfile --silent
     pnpm build >/dev/null
@@ -40,7 +44,8 @@ for ARCH in $ARCHES; do
     ROOTFS=/work/root
     rm -rf "$ROOTFS"
     mkdir -p "$ROOTFS/opt/agents-gateway/bin" "$ROOTFS/opt/agents-gateway/app/web" "$ROOTFS/lib/systemd/system" "$ROOTFS/usr/bin" "$ROOTFS/DEBIAN"
-    # 🧰 O kit do servidor: o Node com npm, npx e corepack, e o micromamba conferido pelo checksum.
+    # 🧰 O kit do servidor, o mesmo da imagem: o Node com npm, npx e corepack, o micromamba e o Antigravity (`agy`),
+    # conferidos pelo checksum. Claude e Codex vêm nas dependências (os binários de Linux).
     cp "$(command -v node)" "$ROOTFS/opt/agents-gateway/bin/node"
     mkdir -p "$ROOTFS/opt/agents-gateway/lib/node_modules"
     cp -R /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack "$ROOTFS/opt/agents-gateway/lib/node_modules/"
@@ -51,6 +56,11 @@ for ARCH in $ARCHES; do
     curl -fsSL -o /tmp/micromamba "https://github.com/mamba-org/micromamba-releases/releases/download/$MICROMAMBA_VERSION/micromamba-linux-$MAMBA_ARCH"
     echo "$MAMBA_SHA  /tmp/micromamba" | sha256sum -c - >/dev/null
     install -m 755 /tmp/micromamba "$ROOTFS/opt/agents-gateway/bin/micromamba"
+    case "$ARCH" in amd64) AGY_ARCH=x64 AGY_SHA=$AGY_SHA_AMD64 ;; arm64) AGY_ARCH=arm64 AGY_SHA=$AGY_SHA_ARM64 ;; esac
+    curl -fsSL -o /tmp/agy.tar.gz "https://github.com/google-antigravity/antigravity-cli/releases/download/$AGY_VERSION/agy_cli_linux_$AGY_ARCH.tar.gz"
+    echo "$AGY_SHA  /tmp/agy.tar.gz" | sha256sum -c - >/dev/null
+    mkdir -p /tmp/agy && tar -xzf /tmp/agy.tar.gz -C /tmp/agy
+    install -m 755 /tmp/agy/antigravity "$ROOTFS/opt/agents-gateway/bin/agy"
     cp -R dist node_modules package.json "$ROOTFS/opt/agents-gateway/app/"
     cp -R web/dist "$ROOTFS/opt/agents-gateway/app/web/dist"
     cp /work/package/agents-gateway.service "$ROOTFS/lib/systemd/system/"

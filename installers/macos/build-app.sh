@@ -15,6 +15,9 @@ VERSION="$(node -p "require('$ROOT/package.json').version")"
 # O micromamba (a guia Pacotes, conda-forge): a MESMA versão da imagem e do setup do Debian, conferida pelo checksum.
 MICROMAMBA_VERSION=2.9.0-0
 MAMBA_SHA_OSX_ARM64=ec2a072f028e1a7cf20f3e2e74d5a8127cf5a5f27636375b5359811565f4e5be
+# O Antigravity CLI (`agy`, assinatura do Gemini): a MESMA versão da imagem; o checksum é o que a release publica.
+AGY_VERSION=1.4.9
+AGY_SHA_MAC_ARM64=64204e14975e632ae7f26912bed48d49ffe17bb2719093ca38c00276b1f134f0
 # O build: a versão + o commit. Muda a cada build, e é por ela que o app sabe que precisa reiniciar o servidor.
 BUILD="$VERSION+$(git -C "$ROOT" rev-parse --short HEAD)"
 
@@ -31,8 +34,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 cp -R "$STAGE/dist" "$STAGE/node_modules" "$STAGE/package.json" "$APP/Contents/Resources/app/"
 mkdir -p "$APP/Contents/Resources/app/web"
 cp -R "$STAGE/web/dist" "$APP/Contents/Resources/app/web/dist"
-# 🧰 O KIT DO SERVIDOR (o terminal dos agentes e a guia Pacotes não dependem do que a máquina tem): o Node com npm, npx
-# e corepack — só eles, sem os globais de quem gera — e o micromamba. Fica em `Resources/runtime/bin`, primeiro no PATH.
+# 🧰 O KIT DO SERVIDOR, o mesmo da imagem (o terminal dos agentes e a guia Pacotes não dependem do que a máquina tem): o
+# Node com npm, npx e corepack — só eles, sem os globais de quem gera —, o micromamba e o Antigravity (`agy`). Claude e
+# Codex já vêm nas dependências (os binários da plataforma). Fica em `Resources/runtime/bin`, primeiro no PATH.
 RUNTIME="$APP/Contents/Resources/runtime"
 NODE_PREFIX="${NODE_BIN:A:h:h}"
 mkdir -p "$RUNTIME/bin" "$RUNTIME/lib/node_modules"
@@ -46,6 +50,14 @@ mkdir -p "${MAMBA_CACHE:h}"
 [ -f "$MAMBA_CACHE" ] || curl -fsSL -o "$MAMBA_CACHE" "https://github.com/mamba-org/micromamba-releases/releases/download/$MICROMAMBA_VERSION/micromamba-osx-arm64"
 echo "$MAMBA_SHA_OSX_ARM64  $MAMBA_CACHE" | shasum -a 256 -c - >/dev/null || { echo "micromamba com checksum diferente: abortado" >&2; rm -f "$MAMBA_CACHE"; exit 1 }
 install -m 755 "$MAMBA_CACHE" "$RUNTIME/bin/micromamba"
+AGY_CACHE="$ROOT/installers/macos/dist/cache/agy-$AGY_VERSION-mac-arm64.tar.gz"
+[ -f "$AGY_CACHE" ] || curl -fsSL -o "$AGY_CACHE" "https://github.com/google-antigravity/antigravity-cli/releases/download/$AGY_VERSION/agy_cli_mac_arm64.tar.gz"
+echo "$AGY_SHA_MAC_ARM64  $AGY_CACHE" | shasum -a 256 -c - >/dev/null || { echo "agy com checksum diferente: abortado" >&2; rm -f "$AGY_CACHE"; exit 1 }
+AGY_TMP="$OUT/agy"
+mkdir -p "$AGY_TMP"
+tar -xzf "$AGY_CACHE" -C "$AGY_TMP"
+install -m 755 "$AGY_TMP/antigravity" "$RUNTIME/bin/agy"
+rm -rf "$AGY_TMP"
 cp "$ROOT/installers/macos/run-server.sh" "$ROOT/installers/macos/service.sh" "$APP/Contents/Resources/"
 # A janela (WebKit): o executável do app. Precisa das Command Line Tools (`xcode-select --install`).
 swiftc -O -target arm64-apple-macos12.0 "$ROOT/installers/macos/App.swift" -o "$APP/Contents/MacOS/Agents Gateway"
