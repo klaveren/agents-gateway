@@ -238,6 +238,8 @@ export function referencesOf(document: ICatalogDocument): IDocumentRef[] {
     case 'adr':
     case 'knowledge':
       for (const id of strings(body.docIds)) add({ field: 'docIds', target: 'doc', id })
+      // O doc que este substitui também tem de existir antes: entra na ordem (e no ciclo) como um anexo.
+      for (const id of strings(body.supersedes)) add({ field: 'supersedes', target: 'doc', id })
       break
     case 'project':
       for (const id of strings(body.initialContext)) add({ field: 'initialContext', target: 'spec', id })
@@ -598,9 +600,9 @@ export function emptySummary(): ICatalogImportPlan['summary'] {
  */
 export function recordPart(target: ICatalogDocument, current: ICatalogDocument | undefined): ICatalogDocument {
   if (target.kind === 'project') return withBody(target, { ...target.body, initialContext: current?.body.initialContext ?? [] })
-  // O doc de um ciclo: os anexos de antes (criado, nenhum); os novos vêm no passo `links`.
+  // O doc de um ciclo: os anexos e o que ele substitui, os de antes (criado, nenhum); os novos vêm no passo `links`.
   if (target.kind === 'spec' || target.kind === 'adr' || target.kind === 'knowledge')
-    return withBody(target, { ...target.body, docIds: current?.body.docIds ?? [], docRefs: current?.body.docRefs ?? [] })
+    return withBody(target, { ...target.body, docIds: current?.body.docIds ?? [], docRefs: current?.body.docRefs ?? [], supersedes: current?.body.supersedes ?? [] })
   if (target.kind !== 'agent') return target
   const { permissions: _permissions, ...body } = target.body
   return withBody(target, {
