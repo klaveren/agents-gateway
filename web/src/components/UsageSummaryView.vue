@@ -30,6 +30,19 @@
   // 10 por página em cada relatório; a barra continua medida contra a lista inteira.
   const agentPage = usePaged(computed(() => props.summary.byAgent))
   const modelPage = usePaged(computed(() => props.summary.byModel))
+  /** Por provedor: a soma dos modelos de cada um (o custo some só se nenhum modelo o tem). */
+  const byProvider = computed(() => {
+    const totals = new Map<string, { provider: string; tokens: number; costUsd?: number; costIsFloor: boolean }>()
+    for (const item of props.summary.byModel) {
+      const entry = totals.get(item.provider) ?? { provider: item.provider, tokens: 0, costIsFloor: false }
+      entry.tokens += item.usage.totalTokens
+      if (item.costUsd !== undefined) entry.costUsd = (entry.costUsd ?? 0) + item.costUsd
+      entry.costIsFloor ||= !!item.costIsFloor
+      totals.set(item.provider, entry)
+    }
+    return [...totals.values()].sort((a, b) => b.tokens - a.tokens)
+  })
+  const providerMax = computed(() => Math.max(1, ...byProvider.value.map((item) => item.tokens)))
   const toolPage = usePaged(tools)
   const topPage = usePaged(computed(() => props.summary.top))
 </script>
@@ -46,7 +59,7 @@
         <UsageDailyChart :days="summary.daily" :show-cost="showCost" />
       </section>
 
-      <div class="grid gap-4 lg:grid-cols-2">
+      <div class="grid gap-4 lg:grid-cols-3">
         <section class="card">
           <h2 class="card-title">Por agente</h2>
           <ul class="flex flex-col gap-2.5">
@@ -79,6 +92,23 @@
             </li>
           </ul>
           <ListPager v-model="modelPage.page.value" :pages="modelPage.pages.value" :total="modelPage.total.value" :size="modelPage.size" />
+        </section>
+        <section class="card" data-test="by-provider">
+          <h2 class="card-title">Por provedor</h2>
+          <ul class="flex flex-col gap-2.5">
+            <li v-for="item in byProvider" :key="item.provider">
+              <div class="flex items-baseline gap-2 text-sm">
+                <span class="truncate text-zinc-200">{{ protocols.providerName(item.provider) }}</span>
+                <span class="ml-auto shrink-0 text-xs text-zinc-400">
+                  {{ tokens(item.tokens) }}
+                  <template v-if="showCost && item.costUsd !== undefined">· {{ item.costIsFloor ? '≥ ' : '' }}{{ usd(item.costUsd) }}</template>
+                </span>
+              </div>
+              <div class="mt-1 h-1.5 rounded-full bg-zinc-800">
+                <div class="h-1.5 rounded-full bg-emerald-500/70" :style="{ width: `${Math.max(2, (item.tokens / providerMax) * 100)}%` }" />
+              </div>
+            </li>
+          </ul>
         </section>
       </div>
 
