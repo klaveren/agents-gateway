@@ -3,6 +3,7 @@ import type { TCatalogKind } from '../Catalog.Document'
 import type { IConnectionSecret } from '../models/ProjectConnection.Model'
 import type { TRevisionOp } from './CatalogHistoryRepository.Port'
 import type { ILedgerWrite } from '../models/Ledger.Model'
+import type { TRemoteUsageInput } from '../models/RemoteUsage.Model'
 
 /** A origem respondeu que o token não vale (revogado, vencido, a conta saiu do projeto, outro projeto). */
 export class RemoteUnauthorizedError extends Error {
@@ -68,6 +69,8 @@ export interface IRemoteCatalog {
   events(onVersion: (version: number) => void, signal: AbortSignal): Promise<void>
   /** 🔌 O ledger do agente, que mora na origem (as datas já como `Date`). */
   ledger(agentId: string): IRemoteLedger
+  /** 🔌 Manda o uso deste projeto aqui para a origem (reenviar o mesmo dia substitui lá). */
+  usage(rows: readonly TRemoteUsageInput[]): Promise<{ received: number }>
 }
 
 /** O ledger de um agente na origem: as mesmas respostas do `LedgerService` de lá. */

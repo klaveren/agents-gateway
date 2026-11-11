@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import type { ConnectService } from '@application/Connect.Service'
 import type { ICatalogEvents } from '@domain/ports/CatalogEvents.Port'
 import type { ILedgerWrite } from '@domain/models/Ledger.Model'
+import { REMOTE_USAGE_MAX_ROWS } from '@domain/models/RemoteUsage.Model'
 import { CALLER_HEADER } from './Security.Middleware'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
@@ -40,6 +41,22 @@ const ledgerWriteSchema = z.object({
   }),
   conversationId: z.string().max(200).optional(),
 }) as unknown as z.ZodType<{ change: ILedgerWrite; conversationId?: string }>
+const tokens = z.number().int().min(0).optional()
+const usageSchema = z.object({
+  rows: z
+    .array(
+      z.object({
+        day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        conversationId: z.string().min(1).max(200),
+        agentId: z.string().min(1).max(200),
+        provider: z.string().min(1).max(100),
+        model: z.string().min(1).max(200),
+        turns: z.number().int().min(0),
+        usage: z.object({ inputTokens: tokens, outputTokens: tokens, reasoningTokens: tokens, totalTokens: tokens, cacheReadTokens: tokens, cacheWriteTokens: tokens }),
+      }),
+    )
+    .max(REMOTE_USAGE_MAX_ROWS),
+})
 /** Quantos streams de aviso um token mantém abertos (o vigia reconecta; mais que isso é laço). */
 const STREAMS_PER_TOKEN = 3
 
@@ -54,7 +71,7 @@ export class ConnectController {
   private readonly streams = new Map<string, number>()
 
   constructor(private readonly deps: IConnectControllerDeps) {
-    for (const name of ['version', 'changes', 'events', 'catalogPackage', 'file', 'ledgerIndex', 'ledgerContext', 'ledgerSearch', 'ledgerWrite'] as const)
+    for (const name of ['version', 'changes', 'events', 'catalogPackage', 'file', 'ledgerIndex', 'ledgerContext', 'ledgerSearch', 'ledgerWrite', 'usage'] as const)
       this[name] = this[name].bind(this)
   }
 
@@ -151,6 +168,15 @@ export class ConnectController {
       const { connection } = this.gate(req)
       const body = parseBody(ledgerWriteSchema, req.body)
       return this.ledgerOf(req).write(body.change, { via: connection.email, ...(body.conversationId ? { conversationId: body.conversationId } : {}) })
+    })
+  }
+
+  /** `POST /connect/:projectId/usage` — o uso do gateway conectado neste projeto, por dia (reenviar substitui). */
+  async usage(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { connect, connection } = this.gate(req)
+      const { rows } = parseBody(usageSchema, req.body)
+      return connect.receiveUsage(connection.projectId, { userId: connection.userId, email: connection.email }, rows)
     })
   }
 

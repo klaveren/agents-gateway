@@ -13,6 +13,7 @@ import {
   makeGuidanceController,
   makeProjectsController,
   makeProvidersController,
+  makeUsageController,
 } from '@composition/factories/Controller.Factory'
 import { HttpServer } from './Http.Server'
 
@@ -47,11 +48,12 @@ describe('projeto conectado: a origem (/connect)', () => {
 
   before(async () => {
     const u = undefined
+    const controller = makeController()
     const server = new HttpServer(
-      makeController(),
+      controller,
       makeAuthController(),
       makeProvidersController(),
-      u,
+      makeUsageController(controller.conversations),
       u,
       u,
       u,
@@ -220,6 +222,26 @@ describe('projeto conectado: a origem (/connect)', () => {
     assert.deepStrictEqual([invalid.status, invalid.body.details[0].field], [422, 'trigger'])
     // Agente de fora do projeto: como inexistente.
     assert.strictEqual((await call('/connect/logiccus/ledger/solta', { token: connection })).status, 404)
+  })
+
+  it('🔌 o uso do gateway conectado entra no uso daqui, na conta da conexão; reenviar o dia substitui', async () => {
+    const today = new Date().toISOString().slice(0, 10)
+    const row = (totalTokens: number) => ({
+      day: today,
+      conversationId: 'gw_local_1',
+      agentId: 'maya',
+      provider: 'claude',
+      model: 'claude-sonnet-5',
+      turns: 2,
+      usage: { inputTokens: totalTokens - 10, outputTokens: 10, totalTokens },
+    })
+    assert.deepStrictEqual((await call('/connect/logiccus/usage', { method: 'POST', token: connection, body: { rows: [row(100)] } })).body.result, { received: 1 })
+    assert.strictEqual((await call('/connect/logiccus/usage', { method: 'POST', token: connection, body: { rows: [row(300)] } })).status, 200)
+    const users = (await call('/usage/users?days=7', { token: admin })).body.result
+    const anaUsage = (users.users ?? users).find((user: { email?: string }) => user.email === 'ana@x.test')
+    assert.ok(anaUsage, JSON.stringify(users))
+    assert.strictEqual(anaUsage.usage.totalTokens, 300)
+    assert.strictEqual((await call('/connect/logiccus/usage', { method: 'POST', token: connection, body: { rows: [{ ...row(1), day: 'ontem' }] } })).status, 422)
   })
 
   it('⛔ a conta que sai do projeto perde a conexão', async () => {

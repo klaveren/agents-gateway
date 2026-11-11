@@ -1,4 +1,5 @@
 import type { ILedgerWrite } from '@domain/models/Ledger.Model'
+import type { TRemoteUsageInput } from '@domain/models/RemoteUsage.Model'
 import {
   IRemoteCatalog,
   IRemoteChanges,
@@ -55,6 +56,10 @@ export class RemoteClient implements IRemoteCatalog {
       search: (query) => this.get(`${base}/search?q=${encodeURIComponent(query)}`),
       write: (change: ILedgerWrite, conversationId?: string) => this.get(`${base}/write`, TIMEOUT_MS, { change, ...(conversationId ? { conversationId } : {}) }),
     }
+  }
+
+  usage(rows: readonly TRemoteUsageInput[]): Promise<{ received: number }> {
+    return this.get('/usage', TIMEOUT_MS, { rows })
   }
 
   async events(onVersion: (version: number) => void, signal: AbortSignal): Promise<void> {

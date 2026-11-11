@@ -45,6 +45,8 @@ import { catalogHistoryParts, makeCatalogHistory, makeCatalogHistoryQuery } from
 import { CatalogRestoreUseCase } from '@application/CatalogRestore.Usecase'
 import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
 import { ConnectService } from '@application/Connect.Service'
+import { SqliteRemoteUsageRepository } from '@infra/persistence/Sqlite.RemoteUsageRepository'
+import { remoteUsageRows } from '@domain/models/RemoteUsage.Model'
 import { ProjectConnectionService } from '@application/ProjectConnection.Service'
 import { catalogItemKey } from '@application/CatalogHistory.Service'
 import { RemoteClient } from '@infra/connect/Remote.Client'
@@ -251,7 +253,31 @@ export function makeProvidersController(): ProvidersController {
 }
 
 export function makeUsageController(conversations: AgentController['conversations'], cap?: UsageCapService): UsageController {
-  return new UsageController({ conversations, proof: makeAuth().proof, models: makeModelCatalog(), accounts: makeAuth().accounts, cap })
+  return new UsageController({ conversations: withRemoteUsage(conversations), proof: makeAuth().proof, models: makeModelCatalog(), accounts: makeAuth().accounts, cap })
+}
+
+let remoteUsage: SqliteRemoteUsageRepository | undefined
+
+/** 🔌 O uso que os gateways conectados mandam (ver `RemoteUsage.Model`): uma instância, no arquivo das conversas. */
+function makeRemoteUsage(): SqliteRemoteUsageRepository {
+  const configured = process.env.CONVERSATIONS_DB?.trim()
+  remoteUsage ??= new SqliteRemoteUsageRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH)
+  return remoteUsage
+}
+
+/** Os relatórios de uso com as linhas dos gateways conectados junto (o resto do repositório, como é). */
+function withRemoteUsage(conversations: AgentController['conversations']): AgentController['conversations'] {
+  const usage: IConversationRepository['usage'] = async (query) => [
+    ...(await conversations.usage(query)),
+    ...remoteUsageRows(makeRemoteUsage().since(query.since.toISOString().slice(0, 10)), query),
+  ]
+  return new Proxy(conversations, {
+    get: (target, property) => {
+      if (property === 'usage') return usage
+      const value = Reflect.get(target, property, target) as unknown
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value
+    },
+  })
 }
 
 export function makeMcpServersController(): McpServersController {
@@ -493,6 +519,7 @@ export function makeConnectController(): ConnectController {
     files: makeResourceFiles(),
     secrets: makeResourceSecrets(),
     ledger: makeLedger(),
+    usage: makeRemoteUsage(),
     agentProject: (agentId) => {
       const agent = makeAgents().get(agentId)
       return agent ? (agent.projectId ?? null) : undefined
@@ -527,6 +554,7 @@ export function makeProjectConnections(): ProjectConnectionService {
     files: makeResourceFiles(),
     applier: makeCatalogImportApplier(),
     reader: catalogHistoryParts().reader,
+    usage: (query) => makeConversationRepository().usage(query),
     remove: async (current, by) => {
       const prepared = await writer.prepare(undefined, current)
       history.within(catalogItemKey(current), { by, source: 'import', note: 'removido na origem (projeto conectado)' }, () => prepared.commit(by))

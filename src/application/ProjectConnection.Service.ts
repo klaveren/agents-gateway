@@ -9,6 +9,9 @@ import { IConnectionChange, IConnectionSkipped, IProjectConnection } from '@doma
 import type { IProjectConnectionRepository, TConnectionPatch } from '@domain/ports/ProjectConnectionRepository.Port'
 import { IRemoteCatalog, IRemoteChanges, RemoteRequestError, RemoteUnauthorizedError, RemoteUnavailableError } from '@domain/ports/RemoteCatalog.Port'
 import type { ILedgerWrite } from '@domain/models/Ledger.Model'
+import type { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
+import { REMOTE_USAGE_MAX_ROWS } from '@domain/models/RemoteUsage.Model'
+import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 
 /** De quanto em quanto tempo o vigia confere a versão quando o aviso ao vivo caiu (e, de todo modo, de vez em quando). */
 export const CONNECTION_POLL_MS = 5 * 60_000
@@ -32,6 +35,8 @@ export interface IProjectConnectionDeps {
   reader: { list(scope: TCatalogScope): ICatalogDocument[] }
   /** Apaga um item que sumiu na origem (o escritor do catálogo, com a revisão). */
   remove(current: ICatalogDocument, by: string): Promise<void>
+  /** O uso das conversas daqui (as linhas do relatório), para mandar o do projeto conectado à origem. */
+  usage?: (query: IUsageQuery) => Promise<IUsageRow[]>
   /** Os modelos desta instalação (sem o mapa, que é da conexão). */
   models(): Promise<Omit<ILocalModels, 'map'>>
   now?: () => Date
@@ -273,7 +278,44 @@ export class ProjectConnectionService {
   }
 
   private async checkAll(): Promise<void> {
-    for (const connection of this.list()) await this.check(connection.projectId).catch(() => undefined)
+    for (const connection of this.list()) {
+      await this.check(connection.projectId).catch(() => undefined)
+      await this.sendUsage(connection.projectId).catch(() => undefined)
+    }
+  }
+
+  /**
+   * 🔌 Manda à origem o uso das conversas deste projeto aqui, por dia (UTC), conversa, provedor e modelo. Reenvia desde
+   * dois dias antes do último envio (o dia corrente cresce; a origem substitui a linha). Lá, entra na conta da conexão.
+   */
+  async sendUsage(projectId: string): Promise<number> {
+    if (!this.deps.usage) return 0
+    const connection = this.require(projectId)
+    const from = connection.usageSentAt ? new Date(connection.usageSentAt.getTime() - 2 * 86_400_000) : connection.createdAt
+    const since = new Date(`${from.toISOString().slice(0, 10)}T00:00:00Z`)
+    const startedAt = this.now()
+    const rows = (await this.deps.usage({ since, tzOffsetMinutes: 0, metadata: { [PROJECT_METADATA_KEY]: projectId } })).map((row) => ({
+      day: row.day,
+      conversationId: row.conversationId,
+      agentId: row.agentId,
+      provider: row.provider,
+      model: row.model,
+      turns: row.turns,
+      usage: {
+        inputTokens: row.usage.inputTokens ?? 0,
+        outputTokens: row.usage.outputTokens ?? 0,
+        reasoningTokens: row.usage.reasoningTokens ?? 0,
+        totalTokens: row.usage.totalTokens ?? 0,
+        cacheReadTokens: row.usage.cacheReadTokens ?? 0,
+        cacheWriteTokens: row.usage.cacheWriteTokens ?? 0,
+      },
+    }))
+    for (let start = 0; start < rows.length; start += REMOTE_USAGE_MAX_ROWS) {
+      const sent = await this.talk(projectId, (client) => client.usage(rows.slice(start, start + REMOTE_USAGE_MAX_ROWS)))
+      if (!sent) return 0
+    }
+    this.deps.repository.update(projectId, { usageSentAt: startedAt })
+    return rows.length
   }
 
   private async watch(projectId: string, signal: AbortSignal): Promise<void> {

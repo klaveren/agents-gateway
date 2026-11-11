@@ -8,7 +8,7 @@ import { ProjectConnectionService } from './ProjectConnection.Service'
 
 /** A origem falsa: guarda as escritas na ordem; `down` = fora do ar; `refuse` = recusa com campos. */
 function origin() {
-  const state = { down: false, refuse: false, written: [] as Array<{ agentId: string; topic: string; conversationId?: string }> }
+  const state = { down: false, refuse: false, written: [] as Array<{ agentId: string; topic: string; conversationId?: string }>, usage: [] as unknown[] }
   const client: IRemoteCatalog = {
     version: async () => 1,
     changes: async () => ({ version: 1, changes: [] }),
@@ -17,6 +17,11 @@ function origin() {
     },
     file: async () => Buffer.from(''),
     events: async () => undefined,
+    usage: async (rows) => {
+      if (state.down) throw new RemoteUnavailableError('down')
+      state.usage.push(...rows)
+      return { received: rows.length }
+    },
     ledger: (agentId) => ({
       index: async () => {
         if (state.down) throw new RemoteUnavailableError('down')
@@ -37,6 +42,7 @@ function origin() {
 
 function build() {
   const { state, client } = origin()
+  const seen: unknown[] = []
   const repository = new SqliteProjectConnectionRepository(':memory:')
   const service = new ProjectConnectionService({
     repository,
@@ -48,6 +54,10 @@ function build() {
     reader: { list: () => [] },
     remove: async () => undefined,
     models: async () => ({ enabled: () => true }),
+    usage: async (query) => {
+      seen.push(query)
+      return [{ day: '2026-11-11', conversationId: 'gw_1', agentId: 'maya', provider: 'claude', model: 'sonnet', turns: 3, usage: { totalTokens: 90 } }]
+    },
   })
   repository.insert(
     {
@@ -66,7 +76,7 @@ function build() {
     },
     'agc_x',
   )
-  return { state, service, repository }
+  return { state, service, repository, seen }
 }
 
 const change = (topic: string): ILedgerWrite => ({ action: 'criar', topic, trigger: 'quando acontecer de novo no CI' })
@@ -112,5 +122,27 @@ describe('projeto conectado: o ledger mora na origem', () => {
     await service.flushLedger('logiccus')
     assert.equal(repository.pendingLedger('logiccus').length, 0)
     assert.match(repository.get('logiccus')!.skipped.at(-1)!.message, /recusou/)
+  })
+
+  it('o uso do projeto vai à origem por dia, só o deste projeto; fora do ar, não marca e reenvia depois', async () => {
+    const { state, service, repository, seen } = build()
+    state.down = true
+    assert.equal(await service.sendUsage('logiccus'), 0)
+    assert.equal(repository.get('logiccus')!.usageSentAt, undefined)
+    state.down = false
+    assert.equal(await service.sendUsage('logiccus'), 1)
+    assert.deepEqual((seen.at(-1) as { metadata: unknown }).metadata, { project: 'logiccus' })
+    assert.deepEqual(state.usage, [
+      {
+        day: '2026-11-11',
+        conversationId: 'gw_1',
+        agentId: 'maya',
+        provider: 'claude',
+        model: 'sonnet',
+        turns: 3,
+        usage: { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, totalTokens: 90, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      },
+    ])
+    assert.ok(repository.get('logiccus')!.usageSentAt)
   })
 })

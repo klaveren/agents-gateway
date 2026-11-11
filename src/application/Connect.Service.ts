@@ -4,6 +4,7 @@ import type { ICatalogDocument, TCatalogKind } from '@domain/Catalog.Document'
 import type { ICatalogHistoryRepository, TRevisionOp } from '@domain/ports/CatalogHistoryRepository.Port'
 import type { TSecretScope } from '@domain/models/ResourceSecret.Model'
 import type { ILedgerWrite } from '@domain/models/Ledger.Model'
+import { IRemoteUsageRow, REMOTE_USAGE_MAX_ROWS, remoteUsageKey, TRemoteUsageInput } from '@domain/models/RemoteUsage.Model'
 import { LedgerNotFoundError } from '@domain/errors/Domain.Error'
 import type { LedgerService } from './Ledger.Service'
 
@@ -22,6 +23,9 @@ export interface IConnectDeps {
   ledger?: Pick<LedgerService, 'index' | 'context' | 'search' | 'write' | 'promptSection'>
   /** O projeto do agente (`null` = global; `undefined` = não existe). */
   agentProject?: (agentId: string) => string | null | undefined
+  /** Onde fica o uso que os gateways conectados mandam. */
+  usage?: { upsert(rows: readonly IRemoteUsageRow[], at: Date): void }
+  now?: () => Date
 }
 
 /** Uma mudança no aviso: um item, a última operação e quantas revisões ele teve desde a versão local. */
@@ -107,6 +111,17 @@ export class ConnectService {
       write: (change: ILedgerWrite, author: { via: string; conversationId?: string }) =>
         ledger.write(agentId, change, { kind: 'agent', agentId, via: author.via, ...(author.conversationId ? { conversationId: author.conversationId } : {}) }),
     }
+  }
+
+  /**
+   * 🔌 O USO que o gateway conectado gastou NESTE projeto, por dia: entra no uso daqui, na conta dona da conexão (o custo,
+   * quem administra vê como o de qualquer conversa). Reenviar o mesmo dia substitui. Devolve quantas linhas gravou.
+   */
+  receiveUsage(projectId: string, account: { userId: string; email: string }, rows: readonly TRemoteUsageInput[]): { received: number } {
+    if (!this.deps.usage) throw new LedgerNotFoundError('agent', 'usage')
+    const stored = rows.slice(0, REMOTE_USAGE_MAX_ROWS).map((row) => ({ ...row, key: remoteUsageKey(row), projectId, userId: account.userId, email: account.email }))
+    this.deps.usage.upsert(stored, (this.deps.now ?? (() => new Date()))())
+    return { received: stored.length }
   }
 
   /** ⛔ Só um arquivo que um documento do projeto cita; o resto responde como inexistente. */

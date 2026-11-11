@@ -5086,6 +5086,45 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'Written', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/connect/{projectId}/usage': {
+      post: {
+        summary:
+          'Connected projects: the usage the other gateway spent IN this project, per day (UTC), conversation there, provider and model. It enters the usage reports here, on the account that owns the connection token. Sending the same day again replaces it',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: {
+              rows: {
+                type: 'array',
+                maxItems: 2000,
+                items: {
+                  type: 'object',
+                  properties: {
+                    day: { type: 'string', format: 'date' },
+                    conversationId: { type: 'string' },
+                    agentId: { type: 'string' },
+                    provider: { type: 'string' },
+                    model: { type: 'string' },
+                    turns: { type: 'integer' },
+                    usage: { type: 'object' },
+                  },
+                  required: ['day', 'conversationId', 'agentId', 'provider', 'model', 'turns', 'usage'],
+                },
+              },
+            },
+            required: ['rows'],
+          }),
+        },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { received: { type: 'integer' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
     '/connect/{projectId}/version': {
       get: {
         summary:
