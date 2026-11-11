@@ -79,6 +79,13 @@ export class ConnectService {
     return { ...result, changes: collapse(revisions), ...(revisions.length >= CONNECT_CHANGES_LIMIT ? { truncated: true } : {}) }
   }
 
+  /** O que mudou desde `since`, sem o pacote: é o que o aviso mostra antes de a pessoa atualizar. */
+  changes(projectId: string, since: number): { version: number; changes: IConnectChange[]; truncated?: boolean } {
+    const version = this.deps.history.versionOf(projectId)
+    const revisions = this.deps.history.since(projectId, since, CONNECT_CHANGES_LIMIT)
+    return { version, changes: collapse(revisions), ...(revisions.length >= CONNECT_CHANGES_LIMIT ? { truncated: true } : {}) }
+  }
+
   /** ⛔ Só um arquivo que um documento do projeto cita; o resto responde como inexistente. */
   file(projectId: string, sha256: string): Buffer | undefined {
     if (!filesOf(this.deps.reader.list({ kind: 'project', projectId })).has(sha256)) return undefined

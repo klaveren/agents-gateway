@@ -17,6 +17,8 @@ import {
   makeLedgerController,
   makeAuditController,
   makeConnectController,
+  makeProjectConnections,
+  makeProjectConnectionsController,
   makeProjectAccountsController,
   makeSecretMaskController,
   makeImportController,
@@ -121,10 +123,13 @@ async function bootstrap() {
     makeLedgerController(),
     makeAuditController(),
     makeConnectController(),
+    makeProjectConnectionsController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
   // O relógio dos agendamentos: depois de o servidor subir — ele executa pela API deste processo.
   makeScheduleRunner().start()
+  // 🔌 O vigia dos projetos conectados: o aviso de atualização (a conexão sai daqui; a origem não nos alcança).
+  makeProjectConnections().start()
 }
 
 bootstrap().catch(console.error)

@@ -148,6 +148,9 @@ describe('projeto conectado: a origem (/connect)', () => {
       [['skill', 'banco', 'update', 2]],
     )
     assert.strictEqual((await call('/connect/logiccus/package?since=-1', { token: connection })).status, 400)
+    // O aviso sem o pacote: a mesma lista.
+    const notice = (await call(`/connect/logiccus/changes?since=${first}`, { token: connection })).body.result
+    assert.deepStrictEqual([notice.version, notice.changes.length], [later.version, 1])
   })
 
   it('o aviso ao vivo: a versão ao abrir e a nova a cada mudança do projeto', async () => {
