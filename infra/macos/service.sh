@@ -75,9 +75,9 @@ elif [ "$restart" = 1 ]; then
 fi
 
 for _ in {1..90}; do
-  status="$(curl -sf "http://127.0.0.1:$PORT/v1/auth/status")"
-  if [ -n "$status" ]; then
-    case "$status" in
+  reply="$(curl -sf "http://127.0.0.1:$PORT/v1/auth/status")"
+  if [ -n "$reply" ]; then
+    case "$reply" in
       *'"setupRequired":true'*) print -r -- "http://localhost:$PORT/setup?code=$SETUP_CODE" ;;
       *) print -r -- "http://localhost:$PORT/" ;;
     esac
