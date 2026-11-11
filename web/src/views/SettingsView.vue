@@ -31,6 +31,8 @@ const failure = ref<string>()
 const issues = ref<Array<{ field: string; message: string }>>([])
 /** O grupo de modelos padrão, em edição (vazio = nenhum). Os grupos em si moram em `/model-groups`. */
 const defaultGroup = ref('')
+/** 🌿 Esta instalação no git (ver `Git.Guard` no servidor): vazio = o padrão. */
+const git = ref({ installationName: '', branchPrefix: '', baseBranch: '', protectedBranches: '', lockMainCheckout: true })
 /** Os limites em edição; vazio = volta ao padrão do `.env` (vai como `null`). */
 const limitDrafts = ref<Partial<Record<TLimitName, number | ''>>>({})
 
@@ -103,6 +105,13 @@ watch(
     classifyTurns.value = current.classifyTurns ?? false
     builder.value = current.builderModel ? `${current.builderProvider ?? ''}::${current.builderModel}` : ''
     defaultGroup.value = current.defaultModelGroup ?? ''
+    git.value = {
+      installationName: current.installationName ?? '',
+      branchPrefix: current.branchPrefix ?? '',
+      baseBranch: current.baseBranch ?? '',
+      protectedBranches: (current.protectedBranches ?? []).join(', '),
+      lockMainCheckout: current.lockMainCheckout !== false,
+    }
     limitDrafts.value = Object.fromEntries(LIMITS.map(({ name }) => [name, current.limits?.[name] ?? ''])) as Partial<Record<TLimitName, number | ''>>
   },
   { immediate: true },
@@ -138,6 +147,11 @@ async function saveSettings() {
       builderModel: builderModel || null,
       // A sequência padrão vai junto (um salvar só por tela); "Nenhum" = `null` desliga a troca dos agentes sem sequência.
       defaultModelGroup: defaultGroup.value || null,
+      installationName: git.value.installationName.trim() || null,
+      branchPrefix: git.value.branchPrefix.trim() || null,
+      baseBranch: git.value.baseBranch.trim() || null,
+      protectedBranches: git.value.protectedBranches.split(/[\s,]+/).filter(Boolean).length ? git.value.protectedBranches.split(/[\s,]+/).filter(Boolean) : null,
+      lockMainCheckout: git.value.lockMainCheckout,
       // Vazio = `null`: o limite volta ao padrão do `.env`.
       limits: Object.fromEntries(LIMITS.map(({ name }) => [name, limitDrafts.value[name] === '' || limitDrafts.value[name] === undefined ? null : Number(limitDrafts.value[name])])),
     })
@@ -260,6 +274,36 @@ async function saveSettings() {
           Sem cota agora:
           {{ settings.current.benched.map((item) => `${protocols.providerName(item.provider)} até ${new Date(item.until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`).join(', ') }}
         </p>
+      </section>
+
+      <section v-if="!lite && auth.isAdmin && settings.current" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5" data-test="installation-git">
+        <h2 class="font-medium">Esta instalação no git</h2>
+        <p class="text-xs text-zinc-400">
+          A pasta principal de cada repositório fica na branch base: os agentes trabalham em worktrees, e o ambiente não recarrega por troca de branch. As branches
+          protegidas só recebem por PR. O prefixo separa as branches deste gateway das de outro no mesmo remoto.
+        </p>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+            Nome da instalação
+            <input v-model="git.installationName" maxlength="60" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-3 text-sm" placeholder="gateway do Henrique" />
+          </label>
+          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+            Prefixo das branches
+            <input v-model="git.branchPrefix" maxlength="40" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-3 font-mono text-sm" placeholder="henrique/" />
+          </label>
+          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+            Branch base das worktrees
+            <input v-model="git.baseBranch" maxlength="100" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-3 font-mono text-sm" placeholder="automation" />
+          </label>
+          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+            Branches protegidas
+            <input v-model="git.protectedBranches" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-3 font-mono text-sm" placeholder="automation, main" />
+          </label>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-zinc-300">
+          <input v-model="git.lockMainCheckout" type="checkbox" class="accent-emerald-500" />
+          Travar a troca de branch na pasta principal do repositório
+        </label>
       </section>
 
       <section v-if="!lite && auth.isAdmin && settings.current?.deployment" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">

@@ -82,6 +82,18 @@ export interface IAgentSettings {
   /** O grupo dos agentes que não apontam para um. Ausente = nenhum: sem grupo, o modelo que falha encerra o turno. */
   defaultModelGroup?: string
 
+  /**
+   * 🌿 ESTA INSTALAÇÃO no git (ver `Git.Guard`): o nome (o gateway da .4, o de um dev), o prefixo das branches que ela
+   * cria (`henrique/`, para dois gateways no mesmo remoto não colidirem), a base das worktrees e as branches que só
+   * recebem por PR. Ausentes = sem prefixo, a base de sempre e nenhuma protegida.
+   */
+  installationName?: string
+  branchPrefix?: string
+  baseBranch?: string
+  protectedBranches?: string[]
+  /** Trocar de branch na pasta principal de um repositório. Ausente = travado; `false` libera. */
+  lockMainCheckout?: boolean
+
   updatedAt?: Date
   updatedBy?: string
 }
@@ -132,6 +144,14 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
     limits: normalizeLimits(stored.limits),
     modelGroups: normalizeModelGroups(stored.modelGroups),
     defaultModelGroup: text(stored.defaultModelGroup),
+    installationName: text(stored.installationName),
+    branchPrefix: text(stored.branchPrefix),
+    baseBranch: text(stored.baseBranch),
+    protectedBranches:
+      Array.isArray(stored.protectedBranches) && stored.protectedBranches.length
+        ? stored.protectedBranches.filter((branch): branch is string => typeof branch === 'string' && !!branch.trim())
+        : undefined,
+    lockMainCheckout: typeof stored.lockMainCheckout === 'boolean' ? stored.lockMainCheckout : undefined,
     updatedAt: date(stored.updatedAt),
     updatedBy: text(stored.updatedBy),
   }
@@ -189,6 +209,11 @@ const EDITABLE = [
   'limits',
   'modelGroups',
   'defaultModelGroup',
+  'installationName',
+  'branchPrefix',
+  'baseBranch',
+  'protectedBranches',
+  'lockMainCheckout',
 ] as const
 const REQUIRED = ['audience'] as const
 

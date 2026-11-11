@@ -5,7 +5,7 @@ import type { IPermissionAsker, IPermissionChecker } from '@application/Permissi
 import { cercoPlan } from '@domain/Cerco.Plan'
 import { commandMatches, definesGitAlias, hasGitDeny, type IPermissionRule } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
-import { exec } from 'node:child_process'
+import { exec, execFileSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, posix, relative, resolve } from 'node:path'
@@ -44,6 +44,7 @@ import type { IEditDiagnostics } from './Edit.Diagnostics'
 import type { IAgentDiagnostics } from '@domain/models/Agent.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
 import { fetchUrlTool } from './Web.Fetch'
+import { gitGuard, IGitGuardOptions } from './Git.Guard'
 import { IImportDesk, IRepositoryBrowser, makeImportTools } from './Import.Tools'
 
 export interface IExecOptions {
@@ -145,6 +146,8 @@ export interface ILocalToolDeps {
   sharedFolders?: (projectId: string | undefined, agentId?: string) => string[]
   /** Os processos em segundo plano (ver `Background.Processes`). Ausente = o do processo. */
   processes?: BackgroundProcesses
+  /** 🌿 As travas de git desta instalação (as Configurações), lidas a cada comando. Ausente = nenhuma. */
+  gitGuard?: () => IGitGuardOptions
   /** A máscara de segredos (ver `Secret.Masker`). Ausente = a saída vai como saiu. */
   mask?: ILocalMask
   /**
@@ -167,6 +170,16 @@ export interface ILocalToolDeps {
     commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<{ env: Record<string, string>; problems: string[]; ssh?: ISshKitIdentity[] }>
     /** A assinatura com a chave SSH importada (`ssh_sign`). Ausente = sem a ferramenta. */
     sign?(projectId: string, id: string, namespace: string, data: string): Promise<string>
+  }
+}
+
+/** A branch atual da pasta (o alvo do `git push` sem refspec); fora de um repositório, nada. */
+function currentBranchOf(dir: string): string | undefined {
+  try {
+    const branch = execFileSync('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return branch && branch !== 'HEAD' ? branch : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -277,6 +290,9 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       ...(sandbox.wrapWith && own?.read ? { own: { dirs: [...new Set([own.dir, realOf(own.dir)])], write: own.write } } : {}),
     })
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
+    // 🌿 As travas de git desta instalação (ver `Git.Guard`): a pasta principal não troca de branch; protegida só por PR.
+    const git = deps.gitGuard ? gitGuard((await analyzeShell(command)).commands, root, deps.gitGuard(), currentBranchOf) : { notes: [] }
+    if (git.refusal) return { status: 'error', result: `Not permitted: ${git.refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
     const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
     // Os serviços locais que as regras liberam EXATOS (`localhost:27017`): no Linux, um encaminhador por porta.
@@ -303,6 +319,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       ])
     const literal = deps.mask?.literalIn(command, context?.sessionId)
     const notes = [
+      ...git.notes,
       ...(accounts?.problems ?? []).map((problem) => `⚠️ ${problem}`),
       ...(literal ? [`⚠️ o comando tem um segredo escrito por extenso (${literal}): use a variável de ambiente, não o valor.`] : []),
     ]
