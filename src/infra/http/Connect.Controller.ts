@@ -39,7 +39,7 @@ export class ConnectController {
   private readonly streams = new Map<string, number>()
 
   constructor(private readonly deps: IConnectControllerDeps) {
-    for (const name of ['version', 'events', 'catalogPackage', 'file'] as const) this[name] = this[name].bind(this)
+    for (const name of ['version', 'changes', 'events', 'catalogPackage', 'file'] as const) this[name] = this[name].bind(this)
   }
 
   /** `GET /connect/:projectId/version` — a versão do catálogo do projeto. */
@@ -50,14 +50,19 @@ export class ConnectController {
     })
   }
 
+  /** `GET /connect/:projectId/changes?since=N` — a versão e o que mudou desde N, uma linha por item (o aviso). */
+  async changes(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { connect, connection } = this.gate(req)
+      return connect.changes(connection.projectId, sinceOf(req) ?? 0)
+    })
+  }
+
   /** `GET /connect/:projectId/package?since=N` — o catálogo inteiro, os arquivos citados, as variáveis e o que mudou desde N. */
   async catalogPackage(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { connect, connection } = this.gate(req)
-      const raw = (req.query as Record<string, unknown>).since
-      const since = raw === undefined ? undefined : Number(raw)
-      if (since !== undefined && (!Number.isInteger(since) || since < 0)) throw new HttpError(400, 'validation_error', 'since must be a non-negative integer')
-      return connect.package(connection.projectId, connection.email, since)
+      return connect.package(connection.projectId, connection.email, sinceOf(req))
     })
   }
 
@@ -135,4 +140,13 @@ export class ConnectController {
     if (failure.status >= 500) console.error('[ConnectController] Error:', failure.message)
     res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
   }
+}
+
+/** `?since=N`: a versão que quem pergunta tem (inteiro ≥ 0). */
+function sinceOf(req: Request): number | undefined {
+  const raw = (req.query as Record<string, unknown>).since
+  if (raw === undefined) return undefined
+  const since = Number(raw)
+  if (!Number.isInteger(since) || since < 0) throw new HttpError(400, 'validation_error', 'since must be a non-negative integer')
+  return since
 }

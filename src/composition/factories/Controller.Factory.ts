@@ -44,6 +44,11 @@ import { catalogHistoryParts, makeCatalogHistory, makeCatalogHistoryQuery } from
 import { CatalogRestoreUseCase } from '@application/CatalogRestore.Usecase'
 import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
 import { ConnectService } from '@application/Connect.Service'
+import { ProjectConnectionService } from '@application/ProjectConnection.Service'
+import { catalogItemKey } from '@application/CatalogHistory.Service'
+import { RemoteClient } from '@infra/connect/Remote.Client'
+import { SqliteProjectConnectionRepository } from '@infra/persistence/Sqlite.ProjectConnectionRepository'
+import { ProjectConnectionsController } from '@infra/http/ProjectConnections.Controller'
 import { ConnectController } from '@infra/http/Connect.Controller'
 import { CatalogImportPlanner } from '@application/CatalogImport.Plan'
 import { CatalogImportApplier } from '@application/CatalogImport.Apply'
@@ -66,7 +71,7 @@ import { AuthController } from '@infra/http/Auth.Controller'
 import { ModelGroupRetirement } from '@application/ModelGroupRetirement.Service'
 import { ProvidersController } from '@infra/http/Providers.Controller'
 import { UsageController } from '@infra/http/Usage.Controller'
-import { makeCredentials } from './Credentials.Factory'
+import { makeCredentials, makeSecretBox } from './Credentials.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
 import { makeSessionStore, providerBench } from './Orchestrator.Factory'
@@ -488,4 +493,47 @@ export function makeConnectController(): ConnectController {
     projectRole: (projectId, userId) => makeProjects().roleOf(projectId, userId),
     events: makeCatalogEvents(),
   })
+}
+
+let connections: ProjectConnectionService | undefined
+
+/**
+ * 🔌 Os projetos conectados (o lado do dev): UMA instância — o vigia e as rotas veem as mesmas conexões. O token fica no
+ * cofre (`SecretBox`); o catálogo entra pelo MESMO import das telas, e o que sumiu na origem sai pelo escritor de sempre.
+ */
+export function makeProjectConnections(): ProjectConnectionService {
+  if (connections) return connections
+  const configured = process.env.CONVERSATIONS_DB?.trim()
+  const repository = new SqliteProjectConnectionRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH)
+  const writer = makeCatalogWriter()
+  const history = makeCatalogHistory()
+  connections = new ProjectConnectionService({
+    repository,
+    box: makeSecretBox(),
+    client: (url, projectId, token) => new RemoteClient(url, projectId, token),
+    projects: makeProjects(),
+    files: makeResourceFiles(),
+    applier: makeCatalogImportApplier(),
+    reader: catalogHistoryParts().reader,
+    remove: async (current, by) => {
+      const prepared = await writer.prepare(undefined, current)
+      history.within(catalogItemKey(current), { by, source: 'import', note: 'removido na origem (projeto conectado)' }, () => prepared.commit(by))
+      await prepared.after?.()
+    },
+    models: async () => {
+      const catalog = makeModelCatalog()
+      const settings = await makeSettings()
+        .read()
+        .catch(() => undefined)
+      return {
+        enabled: (provider, model) => catalog.isEnabled(provider, model),
+        ...(settings?.provider && settings.model ? { fallback: { provider: settings.provider, model: settings.model } } : {}),
+      }
+    },
+  })
+  return connections
+}
+
+export function makeProjectConnectionsController(): ProjectConnectionsController {
+  return new ProjectConnectionsController({ connections: makeProjectConnections(), proof: makeAuth().proof })
 }

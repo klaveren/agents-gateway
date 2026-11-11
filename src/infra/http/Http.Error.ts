@@ -59,6 +59,7 @@ import {
   PermissionRequestClosedError,
   PermissionRequestForbiddenError,
   PermissionRequestNotFoundError,
+  ProjectConnectionError,
 } from '@domain/errors/Domain.Error'
 
 export type TErrorCode =
@@ -104,6 +105,10 @@ export type TErrorCode =
   | 'import_state_conflict'
   | 'import_source_changed'
   | 'builder_unavailable'
+  | 'connection_exists'
+  | 'connection_unauthorized'
+  | 'connection_unavailable'
+  | 'connection_busy'
   | 'internal_error'
 
 export interface IHttpFailure {
@@ -135,6 +140,22 @@ export class HttpError extends Error {
 export function toHttpFailure(error: unknown): IHttpFailure {
   if (error instanceof HttpError) {
     return { status: error.status, code: error.code, message: error.message, details: error.details }
+  }
+
+  if (error instanceof ProjectConnectionError) {
+    // ⚖️ A recusa da ORIGEM nunca é 401 aqui: a tela leria como a própria sessão caída e sairia da conta.
+    const status = { invalid: 422, exists: 409, unauthorized: 422, unavailable: 502, busy: 409, not_found: 404 }[error.reason]
+    const code: TErrorCode = (
+      {
+        invalid: 'validation_error',
+        exists: 'connection_exists',
+        unauthorized: 'connection_unauthorized',
+        unavailable: 'connection_unavailable',
+        busy: 'connection_busy',
+        not_found: 'not_found',
+      } as const
+    )[error.reason]
+    return { status, code, message: error.message }
   }
 
   if (error instanceof CatalogRevisionNotFoundError) {

@@ -1,5 +1,6 @@
 import { PermissionsService } from '@application/Permissions.Service'
 import { ConnectController } from './Connect.Controller'
+import { ProjectConnectionsController } from './ProjectConnections.Controller'
 import { AuditController } from './Audit.Controller'
 import { SqliteAuditRepository } from '@infra/persistence/Sqlite.AuditRepository'
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
@@ -154,6 +155,8 @@ export class HttpServer {
     private readonly audit: AuditController = new AuditController({ repository: new SqliteAuditRepository() }),
     /** 🔌 A origem dos projetos conectados (ver `Connect.Controller`): o gateway de um dev usa um projeto desta instalação. */
     connect: ConnectController = new ConnectController({}),
+    /** 🔌 Os projetos conectados, do lado do dev (ver `ProjectConnections.Controller`). */
+    connections: ProjectConnectionsController = new ProjectConnectionsController({}),
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -212,9 +215,18 @@ export class HttpServer {
     this.routes.push({ method: 'get', path: '/audit', handler: this.audit.list })
     this.routes.push(
       { method: 'get', path: '/connect/:projectId/version', handler: connect.version },
+      { method: 'get', path: '/connect/:projectId/changes', handler: connect.changes },
       { method: 'get', path: '/connect/:projectId/events', handler: connect.events },
       { method: 'get', path: '/connect/:projectId/package', handler: connect.catalogPackage },
       { method: 'get', path: '/connect/:projectId/files/:sha256', handler: connect.file },
+      { method: 'get', path: '/connections', handler: connections.list },
+      { method: 'post', path: '/connections', handler: connections.connect },
+      { method: 'get', path: '/connections/:projectId', handler: connections.get },
+      { method: 'post', path: '/connections/:projectId/check', handler: connections.check },
+      { method: 'post', path: '/connections/:projectId/sync', handler: connections.sync },
+      { method: 'put', path: '/connections/:projectId/token', handler: connections.replaceToken },
+      { method: 'put', path: '/connections/:projectId/models', handler: connections.setModels },
+      { method: 'delete', path: '/connections/:projectId', handler: connections.disconnect },
     )
     this.setupRoutes()
     this.setupFrontend()

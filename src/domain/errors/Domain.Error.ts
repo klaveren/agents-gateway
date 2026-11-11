@@ -504,3 +504,24 @@ export class LedgerNotFoundError extends DomainError {
     super(`${kind === 'context' ? 'Ledger context' : kind === 'line' ? 'Ledger line' : 'Agent'} not found: ${id}`)
   }
 }
+
+/**
+ * 🔌 O projeto conectado (ver `ProjectConnection.Service`):
+ * - `invalid`: o pedido (id, url);
+ * - `exists`: já há um projeto com esse id aqui;
+ * - `unauthorized`: a origem recusou o token (revogado, vencido, a conta saiu do projeto);
+ * - `unavailable`: a origem não respondeu;
+ * - `busy`: já está atualizando;
+ * - `not_found`: o projeto não é conectado.
+ */
+export type TProjectConnectionFailure = 'invalid' | 'exists' | 'unauthorized' | 'unavailable' | 'busy' | 'not_found'
+
+export class ProjectConnectionError extends DomainError {
+  constructor(
+    readonly reason: TProjectConnectionFailure,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ProjectConnectionError'
+  }
+}

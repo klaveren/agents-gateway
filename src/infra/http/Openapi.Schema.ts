@@ -4725,6 +4725,297 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope(usageSummary(false))) }, '401': failures['401'] },
       },
     },
+    '/connections': {
+      get: {
+        summary:
+          'Connected projects (this gateway uses the catalog of a project of another gateway, read-only): the connections of the projects you administer, with the update notice',
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    projectId: { type: 'string' },
+                    url: { type: 'string' },
+                    remoteProjectId: { type: 'string' },
+                    syncedVersion: { type: 'integer' },
+                    latestVersion: { type: 'integer' },
+                    updateAvailable: { type: 'boolean', description: 'One notice per project, always to the LATEST version' },
+                    state: { type: 'string', enum: ['ok', 'offline', 'unauthorized'] },
+                    lastError: { type: 'string' },
+                    changes: { type: 'array', items: { type: 'object' }, description: 'What changed between the local and the latest version, one line per item' },
+                    changesTruncated: { type: 'boolean' },
+                    skipped: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, message: { type: 'string' } } } },
+                    secrets: { type: 'array', items: { type: 'object' }, description: 'The variable names the project needs (values are set here)' },
+                    modelMap: { type: 'object', additionalProperties: { type: 'string' } },
+                    createdAt: { type: 'string', format: 'date-time' },
+                    createdBy: { type: 'string' },
+                    lastCheckedAt: { type: 'string', format: 'date-time' },
+                    lastSyncedAt: { type: 'string', format: 'date-time' },
+                  },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+        },
+      },
+      post: {
+        summary:
+          'Connect a project of another gateway: checks the connection token (`agc_…`, created there by a member of the project) BEFORE creating anything, creates the project here with the same id and brings the latest catalog version. Gateway administrators only',
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { url: { type: 'string' }, projectId: { type: 'string' }, token: { type: 'string' } }, required: ['url', 'projectId', 'token'] }),
+        },
+        responses: {
+          '201': {
+            description: 'Connected',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  projectId: { type: 'string' },
+                  url: { type: 'string' },
+                  remoteProjectId: { type: 'string' },
+                  syncedVersion: { type: 'integer' },
+                  latestVersion: { type: 'integer' },
+                  updateAvailable: { type: 'boolean', description: 'One notice per project, always to the LATEST version' },
+                  state: { type: 'string', enum: ['ok', 'offline', 'unauthorized'] },
+                  lastError: { type: 'string' },
+                  changes: { type: 'array', items: { type: 'object' }, description: 'What changed between the local and the latest version, one line per item' },
+                  changesTruncated: { type: 'boolean' },
+                  skipped: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, message: { type: 'string' } } } },
+                  secrets: { type: 'array', items: { type: 'object' }, description: 'The variable names the project needs (values are set here)' },
+                  modelMap: { type: 'object', additionalProperties: { type: 'string' } },
+                  createdAt: { type: 'string', format: 'date-time' },
+                  createdBy: { type: 'string' },
+                  lastCheckedAt: { type: 'string', format: 'date-time' },
+                  lastSyncedAt: { type: 'string', format: 'date-time' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'A project with this id already exists here', ...json(failureEnvelope) },
+          '422': { description: 'Invalid request, or the origin refused the token', ...json(failureEnvelope) },
+          '502': { description: 'The origin did not answer', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/connections/{projectId}': {
+      get: {
+        summary: 'One connection (project administrators)',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  projectId: { type: 'string' },
+                  url: { type: 'string' },
+                  remoteProjectId: { type: 'string' },
+                  syncedVersion: { type: 'integer' },
+                  latestVersion: { type: 'integer' },
+                  updateAvailable: { type: 'boolean', description: 'One notice per project, always to the LATEST version' },
+                  state: { type: 'string', enum: ['ok', 'offline', 'unauthorized'] },
+                  lastError: { type: 'string' },
+                  changes: { type: 'array', items: { type: 'object' }, description: 'What changed between the local and the latest version, one line per item' },
+                  changesTruncated: { type: 'boolean' },
+                  skipped: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, message: { type: 'string' } } } },
+                  secrets: { type: 'array', items: { type: 'object' }, description: 'The variable names the project needs (values are set here)' },
+                  modelMap: { type: 'object', additionalProperties: { type: 'string' } },
+                  createdAt: { type: 'string', format: 'date-time' },
+                  createdBy: { type: 'string' },
+                  lastCheckedAt: { type: 'string', format: 'date-time' },
+                  lastSyncedAt: { type: 'string', format: 'date-time' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+      delete: {
+        summary: 'Disconnect: the project stays here as a regular (editable) project and the token is forgotten',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Disconnected', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/connections/{projectId}/check': {
+      post: {
+        summary: 'Ask the origin now for the latest version and what changed (the watcher also does it on its own)',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  projectId: { type: 'string' },
+                  url: { type: 'string' },
+                  remoteProjectId: { type: 'string' },
+                  syncedVersion: { type: 'integer' },
+                  latestVersion: { type: 'integer' },
+                  updateAvailable: { type: 'boolean', description: 'One notice per project, always to the LATEST version' },
+                  state: { type: 'string', enum: ['ok', 'offline', 'unauthorized'] },
+                  lastError: { type: 'string' },
+                  changes: { type: 'array', items: { type: 'object' }, description: 'What changed between the local and the latest version, one line per item' },
+                  changesTruncated: { type: 'boolean' },
+                  skipped: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, message: { type: 'string' } } } },
+                  secrets: { type: 'array', items: { type: 'object' }, description: 'The variable names the project needs (values are set here)' },
+                  modelMap: { type: 'object', additionalProperties: { type: 'string' } },
+                  createdAt: { type: 'string', format: 'date-time' },
+                  createdBy: { type: 'string' },
+                  lastCheckedAt: { type: 'string', format: 'date-time' },
+                  lastSyncedAt: { type: 'string', format: 'date-time' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/connections/{projectId}/sync': {
+      post: {
+        summary:
+          'Update to the LATEST version of the origin, as a mirror: creates, updates and removes what is gone there. Variable values and the model map stay local; what does not fit here is listed in `skipped`',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  result: {
+                    type: 'object',
+                    properties: {
+                      version: { type: 'integer' },
+                      applied: { type: 'integer' },
+                      removed: { type: 'array', items: { type: 'string' } },
+                      skipped: { type: 'array', items: { type: 'object' } },
+                    },
+                  },
+                  connection: {
+                    type: 'object',
+                    properties: {
+                      projectId: { type: 'string' },
+                      url: { type: 'string' },
+                      remoteProjectId: { type: 'string' },
+                      syncedVersion: { type: 'integer' },
+                      latestVersion: { type: 'integer' },
+                      updateAvailable: { type: 'boolean', description: 'One notice per project, always to the LATEST version' },
+                      state: { type: 'string', enum: ['ok', 'offline', 'unauthorized'] },
+                      lastError: { type: 'string' },
+                      changes: { type: 'array', items: { type: 'object' }, description: 'What changed between the local and the latest version, one line per item' },
+                      changesTruncated: { type: 'boolean' },
+                      skipped: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, message: { type: 'string' } } } },
+                      secrets: { type: 'array', items: { type: 'object' }, description: 'The variable names the project needs (values are set here)' },
+                      modelMap: { type: 'object', additionalProperties: { type: 'string' } },
+                      createdAt: { type: 'string', format: 'date-time' },
+                      createdBy: { type: 'string' },
+                      lastCheckedAt: { type: 'string', format: 'date-time' },
+                      lastSyncedAt: { type: 'string', format: 'date-time' },
+                    },
+                  },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'Already updating', ...json(failureEnvelope) },
+          '422': { description: 'The origin refused the token', ...json(failureEnvelope) },
+          '502': { description: 'The origin did not answer', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/connections/{projectId}/token': {
+      put: {
+        summary: 'Replace the connection token (expired or revoked) and check again',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { token: { type: 'string' } }, required: ['token'] }) },
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  projectId: { type: 'string' },
+                  url: { type: 'string' },
+                  remoteProjectId: { type: 'string' },
+                  syncedVersion: { type: 'integer' },
+                  latestVersion: { type: 'integer' },
+                  updateAvailable: { type: 'boolean', description: 'One notice per project, always to the LATEST version' },
+                  state: { type: 'string', enum: ['ok', 'offline', 'unauthorized'] },
+                  lastError: { type: 'string' },
+                  changes: { type: 'array', items: { type: 'object' }, description: 'What changed between the local and the latest version, one line per item' },
+                  changesTruncated: { type: 'boolean' },
+                  skipped: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, message: { type: 'string' } } } },
+                  secrets: { type: 'array', items: { type: 'object' }, description: 'The variable names the project needs (values are set here)' },
+                  modelMap: { type: 'object', additionalProperties: { type: 'string' } },
+                  createdAt: { type: 'string', format: 'date-time' },
+                  createdBy: { type: 'string' },
+                  lastCheckedAt: { type: 'string', format: 'date-time' },
+                  lastSyncedAt: { type: 'string', format: 'date-time' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/connections/{projectId}/models': {
+      put: {
+        summary: 'The model map: `provider/model` of the origin → `provider/model` here, for agents whose model does not run here. Applies on the next update',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { map: { type: 'object', additionalProperties: { type: 'string' } } }, required: ['map'] }) },
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  projectId: { type: 'string' },
+                  url: { type: 'string' },
+                  remoteProjectId: { type: 'string' },
+                  syncedVersion: { type: 'integer' },
+                  latestVersion: { type: 'integer' },
+                  updateAvailable: { type: 'boolean', description: 'One notice per project, always to the LATEST version' },
+                  state: { type: 'string', enum: ['ok', 'offline', 'unauthorized'] },
+                  lastError: { type: 'string' },
+                  changes: { type: 'array', items: { type: 'object' }, description: 'What changed between the local and the latest version, one line per item' },
+                  changesTruncated: { type: 'boolean' },
+                  skipped: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, message: { type: 'string' } } } },
+                  secrets: { type: 'array', items: { type: 'object' }, description: 'The variable names the project needs (values are set here)' },
+                  modelMap: { type: 'object', additionalProperties: { type: 'string' } },
+                  createdAt: { type: 'string', format: 'date-time' },
+                  createdBy: { type: 'string' },
+                  lastCheckedAt: { type: 'string', format: 'date-time' },
+                  lastSyncedAt: { type: 'string', format: 'date-time' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
     '/connect/{projectId}/version': {
       get: {
         summary:
@@ -4732,6 +5023,27 @@ export const OPENAPI_DOCUMENT = {
         parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { version: { type: 'integer' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/connect/{projectId}/changes': {
+      get: {
+        summary:
+          'Connected projects: the catalog version and what changed since `since` (one line per item, with its last operation and how many revisions) — the update notice, without the package',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'since', in: 'query', schema: { type: 'integer', minimum: 0 }, description: 'The version the caller has (default 0)' },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({ type: 'object', properties: { version: { type: 'integer' }, changes: { type: 'array', items: { type: 'object' } }, truncated: { type: 'boolean' } } }),
+            ),
+          },
+          '400': { description: 'Invalid `since`', ...json(failureEnvelope) },
           '401': failures['401'],
           '404': failures['404'],
         },
