@@ -949,7 +949,7 @@ describe('AgentProvider — retomar com a memória do SDK', () => {
     assert.match(stale.sent[0], /esta conversa foi retomada/)
   })
 
-  it('⚖️ o adapter nunca vê cap:: recebe o que roda no provedor, e o que não roda vira aviso no primeiro turno', async () => {
+  it('⚖️ o adapter nunca vê cap:: recebe o que roda no provedor (Abrir página, sem nativa, é a do gateway)', async () => {
     const store = new SessionStore()
     const seen: { created: string[]; turn: string[] } = { created: [], turn: [] }
     const adapter: IAgentAdapter = {
@@ -980,9 +980,9 @@ describe('AgentProvider — retomar com a memória do SDK', () => {
     const events: IAgentEvent[] = []
     for await (const event of provider.sendMessage(session.id, { text: 'oi' })) events.push(event)
 
-    // Modo Conversa: os arquivos do gateway; a página não roda aqui.
-    assert.deepStrictEqual(seen.created, ['read_file', 'list_files', 'search_files'])
+    // Modo Conversa: os arquivos e a página do gateway; tudo roda, nenhum aviso.
+    assert.deepStrictEqual(seen.created, ['read_file', 'list_files', 'search_files', 'fetch_url'])
     assert.deepStrictEqual(seen.turn, seen.created)
-    assert.ok(events.some((event) => event.type === 'warning' && /Abrir página/.test(String((event.payload as { message?: string }).message))))
+    assert.ok(!events.some((event) => event.type === 'warning' && /Indisponível/.test(String((event.payload as { message?: string }).message))))
   })
 })

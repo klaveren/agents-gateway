@@ -33,7 +33,7 @@ describe('Capability.Catalog', () => {
     assert.deepStrictEqual(resolve(EProvider.CLAUDE_SUB).allowedTools, allowedTools)
   })
 
-  it('por token (OpenAI): arquivos do gateway; a busca é a hospedada só no oficial, senão a do gateway; Abrir página não roda', () => {
+  it('por token (OpenAI): arquivos do gateway; a busca é a hospedada só no oficial, senão a do gateway; Abrir página é a do gateway', () => {
     const official = resolve(EProvider.OPENAI)
     assert.deepStrictEqual(official.allowedTools, [
       'run_bash',
@@ -47,10 +47,11 @@ describe('Capability.Catalog', () => {
       'write_file',
       'edit_file',
       'sdk:openai:web_search',
+      'fetch_url',
       'update_todos',
       'mcp:gateway/list_agents',
     ])
-    assert.deepStrictEqual(official.unavailable, ['Abrir página'])
+    assert.deepStrictEqual(official.unavailable, [])
     assert.ok(resolve(EProvider.OPENAI, EMode.AGENT, false).allowedTools.includes('search_web'))
   })
 
@@ -74,10 +75,11 @@ describe('Capability.Catalog', () => {
       'write_file',
       'edit_file',
       'sdk:codex:web_search',
+      'fetch_url',
       'update_todos',
       'mcp:gateway/list_agents',
     ])
-    assert.deepStrictEqual(codex.unavailable, ['Abrir página'])
+    assert.deepStrictEqual(codex.unavailable, [])
     // ⛔ O terminal do próprio Codex nunca sai da resolução, nem escolhido direto.
     assert.ok(!resolveCapabilities(['sdk:codex:shell'], { protocol: EProvider.CODEX, official: true, mode: EMode.AGENT }).allowedTools.length)
     // O Gemini também: o `--sandbox` dele nega o próprio terminal, e o projeto chega só pelas ferramentas do gateway.
@@ -102,7 +104,7 @@ describe('Capability.Catalog', () => {
   it('a tela diz como roda; os ids antigos viram capacidade sem repetir', () => {
     assert.strictEqual(capabilityRuns(capability('cap:files.read')!, EProvider.CLAUDE_SUB), 'Read do Claude, busca do gateway')
     assert.strictEqual(capabilityRuns(capability('cap:files.read')!, EProvider.GOOGLE), 'do gateway')
-    assert.strictEqual(capabilityRuns(capability('cap:web.fetch')!, EProvider.OPENAI), 'indisponível')
+    assert.strictEqual(capabilityRuns(capability('cap:web.fetch')!, EProvider.OPENAI), 'do gateway')
     assert.deepStrictEqual(toCapabilities(['sdk:Bash', 'run_bash', 'sdk:Read', 'sdk:Grep', 'sdk:openai:code_interpreter', 'update_todos']), [
       'cap:terminal',
       'cap:files.read',

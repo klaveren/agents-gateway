@@ -29,7 +29,7 @@ describe('LocalTools', () => {
   it('exposes exactly the built-in tools: web, terminal and the files', () => {
     assert.deepStrictEqual(
       toolsWith().map((tool) => tool.name),
-      ['search_web', 'run_bash', 'read_file', 'list_files', 'search_files', 'write_file', 'edit_file'],
+      ['search_web', 'fetch_url', 'run_bash', 'read_file', 'list_files', 'search_files', 'write_file', 'edit_file'],
     )
   })
 

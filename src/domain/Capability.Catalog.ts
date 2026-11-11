@@ -81,12 +81,11 @@ export const CAPABILITIES: readonly ICapability[] = [
     label: 'Abrir página',
     description: 'Lê uma página pelo endereço.',
     risk: 'server-network',
-    local: [],
+    // Onde não há a nativa (OpenAI, Codex por MCP, compatíveis, modo Conversa): a do gateway, com a regra de rede.
+    local: ['fetch_url'],
     runs: {
       [EProvider.CLAUDE]: { tools: ['sdk:WebFetch'], note: 'nativa do Claude' },
       [EProvider.GOOGLE]: { tools: ['sdk:google:url_context'], note: 'do Google' },
-      [EProvider.OPENAI]: { unavailable: true },
-      [EProvider.CODEX]: { unavailable: true },
       [EProvider.ANTIGRAVITY]: { unavailable: true },
     },
   },
