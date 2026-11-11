@@ -1,0 +1,20 @@
+Template: agents-gateway/data_dir
+Type: string
+Default: /var/lib/agents-gateway
+Description: Pasta de dados do Agents Gateway:
+ Os projetos, o banco e o cofre ficam nesta pasta. Numa reinstalação, aponte
+ para a mesma pasta para continuar com os dados.
+
+Template: agents-gateway/host
+Type: select
+Choices: 127.0.0.1, 0.0.0.0
+Default: 127.0.0.1
+Description: Endereço em que o servidor escuta:
+ 127.0.0.1: só esta máquina (para acessar de fora, use um proxy na frente).
+ 0.0.0.0: qualquer máquina da rede alcança a porta.
+
+Template: agents-gateway/port
+Type: string
+Default: 3000
+Description: Porta do servidor:
+ A tela e a API ficam em http://<endereço>:<porta>.

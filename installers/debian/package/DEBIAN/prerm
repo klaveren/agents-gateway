@@ -1,0 +1,7 @@
+#!/bin/sh
+# Remover: para e desliga o serviço. Atualizar: segue rodando (o postinst reinicia na versão nova).
+set -e
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+  systemctl disable --now agents-gateway >/dev/null 2>&1 || true
+fi
+exit 0

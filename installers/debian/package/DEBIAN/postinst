@@ -1,0 +1,57 @@
+#!/bin/sh
+# Instala (ou atualiza) o serviço: o usuário, a pasta de dados, os segredos (uma vez), as respostas e o systemd.
+set -e
+. /usr/share/debconf/confmodule
+SERVICE=agents-gateway
+USER_NAME=agents-gateway
+ETC=/etc/agents-gateway
+
+if [ "$1" = configure ]; then
+  db_get agents-gateway/data_dir; DATA="${RET:-/var/lib/agents-gateway}"
+  db_get agents-gateway/host; HOST="${RET:-127.0.0.1}"
+  db_get agents-gateway/port; PORT="${RET:-3000}"
+  case "$PORT" in '' | *[!0-9]*) PORT=3000 ;; esac
+  DATA="${DATA%/}"
+
+  if ! getent passwd "$USER_NAME" >/dev/null; then
+    useradd --system --user-group --home-dir /var/lib/agents-gateway --create-home --shell /usr/sbin/nologin "$USER_NAME"
+  fi
+  mkdir -p "$DATA"
+  chown "$USER_NAME:$USER_NAME" "$DATA"
+  chmod 700 "$DATA"
+
+  mkdir -p "$ETC"
+  # Os segredos e o código do primeiro admin: UMA vez (reinstalar não troca; quem migra põe os da instalação antiga aqui).
+  if [ ! -f "$ETC/gateway.env" ]; then
+    rand() { od -An -tx1 -N32 /dev/urandom | tr -d ' \n'; }
+    code="$(od -An -tx1 -N6 /dev/urandom | tr -d ' \n' | tr 'a-f' 'A-F' | sed -E 's/(....)(....)(....)/\1-\2-\3/')"
+    umask 077
+    printf 'AUTH_SECRET=%s\nSECRETS_KEY=%s\nSETUP_CODE=%s\n' "$(rand)" "$(rand)" "$code" >"$ETC/gateway.env"
+  fi
+  chmod 600 "$ETC/gateway.env"
+  printf 'GATEWAY_DATA=%s\nCONVERSATIONS_DB=%s/gateway.db\nHOST=%s\nPORT=%s\n' "$DATA" "$DATA" "$HOST" "$PORT" >"$ETC/settings.env"
+  chmod 644 "$ETC/settings.env"
+
+  # O cerco do terminal dos agentes precisa do bubblewrap abrindo user namespace.
+  if command -v bwrap >/dev/null && ! runuser -u "$USER_NAME" -- bwrap --ro-bind / / --dev /dev --unshare-user --unshare-pid true 2>/dev/null; then
+    echo "⚠️  O bubblewrap não abriu um user namespace: sem cerco, o terminal dos agentes de projeto fica recusado." >&2
+    echo "   Ubuntu com AppArmor: libere o bwrap (perfil bwrap-userns-restrict) ou kernel.apparmor_restrict_unprivileged_userns=0." >&2
+  fi
+
+  db_stop
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable "$SERVICE" >/dev/null 2>&1 || true
+    systemctl restart "$SERVICE"
+  else
+    echo "Sem systemd: o serviço não foi iniciado (rode $SERVICE à mão; veja 'agents-gateway ajuda')." >&2
+  fi
+
+  show="$HOST"
+  [ "$HOST" = 0.0.0.0 ] && show="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  echo ""
+  echo "✅ Agents Gateway: http://${show:-localhost}:$PORT"
+  echo "   Código de instalação do primeiro admin: $(sed -n 's/^SETUP_CODE=//p' "$ETC/gateway.env")"
+  echo "   Dados em $DATA · 'agents-gateway ajuda' para status, logs e o código."
+fi
+exit 0
