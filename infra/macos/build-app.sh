@@ -67,6 +67,10 @@ PLIST
 echo "▶ assinatura ad-hoc"
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "  (assinatura ad-hoc falhou: o app abre com botão direito → Abrir)"
 
+# O ícone também no PRÓPRIO executável: é ele que o LaunchAgent roda, e os Itens de Início do macOS mostram o ícone do
+# arquivo do serviço. Depois da assinatura (o ícone fica num atributo do arquivo, fora do que ela confere).
+osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.setIconForFileOptions(\$.NSImage.alloc.initWithContentsOfFile('$ROOT/infra/macos/AppIcon.png'), '$APP/Contents/MacOS/Agents Gateway', 0)" >/dev/null
+
 echo "▶ dmg"
 DMG_DIR="$OUT/dmg"
 mkdir -p "$DMG_DIR"
