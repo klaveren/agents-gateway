@@ -1,0 +1,73 @@
+#!/bin/zsh
+# Gera o "Agents Gateway.app" e o .dmg (uso pessoal: sem assinatura da Apple; assinatura ad-hoc, que basta para o app
+# construído nesta máquina). Do que está COMMITADO (`git archive HEAD`), com o Node desta máquina dentro do app.
+#
+#   infra/macos/build-app.sh            → dist-mac/Agents Gateway.app e dist-mac/Agents-Gateway-<versão>.dmg
+set -eu
+ROOT="${0:A:h:h:h}"
+OUT="$ROOT/dist-mac"
+STAGE="$OUT/stage"
+APP="$OUT/Agents Gateway.app"
+NODE_BIN="$(command -v node)"
+[ -x "$NODE_BIN" ] || { echo "node não encontrado no PATH" >&2; exit 1 }
+case "$("$NODE_BIN" -v)" in v24.*) ;; *) echo "precisa do Node 24 (achei $("$NODE_BIN" -v))" >&2; exit 1 ;; esac
+VERSION="$(node -p "require('$ROOT/package.json').version")"
+
+echo "▶ montagem limpa do HEAD ($(git -C "$ROOT" rev-parse --short HEAD))"
+rm -rf "$OUT"
+mkdir -p "$STAGE"
+git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$STAGE"
+
+echo "▶ dependências e build"
+(cd "$STAGE" && pnpm install --frozen-lockfile --silent && pnpm build && pnpm build:web >/dev/null && CI=true pnpm install --prod --frozen-lockfile --silent)
+
+echo "▶ app"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
+cp -R "$STAGE/dist" "$STAGE/node_modules" "$STAGE/package.json" "$APP/Contents/Resources/app/"
+mkdir -p "$APP/Contents/Resources/app/web"
+cp -R "$STAGE/web/dist" "$APP/Contents/Resources/app/web/dist"
+cp "$NODE_BIN" "$APP/Contents/Resources/node"
+cp "$ROOT/infra/macos/run-server.sh" "$APP/Contents/Resources/run-server.sh"
+cp "$ROOT/infra/macos/launcher.sh" "$APP/Contents/MacOS/Agents Gateway"
+chmod +x "$APP/Contents/MacOS/Agents Gateway" "$APP/Contents/Resources/run-server.sh" "$APP/Contents/Resources/node"
+
+echo "▶ ícone"
+ICONSET="$OUT/AppIcon.iconset"
+mkdir -p "$ICONSET"
+# O desenho é o `AppIcon.svg`; o PNG de 1024 já vem gerado dele (`rsvg-convert -w 1024 AppIcon.svg -o AppIcon.png`).
+for size in 16 32 128 256 512; do
+  sips -z $size $size "$ROOT/infra/macos/AppIcon.png" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+  sips -z $((size * 2)) $((size * 2)) "$ROOT/infra/macos/AppIcon.png" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+
+cat >"$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Agents Gateway</string>
+  <key>CFBundleDisplayName</key><string>Agents Gateway</string>
+  <key>CFBundleIdentifier</key><string>com.agents-gateway.app</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleExecutable</key><string>Agents Gateway</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSUIElement</key><true/>
+</dict>
+</plist>
+PLIST
+
+echo "▶ assinatura ad-hoc"
+codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "  (assinatura ad-hoc falhou: o app abre com botão direito → Abrir)"
+
+echo "▶ dmg"
+DMG_DIR="$OUT/dmg"
+mkdir -p "$DMG_DIR"
+cp -R "$APP" "$DMG_DIR/"
+ln -s /Applications "$DMG_DIR/Applications"
+hdiutil create -volname "Agents Gateway" -srcfolder "$DMG_DIR" -ov -format UDZO "$OUT/Agents-Gateway-$VERSION.dmg" >/dev/null
+rm -rf "$STAGE" "$DMG_DIR" "$ICONSET"
+echo "✅ $OUT/Agents-Gateway-$VERSION.dmg"
