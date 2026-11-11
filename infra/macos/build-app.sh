@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Gera o "Agents Gateway.app" e o .dmg (uso pessoal: sem assinatura da Apple; assinatura ad-hoc, que basta para o app
+# Gera o "Agents Gateway.app" (uma janela própria, WebKit) e o .dmg (uso pessoal: sem assinatura da Apple; assinatura ad-hoc, que basta para o app
 # construído nesta máquina). Do que está COMMITADO (`git archive HEAD`), com o Node desta máquina dentro do app.
 #
 #   infra/macos/build-app.sh            → dist-mac/Agents Gateway.app e dist-mac/Agents-Gateway-<versão>.dmg
@@ -12,6 +12,8 @@ NODE_BIN="$(command -v node)"
 [ -x "$NODE_BIN" ] || { echo "node não encontrado no PATH" >&2; exit 1 }
 case "$("$NODE_BIN" -v)" in v24.*) ;; *) echo "precisa do Node 24 (achei $("$NODE_BIN" -v))" >&2; exit 1 ;; esac
 VERSION="$(node -p "require('$ROOT/package.json').version")"
+# O build: a versão + o commit. Muda a cada build, e é por ela que o app sabe que precisa reiniciar o servidor.
+BUILD="$VERSION+$(git -C "$ROOT" rev-parse --short HEAD)"
 
 echo "▶ montagem limpa do HEAD ($(git -C "$ROOT" rev-parse --short HEAD))"
 rm -rf "$OUT"
@@ -27,9 +29,10 @@ cp -R "$STAGE/dist" "$STAGE/node_modules" "$STAGE/package.json" "$APP/Contents/R
 mkdir -p "$APP/Contents/Resources/app/web"
 cp -R "$STAGE/web/dist" "$APP/Contents/Resources/app/web/dist"
 cp "$NODE_BIN" "$APP/Contents/Resources/node"
-cp "$ROOT/infra/macos/run-server.sh" "$APP/Contents/Resources/run-server.sh"
-cp "$ROOT/infra/macos/launcher.sh" "$APP/Contents/MacOS/Agents Gateway"
-chmod +x "$APP/Contents/MacOS/Agents Gateway" "$APP/Contents/Resources/run-server.sh" "$APP/Contents/Resources/node"
+cp "$ROOT/infra/macos/run-server.sh" "$ROOT/infra/macos/service.sh" "$APP/Contents/Resources/"
+# A janela (WebKit): o executável do app. Precisa das Command Line Tools (`xcode-select --install`).
+swiftc -O -target arm64-apple-macos12.0 "$ROOT/infra/macos/App.swift" -o "$APP/Contents/MacOS/Agents Gateway"
+chmod +x "$APP/Contents/MacOS/Agents Gateway" "$APP/Contents/Resources/run-server.sh" "$APP/Contents/Resources/service.sh" "$APP/Contents/Resources/node"
 
 echo "▶ ícone"
 ICONSET="$OUT/AppIcon.iconset"
@@ -49,13 +52,14 @@ cat >"$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>Agents Gateway</string>
   <key>CFBundleDisplayName</key><string>Agents Gateway</string>
   <key>CFBundleIdentifier</key><string>com.agents-gateway.app</string>
-  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$BUILD</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleExecutable</key><string>Agents Gateway</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
-  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict>
 </plist>
 PLIST
