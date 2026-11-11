@@ -258,7 +258,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 // nome e o ícone do app; daqui, vira o `run-server.sh` (o processo é substituído, sem janela).
 if CommandLine.arguments.contains("--server") {
   let script = Bundle.main.resourceURL!.appendingPathComponent("run-server.sh").path
-  let args = ["/bin/zsh", script].map { strdup($0) } + [nil]
+  let parts: [String] = ["/bin/zsh", script]
+  var args: [UnsafeMutablePointer<CChar>?] = parts.map { strdup($0) }
+  args.append(nil)
   execv("/bin/zsh", args)
   perror("execv")
   exit(1)
