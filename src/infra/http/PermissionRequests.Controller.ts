@@ -13,7 +13,7 @@ import { ownsSession, resolveCaller } from './Caller.Access'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
-import { agentProjectOf, administers, requireAgentAdmin, requireAnyAdmin, requireProjectAdmin } from './Project.Access'
+import { agentProjectOf, administers, refuseConnected, requireAgentAdmin, requireAnyAdmin, requireProjectAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
 import { viaSessionCookie } from './Session.Cookie'
 
@@ -175,6 +175,9 @@ export class PermissionRequestsController {
   async approve(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { service, by } = await this.decider(req, 'approvePermissionRequest')
+      // 🔌 Projeto conectado: as regras do agente vão para a camada local e a variável é valor daqui; o resto mudaria o catálogo.
+      const request = service.get(req.params.requestId as string)
+      if (request.kind === 'agent-patch' || request.kind === 'project-rules') refuseConnected(this.projectOf(request))
       const { confirm, value } = parseBody(approveSchema, req.body)
       return service.approve(req.params.requestId as string, confirm, { by, onScreen: viaSessionCookie(res) && !viaAccessToken(res) }, value)
     })

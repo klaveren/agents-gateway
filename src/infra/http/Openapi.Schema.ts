@@ -1163,6 +1163,44 @@ const permissionRuleSchema = {
   },
   required: ['category', 'pattern', 'decision'],
 }
+
+const localLayerParameters = [
+  { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+  { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+]
+
+const localLayerSchema = {
+  type: 'object',
+  properties: {
+    providers: {
+      type: 'array',
+      description: 'The models of this machine for the agent. Absent or empty: the ones of the origin (through the model map of the connection)',
+      items: {
+        type: 'object',
+        properties: { provider: { type: 'string' }, models: { type: 'array', items: { type: 'string' } }, sandbox: { type: 'string' }, network: { type: 'boolean' } },
+        required: ['provider', 'models'],
+      },
+    },
+    allowedTools: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Tools, `mcp:<server>/<tool>` and `agent:<id>` added here. An automatic tool the origin turned off comes back by its name',
+    },
+    permissions: { type: 'array', items: permissionRuleSchema },
+  },
+}
+
+const localLayerViewSchema = {
+  type: 'object',
+  properties: {
+    agentId: { type: 'string' },
+    projectId: { type: 'string' },
+    origin: { type: 'object', description: 'What came from the origin (read-only)', properties: localLayerSchema.properties },
+    layer: localLayerSchema,
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: { type: 'string' },
+  },
+}
 /** Um pedido de permissão do agente (ver `PermissionRequests.Service`). */
 const permissionRequestSchema = {
   type: 'object',
@@ -3802,6 +3840,11 @@ export const OPENAPI_DOCUMENT = {
                   agentName: { type: 'string' },
                   projectId: { type: 'string' },
                   rules: { type: 'array', items: permissionRuleSchema },
+                  origin: {
+                    type: 'array',
+                    items: permissionRuleSchema,
+                    description: 'Agent of a connected project: the rules that came from the origin (read-only). `rules` are then the ones of this machine',
+                  },
                   project: { type: 'object', properties: { projectId: { type: 'string' }, rules: { type: 'array', items: permissionRuleSchema } } },
                   pending: { type: 'array', items: permissionRequestSchema },
                 },
@@ -5014,6 +5057,26 @@ export const OPENAPI_DOCUMENT = {
           '401': failures['401'],
           '404': failures['404'],
         },
+      },
+    },
+    '/connections/{projectId}/agents/{agentId}/local': {
+      get: {
+        summary:
+          'Connected projects: the local layer of an agent, what THIS machine adds to what came from the origin. It lives outside the catalog: the update never touches it and it never travels to the origin',
+        parameters: localLayerParameters,
+        responses: { '200': { description: 'OK', ...json(envelope(localLayerViewSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+      put: {
+        summary:
+          'Saves the local layer of an agent of a connected project. Models REPLACE the ones of the origin for that agent; tools, MCPs and delegation ADD to its list; permission rules add to its layer (a deny of the origin still wins). An empty layer removes it',
+        parameters: localLayerParameters,
+        requestBody: { required: true, ...json(localLayerSchema) },
+        responses: { '200': { description: 'OK', ...json(envelope(localLayerViewSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Removes the local layer: the agent goes back to exactly what came from the origin',
+        parameters: localLayerParameters,
+        responses: { '200': { description: 'OK', ...json(envelope(localLayerViewSchema)) }, '401': failures['401'], '404': failures['404'] },
       },
     },
     '/connect/{projectId}/ledger/{agentId}': {

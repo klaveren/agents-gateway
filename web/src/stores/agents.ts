@@ -171,6 +171,7 @@ export const useAgentsStore = defineStore('agents', () => {
     byId,
     load,
     ensure,
+    reloadLists,
     reloadAll,
     loadTools,
     ensureTools,

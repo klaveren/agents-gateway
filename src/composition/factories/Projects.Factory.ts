@@ -128,3 +128,6 @@ let connectedProject: (projectId: string) => { url: string } | undefined = () =>
 export function useConnectedProjects(lookup: (projectId: string) => { url: string } | undefined): void {
   connectedProject = lookup
 }
+
+/** O projeto é conectado? (Para quem decide fora das rotas, como a camada local dos agentes.) */
+export const isConnectedProject = (projectId: string): boolean => !!connectedProject(projectId)

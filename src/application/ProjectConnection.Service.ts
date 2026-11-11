@@ -33,6 +33,11 @@ export interface IProjectConnectionDeps {
   reader: { list(scope: TCatalogScope): ICatalogDocument[] }
   /** Apaga um item que sumiu na origem (o escritor do catálogo, com a revisão). */
   remove(current: ICatalogDocument, by: string): Promise<void>
+  /**
+   * 🔌 As camadas locais dos agentes (ver `AgentLocalLayer.Service`): a atualização NÃO as toca — só a do agente que a
+   * origem removeu sai; ao desconectar, cada uma passa a ser do próprio agente.
+   */
+  layers?: { applyAll(projectId: string, by: string): void; forget(agentId: string): void }
   /** O uso das conversas daqui (as linhas do relatório), para mandar o do projeto conectado à origem. */
   usage?: (query: IUsageQuery) => Promise<IUsageRow[]>
   /** Os modelos desta instalação (sem o mapa, que é da conexão). */
@@ -146,8 +151,10 @@ export class ProjectConnectionService {
   }
 
   /** Desconecta: o projeto fica, como um projeto comum daqui (editável), e o token é esquecido. */
-  disconnect(projectId: string): void {
+  disconnect(projectId: string, by = 'system'): void {
     this.require(projectId)
+    // ⚠️ Antes de esquecer a conexão: a camada local só vale em projeto conectado, e o agente não pode perder o que tinha.
+    this.deps.layers?.applyAll(projectId, by)
     this.deps.repository.remove(projectId)
   }
 
@@ -487,6 +494,8 @@ export class ProjectConnectionService {
     for (const kind of REMOVAL_ORDER)
       for (const current of local.filter((document) => document.kind === kind && !kept.has(`${document.kind}/${document.id}`)))
         try {
+          // Quem delegava a ele só pela camada local não pode travar a saída (`AgentInUseError`).
+          if (current.kind === 'agent') this.deps.layers?.forget(current.id)
           await this.deps.remove(current, who)
           removed.push(`${current.kind}/${current.id}`)
         } catch (error) {

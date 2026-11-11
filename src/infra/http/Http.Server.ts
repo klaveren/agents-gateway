@@ -233,6 +233,9 @@ export class HttpServer {
       { method: 'put', path: '/connections/:projectId/token', handler: connections.replaceToken },
       { method: 'put', path: '/connections/:projectId/models', handler: connections.setModels },
       { method: 'delete', path: '/connections/:projectId', handler: connections.disconnect },
+      { method: 'get', path: '/connections/:projectId/agents/:agentId/local', handler: connections.getLocal },
+      { method: 'put', path: '/connections/:projectId/agents/:agentId/local', handler: connections.saveLocal },
+      { method: 'delete', path: '/connections/:projectId/agents/:agentId/local', handler: connections.removeLocal },
     )
     this.setupRoutes()
     this.setupFrontend()

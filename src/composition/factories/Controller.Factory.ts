@@ -35,6 +35,7 @@ import { McpServersController } from '@infra/http/McpServers.Controller'
 import { PackagesController } from '@infra/http/Packages.Controller'
 import { HooksController } from '@infra/http/Hooks.Controller'
 import { makeHooks } from './Hooks.Factory'
+import { makeAgentLocalLayers } from './AgentLocalLayers.Factory'
 import { makeProjects, useConnectedProjects } from './Projects.Factory'
 import { useConnectionsForLedger } from './Connected.Ledger'
 import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
@@ -175,6 +176,8 @@ export function makeController(): AgentController {
   )
   // O `patch_agent` e a aprovação de um patch gravam o agente inteiro: com as MESMAS regras do `PUT /agents`.
   makePermissionRequests().useAgentValidation(async () => ({ rules: await controller.agentRules(), issues: (agent) => controller.projectIssues(agent) }))
+  // E a camada local do agente de projeto conectado.
+  makeAgentLocalLayers().useAgentValidation(async () => ({ rules: await controller.agentRules(), issues: (agent) => controller.projectIssues(agent) }))
   return controller
 }
 
@@ -557,6 +560,7 @@ export function makeProjectConnections(): ProjectConnectionService {
     applier: makeCatalogImportApplier(),
     reader: catalogHistoryParts().reader,
     usage: (query) => makeConversationRepository().usage(query),
+    layers: makeAgentLocalLayers(),
     remove: async (current, by) => {
       const prepared = await writer.prepare(undefined, current)
       history.within(catalogItemKey(current), { by, source: 'import', note: 'removido na origem (projeto conectado)' }, () => prepared.commit(by))
@@ -592,5 +596,5 @@ export function makeProjectConnections(): ProjectConnectionService {
 }
 
 export function makeProjectConnectionsController(): ProjectConnectionsController {
-  return new ProjectConnectionsController({ connections: makeProjectConnections(), proof: makeAuth().proof })
+  return new ProjectConnectionsController({ connections: makeProjectConnections(), layers: makeAgentLocalLayers(), proof: makeAuth().proof })
 }
