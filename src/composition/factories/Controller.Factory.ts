@@ -35,7 +35,7 @@ import { McpServersController } from '@infra/http/McpServers.Controller'
 import { PackagesController } from '@infra/http/Packages.Controller'
 import { HooksController } from '@infra/http/Hooks.Controller'
 import { makeHooks } from './Hooks.Factory'
-import { makeProjects } from './Projects.Factory'
+import { makeProjects, useConnectedProjects } from './Projects.Factory'
 import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { ProjectsController } from '@infra/http/Projects.Controller'
 import { ImportController } from '@infra/http/Import.Controller'
@@ -531,6 +531,8 @@ export function makeProjectConnections(): ProjectConnectionService {
       }
     },
   })
+  const service = connections
+  useConnectedProjects((projectId) => service.get(projectId))
   return connections
 }
 

@@ -109,6 +109,7 @@ export type TErrorCode =
   | 'connection_unauthorized'
   | 'connection_unavailable'
   | 'connection_busy'
+  | 'project_read_only'
   | 'internal_error'
 
 export interface IHttpFailure {

@@ -1,5 +1,6 @@
 import { PermissionsService } from '@application/Permissions.Service'
 import { ConnectController } from './Connect.Controller'
+import { requestScope } from './Request.Scope'
 import { ProjectConnectionsController } from './ProjectConnections.Controller'
 import { AuditController } from './Audit.Controller'
 import { SqliteAuditRepository } from '@infra/persistence/Sqlite.AuditRepository'
@@ -310,7 +311,8 @@ export class HttpServer {
           ? [exchange, callerScope, ...done]
           : [exchange, identity, callerScope, ...done]
       const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : open
-      this.app[method](`${API_PREFIX}${routePath}`, ...chain)
+      // A rota em atendimento, para quem decide acesso lá no fundo (a trava do projeto conectado, em `Project.Access`).
+      this.app[method](`${API_PREFIX}${routePath}`, requestScope(method, routePath), ...chain)
     }
 
     // Último recurso: erro que escapou de um middleware (token, corpo malformado) ainda

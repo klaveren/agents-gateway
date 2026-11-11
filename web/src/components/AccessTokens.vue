@@ -5,6 +5,7 @@ import { fullTime } from '@/lib/format'
 import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
 import { type IAccessToken, useTokensStore } from '@/stores/tokens'
+import { useProjectsStore } from '@/stores/projects'
 import ConfirmDialog from './ConfirmDialog.vue'
 import Icon from './Icon.vue'
 import { copyText } from '@/lib/clipboard'
@@ -26,7 +27,10 @@ const name = ref('Claude Code')
 const days = ref<number>(90)
 const creating = ref(false)
 const createError = ref<string>()
-const revealed = ref<{ name: string; token: string }>()
+const revealed = ref<{ name: string; token: string; projectId?: string }>()
+const projects = useProjectsStore()
+/** Para quê: acesso pessoal (a conta inteira) ou a conexão de UM projeto com outro gateway (`agc_`, só leitura do catálogo). */
+const purpose = ref<string>('')
 const copied = ref<string>()
 const revoking = ref<IAccessToken>()
 
@@ -39,6 +43,7 @@ const DAYS = [
 /** Ativo = não revogado E dentro da validade: token vencido não vale e não conta nos 20. */
 const isActive = (token: IAccessToken) => !token.revokedAt && (!token.expiresAt || new Date(token.expiresAt).getTime() > Date.now())
 const active = computed(() => tokens.value.filter(isActive))
+const origin = location.origin
 const mcpCommand = computed(() =>
   revealed.value
     ? `claude mcp add --transport http gateway ${location.origin}/v1/mcp --header "X-Tool-Authorization: Bearer ${revealed.value.token}"`
@@ -50,8 +55,8 @@ async function create() {
   createError.value = undefined
   try {
     if (!userId.value) return
-    const created = await store.create(userId.value, { name: name.value, expiresInDays: days.value })
-    revealed.value = { name: created.name, token: created.token }
+    const created = await store.create(userId.value, { name: name.value, expiresInDays: days.value, ...(purpose.value ? { projectId: purpose.value } : {}) })
+    revealed.value = { name: created.name, token: created.token, ...(created.projectId ? { projectId: created.projectId } : {}) }
   } catch (error) {
     createError.value = error instanceof ApiError && error.status === 422 ? Object.values(error.fieldIssues).flat().join('; ') : error instanceof Error ? error.message : String(error)
   } finally {
@@ -82,7 +87,8 @@ async function revoke() {
   <section id="tokens" class="flex scroll-mt-4 flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
     <h2 class="font-medium">Tokens de acesso</h2>
     <p class="text-xs text-zinc-400">
-      Para o Claude Code, scripts e integrações. O token age como a sua conta. Revogue quando não usar mais.
+      Para o Claude Code, scripts e integrações. O token de acesso age como a sua conta. O de conexão só deixa outro gateway (o da sua máquina) usar o
+      catálogo de um projeto. Revogue quando não usar mais.
     </p>
 
     <div v-if="revealed" class="flex flex-col gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
@@ -91,11 +97,19 @@ async function revoke() {
         <code class="min-w-0 flex-1 truncate rounded-lg bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100">{{ revealed.token }}</code>
         <button class="btn btn-sm btn-secondary" @click="copy('token', revealed.token)"><Icon :name="copied === 'token' ? 'check' : 'copy'" class="h-3.5 w-3.5" /> Copiar</button>
       </div>
-      <p class="text-xs text-zinc-400">Para ligar no Claude Code:</p>
-      <div class="flex min-w-0 items-start gap-2">
-        <code class="min-w-0 flex-1 rounded-lg bg-zinc-950 px-2 py-1.5 font-mono text-[11px] break-all text-zinc-300">{{ mcpCommand }}</code>
-        <button class="btn btn-sm btn-secondary" @click="copy('cmd', mcpCommand)"><Icon :name="copied === 'cmd' ? 'check' : 'copy'" class="h-3.5 w-3.5" /> Copiar</button>
-      </div>
+      <template v-if="revealed.projectId">
+        <p class="text-xs text-zinc-300">
+          No gateway da sua máquina: Projetos → Novo → <strong>Conectar de outro gateway</strong>, com o endereço
+          <code class="text-zinc-100">{{ origin }}</code>, o projeto <code class="text-zinc-100">{{ revealed.projectId }}</code> e este token.
+        </p>
+      </template>
+      <template v-else>
+        <p class="text-xs text-zinc-400">Para ligar no Claude Code:</p>
+        <div class="flex min-w-0 items-start gap-2">
+          <code class="min-w-0 flex-1 rounded-lg bg-zinc-950 px-2 py-1.5 font-mono text-[11px] break-all text-zinc-300">{{ mcpCommand }}</code>
+          <button class="btn btn-sm btn-secondary" @click="copy('cmd', mcpCommand)"><Icon :name="copied === 'cmd' ? 'check' : 'copy'" class="h-3.5 w-3.5" /> Copiar</button>
+        </div>
+      </template>
       <button class="self-start text-xs text-zinc-400 hover:text-zinc-100" @click="revealed = undefined">Já copiei — fechar</button>
     </div>
 
@@ -103,6 +117,13 @@ async function revoke() {
       <label class="flex min-w-0 flex-1 basis-40 flex-col gap-1 text-sm text-zinc-300">
         Nome
         <input v-model="name" required maxlength="60" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm" placeholder="Claude Code" />
+      </label>
+      <label v-if="projects.list.length" class="flex flex-col gap-1 text-sm text-zinc-300">
+        Para
+        <select v-model="purpose" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm" data-test="token-purpose">
+          <option value="">Acesso pessoal</option>
+          <option v-for="project in projects.list" :key="project.id" :value="project.id">Conectar o projeto {{ project.name }}</option>
+        </select>
       </label>
       <label class="flex flex-col gap-1 text-sm text-zinc-300">
         Validade
@@ -121,6 +142,7 @@ async function revoke() {
           <div class="flex items-center gap-2">
             <span class="truncate text-sm font-medium">{{ token.name }}</span>
             <code class="shrink-0 text-[11px] text-zinc-500">{{ token.prefix }}…</code>
+            <span v-if="token.projectId" class="shrink-0 rounded-full bg-sky-500/15 px-1.5 text-[10px] text-sky-200">conexão · {{ token.projectId }}</span>
           </div>
           <div class="text-xs text-zinc-500">
             criado {{ fullTime(token.createdAt) }} ·

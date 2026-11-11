@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ApiError } from './lib/api'
 import DefaultLayout from './layouts/DefaultLayout.vue'
+import ConnectionNotice from './components/ConnectionNotice.vue'
 import LiteLayout from './layouts/LiteLayout.vue'
 import { lite } from './lib/edition'
 import { useAgentsStore } from './stores/agents'
@@ -83,6 +84,8 @@ onMounted(async () => {
         <button type="button" :disabled="retrying" class="shrink-0 rounded-full bg-rose-500/20 px-3 py-1 text-xs font-medium hover:bg-rose-500/30 disabled:opacity-50" @click="loadAgents">{{ retrying ? 'Tentando…' : 'Tentar de novo' }}</button>
       </div>
       <RouterView v-if="auth.checked" />
+      <!-- 🔌 O aviso dos projetos conectados: só para quem administra algo (o membro não atualiza). -->
+      <ConnectionNotice v-if="auth.checked && auth.signedIn && (auth.isAdmin || projects.managesAny)" />
     </main>
   </component>
 </template>
