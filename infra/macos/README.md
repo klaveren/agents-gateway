@@ -1,7 +1,8 @@
 # Agents Gateway no Mac (uso pessoal)
 
-O gateway instalado como app: ícone em **/Applications**, servidor em **segundo plano** (sobe no login, volta se cair) e
-uma **pasta de trabalho** escolhida no primeiro uso — os projetos, o banco e o cofre ficam nela.
+O gateway instalado como app: ícone em **/Applications**, a tela numa **janela própria** (não no navegador), servidor em
+**segundo plano** (sobe no login, volta se cair) e uma **pasta de trabalho** escolhida no primeiro uso — os projetos, o
+banco e o cofre ficam nela. Fechar a janela não para o servidor.
 
 Sem assinatura da Apple: é para esta máquina (o build assina ad-hoc).
 
@@ -12,23 +13,26 @@ infra/macos/build-app.sh
 ```
 
 Gera `dist-mac/Agents-Gateway-<versão>.dmg` do que está **commitado** (`git archive HEAD`), com o Node 24 desta
-máquina dentro do app. Precisa de `pnpm` e do Node 24 no `PATH`.
+máquina dentro do app. Precisa de `pnpm`, do Node 24 no `PATH` e das Command Line Tools (`swiftc`).
 
 ## Instalar e usar
 
 1. Abra o `.dmg` e arraste **Agents Gateway** para **Applications**.
 2. Abra o app. No primeiro uso ele pergunta a **pasta de trabalho** (uma pasta que já tem um `gateway.db` continua com os
    dados dela).
-3. O navegador abre em `http://localhost:3210`. No primeiro uso, a tela de criar o primeiro admin.
+3. A janela abre a tela do gateway. No primeiro uso, a de criar o primeiro admin, com o código de instalação já preenchido.
 
 | O quê | Onde |
 |---|---|
-| Configuração (pasta, porta) | `~/Library/Application Support/Agents Gateway/config.env` |
+| Configuração (pasta, porta, código de instalação) | `~/Library/Application Support/Agents Gateway/config.env` |
 | Serviço (LaunchAgent) | `~/Library/LaunchAgents/com.agents-gateway.server.plist` |
 | Log | `~/Library/Logs/Agents Gateway/server.log` |
 | Dados | a pasta escolhida: `gateway.db`, `secrets.key`, `projects/` |
 
-- **Trocar a pasta:** abra o app segurando **⌥ Option**. O servidor reinicia na nova.
+- **Trocar a pasta:** menu Agents Gateway → Trocar a pasta de trabalho…, ou abra o app segurando **⌥ Option**. O servidor
+  reinicia na nova.
+- **No navegador também:** `http://localhost:3210` (o servidor é o mesmo).
+- **Arquivos que o agente entrega:** vão para Downloads. Links de fora abrem no navegador.
 - **Trocar a porta:** mude `PORT` no `config.env` e abra o app de novo.
 - **Atualizar:** gere o `.dmg` de novo e substitua o app em Applications; ao abrir, o servidor reinicia na versão nova.
 - **Estado do serviço:** `launchctl print gui/$(id -u)/com.agents-gateway.server`.
