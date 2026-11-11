@@ -112,3 +112,17 @@ export function envDuplicates(rows: readonly IEnvRow[]): string[] {
 export function mcpServersFor<T extends { projectId?: string }>(servers: readonly T[], projectId: string | null | undefined): T[] {
   return servers.filter((server) => !server.projectId || server.projectId === projectId)
 }
+
+/**
+ * O agente aberto pelo endereço (um link, o histórico) pode ser de OUTRO projeto: devolve o projeto dele quando a tela
+ * deve trocar para lá. O global e o compartilhado com o projeto atual (já está na lista dele) ficam onde estão; projeto
+ * que quem abriu não vê, também.
+ */
+export function homeProjectOf(
+  agent: { id: string; projectId?: string | null },
+  here: { current?: string; projects: readonly string[]; listed: readonly string[] },
+): string | undefined {
+  const home = agent.projectId
+  if (!home || home === here.current || here.listed.includes(agent.id)) return undefined
+  return here.projects.includes(home) ? home : undefined
+}

@@ -5,6 +5,7 @@ import {
   envRecord,
   envRows,
   findOrphans,
+  homeProjectOf,
   isUsableProvider,
   mcpServersFor,
   pruneModels,
@@ -125,5 +126,21 @@ describe('mcpServersFor', () => {
     expect(mcpServersFor(servers, 'b').map((server) => server.key)).toEqual(['pw', 'b.n8n'])
     expect(mcpServersFor(servers, null).map((server) => server.key)).toEqual(['pw'])
     expect(mcpServersFor(servers, undefined).map((server) => server.key)).toEqual(['pw'])
+  })
+})
+
+describe('homeProjectOf', () => {
+  const here = { current: 'geral', projects: ['geral', 'logiccus'], listed: ['atlas', 'emprestado'] }
+  it('agente de outro projeto: a tela troca para o projeto dele', () => {
+    expect(homeProjectOf({ id: 'maya', projectId: 'logiccus' }, here)).toBe('logiccus')
+  })
+  it('fica onde está: o global, o do projeto atual e o compartilhado com ele', () => {
+    expect(homeProjectOf({ id: 'atlas' }, here)).toBeUndefined()
+    expect(homeProjectOf({ id: 'atlas', projectId: null }, here)).toBeUndefined()
+    expect(homeProjectOf({ id: 'local', projectId: 'geral' }, here)).toBeUndefined()
+    expect(homeProjectOf({ id: 'emprestado', projectId: 'logiccus' }, here)).toBeUndefined()
+  })
+  it('⛔ projeto que quem abriu não vê: não troca', () => {
+    expect(homeProjectOf({ id: 'x', projectId: 'secreto' }, here)).toBeUndefined()
   })
 })
