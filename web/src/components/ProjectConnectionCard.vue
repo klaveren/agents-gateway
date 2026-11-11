@@ -91,6 +91,10 @@ async function disconnect() {
 
     <details v-if="connection.skipped.length" class="text-xs">
       <summary class="cursor-pointer text-amber-300">{{ connection.skipped.length }} item(ns) da origem não entraram aqui</summary>
+      <!-- Sem versão nova, a mesma versão de novo: o que mudou foi aqui (um modelo ligado, uma variável preenchida). -->
+      <button v-if="!connection.updateAvailable" type="button" class="btn btn-sm btn-secondary mt-1" :disabled="!!busy" @click="update">
+        {{ busy === 'sync' ? 'Tentando…' : 'Tentar de novo' }}
+      </button>
       <ul class="mt-1 flex flex-col gap-0.5 text-zinc-400">
         <li v-for="item in connection.skipped" :key="item.ref"><code class="text-zinc-300">{{ item.ref }}</code>: {{ item.message }}</li>
       </ul>
