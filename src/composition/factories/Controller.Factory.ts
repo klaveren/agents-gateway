@@ -83,6 +83,8 @@ import { loadPricing } from '@infra/pricing/Pricing.File'
 import { sessionContextFromEnv } from '@infra/session/Template.SessionContext'
 import { makeAgents } from './Agents.Factory'
 import { makeAuth } from './Auth.Factory'
+import type { IAgent } from '@domain/models/Agent.Model'
+import { targetUnavailable } from '@domain/Agent.Availability'
 import { importJobRepository } from './ImportJobs.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeUsecases } from './Usecases.Factory'
@@ -562,13 +564,25 @@ export function makeProjectConnections(): ProjectConnectionService {
     },
     models: async () => {
       const catalog = makeModelCatalog()
+      const providers = makeProviders()
       const settings = await makeSettings()
         .read()
         .catch(() => undefined)
-      return {
-        enabled: (provider, model) => catalog.isEnabled(provider, model),
-        ...(settings?.provider && settings.model ? { fallback: { provider: settings.provider, model: settings.model } } : {}),
+      // "Roda aqui": provedor ligado, modelo ativo e credencial (a assinatura usa o login do host) — o mesmo de `targetUnavailable`.
+      const runs = (provider: string, model: string) => {
+        const config = providers.get(provider)
+        return (
+          catalog.isEnabled(provider, model) &&
+          !targetUnavailable({} as IAgent, { provider, models: [model] }, { provider: config, hasKey: !!providers.connection(provider)?.key, admin: true })
+        )
       }
+      // O padrão das Configurações; sem ele, o primeiro modelo que roda aqui (sem nenhum, o agente fica de fora, com o motivo).
+      const first = providers
+        .list()
+        .flatMap((provider) => catalog.enabledIds(provider.id).map((model) => ({ provider: provider.id, model })))
+        .find((target) => runs(target.provider, target.model))
+      const chosen = settings?.provider && settings.model && runs(settings.provider, settings.model) ? { provider: settings.provider, model: settings.model } : first
+      return { enabled: runs, ...(chosen ? { fallback: chosen } : {}) }
     },
   })
   const service = connections
