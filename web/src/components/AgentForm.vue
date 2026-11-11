@@ -1,4 +1,6 @@
 <script setup lang="ts">
+  import ConnectedReadOnly from './ConnectedReadOnly.vue'
+  import { useConnectionsStore } from '@/stores/connections'
   import { lite, LITE_HIDDEN_AGENT_TABS, LITE_HIDDEN_PERMISSIONS, LITE_HIDDEN_TOOLS } from '@/lib/edition'
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
@@ -61,6 +63,7 @@
 
   const agents = useAgentsStore()
   const projects = useProjectsStore()
+  const connections = useConnectionsStore()
   const providers = useProvidersStore()
   const protocols = useProtocolsStore()
   const mcp = useMcpStore()
@@ -367,7 +370,9 @@
   const globalLocked = computed(() => !props.creating && !!props.agent && !props.agent.projectId && !auth.isAdmin)
   /** Veio de outro projeto (compartilhado): o projeto de origem. Aqui é só leitura; só as Variáveis (valores deste projeto) se editam. */
   const sharedFrom = computed(() => (props.creating || !props.agent ? undefined : props.sharedFrom ?? sharedFromOf(props.agent, projects.current)))
-  const locked = computed(() => globalLocked.value || !!sharedFrom.value)
+  /** 🔌 Agente de projeto conectado: só leitura (vem da origem); as Variáveis (valores daqui) seguem editáveis. */
+  const connectedOrigin = computed(() => connections.originOf(props.creating ? form.value.projectId || projects.current : props.agent?.projectId))
+  const locked = computed(() => globalLocked.value || !!sharedFrom.value || !!connectedOrigin.value)
   const groupChoice = computed({
     get: () => (form.value.modelGroup === undefined || form.value.modelGroup === null ? '' : form.value.modelGroup),
     set: (value: string) => (form.value.modelGroup = value === '' ? null : value),
@@ -861,7 +866,8 @@
         <span v-else-if="unsavedTabs.includes(item.id)" class="h-1.5 w-1.5 rounded-full bg-amber-400" title="Mudança não salva" />
       </button>
     </nav>
-    <p v-if="sharedFrom" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="shared-readonly">Compartilhado por {{ scopeLabel(sharedFrom, projects.list) }}: só leitura aqui; a manutenção é lá.</p>
+    <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
+    <p v-else-if="sharedFrom" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="shared-readonly">Compartilhado por {{ scopeLabel(sharedFrom, projects.list) }}: só leitura aqui; a manutenção é lá.</p>
     <p v-else-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
     <fieldset :disabled="locked" class="contents">
     <fieldset v-show="tab === 'agente'" class="grid gap-4 sm:grid-cols-2">
@@ -1632,7 +1638,7 @@
       <button v-if="!locked" type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar agente' }}
       </button>
-      <button v-if="!creating && agent" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar agente</button>
+      <button v-if="!creating && agent && !connectedOrigin" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar agente</button>
       <button v-if="!creating && agent && !locked" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar agente</button>
     </div>
     <ConfirmDialog

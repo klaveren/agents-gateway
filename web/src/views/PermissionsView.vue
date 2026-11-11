@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ConnectedReadOnly from '@/components/ConnectedReadOnly.vue'
+import { useConnectionsStore } from '@/stores/connections'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import HistoryPanel from '@/components/HistoryPanel.vue'
@@ -26,8 +28,11 @@ import { useProjectsStore } from '@/stores/projects'
  */
 const route = useRoute()
 const projects = useProjectsStore()
+const connections = useConnectionsStore()
 const agents = useAgentsStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
+/** 🔌 As permissões do projeto conectado vêm da origem: só leitura (os pedidos dos agentes também se decidem lá). */
+const connectedOrigin = computed(() => connections.originOf(project.value?.id))
 
 const permissions = usePermissionsStore()
 const permissionRequests = usePermissionRequestsStore()
@@ -149,9 +154,12 @@ watch(decisionAgent, () => void loadDecisions())
         <HistoryPanel v-if="tab === 'history'" kind="project-permissions" :id="project.id" @restored="restored" />
         <template v-else>
           <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
+          <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
 
-          <PermissionRequests :project-id="project.id" @approved="requestApproved" />
-          <PermissionRules v-model="rules" :only="section" />
+          <PermissionRequests v-if="!connectedOrigin" :project-id="project.id" @approved="requestApproved" />
+          <fieldset :disabled="!!connectedOrigin" class="contents">
+            <PermissionRules v-model="rules" :only="section" />
+          </fieldset>
           <p v-if="notice" class="text-xs text-emerald-300">{{ notice }}</p>
           <p v-else-if="meta.updatedBy" class="text-xs text-zinc-500">Alterado por {{ meta.updatedBy }} em {{ fullTime(meta.updatedAt) }}</p>
 
@@ -191,7 +199,7 @@ watch(decisionAgent, () => void loadDecisions())
             </ul>
             <p v-else class="text-xs text-zinc-500">Nenhuma decisão registrada ainda.</p>
           </section>
-          <SaveFooter label="Salvar permissões" :busy="busy" :disabled="!dirty" :pending="dirty" @save="save" />
+          <SaveFooter v-if="!connectedOrigin" label="Salvar permissões" :busy="busy" :disabled="!dirty" :pending="dirty" @save="save" />
         </template>
       </template>
     </section>

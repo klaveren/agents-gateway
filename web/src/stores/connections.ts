@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
+import { originLabel } from '@/lib/connection'
 
 /** Uma linha do aviso: o item da origem, a última operação e quantas revisões teve desde a versão daqui. */
 export interface IConnectionChange {
@@ -54,6 +55,12 @@ export const useConnectionsStore = defineStore('connections', () => {
   /** O que pede atenção no aviso global: atualização disponível ou conexão que parou de valer. */
   const attention = computed(() => list.value.filter((connection) => connection.updateAvailable || connection.state === 'unauthorized'))
 
+  /** 🔌 A origem do projeto conectado (o que a faixa mostra), ou nada: o item desse projeto é só leitura aqui. */
+  function originOf(projectId: string | undefined): string | undefined {
+    const connection = projectId ? byProject.value.get(projectId) : undefined
+    return connection ? originLabel(connection.url) : undefined
+  }
+
   async function refresh(): Promise<void> {
     list.value = await api<IProjectConnection[]>('/connections')
   }
@@ -93,5 +100,5 @@ export const useConnectionsStore = defineStore('connections', () => {
     list.value = list.value.filter((item) => item.projectId !== projectId)
   }
 
-  return { list, byProject, attention, refresh, follow, connect, check, sync, replaceToken, disconnect }
+  return { list, byProject, attention, originOf, refresh, follow, connect, check, sync, replaceToken, disconnect }
 })
