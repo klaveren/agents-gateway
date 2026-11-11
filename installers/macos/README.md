@@ -13,7 +13,8 @@ installers/macos/build-app.sh
 ```
 
 Gera `installers/macos/dist/Agents-Gateway-<versão>.dmg` do que está **commitado** (`git archive HEAD`), com o Node 24 desta
-máquina dentro do app. Precisa de `pnpm`, do Node 24 no `PATH` e das Command Line Tools (`swiftc`).
+máquina dentro do app, junto com o kit do servidor (npm, npx, corepack e o micromamba, baixado uma vez e conferido pelo
+checksum). Precisa de `pnpm`, do Node 24 no `PATH` e das Command Line Tools (`swiftc`).
 
 ## Instalar e usar
 
