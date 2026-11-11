@@ -1,4 +1,5 @@
 import assert from 'node:assert'
+import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { describe, it } from 'node:test'
@@ -138,11 +139,29 @@ describe('pseudo-terminal e binário', () => {
   it('macOS e Linux têm cada um o seu `script`, sempre largo (o link e o token não quebram de linha)', () => {
     const mac = inTerminal(['/x/claude', 'setup-token'], 'darwin')
     assert.strictEqual(mac.command, '/bin/sh')
-    assert.match(mac.args.join(' '), /cat \| script -q \/dev\/null/)
+    assert.match(mac.args.join(' '), /cat \| { script -q \/dev\/null/)
     assert.match(mac.args.at(-1) ?? '', /^stty cols 400 rows 50 2>\/dev\/null; exec '\/x\/claude' 'setup-token'$/)
 
     const linux = inTerminal(['/x/claude', 'setup-token'], 'linux')
     assert.deepStrictEqual([linux.command, linux.args[0], linux.args.at(-1)], ['script', '-qfec', '/dev/null'])
+  })
+
+  it('macOS de verdade: o código passa pelo terminal, e o processo ACABA junto com o comando (com o código de saída dele)', { skip: process.platform !== 'darwin' }, async () => {
+    const { command, args } = inTerminal(['/bin/sh', '-c', 'read x; echo "got: $x"; exit 3'], 'darwin')
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    let out = ''
+    child.stdout.on('data', (chunk) => (out += String(chunk)))
+    setTimeout(() => child.stdin.write('codigo123\r'), 300)
+    // ⚠️ A entrada fica ABERTA (é como o gateway a usa): antes, o `cat` seguia vivo e o processo nunca terminava.
+    const code = await new Promise<number | null>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('o processo não terminou com o comando')), 8000)
+      child.on('exit', (exit) => {
+        clearTimeout(timer)
+        resolve(exit)
+      })
+    })
+    assert.strictEqual(code, 3)
+    assert.match(out, /got: codigo123/)
   })
 
   it('Antigravity ausente: a tela recebe "missing" e as instruções, não um erro de processo', async () => {
