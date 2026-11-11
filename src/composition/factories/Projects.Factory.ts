@@ -64,6 +64,8 @@ function build() {
       const agent = makeAgents().get(agentId)
       return agent ? (agent.projectId ?? null) : undefined
     },
+    // 🔌 Pedido na hora: as conexões nascem depois desta fábrica (e as duas se usam).
+    connection: (projectId) => connectedProject(projectId),
   })
   // ⚖️ O gateway nasce com um projeto: o primeiro admin já administra o `geral` (sem projeto, a tela não deixava criar agente).
   makeAuth().accounts?.afterSetup((user) => {
@@ -118,4 +120,11 @@ export async function migrateToProjects(conversations: IConversationRepository):
 /** As contas ativas que administram o gateway. */
 function gatewayAdminIds(): string[] {
   return (makeAuth().accounts?.list() ?? []).filter((user) => user.role === 'admin' && !user.disabled).map((user) => user.id)
+}
+
+/** O projeto conectado (ver `ProjectConnection.Service`); a fábrica dele é registrada na composição, sem volta entre as duas. */
+let connectedProject: (projectId: string) => { url: string } | undefined = () => undefined
+
+export function useConnectedProjects(lookup: (projectId: string) => { url: string } | undefined): void {
+  connectedProject = lookup
 }

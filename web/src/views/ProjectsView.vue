@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import SaveFooter from '@/components/SaveFooter.vue'
+import ProjectConnectionCard from '@/components/ProjectConnectionCard.vue'
+import { useConnectionsStore } from '@/stores/connections'
 import Icon from '@/components/Icon.vue'
 import ListFilter from '@/components/ListFilter.vue'
 import { filterList } from '@/lib/listFilter'
@@ -42,6 +44,14 @@ const canOpen = computed(() => auth.isAdmin || projects.managesAny)
 /** Edita o projeto aberto (nome, descrição, membros): o admin dele ou o do gateway. */
 const canEdit = computed(() => !!selected.value && (selected.value.role === 'admin' || auth.isAdmin))
 
+const connections = useConnectionsStore()
+/** 🔌 O projeto aberto é a cópia só de leitura de um projeto de outro gateway. */
+const connected = computed(() => (selected.value ? connections.byProject.has(selected.value.id) : false))
+/** Criar do zero, ou conectar um projeto de outro gateway (a .4): o catálogo vem de lá, só leitura. */
+const mode = ref<'new' | 'connect'>('new')
+const link = ref({ url: '', projectId: '', token: '' })
+const connecting = ref(false)
+
 const loadError = ref<string>()
 const form = ref({ id: '', name: '', description: '' })
 const formIssues = ref<Record<string, string[]>>({})
@@ -66,6 +76,7 @@ onMounted(async () => {
   if (!canOpen.value) return
   // As contas e as configurações são do gateway: quem só administra o projeto pode não ler (a lista de membros fica vazia).
   await Promise.all([users.ensure(), auth.isAdmin ? settings.ensure() : undefined]).catch(() => undefined)
+  connections.follow()
 })
 
 watch(
@@ -109,6 +120,21 @@ async function create() {
   } catch (failure) {
     if (failure instanceof ApiError && failure.status === 422) formIssues.value = failure.fieldIssues
     formError.value = describe(failure)
+  }
+}
+
+async function connectProject() {
+  formError.value = undefined
+  connecting.value = true
+  try {
+    const created = await connections.connect({ url: link.value.url, projectId: link.value.projectId, token: link.value.token })
+    link.value = { url: '', projectId: '', token: '' }
+    await projects.load()
+    await router.push(`/projects/${created.projectId}`)
+  } catch (failure) {
+    formError.value = describe(failure)
+  } finally {
+    connecting.value = false
   }
 }
 
@@ -197,7 +223,31 @@ async function confirmRemove() {
     <template #detail>
       <template v-if="adding && auth.isAdmin">
         <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">Novo projeto</h2>
-        <form class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="create">
+        <div class="mx-auto mb-4 flex max-w-3xl gap-1 rounded-full bg-zinc-900 p-1 text-sm" role="group" aria-label="Como criar">
+          <button type="button" class="flex-1 rounded-full px-3 py-1" :class="mode === 'new' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="mode = 'new'">Criar do zero</button>
+          <button type="button" class="flex-1 rounded-full px-3 py-1" :class="mode === 'connect' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="mode = 'connect'">Conectar de outro gateway</button>
+        </div>
+        <form v-if="mode === 'connect'" class="mx-auto flex max-w-3xl flex-col gap-3" data-test="connect-form" @submit.prevent="connectProject">
+          <p class="text-xs text-zinc-400">
+            Usa aqui o projeto de outro gateway (a origem): agentes, skills, comandos, specs e regras chegam de lá, só leitura, com um aviso quando houver versão nova.
+            Os modelos, as conversas, as variáveis e o repositório ficam nesta máquina. O token de conexão é criado na origem, em Conta → Tokens, por um membro do projeto.
+          </p>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">Endereço da origem<input v-model="link.url" required class="input" placeholder="https://gateway.empresa.com" /></label>
+            <label class="field">Id do projeto na origem<input v-model="link.projectId" required pattern="[a-z0-9][a-z0-9-]{1,31}" class="input font-mono" placeholder="logiccus" /></label>
+          </div>
+          <label class="field">
+            Token de conexão
+            <input v-model="link.token" required type="password" autocomplete="off" class="input font-mono" placeholder="agc_…" />
+            <small class="hint">Fica guardado cifrado nesta máquina e nunca volta para a tela.</small>
+          </label>
+          <p v-if="formError" class="text-sm text-rose-300">{{ formError }}</p>
+          <div class="flex gap-2">
+            <button type="submit" class="btn btn-primary" :disabled="connecting">{{ connecting ? 'Conectando…' : 'Conectar projeto' }}</button>
+            <RouterLink to="/projects" class="btn btn-ghost">Cancelar</RouterLink>
+          </div>
+        </form>
+        <form v-else class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="create">
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="field">Nome<input v-model="form.name" required class="input" placeholder="Loja XPTO" @blur="slug" /><small v-for="m in formIssues.name" :key="m" class="error">{{ m }}</small></label>
             <label class="field">
@@ -247,6 +297,7 @@ async function confirmRemove() {
         </nav>
 
         <div v-show="tab === 'projeto'" class="flex flex-col gap-4" role="tabpanel">
+          <ProjectConnectionCard v-if="connected" :project-id="selected.id" />
           <p class="text-xs text-zinc-500">
             Regras e specs do projeto ficam em <RouterLink to="/environment" class="text-emerald-400 underline underline-offset-2">Projeto → Ambiente</RouterLink>.
           </p>
@@ -265,8 +316,8 @@ async function confirmRemove() {
           </div>
 
           <div class="grid gap-3">
-            <label class="field">Nome<input v-model="edit.name" :disabled="!canEdit" class="input" /></label>
-            <label class="field">Descrição<textarea v-model="edit.description" :disabled="!canEdit" rows="2" class="input text-sm" /></label>
+            <label class="field">Nome<input v-model="edit.name" :disabled="!canEdit || connected" class="input" /></label>
+            <label class="field">Descrição<textarea v-model="edit.description" :disabled="!canEdit || connected" rows="2" class="input text-sm" /></label>
           </div>
         </div>
 
@@ -304,7 +355,7 @@ async function confirmRemove() {
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
         <SaveFooter v-if="canEdit" label="Salvar projeto" :busy="busy" :disabled="(!dirty && !membersDirty) || noAdmin" :pending="dirty || membersDirty" @save="saveProject">
           <template #end>
-            <button v-if="auth.isAdmin" type="button" class="btn btn-danger" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
+            <button v-if="auth.isAdmin && !connected" type="button" class="btn btn-danger" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
           </template>
         </SaveFooter>
       </section>

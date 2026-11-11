@@ -3,6 +3,7 @@ import { provenCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError } from './Http.Error'
+import { currentRequest } from './Request.Scope'
 
 /** O que a regra precisa dos projetos (o `ProjectsService`). */
 export interface IProjectRoles {
@@ -18,6 +19,8 @@ export interface IProjectAccessRegistry {
   roles: IProjectRoles
   /** O projeto de um agente: `null` = agente global; `undefined` = agente que não existe. */
   agentProject?: (agentId: string) => string | null | undefined
+  /** 🔌 O projeto conectado (a cópia só de leitura do de outro gateway): a origem dele. Ausente = nenhum conectado. */
+  connection?: (projectId: string) => { url: string } | undefined
 }
 
 /**
@@ -86,6 +89,7 @@ export async function requireGatewayAdmin(proof: ICallerProof | undefined, opera
 export async function requireProjectAdmin(proof: ICallerProof | undefined, projectId: string | null | undefined, operation: string): Promise<string> {
   const view = await adminView(proof)
   if (!view || !administers(view, projectId)) throw denied(operation, projectId ? `not an administrator of project ${projectId}` : 'global item: gateway administrators only')
+  guardConnected([projectId])
   return view.by
 }
 
@@ -100,6 +104,7 @@ export async function requireProjectsAdmin(proof: ICallerProof | undefined, proj
   // ⚠️ `findIndex`, não `find`: o escopo negado pode ser o global (`undefined`), e `find` o confundiria com "nenhum".
   const outside = projectIds.findIndex((projectId) => !view || !administers(view, projectId))
   if (!view || outside >= 0) throw denied(operation, `not an administrator of ${projectIds[outside] ?? 'the global scope'}`)
+  guardConnected(projectIds)
   return view.by
 }
 
@@ -122,6 +127,40 @@ export async function requireAgentAdmin(proof: ICallerProof | undefined, agentId
 /** O projeto do agente (`null` = global; `undefined` = não existe ou sem registro). */
 export function agentProjectOf(agentId: string): string | null | undefined {
   return registry?.agentProject?.(agentId)
+}
+
+/**
+ * 🔌 O que muda num projeto conectado SEM mexer no catálogo: os valores das variáveis, o ledger (vai à origem), os
+ * hooks e os agendamentos (a operação daqui), os membros, as contas, a própria conexão e o que só confere ou planeja.
+ */
+const CONNECTED_WRITABLE: readonly RegExp[] = [
+  /^\/connections(\/|$)/,
+  /^\/(agents\/:agentId|resources\/:resourceId)\/secrets\//,
+  /^\/agents\/:agentId\/(ledger|hooks|schedules)(\/|$)/,
+  /^\/mcp-servers\/:id\/(env|secret|oauth|test|install|stop)(\/|$)/,
+  /^\/projects\/:id\/members$/,
+  /^\/projects\/:projectId\/(accounts|permissions\/test)(\/|$)/,
+  /^\/catalog\/import\/plan$/,
+  /^\/permission-requests\/:requestId\/reject$/,
+]
+
+/**
+ * ⛔ O PROJETO CONECTADO É SÓ LEITURA: o catálogo vem da origem (a .4), e mudar é lá — um ticket, que a esteira
+ * implementa e chega a todos pela atualização. Vale para a tela, a API e as ferramentas dos agentes (que chamam a API).
+ * Quem não administra o projeto já ouviu 404 antes; quem administra ouve o porquê. A sincronização não passa por aqui.
+ */
+function guardConnected(projectIds: ReadonlyArray<string | null | undefined>): void {
+  const request = currentRequest()
+  if (!request || request.method === 'GET' || CONNECTED_WRITABLE.some((pattern) => pattern.test(request.route))) return
+  for (const projectId of projectIds) {
+    const connection = projectId ? registry?.connection?.(projectId) : undefined
+    if (connection)
+      throw new HttpError(
+        409,
+        'project_read_only',
+        `O projeto ${projectId} é conectado a ${connection.url}: o catálogo é só leitura aqui. Mudança é feita na origem (abra um ticket); para mexer localmente, desconecte o projeto.`,
+      )
+  }
 }
 
 function denied(operation: string, reason: string): HttpError {

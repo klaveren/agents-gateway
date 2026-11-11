@@ -11,6 +11,8 @@ export interface IAccessToken {
   expiresAt?: string
   lastUsedAt?: string
   revokedAt?: string
+  /** 🔌 Token de CONEXÃO (`agc_…`): outro gateway usa este projeto daqui. Ausente = token de acesso pessoal. */
+  projectId?: string
 }
 
 /**
@@ -21,7 +23,7 @@ export interface IAccessToken {
 export const useTokensStore = defineStore('tokens', () => {
   const lists = keyedResource(() => api<IAccessToken[]>('/auth/tokens'))
 
-  async function create(userId: string, input: { name: string; expiresInDays: number }): Promise<IAccessToken & { token: string }> {
+  async function create(userId: string, input: { name: string; expiresInDays: number; projectId?: string }): Promise<IAccessToken & { token: string }> {
     const created = await api<IAccessToken & { token: string }>('/auth/tokens', { method: 'POST', body: input })
     const { token: _token, ...kept } = created
     lists.update(userId, (list) => [kept, ...list.filter((item) => item.id !== kept.id)])

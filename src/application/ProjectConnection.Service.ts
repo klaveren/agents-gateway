@@ -59,6 +59,8 @@ export class ProjectConnectionService {
   private readonly now: () => Date
   private readonly syncing = new Set<string>()
   private watching?: { abort: AbortController; timer: NodeJS.Timeout }
+  /** Os projetos com o aviso ao vivo aberto (um vigia por projeto). */
+  private readonly watched = new Set<string>()
 
   constructor(private readonly deps: IProjectConnectionDeps) {
     this.now = deps.now ?? (() => new Date())
@@ -124,6 +126,8 @@ export class ProjectConnectionService {
     this.require(projectId)
     this.deps.repository.update(projectId, { tokenSealed: this.deps.box.seal(token.trim(), owner(projectId)) })
     await this.check(projectId)
+    // O vigia parou quando o token caiu: com o novo, volta a ouvir.
+    this.follow(projectId)
     return this.require(projectId)
   }
 
@@ -186,6 +190,17 @@ export class ProjectConnectionService {
   }
 
   private async watch(projectId: string, signal: AbortSignal): Promise<void> {
+    if (this.watched.has(projectId)) return
+    this.watched.add(projectId)
+    try {
+      await this.listen(projectId, signal)
+    } finally {
+      this.watched.delete(projectId)
+    }
+  }
+
+  /** O aviso ao vivo de um projeto, reabrindo com espera crescente; token que caiu para (até o `replaceToken`). */
+  private async listen(projectId: string, signal: AbortSignal): Promise<void> {
     let wait = RETRY_MIN_MS
     while (!signal.aborted && this.deps.repository.get(projectId)) {
       const client = this.clientOf(projectId)
