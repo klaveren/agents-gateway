@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
 import { originLabel } from '@/lib/connection'
+import type { IAgentLocalLayerInput, IAgentLocalLayerView } from '@/lib/localLayer'
 
 /** Uma linha do aviso: o item da origem, a última operação e quantas revisões teve desde a versão daqui. */
 export interface IConnectionChange {
@@ -100,5 +101,20 @@ export const useConnectionsStore = defineStore('connections', () => {
     list.value = list.value.filter((item) => item.projectId !== projectId)
   }
 
-  return { list, byProject, attention, originOf, refresh, follow, connect, check, sync, replaceToken, disconnect }
+  /** 🔌 A camada local de um agente do projeto conectado: o que esta máquina acrescenta ao que veio da origem. */
+  const localPath = (projectId: string, agentId: string) => `/connections/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}/local`
+
+  function readLocal(projectId: string, agentId: string): Promise<IAgentLocalLayerView> {
+    return api<IAgentLocalLayerView>(localPath(projectId, agentId))
+  }
+
+  function saveLocal(projectId: string, agentId: string, layer: IAgentLocalLayerInput): Promise<IAgentLocalLayerView> {
+    return api<IAgentLocalLayerView>(localPath(projectId, agentId), { method: 'PUT', body: layer })
+  }
+
+  function removeLocal(projectId: string, agentId: string): Promise<IAgentLocalLayerView> {
+    return api<IAgentLocalLayerView>(localPath(projectId, agentId), { method: 'DELETE' })
+  }
+
+  return { list, byProject, attention, originOf, refresh, follow, connect, check, sync, replaceToken, disconnect, readLocal, saveLocal, removeLocal }
 })

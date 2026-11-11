@@ -5,6 +5,7 @@ import { agentIssues, IAgentRules, triggerIssues } from '@domain/Agent.Policy'
 import { AgentInUseError, AgentNotFoundError, GuidanceNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
 import { describeMatch, IImportProblemMatch, withoutProblem } from '@domain/models/ImportProblem.Model'
 import { diagnosticsOn, IAgent, IAgentTarget, IAgentTrigger } from '@domain/models/Agent.Model'
+import { mergeLocalLayer, TAgentLocalLayerInput } from '@domain/models/AgentLocalLayer.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
 import { cleanRules, IPermissionRule, permissionIssues } from '@domain/Permission.Policy'
 import { AGENT_KIND, normalizeShares, shareIssues } from '@domain/Share.Policy'
@@ -82,6 +83,16 @@ export class AgentCatalog implements IAgentDirectory {
   private files?: IResourceFilesPort
 
   /**
+   * 🔌 A camada local do agente de projeto conectado (ver `AgentLocalLayer.Model`): entra no agente que RODA
+   * (`list`/`get`/`entries`), nunca no gravado (`rawEntries`/`entry`) — o catálogo e a tela seguem vendo só a origem.
+   */
+  useLocalLayers(layerOf: (agent: IAgent) => TAgentLocalLayerInput | undefined): void {
+    this.layerOf = layerOf
+  }
+
+  private layerOf?: (agent: IAgent) => TAgentLocalLayerInput | undefined
+
+  /**
    * ⛔ A PASTA PRIVADA do agente: existe para todo agente (vazia, até alguém pôr algo), e só ele a alcança. Lê com Ler
    * arquivos ou Terminal; grava com Escrever arquivos (ver `agentFolderAccess`). Nada sem o depósito.
    */
@@ -121,7 +132,9 @@ export class AgentCatalog implements IAgentDirectory {
     )
   }
 
-  private effective(agent: IAgent): IAgent {
+  private effective(stored: IAgent): IAgent {
+    const layer = this.layerOf?.(stored)
+    const agent = layer ? mergeLocalLayer(stored, layer) : stored
     if (!this.usable) return agent
     return { ...agent, providers: agent.providers.map((target) => ({ ...target, models: target.models.filter((model) => this.usable!(target.provider, model)) })) }
   }
@@ -316,12 +329,23 @@ export class AgentCatalog implements IAgentDirectory {
   }
 
   /**
+   * 🔌 Desconectar o projeto: a camada local passa a ser do próprio agente (que agora é daqui, editável). Sem a regra do
+   * salvamento, como `moveToProject`: o que veio da origem não pode travar a saída.
+   */
+  applyLocalLayer(id: string, layer: TAgentLocalLayerInput, by: string): void {
+    const stored = this.repository.list().find((agent) => agent.id === id)
+    if (!stored) return
+    this.repository.save(mergeLocalLayer(toAgent(stored), layer), by)
+    this.history.record([{ kind: 'agent', id }], { by, note: 'camada local aplicada (projeto desconectado)' })
+  }
+
+  /**
    * ⛔ Não apaga agente que outro usa: um `agent:<id>` órfão travava todo salvamento do agente que delega,
    * e o padrão das configurações apagado fazia toda conversa sem agente escolhido falhar.
+   * A delegação que só existe na camada local conta (por isso a lista é a do agente que roda).
    */
   remove(id: string, by: string, options: { defaultAgentId?: string } = {}): void {
-    const delegators = this.repository
-      .list()
+    const delegators = this.list()
       .filter((agent) => agent.id !== id && agent.allowedTools.includes(`agent:${id}`))
       .map((agent) => agent.id)
     const isDefault = options.defaultAgentId === id

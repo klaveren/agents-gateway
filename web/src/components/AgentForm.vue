@@ -31,6 +31,7 @@
   import { useAuthStore } from '@/stores/auth'
   import { useProtocolsStore } from '@/stores/protocols'
   import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, TMode, TPermissionCategory, TSandboxLevel } from '@/lib/types'
+  import { AUTO_TOOL_OFF, AUTO_TOOLS, layerTools, originLocksTool, shownTools, type IAgentLocalLayerView } from '@/lib/localLayer'
   import { useAgentsStore } from '@/stores/agents'
   import { useMcpStore } from '@/stores/mcp'
   import { useProjectsStore } from '@/stores/projects'
@@ -141,7 +142,7 @@
     const all = mcpRef(server, '*')
     if (form.value.allowedTools.includes(all)) form.value.allowedTools = form.value.allowedTools.filter((entry) => entry !== all)
     // "Todas" substitui as escolhidas uma a uma do mesmo servidor.
-    else form.value.allowedTools = [...form.value.allowedTools.filter((entry) => !entry.startsWith(`mcp:${server}/`)), all]
+    else form.value.allowedTools = [...form.value.allowedTools.filter((entry) => !entry.startsWith(`mcp:${server}/`) || fromOrigin(entry)), all]
   }
 
   /** Os providers configurados e ligados; um desligado só aparece se for deste agente. */
@@ -373,6 +374,25 @@
   /** 🔌 Agente de projeto conectado: só leitura (vem da origem); as Variáveis (valores daqui) seguem editáveis. */
   const connectedOrigin = computed(() => connections.originOf(props.creating ? form.value.projectId || projects.current : props.agent?.projectId))
   const locked = computed(() => globalLocked.value || !!sharedFrom.value || !!connectedOrigin.value)
+  /**
+   * 🔌 A CAMADA LOCAL: no agente de projeto conectado, Modelos, Ferramentas, MCPs, Delegação e Permissões aceitam o que
+   * ESTA máquina acrescenta. O que veio da origem aparece travado, e o Salvar dessas guias grava só a camada.
+   */
+  const LAYER_TABS: readonly TTab[] = ['modelos', 'ferramentas', 'delegacao', 'mcps', 'sdk']
+  const layerMode = computed(() => !!connectedOrigin.value && !props.creating && !!props.agent?.projectId && !sharedFrom.value)
+  /** A camada como o servidor a tem (a origem e o que é daqui). Sem ela (ainda lendo, ou falhou), tudo segue travado. */
+  const local = ref<IAgentLocalLayerView>()
+  /** Os modelos são os desta máquina (substituem os da origem) ou os que vieram dela. */
+  const localModels = ref(false)
+  const layerTab = computed(() => layerMode.value && !!local.value && LAYER_TABS.includes(tab.value))
+  const originTools = computed(() => (layerMode.value ? (local.value?.origin.allowedTools ?? []) : []))
+  const originRules = computed(() => (layerMode.value ? (local.value?.origin.permissions ?? []) : []))
+  /** A entrada (`agent:`, `mcp:`, `sdk:`, `cap:`) que veio da origem: marcada e travada. */
+  const fromOrigin = (entry: string) => originTools.value.includes(entry)
+  /** A ferramenta do gateway que a origem decidiu (a automática, só a que ela deixou ligada). */
+  const toolLocked = (name: string) => layerMode.value && originLocksTool(originTools.value, name)
+  /** As regras que valem para o agente aqui: as da origem e as locais (para as contagens das guias). */
+  const shownRules = computed(() => [...originRules.value, ...(form.value.permissions ?? [])])
   const groupChoice = computed({
     get: () => (form.value.modelGroup === undefined || form.value.modelGroup === null ? '' : form.value.modelGroup),
     set: (value: string) => (form.value.modelGroup = value === '' ? null : value),
@@ -412,6 +432,11 @@
     // O patch aprovado muda outros campos: o agente é relido (o formulário volta ao gravado).
     if (request.kind === 'agent-patch') return void agents.details.refresh(props.agent.id).catch(() => undefined)
     form.value.permissions = (permissions ?? []).map((rule) => ({ ...rule }))
+    // 🔌 No projeto conectado a aprovação gravou na camada local: o agente (a origem) não mudou.
+    if (layerMode.value) {
+      if (local.value) local.value = { ...local.value, layer: { ...local.value.layer, permissions: (permissions ?? []).map((rule) => ({ ...rule })) } }
+      return
+    }
     agents.setPermissions(props.agent.id, permissions)
   }
 
@@ -437,8 +462,6 @@
    * ⚖️ AS AUTOMÁTICAS (ver `Auto.Tools` no servidor): o gateway as liga sozinho — a memória, o painel e a entrega de arquivo sempre, os
    * documentos e os recursos quando há o que ler. Aqui aparecem LIGADAS, e desligar grava `off:<ferramenta>`.
    */
-  const AUTO_TOOL_OFF = 'off:'
-  const AUTO_TOOLS: readonly string[] = ['ledger_read', 'ledger_write', 'conversation_panel', 'deliver_file', 'read_doc', 'search_docs', 'use_resource', 'search_resources']
   const LEDGER_TOOLS = [
     { name: 'ledger_read', description: 'Lê a memória do agente: o que ele aprendeu de como agir.' },
     { name: 'ledger_write', description: 'Grava na memória do agente o que ele aprendeu.' },
@@ -564,12 +587,12 @@
       {
         id: 'delegacao',
         label: 'Delegação',
-        count: tools.filter((entry) => entry.startsWith('agent:')).length + (form.value.permissions ?? []).filter((rule) => rule.category === 'delegate').length,
+        count: tools.filter((entry) => entry.startsWith('agent:')).length + shownRules.value.filter((rule) => rule.category === 'delegate').length,
       },
       {
         id: 'sdk',
         label: 'Permissões',
-        count: (form.value.permissions ?? []).filter((rule) => rule.category !== 'delegate').length + tools.filter((entry) => entry.startsWith('sdk:')).length,
+        count: shownRules.value.filter((rule) => rule.category !== 'delegate').length + tools.filter((entry) => entry.startsWith('sdk:')).length,
       },
       { id: 'recursos', label: 'Recursos' },
       { id: 'arquivos', label: 'Arquivos', count: agentFiles.value.length },
@@ -629,12 +652,14 @@
     } else {
       form.value.providers = [...form.value.providers, { provider: id, models: [] }]
       added.add(id)
-      if (form.value.providers.length === 1) {
+      if (form.value.providers.length === 1 && !layerMode.value) {
         const info = protocols.get(protocols.protocolOf(id) ?? id)
         form.value.modes = defaultLanes(info)
         form.value.reasoningEfforts = protocols.levelsFor(info?.id ?? id, form.value.reasoningEfforts ?? [])
       }
     }
+    // 🔌 Na camada local só os provedores mudam: as lanes, os níveis e as nativas são da origem.
+    if (layerMode.value) return
     const lanes = lanesAllowed.value
     form.value.modes = form.value.modes.filter((mode) => lanes.includes(mode))
     if (!form.value.modes.length) form.value.modes = [...lanes]
@@ -672,23 +697,26 @@
     )
   }
 
+  /** Os provedores do agente como o formulário os guarda. Os desligados no catálogo não entram: salvar com eles seria recusado. */
+  const formProviders = (agent: IAgentDetail): IAgentInput['providers'] =>
+    agent.providers.map((provider) => ({
+      provider: provider.id,
+      models: provider.models.filter((model) => !provider.disabledModels?.includes(model)),
+      ...(provider.sandbox ? { sandbox: provider.sandbox } : {}),
+      ...(provider.network ? { network: true } : {}),
+    }))
+
   watch(
     () => [props.agent, props.creating] as const,
     ([agent]) => {
       added.clear()
       modelSearch.value = ''
-      // Os desligados no catálogo não entram no formulário: salvar com eles seria recusado.
       droppedModels.value = Object.fromEntries((agent?.providers ?? []).map((provider) => [provider.id, provider.disabledModels ?? []]))
       form.value = agent
         ? {
             id: agent.id,
             name: agent.name,
-            providers: agent.providers.map((provider) => ({
-              provider: provider.id,
-              models: provider.models.filter((model) => !provider.disabledModels?.includes(model)),
-              ...(provider.sandbox ? { sandbox: provider.sandbox } : {}),
-              ...(provider.network ? { network: true } : {}),
-            })),
+            providers: formProviders(agent),
             soul: agent.soul ?? '',
             systemPrompt: agent.systemPrompt,
             reasoningEfforts: [...(agent.reasoningEfforts ?? [])],
@@ -710,9 +738,96 @@
       issues.value = {}
       failure.value = undefined
       applyDefaultProvider()
+      // 🔌 O agente foi relido: a camada local volta por cima (a dele; a de outro agente sai).
+      applyLocal(local.value?.agentId === agent?.id ? local.value : undefined)
     },
     { immediate: true },
   )
+
+  /** 🔌 O formulário das guias da camada: o da origem com o que esta máquina acrescentou por cima. */
+  function applyLocal(view: IAgentLocalLayerView | undefined) {
+    local.value = view
+    localModels.value = !!view?.layer.providers?.length
+    if (!view || !props.agent) return
+    form.value.allowedTools = shownTools(view.origin.allowedTools, view.layer.allowedTools)
+    // As regras do formulário são só as locais: as da origem aparecem acima delas, travadas.
+    form.value.permissions = view.layer.permissions.map((rule) => ({ ...rule }))
+    form.value.providers = view.layer.providers?.length ? view.layer.providers.map((target) => ({ ...target, models: [...target.models] })) : formProviders(props.agent)
+  }
+  const layerError = ref<string>()
+  watch(
+    () => [props.agent?.id, layerMode.value] as const,
+    async ([agentId, on]) => {
+      layerError.value = undefined
+      const projectId = props.agent?.projectId
+      if (!on || !agentId || !projectId) return applyLocal(undefined)
+      try {
+        const view = await connections.readLocal(projectId, agentId)
+        if (props.agent?.id === agentId) applyLocal(view)
+      } catch (error) {
+        layerError.value = error instanceof Error ? error.message : String(error)
+      }
+    },
+    { immediate: true },
+  )
+  /** Modelos: escolher os desta máquina (parte dos da origem) ou voltar aos que vieram dela. */
+  function useLocalModels(on: boolean) {
+    localModels.value = on
+    if (!on && props.agent) form.value.providers = formProviders(props.agent)
+    issues.value = {}
+  }
+  /** O que a camada tem hoje no servidor (para o "Descartar ajustes locais"). */
+  const hasLayer = computed(() => !!local.value && (!!local.value.layer.providers?.length || !!local.value.layer.allowedTools.length || !!local.value.layer.permissions.length))
+  const confirmingDiscard = ref(false)
+
+  /** 🔌 O Salvar das guias da camada: grava só o que esta máquina acrescenta. O agente (a origem) não muda. */
+  async function saveLayer() {
+    const view = local.value
+    if (!view || !props.agent) return
+    saving.value = true
+    issues.value = {}
+    failure.value = undefined
+    if (localModels.value && !form.value.providers.some((target) => target.models.length)) {
+      issues.value = { providers: ['marque ao menos um modelo. Nenhum aparece? Ative um no menu Modelos.'] }
+      failure.value = 'Os modelos desta máquina precisam de ao menos um modelo.'
+      tab.value = 'modelos'
+      saving.value = false
+      return
+    }
+    try {
+      applyLocal(
+        await connections.saveLocal(view.projectId, view.agentId, {
+          ...(localModels.value ? { providers: form.value.providers.filter((target) => target.models.length) } : {}),
+          allowedTools: layerTools(view.origin.allowedTools, form.value.allowedTools),
+          permissions: (form.value.permissions ?? []).filter((rule) => rule.pattern.trim()),
+        }),
+      )
+      // As listas mostram o agente como ele roda (com a camada): relidas.
+      await agents.reloadLists().catch(() => undefined)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 422) issues.value = error.fieldIssues
+      failure.value = error instanceof Error ? error.message : String(error)
+    } finally {
+      saving.value = false
+    }
+  }
+
+  async function discardLayer() {
+    const view = local.value
+    confirmingDiscard.value = false
+    if (!view) return
+    saving.value = true
+    issues.value = {}
+    failure.value = undefined
+    try {
+      applyLocal(await connections.removeLocal(view.projectId, view.agentId))
+      await agents.reloadLists().catch(() => undefined)
+    } catch (error) {
+      failure.value = error instanceof Error ? error.message : String(error)
+    } finally {
+      saving.value = false
+    }
+  }
 
   function toggle<T>(values: T[], value: T) {
     const at = values.indexOf(value)
@@ -771,6 +886,12 @@
       group?.dirty && (group.users ?? 0) > 1 ? ` A sequência ${group.name ?? ''} muda para os ${group.users} agentes que a usam.` : group?.dirty ? ` A sequência ${group.name ?? ''} muda para todo agente que a usa.` : ''
     return base + extra + shared
   })
+
+  /** O Enter e o botão do rodapé: no agente conectado, só as guias da camada gravam (e sem a confirmação do agente). */
+  function submit() {
+    if (!layerMode.value) confirmingSave.value = true
+    else if (layerTab.value) void saveLayer()
+  }
 
   async function save() {
     confirmingSave.value = false
@@ -846,7 +967,7 @@
 </script>
 
 <template>
-  <form class="mx-auto flex max-w-3xl flex-col gap-5" @submit.prevent="confirmingSave = true" @invalid.capture="tab = ($event.target as HTMLElement).dataset.tab === 'instrucoes' ? 'instrucoes' : 'agente'">
+  <form class="mx-auto flex max-w-3xl flex-col gap-5" @submit.prevent="submit" @invalid.capture="tab = ($event.target as HTMLElement).dataset.tab === 'instrucoes' ? 'instrucoes' : 'agente'">
     <!-- Uma linha só: com muitas guias, rola de lado (quebrar em duas linhas desalinhava o sublinhado). -->
     <nav ref="tabBar" class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" :class="{ 'fade-right': moreTabs }" role="tablist" @scroll.passive="measureTabs">
       <button
@@ -866,10 +987,11 @@
         <span v-else-if="unsavedTabs.includes(item.id)" class="h-1.5 w-1.5 rounded-full bg-amber-400" title="Mudança não salva" />
       </button>
     </nav>
-    <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
+    <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" :layer="layerMode" />
     <p v-else-if="sharedFrom" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="shared-readonly">Compartilhado por {{ scopeLabel(sharedFrom, projects.list) }}: só leitura aqui; a manutenção é lá.</p>
     <p v-else-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
-    <fieldset :disabled="locked" class="contents">
+    <p v-if="layerError" class="text-sm text-rose-300">Não foi possível ler os ajustes locais deste agente ({{ layerError }}).</p>
+    <fieldset :disabled="locked && !layerTab" class="contents">
     <fieldset v-show="tab === 'agente'" class="grid gap-4 sm:grid-cols-2">
       <label class="field">
         <span>Nome</span>
@@ -997,6 +1119,21 @@
         </button>
       </nav>
       <div v-show="modelsTab === 'agente'" class="flex flex-col gap-3" role="tabpanel">
+      <!-- 🔌 Os modelos da origem podem nem existir aqui: a escolha local SUBSTITUI a dela, só nesta máquina. -->
+      <section v-if="layerMode && local" class="tool-card" data-test="layer-models">
+        <header>
+          <h3>Modelos desta máquina</h3>
+          <span class="count">{{ localModels ? 'escolha local' : 'os da origem' }}</span>
+        </header>
+        <div class="flex flex-wrap items-center gap-2 p-3">
+          <p class="hint min-w-0 flex-1">
+            {{ localModels ? 'O agente roda aqui com os provedores e modelos marcados abaixo. Os da origem não mudam.' : 'O agente usa os modelos que vieram da origem. Se eles não existem aqui, escolha os desta máquina.' }}
+          </p>
+          <button v-if="localModels" type="button" class="btn btn-sm btn-secondary" data-test="layer-models-origin" @click="useLocalModels(false)">Voltar aos da origem</button>
+          <button v-else type="button" class="btn btn-sm btn-secondary" data-test="layer-models-local" @click="useLocalModels(true)">Escolher modelos desta máquina</button>
+        </div>
+      </section>
+      <fieldset :disabled="layerMode && !localModels" class="contents">
       <section class="tool-card">
         <header>
           <h3>Provedores</h3>
@@ -1029,7 +1166,10 @@
         </header>
         <p class="hint px-3 pt-2">Os que a pessoa escolhe na conversa. O padrão é o usado quando ninguém escolhe.</p>
         <div class="flex flex-col gap-3 p-3">
-        <p v-if="dropped.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-normal text-amber-200">
+        <p v-if="dropped.length && layerMode" v-show="!localModels" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-normal text-amber-200">
+          Não estão ativos nesta máquina: <template v-for="([providerId, models], index) in dropped" :key="providerId">{{ index ? '; ' : '' }}{{ protocols.providerName(providerId) }}: <code>{{ models.join(', ') }}</code></template>. Ative-os no menu Modelos ou escolha os modelos desta máquina.
+        </p>
+        <p v-else-if="dropped.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-normal text-amber-200">
           <!-- Aviso, não erro: o agente salva sem eles. Numa linha só, para não sobrar espaço antes da pontuação. -->
           Não estão ativos no menu Modelos e saem do agente ao salvar: <template v-for="([providerId, models], index) in dropped" :key="providerId">{{ index ? '; ' : '' }}{{ protocols.providerName(providerId) }}: <code>{{ models.join(', ') }}</code></template>. Para manter, ative-os no menu Modelos.
         </p>
@@ -1064,9 +1204,12 @@
         <small v-for="message in issues.models" :key="message" class="error">{{ message }}</small>
         </div>
       </section>
+      </fieldset>
+      <fieldset :disabled="layerMode" class="contents">
       <section class="tool-card">
         <header>
           <h3>Modos e raciocínio</h3>
+          <span v-if="layerMode" class="count">da origem</span>
         </header>
         <div class="grid gap-4 p-3 sm:grid-cols-2">
       <div class="field">
@@ -1107,9 +1250,12 @@
       </div>
         </div>
       </section>
+      </fieldset>
       </div>
       <div v-if="!lite" v-show="modelsTab === 'grupo'" role="tabpanel">
+        <fieldset :disabled="layerMode" class="contents">
         <AgentModelGroup ref="groupPart" v-model="groupChoice" />
+        </fieldset>
       </div>
     </fieldset>
     <!-- Três guias: as ferramentas do gateway, os extras que só um provedor tem e as configurações do terminal. -->
@@ -1130,6 +1276,7 @@
         </button>
       </nav>
       <!-- Um bloco por assunto, no desenho das permissões: o título, quantas estão marcadas e o que o bloco quer dizer. -->
+      <p v-if="layerMode" class="hint" data-test="layer-hint">O que veio da origem aparece marcado como "origem" e não muda aqui. O resto é desta máquina.</p>
       <div v-show="toolsTab === 'gateway'" class="flex flex-col gap-3" role="tabpanel">
       <section class="tool-card">
         <header>
@@ -1143,12 +1290,14 @@
             v-for="item in serverCapabilities"
             :key="item.id"
             type="button"
-            class="chip"
+            class="chip disabled:cursor-not-allowed"
             :class="{ on: form.allowedTools.includes(item.id), danger: item.dangerous }"
+            :disabled="fromOrigin(item.id)"
             :title="item.description"
             @click="toggle(form.allowedTools, item.id)"
           >
             {{ item.label }}
+            <span v-if="fromOrigin(item.id)" class="ml-1 text-[10px] text-sky-300">origem</span>
           </button>
         </div>
         <dl v-if="capabilityRows.length && form.providers.length" class="mx-3 mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-zinc-900/60 px-3 py-2 text-xs">
@@ -1165,23 +1314,27 @@
               v-for="item in gatewayCapabilities"
               :key="item.id"
               type="button"
-              class="chip"
+              class="chip disabled:cursor-not-allowed"
               :class="{ on: form.allowedTools.includes(item.id), danger: item.dangerous }"
+              :disabled="fromOrigin(item.id)"
               :title="item.description"
               @click="toggle(form.allowedTools, item.id)"
             >
               {{ item.label }}
+              <span v-if="fromOrigin(item.id)" class="ml-1 text-[10px] text-sky-300">origem</span>
             </button>
             <button
               v-for="tool in gatewayTools"
               :key="tool.name"
               type="button"
-              class="chip"
+              class="chip disabled:cursor-not-allowed"
               :class="{ on: toolOn(tool.name), danger: tool.dangerous }"
+              :disabled="toolLocked(tool.name)"
               :title="`${tool.name} — ${tool.description}`"
               @click="toggleTool(tool.name)"
             >
               {{ LOCAL_TOOL_LABEL[tool.name] ?? tool.name }}
+              <span v-if="toolLocked(tool.name)" class="ml-1 text-[10px] text-sky-300">origem</span>
             </button>
           </div>
         </template>
@@ -1204,8 +1357,9 @@
             v-for="entry in orphans"
             :key="entry"
             type="button"
-            class="chip on danger font-mono text-xs"
-            title="Clique para tirar do agente"
+            class="chip on danger font-mono text-xs disabled:cursor-not-allowed"
+            :disabled="fromOrigin(entry)"
+            :title="fromOrigin(entry) ? 'Veio da origem' : 'Clique para tirar do agente'"
             @click="toggle(form.allowedTools, entry)"
           >
             <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">indisponível</span>
@@ -1229,13 +1383,14 @@
               type="checkbox"
               class="accent-emerald-500"
               :checked="form.allowedTools.includes(tool.id)"
-              :disabled="!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id)"
+              :disabled="fromOrigin(tool.id) || (!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id))"
               @change="toggle(form.allowedTools, tool.id)"
             />
             <span class="min-w-0 flex-1">
               <span class="block text-sm">
                 {{ tool.label }}
                 <code class="text-[11px] text-zinc-500">{{ tool.sdkName }}</code>
+                <span v-if="fromOrigin(tool.id)" class="ml-1 text-[10px] text-sky-300">origem</span>
               </span>
               <span class="block text-xs text-zinc-500">{{ tool.description }}</span>
               <span v-if="nativeBlock(tool, section.entry)" class="block text-xs text-zinc-500">{{ nativeBlock(tool, section.entry) }}</span>
@@ -1251,6 +1406,8 @@
         </small>
       </div>
       <div v-show="toolsTab === 'config'" class="flex flex-col gap-4" role="tabpanel">
+      <p v-if="layerMode" class="hint">Estes ajustes vêm da origem e não mudam aqui.</p>
+      <fieldset :disabled="layerMode" class="contents">
       <div class="flex flex-col gap-2">
         <h3 class="text-sm font-medium text-zinc-200">Terminal</h3>
         <p class="text-xs text-zinc-500">
@@ -1311,9 +1468,11 @@
           />
         </label>
       </div>
+      </fieldset>
       </div>
     </fieldset>
     <fieldset v-show="tab === 'delegacao'" class="flex flex-col gap-3">
+      <p v-if="layerMode" class="hint">O que veio da origem aparece marcado como "origem" e não muda aqui. O resto é desta máquina.</p>
       <section class="tool-card">
         <header>
           <h3>A quem pode pedir ajuda</h3>
@@ -1332,11 +1491,12 @@
                 type="button"
                 class="chip disabled:cursor-not-allowed disabled:opacity-40"
                 :class="{ on: form.allowedTools.includes(`agent:${other.id}`), danger: !!cannotRun(other) && form.allowedTools.includes(`agent:${other.id}`) }"
-                :disabled="!!cannotRun(other) && !form.allowedTools.includes(`agent:${other.id}`)"
+                :disabled="fromOrigin(`agent:${other.id}`) || (!!cannotRun(other) && !form.allowedTools.includes(`agent:${other.id}`))"
                 :title="cannotRun(other) ? `Não dá para delegar: ${cannotRun(other)}. Ative um modelo dele em Modelos.` : undefined"
                 @click="toggle(form.allowedTools, `agent:${other.id}`)"
               >
                 {{ other.name }}
+                <span v-if="fromOrigin(`agent:${other.id}`)" class="ml-1 text-[10px] text-sky-300">origem</span>
                 <span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
                 <span v-if="cannotRun(other)" class="ml-1 text-[10px] text-amber-300">{{ cannotRun(other) }}</span>
               </button>
@@ -1351,12 +1511,14 @@
                 v-for="builder in CORE_BUILDERS"
                 :key="builder.id"
                 type="button"
-                class="chip"
+                class="chip disabled:cursor-not-allowed"
                 :class="{ on: form.allowedTools.includes(`agent:${builder.id}`) }"
+                :disabled="fromOrigin(`agent:${builder.id}`)"
                 title="Agente do sistema, só para administradores"
                 @click="toggle(form.allowedTools, `agent:${builder.id}`)"
               >
                 {{ builder.name }}
+                <span v-if="fromOrigin(`agent:${builder.id}`)" class="ml-1 text-[10px] text-sky-300">origem</span>
               </button>
             </div>
           </div>
@@ -1368,6 +1530,11 @@
            ⚖️ A lite não tem regra de delegação: marcar o agente já libera (ver `Permission.Policy`). -->
       <template v-if="!lite">
         <p class="hint">Marcar acima dá a ferramenta; a regra libera a chamada. Precisa dos dois: a regra pode estar aqui ou nas permissões do projeto.</p>
+        <template v-if="originRules.some((rule) => rule.category === 'delegate')">
+          <h4 class="text-xs font-medium text-sky-300">Da origem</h4>
+          <PermissionRules :model-value="originRules" readonly only="delegate" />
+          <h4 class="text-xs font-medium text-zinc-300">Desta máquina</h4>
+        </template>
         <PermissionRules v-model="form.permissions!" only="delegate" />
       </template>
     </fieldset>
@@ -1377,6 +1544,7 @@
           MCPs
           <em class="font-normal text-zinc-500">— o agente usa só o que estiver marcado.</em>
         </span>
+        <p v-if="layerMode" class="hint font-normal">O que veio da origem aparece marcado como "origem" e não muda aqui. Para usar um MCP desta máquina, cadastre-o como global em MCPs.</p>
         <div v-if="enabledMcp.length" class="flex flex-col gap-2">
           <div v-for="server in enabledMcp" :key="server.key" class="rounded-xl border border-zinc-800 px-3 py-2 font-normal">
             <div class="flex flex-wrap items-center gap-2">
@@ -1387,8 +1555,15 @@
                 ≈ {{ mcpWeight(server).toLocaleString('pt-BR') }} tokens por mensagem
               </span>
               <label class="ml-auto flex items-center gap-1.5 text-xs text-zinc-400">
-                <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(mcpRef(server.id, '*'))" @change="toggleAllMcp(server.id)" />
+                <input
+                  type="checkbox"
+                  class="accent-emerald-500"
+                  :checked="form.allowedTools.includes(mcpRef(server.id, '*'))"
+                  :disabled="fromOrigin(mcpRef(server.id, '*'))"
+                  @change="toggleAllMcp(server.id)"
+                />
                 Todas as ferramentas
+                <span v-if="fromOrigin(mcpRef(server.id, '*'))" class="ml-1 text-[10px] text-sky-300">origem</span>
               </label>
             </div>
             <div v-if="!form.allowedTools.includes(mcpRef(server.id, '*'))" class="mt-2 flex flex-wrap gap-1.5">
@@ -1396,12 +1571,14 @@
                 v-for="tool in mcpChips(server)"
                 :key="tool.name"
                 type="button"
-                class="chip font-mono text-xs"
+                class="chip font-mono text-xs disabled:cursor-not-allowed"
                 :class="{ on: form.allowedTools.includes(mcpRef(server.id, tool.name)) }"
+                :disabled="fromOrigin(mcpRef(server.id, tool.name))"
                 :title="tool.unlisted ? 'Escolhida, mas o servidor não a mostra agora' : `${tool.description ?? ''} (≈ ${toolTokens(tool)} tokens)`"
                 @click="toggle(form.allowedTools, mcpRef(server.id, tool.name))"
               >
                 {{ tool.name }}
+                <span v-if="fromOrigin(mcpRef(server.id, tool.name))" class="ml-1 text-[10px] text-sky-300">origem</span>
                 <span v-if="tool.unlisted" class="ml-1 text-[10px] text-zinc-500">não listada</span>
               </button>
               <span v-if="!mcpChips(server).length" class="text-xs text-zinc-500">Nenhuma ferramenta listada agora.</span>
@@ -1422,7 +1599,7 @@
         <p class="text-xs text-zinc-500">
           Valem antes das do projeto: liberam o que o projeto fechou, ou fecham mais. Sem regra no agente nem no projeto, negado. As do sistema valem sempre.
         </p>
-        <PermissionCategoryTabs v-model="permissionSection" :rules="form.permissions ?? []" :exclude="lite ? ['delegate', ...LITE_HIDDEN_PERMISSIONS] : ['delegate']" :active="permissionPane === 'rules'" @pick="permissionPane = 'rules'">
+        <PermissionCategoryTabs v-model="permissionSection" :rules="shownRules" :exclude="lite ? ['delegate', ...LITE_HIDDEN_PERMISSIONS] : ['delegate']" :active="permissionPane === 'rules'" @pick="permissionPane = 'rules'">
           <!-- O nível de acesso dos CLIs por assinatura (o sandbox deles): só quando algum provedor do agente o tem. -->
           <button
             v-if="accessSections.length"
@@ -1438,6 +1615,11 @@
           </button>
         </PermissionCategoryTabs>
         <template v-if="permissionPane === 'rules'">
+          <template v-if="originRules.some((rule) => rule.category === permissionSection)">
+            <h4 class="text-xs font-medium text-sky-300">Da origem · a negação daqui vale sempre</h4>
+            <PermissionRules :model-value="originRules" readonly :only="permissionSection" />
+            <h4 class="text-xs font-medium text-zinc-300">Desta máquina</h4>
+          </template>
           <PermissionRules v-model="form.permissions!" :only="permissionSection" />
           <PermissionTester
             v-if="agent && !creating && (agent.projectId ?? projects.current)"
@@ -1450,6 +1632,8 @@
         <div v-else class="flex flex-col gap-3">
           <p class="text-xs text-zinc-500">Só no modo Agente: o quanto o CLI do provedor (por assinatura) alcança do servidor, no sandbox dele.</p>
           <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
+          <p v-if="layerMode && !localModels" class="hint">Vem da origem. Para mudar aqui, escolha os modelos desta máquina na guia Modelos.</p>
+          <fieldset :disabled="layerMode && !localModels" class="contents">
           <section v-for="section in accessSections" :key="section.entry.target.provider" class="tool-card">
             <header>
               <h3>{{ protocols.providerName(section.entry.target.provider) }}</h3>
@@ -1486,6 +1670,7 @@
 
             </div>
           </section>
+          </fieldset>
           <small v-if="openSandboxes.length" class="text-amber-300">
             ⚠ {{ openSandboxes.join(', ') }}: acesso total. Quem conversar com este agente também terá esse acesso.
             <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
@@ -1638,6 +1823,8 @@
       <button v-if="!locked" type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar agente' }}
       </button>
+      <button v-else-if="layerTab" type="submit" :disabled="saving" class="btn btn-primary" data-test="layer-save">{{ saving ? 'Salvando…' : 'Salvar ajustes locais' }}</button>
+      <button v-if="layerTab && hasLayer" type="button" :disabled="saving" class="btn btn-secondary" data-test="layer-discard" @click="confirmingDiscard = true">Descartar ajustes locais</button>
       <button v-if="!creating && agent && !connectedOrigin" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar agente</button>
       <button v-if="!creating && agent && !locked" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar agente</button>
     </div>
@@ -1649,6 +1836,15 @@
       tone="neutral"
       @confirm="save"
       @cancel="confirmingSave = false"
+    />
+    <ConfirmDialog
+      :open="confirmingDiscard"
+      :title="`Descartar os ajustes locais de ${agent?.name ?? ''}?`"
+      message="O agente volta a rodar como veio da origem: saem os modelos, as ferramentas, as delegações e as regras desta máquina."
+      action="Descartar"
+      :busy="saving"
+      @confirm="discardLayer"
+      @cancel="confirmingDiscard = false"
     />
     <ConfirmDialog
       :open="confirming"

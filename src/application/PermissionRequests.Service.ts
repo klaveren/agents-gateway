@@ -60,6 +60,8 @@ export interface IPermissionRulesView {
   projectName?: string
   /** As regras da camada pedida. */
   rules: IPermissionRule[]
+  /** 🔌 Agente de projeto conectado: as regras que vieram da origem (só leitura). As de `rules` são as desta máquina. */
+  origin?: IPermissionRule[]
   /** As do projeto do agente (a camada de baixo), quando é um agente de projeto. */
   project?: { projectId: string; rules: IPermissionRule[] }
   /** Os pedidos ainda abertos (pendentes e vencidos) para este alvo. */
@@ -124,6 +126,11 @@ export interface IPermissionRequestsDeps {
   }
   repository: IPermissionRequestRepository
   agents: Pick<AgentCatalog, 'entry' | 'save' | 'savePermissions'>
+  /**
+   * 🔌 As regras LOCAIS de um agente de projeto conectado (ver `AgentLocalLayer.Service`): presentes, são elas que a
+   * troca e a aprovação leem e gravam — o agente que veio da origem não muda. `undefined` = agente comum.
+   */
+  localRules?(agent: IAgent): { rules: IPermissionRule[]; save(rules: readonly IPermissionRule[], by: string): IPermissionRule[] } | undefined
   /** As regras dos projetos (a camada de baixo). Ausente: sem pedido de projeto. */
   projects?: IProjectRulesPort
   /** O aviso às telas abertas (`catalog.changed`, tipo `permission-request`): o pedido novo aparece sem reler. */
@@ -194,6 +201,7 @@ export class PermissionRequestsService {
       agentName: agent.name,
       ...(agent.projectId ? { projectId: agent.projectId } : {}),
       rules: target.rules,
+      ...(this.deps.localRules?.(agent) ? { origin: agent.permissions ?? [] } : {}),
       ...(project ? { project } : {}),
       pending: this.list({ agentId: agent.id }),
     }
@@ -383,6 +391,8 @@ export class PermissionRequestsService {
     let permissions: IPermissionRule[] | undefined
     if (request.kind === 'agent-patch') {
       const agent = this.agent(request.agentId!)
+      // ⛔ O patch grava o agente inteiro: o de projeto conectado é da origem.
+      if (this.deps.localRules?.(agent)) throw new PermissionRequestForbiddenError()
       const target = requestedAgent(agent, request)
       const widenings = agentWidenings(agent, target)
       gate(widenings, confirm)
@@ -455,6 +465,7 @@ export class PermissionRequestsService {
   private rulesTarget(ref: IRulesRef): IRulesTarget {
     if (ref.agentId) {
       const agent = this.agent(ref.agentId)
+      const local = this.deps.localRules?.(agent)
       return {
         kind: 'agent-rules',
         item: agentItem(agent),
@@ -462,8 +473,8 @@ export class PermissionRequestsService {
         ...(agent.projectId ? { projectId: agent.projectId } : {}),
         name: agent.name,
         screen: agentScreen(agent.name),
-        rules: agent.permissions ?? [],
-        save: (rules, by, change) => this.deps.agents.savePermissions(agent.id, rules, by, change).permissions ?? [],
+        rules: local ? local.rules : (agent.permissions ?? []),
+        save: local ? (rules, by) => local.save(rules, by) : (rules, by, change) => this.deps.agents.savePermissions(agent.id, rules, by, change).permissions ?? [],
       }
     }
     const projects = this.deps.projects

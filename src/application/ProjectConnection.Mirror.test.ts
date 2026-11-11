@@ -20,7 +20,7 @@ const ORIGIN = [
 ]
 
 /** O aplicador falso: grava na ordem e PARA no item de `failOn` (como o de verdade); o plano não bloqueia nada. */
-function build(localGlobals: ICatalogDocument[]) {
+function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[] = []) {
   const exporter = new CatalogExportUseCase({
     reader: { list: () => ORIGIN, read: () => ORIGIN[0] } as never,
     mask: { scan: (value: string) => ({ text: value, hits: [] }) } as never,
@@ -30,6 +30,8 @@ function build(localGlobals: ICatalogDocument[]) {
   const failOn = 'spec/quebrada'
   const planned: string[][] = []
   const written: string[] = []
+  /** A ordem do que a camada local e o espelho fizeram. */
+  const steps: string[] = []
   const repository = new SqliteProjectConnectionRepository(':memory:')
   const service = new ProjectConnectionService({
     repository,
@@ -53,8 +55,9 @@ function build(localGlobals: ICatalogDocument[]) {
         }
       },
     } as never,
-    reader: { list: (scope) => (scope.kind === 'global' ? localGlobals : []) },
-    remove: async () => undefined,
+    reader: { list: (scope) => (scope.kind === 'global' ? localGlobals : localProject) },
+    remove: async (current) => void steps.push(`remove ${current.kind}/${current.id}`),
+    layers: { applyAll: (projectId) => void steps.push(`apply ${projectId}`), forget: (agentId) => void steps.push(`forget ${agentId}`) },
     models: async () => ({ enabled: () => true }),
   })
   repository.insert(
@@ -74,7 +77,7 @@ function build(localGlobals: ICatalogDocument[]) {
     },
     'agc_x',
   )
-  return { service, planned, written }
+  return { service, planned, written, steps, repository }
 }
 
 describe('projeto conectado: a cópia', () => {
@@ -96,5 +99,19 @@ describe('projeto conectado: a cópia', () => {
     assert.ok(!planned[0].includes('mcp/logiccus.gateway'))
     assert.ok(planned[0].includes('mcp/logiccus.agents-mcp'))
     assert.ok(!result.skipped.some((item) => item.ref.startsWith('mcp/')))
+  })
+
+  it('🔌 a camada local: o agente que a origem removeu leva a dele ANTES de sair; os outros ficam como estão', async () => {
+    const { service, steps } = build([], [...ORIGIN, doc('agent', 'antigo', 'logiccus', { allowedTools: [] })])
+    const result = await service.sync('logiccus', 'dev')
+    assert.deepEqual(steps, ['forget antigo', 'remove agent/antigo'])
+    assert.deepEqual(result.removed, ['agent/antigo'])
+  })
+
+  it('🔌 desconectar aplica as camadas locais nos agentes antes de esquecer a conexão', () => {
+    const { service, steps, repository } = build([])
+    service.disconnect('logiccus', 'dev')
+    assert.deepEqual(steps, ['apply logiccus'])
+    assert.equal(repository.get('logiccus'), undefined)
   })
 })

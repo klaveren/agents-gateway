@@ -3,6 +3,7 @@ import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { PermissionRequestsService } from '@application/PermissionRequests.Service'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqlitePermissionRequestRepository } from '@infra/persistence/Sqlite.PermissionRequestRepository'
+import { makeAgentLocalLayers } from './AgentLocalLayers.Factory'
 import { makeAgents } from './Agents.Factory'
 import { makeCatalogEvents } from './CatalogEvents.Factory'
 import { makePermissions } from './Permissions.Factory'
@@ -17,6 +18,7 @@ export function makePermissionRequests(): PermissionRequestsService {
   service = new PermissionRequestsService({
     repository: new SqlitePermissionRequestRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH),
     agents: makeAgents(),
+    localRules: (agent) => makeAgentLocalLayers().localRules(agent),
     projects: {
       exists: (projectId) => makeProjects().exists(projectId),
       name: (projectId) => (makeProjects().exists(projectId) ? makeProjects().get(projectId).name : undefined),

@@ -133,6 +133,8 @@ export function agentProjectOf(agentId: string): string | null | undefined {
  * 🔌 O que muda num projeto conectado SEM mexer no catálogo: os valores das variáveis, os hooks e os agendamentos (a
  * operação daqui), os membros, as contas, a própria conexão e o que só confere ou planeja. O ledger do agente conectado
  * mora na origem: a tela daqui não o edita.
+ * As regras de permissão do AGENTE e a aprovação de um pedido entram: gravam na camada local dele (`AgentLocalLayer`),
+ * nunca no agente; o pedido que mudaria o catálogo é recusado na própria rota (`refuseConnected`).
  */
 const CONNECTED_WRITABLE: readonly RegExp[] = [
   /^\/connections(\/|$)/,
@@ -142,7 +144,8 @@ const CONNECTED_WRITABLE: readonly RegExp[] = [
   /^\/projects\/:id\/members$/,
   /^\/projects\/:projectId\/(accounts|permissions\/test)(\/|$)/,
   /^\/catalog\/import\/plan$/,
-  /^\/permission-requests\/:requestId\/reject$/,
+  /^\/permission-requests\/:requestId\/(approve|reject)$/,
+  /^\/agents\/:agentId\/permission-rules$/,
 ]
 
 /**
@@ -153,15 +156,18 @@ const CONNECTED_WRITABLE: readonly RegExp[] = [
 function guardConnected(projectIds: ReadonlyArray<string | null | undefined>): void {
   const request = currentRequest()
   if (!request || request.method === 'GET' || CONNECTED_WRITABLE.some((pattern) => pattern.test(request.route))) return
-  for (const projectId of projectIds) {
-    const connection = projectId ? registry?.connection?.(projectId) : undefined
-    if (connection)
-      throw new HttpError(
-        409,
-        'project_read_only',
-        `O projeto ${projectId} é conectado a ${connection.url}: o catálogo é só leitura aqui. Mudança é feita na origem (abra um ticket); para mexer localmente, desconecte o projeto.`,
-      )
-  }
+  for (const projectId of projectIds) refuseConnected(projectId)
+}
+
+/** ⛔ Recusa o que mudaria o catálogo de um projeto conectado, em qualquer rota (a que passa pela lista acima confere aqui o caso que não pode). */
+export function refuseConnected(projectId: string | null | undefined): void {
+  const connection = projectId ? registry?.connection?.(projectId) : undefined
+  if (connection)
+    throw new HttpError(
+      409,
+      'project_read_only',
+      `O projeto ${projectId} é conectado a ${connection.url}: o catálogo é só leitura aqui. Mudança é feita na origem (abra um ticket); para mexer localmente, desconecte o projeto.`,
+    )
 }
 
 function denied(operation: string, reason: string): HttpError {
