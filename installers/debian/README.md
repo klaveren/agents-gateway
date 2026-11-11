@@ -15,7 +15,8 @@ installers/debian/build-deb.sh arm64      # só uma arquitetura
 ```
 
 Gera `installers/debian/dist/agents-gateway_<versão>_<arch>.deb` do que está **commitado** (`git archive HEAD`),
-compilado num contêiner Debian da arquitetura certa. Precisa do Docker; a arquitetura que não é a desta máquina roda
+compilado num contêiner Debian da arquitetura certa, com o kit do servidor — o mesmo da imagem: Node com npm, npx e corepack, o
+micromamba e o Antigravity (`agy`), conferidos pelo checksum; Claude e Codex vêm nas dependências. Precisa do Docker; a arquitetura que não é a desta máquina roda
 emulada (mais lenta).
 
 ## Instalar
@@ -52,5 +53,3 @@ agents-gateway configurar    # muda a pasta, o endereço e a porta (dpkg-reconfi
   também a configuração e o usuário. **A pasta de dados fica sempre**: apagar é à mão.
 - **Terminal dos agentes:** o cerco usa o bubblewrap. No Ubuntu com AppArmor restringindo user namespaces, a instalação avisa;
   libere o bwrap (perfil `bwrap-userns-restrict`) ou `kernel.apparmor_restrict_unprivileged_userns=0`.
-- **Opcional:** o CLI do Antigravity e o micromamba (Python dos agentes) não vêm no pacote; o `infra/debian/setup.sh` mostra
-  como instalá-los.
