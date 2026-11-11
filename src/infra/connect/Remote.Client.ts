@@ -64,7 +64,7 @@ export class RemoteClient implements IRemoteCatalog {
 
   async events(onVersion: (version: number) => void, signal: AbortSignal): Promise<void> {
     const res = await this.request('/events', signal)
-    if (!res.body) throw new RemoteUnavailableError('the origin closed the event stream')
+    if (!res.body) throw new RemoteUnavailableError('a origem fechou o aviso ao vivo')
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
@@ -96,10 +96,11 @@ export class RemoteClient implements IRemoteCatalog {
       envelope = undefined
     }
     // ⚖️ O 404 do portão da origem tem o código da conexão: é credencial, não "não achei".
-    if (envelope?.code === 'connection_unauthorized') throw new RemoteUnauthorizedError(`the origin does not give this token the project ${this.projectId}`)
+    if (envelope?.code === 'connection_unauthorized')
+      throw new RemoteUnauthorizedError(`a origem não libera o projeto ${this.projectId} para este token (a conta saiu do projeto?)`)
     if (envelope?.ok) return envelope.result as T
-    if (!envelope || res.status >= 500) throw new RemoteUnavailableError(envelope?.message ?? `the origin answered ${res.status}`)
-    throw new RemoteRequestError(res.status, envelope.message ?? `the origin answered ${res.status}`, envelope.details)
+    if (!envelope || res.status >= 500) throw new RemoteUnavailableError(envelope?.message ?? `a origem respondeu ${res.status}`)
+    throw new RemoteRequestError(res.status, envelope.message ?? `a origem respondeu ${res.status}`, envelope.details)
   }
 
   private async request(path: string, signal: AbortSignal, body?: unknown): Promise<Response> {
@@ -116,16 +117,16 @@ export class RemoteClient implements IRemoteCatalog {
         signal,
       })
     } catch (error) {
-      throw new RemoteUnavailableError(`the origin did not answer: ${error instanceof Error ? error.message : String(error)}`)
+      throw new RemoteUnavailableError(`a origem não respondeu (${error instanceof Error ? error.message : String(error)})`)
     }
     if (res.status === 401) {
       await res.body?.cancel().catch(() => undefined)
-      throw new RemoteUnauthorizedError('the connection token is invalid, expired or revoked')
+      throw new RemoteUnauthorizedError('o token de conexão não vale mais (revogado, vencido ou inválido): crie outro na origem e troque aqui')
     }
     if (path === '/events' && !res.ok) {
       await res.body?.cancel().catch(() => undefined)
-      if (res.status === 404) throw new RemoteUnauthorizedError(`the origin does not give this token the project ${this.projectId}`)
-      throw new RemoteUnavailableError(`the origin answered ${res.status}`)
+      if (res.status === 404) throw new RemoteUnauthorizedError(`a origem não libera o projeto ${this.projectId} para este token (a conta saiu do projeto?)`)
+      throw new RemoteUnavailableError(`a origem respondeu ${res.status}`)
     }
     return res
   }

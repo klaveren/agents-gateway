@@ -34,6 +34,14 @@ const SCHEMA = `
     created_at       TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS ledger_outbox_project ON ledger_outbox (project_id, id);
+  CREATE TABLE IF NOT EXISTS ledger_cache (
+    project_id  TEXT NOT NULL,
+    agent_id    TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    at          TEXT NOT NULL,
+    PRIMARY KEY (project_id, agent_id, key)
+  );
 `
 
 type TRow = Record<string, unknown>
@@ -107,6 +115,27 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
   remove(projectId: string): void {
     this.db.prepare('DELETE FROM project_connections WHERE project_id = ?').run(projectId)
     this.db.prepare('DELETE FROM ledger_outbox WHERE project_id = ?').run(projectId)
+    this.db.prepare('DELETE FROM ledger_cache WHERE project_id = ?').run(projectId)
+  }
+
+  ledgerCacheGet(projectId: string, agentId: string, key: string): string | undefined {
+    const row = this.db.prepare('SELECT value FROM ledger_cache WHERE project_id = ? AND agent_id = ? AND key = ?').get(projectId, agentId, key) as TRow | undefined
+    return row ? String(row.value) : undefined
+  }
+
+  ledgerCachePut(projectId: string, agentId: string, key: string, json: string, at: Date): void {
+    this.db
+      .prepare(
+        'INSERT INTO ledger_cache (project_id, agent_id, key, value, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (project_id, agent_id, key) DO UPDATE SET value = excluded.value, at = excluded.at',
+      )
+      .run(projectId, agentId, key, json, at.toISOString())
+  }
+
+  ledgerCacheList(projectId: string, agentId: string, prefix: string): string[] {
+    const rows = this.db
+      .prepare('SELECT value FROM ledger_cache WHERE project_id = ? AND agent_id = ? AND substr(key, 1, ?) = ?')
+      .all(projectId, agentId, prefix.length, prefix) as TRow[]
+    return rows.map((row) => String(row.value))
   }
 
   enqueueLedger(entry: Omit<ILedgerOutboxEntry, 'id'>): void {

@@ -67,8 +67,6 @@ export class ProjectConnectionService {
   private watching?: { abort: AbortController; timer: NodeJS.Timeout }
   /** Os projetos com o aviso ao vivo aberto (um vigia por projeto). */
   private readonly watched = new Set<string>()
-  /** O último ledger lido da origem, por agente e pergunta: o que o agente lê quando a origem está fora do ar. */
-  private readonly ledgerCache = new Map<string, unknown>()
   /** A seção do ledger no system prompt de cada agente conectado (a última que a origem deu). */
   private readonly prompts = new Map<string, string | null>()
   private readonly flushing = new Set<string>()
@@ -99,9 +97,9 @@ export class ProjectConnectionService {
     const remoteProjectId = projectId
     const token = input.token.trim()
     const url = input.url.trim()
-    if (!PROJECT_ID_PATTERN.test(projectId)) throw new ProjectConnectionError('invalid', `invalid project id: ${projectId}`)
-    if (!/^https?:\/\//i.test(url)) throw new ProjectConnectionError('invalid', 'the url must start with http:// or https://')
-    if (this.deps.projects.exists(projectId)) throw new ProjectConnectionError('exists', `a project ${projectId} already exists here: pick another id`)
+    if (!PROJECT_ID_PATTERN.test(projectId)) throw new ProjectConnectionError('invalid', `id de projeto inválido: ${projectId}`)
+    if (!/^https?:\/\//i.test(url)) throw new ProjectConnectionError('invalid', 'o endereço precisa começar com http:// ou https://')
+    if (this.deps.projects.exists(projectId)) throw new ProjectConnectionError('exists', `já existe um projeto ${projectId} aqui: apague-o ou desconecte-o antes`)
 
     const client = this.deps.client(url, remoteProjectId, token)
     try {
@@ -169,7 +167,7 @@ export class ProjectConnectionService {
 
   /** Atualiza para a ÚLTIMA versão da origem, em espelho. */
   async sync(projectId: string, by: string): Promise<ISyncResult> {
-    if (this.syncing.has(projectId)) throw new ProjectConnectionError('busy', `${projectId} is already updating`)
+    if (this.syncing.has(projectId)) throw new ProjectConnectionError('busy', `${projectId} já está atualizando`)
     this.syncing.add(projectId)
     try {
       return await this.mirror(projectId, by)
@@ -179,27 +177,36 @@ export class ProjectConnectionService {
   }
 
   /**
-   * 🔌 O LEDGER DE UM AGENTE DE PROJETO CONECTADO: mora na ORIGEM (um ledger só, não um por máquina). Ler vai lá e guarda
-   * a resposta; com a origem fora do ar, devolve a última lida. Escrever vai lá; fora do ar, entra na FILA, na ordem, e
-   * sai quando ela voltar (o vigia esvazia).
+   * 🔌 O LEDGER DE UM AGENTE DE PROJETO CONECTADO: mora na ORIGEM (um ledger só, não um por máquina). Ler vai lá e GUARDA a
+   * resposta (no banco: vale depois de reiniciar); o índice traz junto os contextos que mudaram. Com a origem fora do ar,
+   * vale o guardado — a busca, feita aqui sobre os contextos guardados — e a conexão passa a "fora do ar". Escrever vai
+   * lá; fora do ar, entra na FILA, na ordem, e sai quando ela voltar (o vigia esvazia).
    */
   async ledgerRead<T>(projectId: string, agentId: string, ask: 'index' | 'context' | 'search', key = ''): Promise<T> {
     const client = this.clientOf(projectId)
-    const cacheKey = `${projectId}\0${agentId}\0${ask}\0${key}`
+    const cacheKey = ask === 'index' ? 'index' : `${ask}:${key}`
     try {
-      if (!client) throw new RemoteUnavailableError('the stored token could not be opened')
+      if (!client) throw new RemoteUnavailableError('o token guardado não abriu: troque o token do projeto')
       const ledger = client.ledger(agentId)
       const result = ask === 'index' ? await ledger.index() : ask === 'context' ? await ledger.context(key) : await ledger.search(key)
-      this.ledgerCache.set(cacheKey, result)
-      if (ask === 'index') this.prompts.set(agentId, (result as { prompt: string | null }).prompt)
+      this.remember(projectId, agentId, cacheKey, result)
+      this.reachable(projectId)
+      if (ask === 'index') {
+        this.prompts.set(agentId, (result as { prompt: string | null }).prompt)
+        void this.prefetch(projectId, agentId, (result as { index: { contexts: Array<{ topic: string; updatedAt: Date }> } }).index.contexts)
+      }
       return result as T
     } catch (error) {
-      const cached = this.ledgerCache.get(cacheKey)
       if (error instanceof RemoteRequestError) throw new Error(error.message, { cause: error })
-      if (cached !== undefined) return cached as T
-      throw new Error(`O ledger mora na origem do projeto, que não respondeu agora (${error instanceof Error ? error.message : String(error)}). Tente de novo mais tarde.`, {
-        cause: error,
-      })
+      this.unreachable(projectId, error)
+      const cached = this.recalled<T>(projectId, agentId, cacheKey) ?? (ask === 'search' ? (this.searchCached(projectId, agentId, key) as T | undefined) : undefined)
+      if (cached !== undefined) return cached
+      throw new Error(
+        `O ledger mora na origem do projeto, que não respondeu agora (${error instanceof Error ? error.message : String(error)}), e este trecho não estava guardado aqui. Tente de novo mais tarde.`,
+        {
+          cause: error,
+        },
+      )
     }
   }
 
@@ -216,9 +223,15 @@ export class ProjectConnectionService {
     const client = this.clientOf(projectId)
     if (!client) throw queue()
     try {
-      return (await client.ledger(agentId).write(change, conversationId)) as T
+      const result = (await client.ledger(agentId).write(change, conversationId)) as T
+      // A resposta traz o contexto e o índice de depois: o guardado fica em dia sem reler.
+      const written = result as { topic?: string; context?: unknown; index?: unknown }
+      if (written.context && written.topic) this.remember(projectId, agentId, `context:${written.topic}`, written.context)
+      this.reachable(projectId)
+      return result
     } catch (error) {
       if (error instanceof RemoteRequestError) throw remoteRefusal(error)
+      if (!(error instanceof RemoteUnauthorizedError)) this.unreachable(projectId, error)
       if (error instanceof RemoteUnauthorizedError)
         throw new Error(`O ledger mora na origem do projeto, que recusou a conexão: ${error.message}. Troque o token do projeto.`, { cause: error })
       throw queue()
@@ -228,7 +241,62 @@ export class ProjectConnectionService {
   /** A seção do ledger no system prompt do agente conectado: a última que a origem deu (lê de novo em segundo plano). */
   ledgerPrompt(projectId: string, agentId: string): string | undefined {
     void this.ledgerRead(projectId, agentId, 'index').catch(() => undefined)
+    if (!this.prompts.has(agentId)) this.prompts.set(agentId, this.recalled<{ prompt: string | null }>(projectId, agentId, 'index')?.prompt ?? null)
     return this.prompts.get(agentId) ?? undefined
+  }
+
+  /** Traz os contextos que mudaram desde o guardado (o índice diz quando cada um mudou): é o que vale fora do ar. */
+  private async prefetch(projectId: string, agentId: string, contexts: ReadonlyArray<{ topic: string; updatedAt: Date }>): Promise<void> {
+    const client = this.clientOf(projectId)
+    if (!client) return
+    for (const context of contexts) {
+      const cached = this.recalled<{ updatedAt: Date }>(projectId, agentId, `context:${context.topic}`)
+      if (cached && new Date(cached.updatedAt).getTime() >= new Date(context.updatedAt).getTime()) continue
+      try {
+        this.remember(projectId, agentId, `context:${context.topic}`, await client.ledger(agentId).context(context.topic))
+      } catch {
+        return
+      }
+    }
+  }
+
+  private remember(projectId: string, agentId: string, key: string, value: unknown): void {
+    this.deps.repository.ledgerCachePut(projectId, agentId, key, JSON.stringify(value), this.now())
+  }
+
+  private recalled<T>(projectId: string, agentId: string, key: string): T | undefined {
+    const json = this.deps.repository.ledgerCacheGet(projectId, agentId, key)
+    return json === undefined ? undefined : (JSON.parse(json, revive) as T)
+  }
+
+  /** A busca fora do ar: as palavras nos contextos guardados (tema, gatilho, playbook) e nas linhas deles. */
+  private searchCached(projectId: string, agentId: string, query: string): unknown {
+    const contexts = this.deps.repository.ledgerCacheList(projectId, agentId, 'context:').map((json) => JSON.parse(json, revive) as ICachedContext)
+    if (!contexts.length) return undefined
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+    const hits = (text: string) => words.every((word) => text.toLowerCase().includes(word))
+    return {
+      agentId,
+      query,
+      contexts: contexts
+        .filter((context) => hits(`${context.topic} ${context.trigger} ${context.playbook ?? ''}`))
+        .map(({ lines: _lines, playbook: _playbook, ...summary }) => summary),
+      lines: contexts.flatMap((context) =>
+        (context.lines ?? []).filter((line) => hits(`${line.trigger} ${line.learning} ${line.ref ?? ''}`)).map((line) => ({ ...line, topic: context.topic })),
+      ),
+    }
+  }
+
+  /** O ledger respondeu: a conexão que estava "fora do ar" volta. */
+  private reachable(projectId: string): void {
+    if (this.deps.repository.get(projectId)?.state === 'offline') this.deps.repository.update(projectId, { state: 'ok', lastError: undefined })
+  }
+
+  /** O ledger não respondeu: a conexão passa a "fora do ar" (o vigia confere e volta quando ela responder). */
+  private unreachable(projectId: string, error: unknown): void {
+    const connection = this.deps.repository.get(projectId)
+    if (connection && connection.state === 'ok')
+      this.deps.repository.update(projectId, { state: 'offline', lastError: `a origem não respondeu ao ledger: ${error instanceof Error ? error.message : String(error)}` })
   }
 
   /** Esvazia a fila do ledger, na ordem; para na primeira que não sai (a origem caiu de novo). Recusa da origem descarta, com o motivo. */
@@ -357,7 +425,7 @@ export class ProjectConnectionService {
     if (!pack)
       throw new ProjectConnectionError(
         this.require(projectId).state === 'unauthorized' ? 'unauthorized' : 'unavailable',
-        this.require(projectId).lastError ?? 'the origin did not answer',
+        this.require(projectId).lastError ?? 'a origem não respondeu',
       )
 
     // Os arquivos que faltam aqui, antes de gravar quem os cita (o escritor recusa conteúdo que não está no cofre).
@@ -365,7 +433,7 @@ export class ProjectConnectionService {
     for (const file of pack.files) {
       if (this.deps.files.has(file.sha256)) continue
       const content = await client.file(file.sha256)
-      if (this.deps.files.put(content).sha256 !== file.sha256) throw new ProjectConnectionError('unavailable', `the file ${file.sha256} came corrupted`)
+      if (this.deps.files.put(content).sha256 !== file.sha256) throw new ProjectConnectionError('unavailable', `o arquivo ${file.sha256} chegou corrompido`)
     }
 
     const models = { ...(await this.deps.models()), map: connection.modelMap }
@@ -437,7 +505,7 @@ export class ProjectConnectionService {
   private async talk<T>(projectId: string, work: (client: IRemoteCatalog) => Promise<T>): Promise<T | undefined> {
     const client = this.clientOf(projectId)
     if (!client) {
-      this.deps.repository.update(projectId, { state: 'unauthorized', lastError: 'the stored token could not be opened: connect again' })
+      this.deps.repository.update(projectId, { state: 'unauthorized', lastError: 'o token guardado não abriu: troque o token do projeto' })
       return undefined
     }
     try {
@@ -458,7 +526,7 @@ export class ProjectConnectionService {
 
   private require(projectId: string): IProjectConnection {
     const connection = this.deps.repository.get(projectId)
-    if (!connection) throw new ProjectConnectionError('not_found', `${projectId} is not a connected project`)
+    if (!connection) throw new ProjectConnectionError('not_found', `${projectId} não é um projeto conectado`)
     return connection
   }
 }
@@ -467,4 +535,18 @@ export class ProjectConnectionService {
 function remoteRefusal(error: RemoteRequestError): Error {
   if (error.status === 422 && Array.isArray(error.details)) return new InvalidLedgerError(error.details as Array<{ field: string; message: string }>)
   return new Error(error.message)
+}
+
+/** Um contexto guardado do ledger (o que a busca fora do ar lê). */
+interface ICachedContext {
+  topic: string
+  trigger: string
+  playbook?: string
+  updatedAt: Date
+  lines?: Array<{ trigger: string; learning: string; ref?: string }>
+}
+
+/** As datas do JSON guardado voltam a ser `Date` (as ferramentas formatam). */
+function revive(key: string, value: unknown): unknown {
+  return (key === 'createdAt' || key === 'updatedAt' || key === 'at') && typeof value === 'string' ? new Date(value) : value
 }

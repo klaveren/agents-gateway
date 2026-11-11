@@ -1,5 +1,7 @@
 <script setup lang="ts">
   import SaveFooter from '@/components/SaveFooter.vue'
+  import ConnectedReadOnly from '@/components/ConnectedReadOnly.vue'
+  import { useConnectionsStore } from '@/stores/connections'
 import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import { lite } from '@/lib/edition'
@@ -38,6 +40,7 @@ import { computed, onMounted, ref, watch } from 'vue'
   const mcp = useMcpStore()
   const settings = useSettingsStore()
   const projects = useProjectsStore()
+  const connections = useConnectionsStore()
   /** O MCP do próprio gateway: a URL e a credencial são do sistema, não se editam. */
   const isSelf = computed(() => selected.value?.key === 'gateway')
   /** Sem Docker neste servidor (o pod do k3s não tem): o "Contêiner isolado" não sobe. `undefined` = não se sabe. */
@@ -60,7 +63,9 @@ import { computed, onMounted, ref, watch } from 'vue'
   /** Mexe nos MCPs: o admin do gateway (os globais) ou o admin do projeto atual (os dele). */
   const canManage = computed(() => auth.isAdmin || projects.manages)
   /** O MCP aberto é só leitura: global é do admin do gateway; o de projeto, de quem administra o projeto. */
-  const locked = computed(() => !!selected.value && (selected.value.projectId ? !projects.manages : !auth.isAdmin))
+  /** 🔌 MCP de projeto conectado: só leitura (vem da origem). */
+  const connectedOrigin = computed(() => connections.originOf(selected.value?.projectId))
+  const locked = computed(() => !!selected.value && (!!connectedOrigin.value || (selected.value.projectId ? !projects.manages : !auth.isAdmin)))
   const adding = computed(() => route.name === 'mcp-new')
   /** ⚖️ A rota leva a CHAVE (`n8n`, `cliente-a.n8n`): o mesmo id pode estar em dois projetos. */
   const selected = computed(() => (props.id ? mcp.list.find((server) => server.key === props.id) : undefined))
@@ -448,7 +453,7 @@ import { computed, onMounted, ref, watch } from 'vue'
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">MCPs</h1>
-        <RouterLink to="/mcp/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar MCP">
+        <RouterLink v-if="!connections.originOf(projects.current)" to="/mcp/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar MCP">
           <Icon name="plus" class="h-5 w-5" />
         </RouterLink>
       </header>
@@ -638,7 +643,8 @@ import { computed, onMounted, ref, watch } from 'vue'
         <HistoryTabs v-model="tab" edit-label="Configuração" />
         <HistoryPanel v-if="tab === 'history'" kind="mcp" :id="selected.key" :readonly="locked" @restored="restored" />
         <template v-else>
-          <p v-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
+          <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
+          <p v-else-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
           <fieldset :disabled="locked" class="contents">
           <p v-if="selected.selfReference" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
             MCP do próprio gateway: o agente pode abrir conversas com outros agentes, até com ele mesmo. Dê só o necessário.

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ConnectedReadOnly from './ConnectedReadOnly.vue'
+import { useConnectionsStore } from '@/stores/connections'
 import { computed, ref } from 'vue'
 import InitialContextEditor from './InitialContextEditor.vue'
 import SaveFooter from './SaveFooter.vue'
@@ -10,7 +12,10 @@ import RulesEditor from './RulesEditor.vue'
  * ⚖️ Juntos porque são a mesma pergunta: "o que entra sempre, e quanto custa". Em guias, como no agente: as duas ficam
  * montadas (`v-show`), para o peso de cada uma chegar ao total sem abrir a guia.
  */
-defineProps<{ projectId: string }>()
+const props = defineProps<{ projectId: string }>()
+/** 🔌 O ambiente do projeto conectado vem da origem: só leitura. */
+const connections = useConnectionsStore()
+const connectedOrigin = computed(() => connections.originOf(props.projectId))
 
 type TTab = 'regras' | 'contexto'
 const tab = ref<TTab>('regras')
@@ -85,16 +90,19 @@ const format = (value: number) => value.toLocaleString('pt-BR')
     </div>
 
     <div v-show="tab === 'contexto'" class="flex flex-col gap-2" role="tabpanel">
+      <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
+      <fieldset :disabled="!!connectedOrigin" class="contents">
       <InitialContextEditor ref="editor" owner="projects" :owner-id="projectId" :project-id="projectId" embedded @weight="(tokens) => (specsWeight = tokens)">
         <p class="text-sm text-zinc-400">
           As specs marcadas ficam sempre na memória de todo agente do projeto. As demais o agente consulta quando precisa.
         </p>
       </InitialContextEditor>
+      </fieldset>
     </div>
 
     <p class="rounded-xl bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400">Cada agente soma o que tem de próprio; veja o total na guia Tamanho do agente.</p>
     <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
     <p v-if="failure" class="text-sm text-rose-300">{{ failure }}</p>
-    <SaveFooter v-show="tab === 'contexto'" label="Salvar contexto inicial" :busy="busy" :disabled="!editor?.dirty" :pending="!!editor?.dirty" @save="saveContext" />
+    <SaveFooter v-show="tab === 'contexto' && !connectedOrigin" label="Salvar contexto inicial" :busy="busy" :disabled="!editor?.dirty" :pending="!!editor?.dirty" @save="saveContext" />
   </section>
 </template>

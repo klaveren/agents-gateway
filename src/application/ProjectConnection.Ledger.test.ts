@@ -25,10 +25,30 @@ function origin() {
     ledger: (agentId) => ({
       index: async () => {
         if (state.down) throw new RemoteUnavailableError('down')
-        return { index: { agentId, contexts: [], lineCount: state.written.length, warnings: [] }, prompt: `## Ledger de ${agentId}` }
+        return {
+          index: {
+            agentId,
+            contexts: [{ topic: 'build-oom', trigger: 'quando o build estourar', updatedAt: new Date('2026-11-11T10:00:00Z') }],
+            lineCount: state.written.length,
+            warnings: [],
+          },
+          prompt: `## Ledger de ${agentId}`,
+        }
       },
-      context: async () => ({}),
-      search: async () => ({}),
+      context: async (topic: string) => {
+        if (state.down) throw new RemoteUnavailableError('down')
+        return {
+          topic,
+          trigger: 'quando o build estourar',
+          playbook: '',
+          updatedAt: new Date('2026-11-11T10:00:00Z'),
+          lines: [{ id: 1, trigger: 'no CI', learning: 'aumentar a memória do node', ref: '' }],
+        }
+      },
+      search: async () => {
+        if (state.down) throw new RemoteUnavailableError('down')
+        return {}
+      },
       write: async (change: ILedgerWrite, conversationId?: string) => {
         if (state.down) throw new RemoteUnavailableError('down')
         if (state.refuse) throw new RemoteRequestError(422, 'Ledger change is invalid', [{ field: 'trigger', message: 'too short' }])
@@ -90,6 +110,27 @@ describe('projeto conectado: o ledger mora na origem', () => {
     state.down = true
     assert.deepEqual(await service.ledgerRead('logiccus', 'maya', 'index'), first)
     await assert.rejects(service.ledgerRead('logiccus', 'outro', 'index'), /não respondeu/)
+  })
+
+  it('fora do ar e depois de reiniciar: o índice traz os contextos, a busca sai do guardado, e a conexão marca fora do ar', async () => {
+    const { state, service, repository } = build()
+    await service.ledgerRead('logiccus', 'maya', 'index')
+    await new Promise((resolve) => setImmediate(resolve))
+    state.down = true
+    // Outra instância, o mesmo banco: o guardado vale depois de reiniciar.
+    const again = new ProjectConnectionService({ ...(service as unknown as { deps: ConstructorParameters<typeof ProjectConnectionService>[0] }).deps })
+    const context = await again.ledgerRead<{ updatedAt: Date; lines: unknown[] }>('logiccus', 'maya', 'context', 'build-oom')
+    assert.ok(context.updatedAt instanceof Date)
+    const found = await again.ledgerRead<{ lines: Array<{ topic: string }> }>('logiccus', 'maya', 'search', 'memória node')
+    assert.deepEqual(
+      found.lines.map((line) => line.topic),
+      ['build-oom'],
+    )
+    assert.equal(again.ledgerPrompt('logiccus', 'maya'), '## Ledger de maya')
+    assert.equal(repository.get('logiccus')!.state, 'offline')
+    state.down = false
+    await again.ledgerRead('logiccus', 'maya', 'index')
+    assert.equal(repository.get('logiccus')!.state, 'ok')
   })
 
   it('escrever com a origem fora do ar entra na FILA, na ordem; a próxima conferência esvazia', async () => {

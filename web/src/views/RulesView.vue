@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ConnectedReadOnly from '@/components/ConnectedReadOnly.vue'
+import { useConnectionsStore } from '@/stores/connections'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import BuildTabs from '@/components/BuildTabs.vue'
@@ -21,6 +23,7 @@ import { useRulesStore } from '@/stores/rules'
 const route = useRoute()
 const auth = useAuthStore()
 const projects = useProjectsStore()
+const connections = useConnectionsStore()
 const rules = useRulesStore()
 
 // O rascunho do construtor ("Abrir no editor") abre no escopo dele; o link do histórico (`?escopo=&rule=#historico`), no da rule.
@@ -34,7 +37,9 @@ watch(
 )
 const label = computed(() => scopeLabel(scope.value, projects.list))
 // Global: só o admin do gateway altera; o do projeto lê.
-const readonly = computed(() => scope.value === GLOBAL_SCOPE && !auth.isAdmin)
+/** 🔌 As regras de um projeto conectado vêm da origem: só leitura. */
+const connectedOrigin = computed(() => (scope.value === GLOBAL_SCOPE ? undefined : connections.originOf(scope.value)))
+const readonly = computed(() => (scope.value === GLOBAL_SCOPE && !auth.isAdmin) || !!connectedOrigin.value)
 
 /**
  * O HISTÓRICO das rules do escopo, uma por vez: as de hoje (da store, a mesma lista do editor) e as apagadas que
@@ -106,7 +111,8 @@ watch(
       <p class="text-xs text-zinc-500">
         Regras que todo agente respeita. Editar vale para as próximas conversas. Mostrando: <strong class="text-zinc-300">{{ label }}</strong>.
       </p>
-      <p v-if="readonly" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
+      <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
+      <p v-else-if="readonly" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
       <HistoryTabs v-model="tab" edit-label="Regras" />
       <RulesEditor v-if="tab === 'edit'" :key="scope" :scope="scope" :show-globals="scope !== GLOBAL_SCOPE" :readonly="readonly" />
       <template v-else>

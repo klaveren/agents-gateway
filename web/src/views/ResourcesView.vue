@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import SaveFooter from '@/components/SaveFooter.vue'
+import ConnectedReadOnly from '@/components/ConnectedReadOnly.vue'
+import { useConnectionsStore } from '@/stores/connections'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -45,6 +47,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
+const connections = useConnectionsStore()
 const resources = useResourcesStore()
 
 const KIND: Record<TResourceKind, { title: string; one: string; masc?: boolean; base: string; lead: string; when: string[]; example: string; bodyHint: string; template: string }> = {
@@ -111,7 +114,9 @@ const loaded = ref<IResource>()
 const globalLocked = computed(() => !auth.isAdmin && (adding.value ? form.value.global : !!loaded.value && !loaded.value.projectId))
 /** Veio de outro projeto (compartilhado): o projeto de origem. Aqui é só leitura. */
 const sharedFrom = computed(() => (adding.value || !loaded.value ? undefined : sharedFromOf(loaded.value, projects.current)))
-const locked = computed(() => globalLocked.value || !!sharedFrom.value)
+/** 🔌 Do projeto conectado: só leitura (o catálogo vem da origem). */
+const connectedOrigin = computed(() => connections.originOf(adding.value ? projects.current : loaded.value?.projectId))
+const locked = computed(() => globalLocked.value || !!sharedFrom.value || !!connectedOrigin.value)
 const preview = ref(false)
 const issues = ref<Record<string, string[]>>({})
 const error = ref<string>()
@@ -374,7 +379,7 @@ function onInvalid(event: Event) {
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">{{ info.title }}</h1>
-        <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`${g.nova} ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <RouterLink v-if="!connections.originOf(projects.current)" :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`${g.nova} ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs :kind="kind" active="list" class="px-3 pb-2" />
       <!-- ⚖️ Sem seletor de projeto aqui: a lista segue o projeto escolhido no topo (e traz os globais junto). -->
@@ -401,7 +406,8 @@ function onInvalid(event: Event) {
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" :edit-label="info.one.charAt(0).toUpperCase() + info.one.slice(1)" :extra="extraTabs" :history="!adding" /></div>
       <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'triggers' || tab === 'attachments' || tab === 'files'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
-        <p v-if="sharedFrom" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="shared-readonly">Compartilhado por {{ scopeLabel(sharedFrom, projects.list) }}: só leitura aqui; a manutenção é lá.</p>
+        <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
+        <p v-else-if="sharedFrom" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="shared-readonly">Compartilhado por {{ scopeLabel(sharedFrom, projects.list) }}: só leitura aqui; a manutenção é lá.</p>
         <p v-else-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
         <fieldset :disabled="locked" class="contents">
         <div v-show="tab === 'edit'" class="flex flex-col gap-3">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useConnectionsStore } from '@/stores/connections'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AgentAvatar from '@/components/AgentAvatar.vue'
@@ -28,6 +29,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
+const connections = useConnectionsStore()
 const agents = useAgentsStore()
 const providers = useProvidersStore()
 const protocols = useProtocolsStore()
@@ -164,7 +166,7 @@ watch(creating, (value) => {
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">Agentes</h1>
-        <RouterLink to="/agents/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo agente" @click="template = undefined"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <RouterLink v-if="!connections.originOf(projects.current)" to="/agents/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo agente" @click="template = undefined"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs kind="agent" active="list" class="px-3 pb-2" />
       <ListFilter v-model:query="query" v-model:tag="tag" placeholder="Buscar agente…" :items="agents.list" />
