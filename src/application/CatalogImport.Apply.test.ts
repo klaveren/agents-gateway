@@ -106,6 +106,17 @@ describe('CatalogImportApplier — aplicar o import', () => {
     )
   })
 
+  it('⚖️ o ciclo também pelo `supersedes`: A substitui B e B anexa A — os dois gravam', async () => {
+    const stack = buildCatalogStack()
+    const documents = [withBody(spec('anatomia'), { ...spec('anatomia').body, supersedes: ['ledger'] }), withBody(spec('ledger'), { ...spec('ledger').body, docIds: ['anatomia'] })]
+    const { plan } = await stack.applier.plan({ documents })
+    assert.ok(plan.items.every((item) => item.op === 'create'))
+    const result = await stack.applier.apply({ documents, planHash: plan.planHash }, ADMIN)
+    assert.strictEqual(result.failed, undefined)
+    assert.deepStrictEqual(stack.guidance.doc('anatomia').supersedes, ['ledger'])
+    assert.deepStrictEqual(stack.guidance.doc('ledger').docIds, ['anatomia'])
+  })
+
   it('planHash velho: 409 com o plano novo, nada gravado', async () => {
     const stack = buildCatalogStack()
     const documents = [spec('novo')]
