@@ -1,10 +1,13 @@
 import { Request, Response } from 'express'
 import type { ConnectService } from '@application/Connect.Service'
 import type { ICatalogEvents } from '@domain/ports/CatalogEvents.Port'
+import type { ILedgerWrite } from '@domain/models/Ledger.Model'
 import { CALLER_HEADER } from './Security.Middleware'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { SseStream } from './Sse.Stream'
+import { parseBody } from './Request.Parser'
+import { z } from 'zod'
 
 /** Quem está conectado: a conta dona do token e o projeto dele. */
 export interface IConnection {
@@ -25,6 +28,18 @@ export interface IConnectControllerDeps {
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
+/** Só o formato: as regras (tema, gatilho, linha) são as do `Ledger.Policy`, as mesmas da ferramenta. */
+const ledgerWriteSchema = z.object({
+  change: z.object({
+    action: z.string().max(40),
+    topic: z.string().max(200),
+    trigger: z.string().max(2000).optional(),
+    playbook: z.string().max(50_000).optional(),
+    lineId: z.number().int().optional(),
+    line: z.record(z.string(), z.string().max(2000)).optional(),
+  }),
+  conversationId: z.string().max(200).optional(),
+}) as unknown as z.ZodType<{ change: ILedgerWrite; conversationId?: string }>
 /** Quantos streams de aviso um token mantém abertos (o vigia reconecta; mais que isso é laço). */
 const STREAMS_PER_TOKEN = 3
 
@@ -39,7 +54,8 @@ export class ConnectController {
   private readonly streams = new Map<string, number>()
 
   constructor(private readonly deps: IConnectControllerDeps) {
-    for (const name of ['version', 'changes', 'events', 'catalogPackage', 'file'] as const) this[name] = this[name].bind(this)
+    for (const name of ['version', 'changes', 'events', 'catalogPackage', 'file', 'ledgerIndex', 'ledgerContext', 'ledgerSearch', 'ledgerWrite'] as const)
+      this[name] = this[name].bind(this)
   }
 
   /** `GET /connect/:projectId/version` — a versão do catálogo do projeto. */
@@ -114,6 +130,35 @@ export class ConnectController {
     })
   }
 
+  /** `GET /connect/:projectId/ledger/:agentId` — o índice do ledger do agente e a seção dele no system prompt. */
+  async ledgerIndex(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => this.ledgerOf(req).index())
+  }
+
+  /** `GET /connect/:projectId/ledger/:agentId/contexts/:topic` — um contexto inteiro. */
+  async ledgerContext(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => this.ledgerOf(req).context(String(req.params.topic ?? '')))
+  }
+
+  /** `GET /connect/:projectId/ledger/:agentId/search?q=` — a busca nas linhas e nos contextos. */
+  async ledgerSearch(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => this.ledgerOf(req).search(String((req.query as Record<string, unknown>).q ?? '')))
+  }
+
+  /** `POST /connect/:projectId/ledger/:agentId/write` — uma escrita, com o agente como autor e a conta da conexão no `via`. */
+  async ledgerWrite(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { connection } = this.gate(req)
+      const body = parseBody(ledgerWriteSchema, req.body)
+      return this.ledgerOf(req).write(body.change, { via: connection.email, ...(body.conversationId ? { conversationId: body.conversationId } : {}) })
+    })
+  }
+
+  private ledgerOf(req: Request) {
+    const { connect, connection } = this.gate(req)
+    return connect.ledger(connection.projectId, String(req.params.agentId ?? ''))
+  }
+
   /** ⛔ O token de conexão, o projeto DELE na rota e a conta ainda no projeto. */
   private gate(req: Request): { connect: ConnectService; connection: IConnection } {
     const connect = this.deps.connect
@@ -123,7 +168,9 @@ export class ConnectController {
     const connection = raw ? this.deps.connection(raw) : undefined
     if (!connection) throw new HttpError(401, 'unauthorized', 'Connection token is invalid, expired or revoked')
     const projectId = String(req.params.projectId ?? '')
-    if (projectId !== connection.projectId || !this.deps.projectRole?.(projectId, connection.userId)) throw new HttpError(404, 'not_found', `Project not found: ${projectId}`)
+    // ⚖️ 404 (não diz se o projeto existe), com o código da conexão: quem conecta distingue do "não achei" do ledger.
+    if (projectId !== connection.projectId || !this.deps.projectRole?.(projectId, connection.userId))
+      throw new HttpError(404, 'connection_unauthorized', `Project not found: ${projectId}`)
     return { connect, connection }
   }
 

@@ -3,11 +3,12 @@ import type { CatalogImportApplier } from '@application/CatalogImport.Apply'
 import { CATALOG_KINDS, ICatalogDocument, TCatalogKind } from '@domain/Catalog.Document'
 import { itemRef, parsePackage } from '@domain/Catalog.Import'
 import { forLocal, ILocalModels } from '@domain/Connect.Policy'
-import { ProjectConnectionError } from '@domain/errors/Domain.Error'
+import { InvalidLedgerError, LedgerQueuedError, ProjectConnectionError } from '@domain/errors/Domain.Error'
 import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
 import { IConnectionChange, IConnectionSkipped, IProjectConnection } from '@domain/models/ProjectConnection.Model'
 import type { IProjectConnectionRepository, TConnectionPatch } from '@domain/ports/ProjectConnectionRepository.Port'
-import { IRemoteCatalog, IRemoteChanges, RemoteUnauthorizedError } from '@domain/ports/RemoteCatalog.Port'
+import { IRemoteCatalog, IRemoteChanges, RemoteRequestError, RemoteUnauthorizedError, RemoteUnavailableError } from '@domain/ports/RemoteCatalog.Port'
+import type { ILedgerWrite } from '@domain/models/Ledger.Model'
 
 /** De quanto em quanto tempo o vigia confere a versão quando o aviso ao vivo caiu (e, de todo modo, de vez em quando). */
 export const CONNECTION_POLL_MS = 5 * 60_000
@@ -61,6 +62,11 @@ export class ProjectConnectionService {
   private watching?: { abort: AbortController; timer: NodeJS.Timeout }
   /** Os projetos com o aviso ao vivo aberto (um vigia por projeto). */
   private readonly watched = new Set<string>()
+  /** O último ledger lido da origem, por agente e pergunta: o que o agente lê quando a origem está fora do ar. */
+  private readonly ledgerCache = new Map<string, unknown>()
+  /** A seção do ledger no system prompt de cada agente conectado (a última que a origem deu). */
+  private readonly prompts = new Map<string, string | null>()
+  private readonly flushing = new Set<string>()
 
   constructor(private readonly deps: IProjectConnectionDeps) {
     this.now = deps.now ?? (() => new Date())
@@ -148,7 +154,11 @@ export class ProjectConnectionService {
   async check(projectId: string): Promise<IProjectConnection> {
     const connection = this.require(projectId)
     const result = await this.talk(projectId, (client) => client.changes(connection.syncedVersion))
-    if (result) this.deps.repository.update(projectId, { ...this.notice(connection.syncedVersion, result), lastCheckedAt: this.now() })
+    if (result) {
+      this.deps.repository.update(projectId, { ...this.notice(connection.syncedVersion, result), lastCheckedAt: this.now() })
+      // A origem respondeu: a fila do ledger sai agora.
+      await this.flushLedger(projectId).catch(() => undefined)
+    }
     return this.require(projectId)
   }
 
@@ -160,6 +170,83 @@ export class ProjectConnectionService {
       return await this.mirror(projectId, by)
     } finally {
       this.syncing.delete(projectId)
+    }
+  }
+
+  /**
+   * 🔌 O LEDGER DE UM AGENTE DE PROJETO CONECTADO: mora na ORIGEM (um ledger só, não um por máquina). Ler vai lá e guarda
+   * a resposta; com a origem fora do ar, devolve a última lida. Escrever vai lá; fora do ar, entra na FILA, na ordem, e
+   * sai quando ela voltar (o vigia esvazia).
+   */
+  async ledgerRead<T>(projectId: string, agentId: string, ask: 'index' | 'context' | 'search', key = ''): Promise<T> {
+    const client = this.clientOf(projectId)
+    const cacheKey = `${projectId}\0${agentId}\0${ask}\0${key}`
+    try {
+      if (!client) throw new RemoteUnavailableError('the stored token could not be opened')
+      const ledger = client.ledger(agentId)
+      const result = ask === 'index' ? await ledger.index() : ask === 'context' ? await ledger.context(key) : await ledger.search(key)
+      this.ledgerCache.set(cacheKey, result)
+      if (ask === 'index') this.prompts.set(agentId, (result as { prompt: string | null }).prompt)
+      return result as T
+    } catch (error) {
+      const cached = this.ledgerCache.get(cacheKey)
+      if (error instanceof RemoteRequestError) throw new Error(error.message, { cause: error })
+      if (cached !== undefined) return cached as T
+      throw new Error(`O ledger mora na origem do projeto, que não respondeu agora (${error instanceof Error ? error.message : String(error)}). Tente de novo mais tarde.`, {
+        cause: error,
+      })
+    }
+  }
+
+  async ledgerWrite<T>(projectId: string, agentId: string, change: ILedgerWrite, conversationId?: string): Promise<T> {
+    const queue = () => {
+      this.deps.repository.enqueueLedger({ projectId, agentId, change, ...(conversationId ? { conversationId } : {}), createdAt: this.now() })
+      return new LedgerQueuedError()
+    }
+    // ⚖️ A ORDEM: com escrita na fila, a nova entra atrás dela (senão passaria na frente).
+    if (this.deps.repository.pendingLedger(projectId).length) {
+      await this.flushLedger(projectId)
+      if (this.deps.repository.pendingLedger(projectId).length) throw queue()
+    }
+    const client = this.clientOf(projectId)
+    if (!client) throw queue()
+    try {
+      return (await client.ledger(agentId).write(change, conversationId)) as T
+    } catch (error) {
+      if (error instanceof RemoteRequestError) throw remoteRefusal(error)
+      if (error instanceof RemoteUnauthorizedError)
+        throw new Error(`O ledger mora na origem do projeto, que recusou a conexão: ${error.message}. Troque o token do projeto.`, { cause: error })
+      throw queue()
+    }
+  }
+
+  /** A seção do ledger no system prompt do agente conectado: a última que a origem deu (lê de novo em segundo plano). */
+  ledgerPrompt(projectId: string, agentId: string): string | undefined {
+    void this.ledgerRead(projectId, agentId, 'index').catch(() => undefined)
+    return this.prompts.get(agentId) ?? undefined
+  }
+
+  /** Esvazia a fila do ledger, na ordem; para na primeira que não sai (a origem caiu de novo). Recusa da origem descarta, com o motivo. */
+  async flushLedger(projectId: string): Promise<void> {
+    if (this.flushing.has(projectId)) return
+    this.flushing.add(projectId)
+    try {
+      const client = this.clientOf(projectId)
+      if (!client) return
+      for (const entry of this.deps.repository.pendingLedger(projectId)) {
+        try {
+          await client.ledger(entry.agentId).write(entry.change, entry.conversationId)
+        } catch (error) {
+          if (!(error instanceof RemoteRequestError)) return
+          const skipped = this.require(projectId).skipped
+          this.deps.repository.update(projectId, {
+            skipped: [...skipped, { ref: `ledger/${entry.agentId}/${entry.change.topic}`, message: `a origem recusou a escrita da fila: ${error.message}` }],
+          })
+        }
+        this.deps.repository.dropLedger(entry.id)
+      }
+    } finally {
+      this.flushing.delete(projectId)
     }
   }
 
@@ -332,4 +419,10 @@ export class ProjectConnectionService {
     if (!connection) throw new ProjectConnectionError('not_found', `${projectId} is not a connected project`)
     return connection
   }
+}
+
+/** A recusa da origem na língua do ledger: os campos voltam como `InvalidLedgerError` (a ferramenta diz qual argumento). */
+function remoteRefusal(error: RemoteRequestError): Error {
+  if (error.status === 422 && Array.isArray(error.details)) return new InvalidLedgerError(error.details as Array<{ field: string; message: string }>)
+  return new Error(error.message)
 }

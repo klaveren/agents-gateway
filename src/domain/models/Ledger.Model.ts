@@ -28,7 +28,11 @@ export const LEDGER_LINE_TYPE_LABEL: Record<TLedgerLineType, string> = {
 }
 
 /** Quem mexeu: o próprio agente (numa conversa) ou um administrador na tela. É a troca do `git log` das pastas antigas. */
-export type TLedgerAuthor = { kind: 'agent'; agentId: string; conversationId?: string } | { kind: 'admin'; email: string }
+/**
+ * Quem escreveu. `via`: a escrita veio de um projeto CONECTADO (o gateway de um dev usando o projeto desta instalação):
+ * a conta dona da conexão; a conversa é a de lá, que esta instalação não abre.
+ */
+export type TLedgerAuthor = { kind: 'agent'; agentId: string; conversationId?: string; via?: string } | { kind: 'admin'; email: string }
 
 export interface ILedgerContext {
   /** Interno: a chave das linhas e das revisões. */

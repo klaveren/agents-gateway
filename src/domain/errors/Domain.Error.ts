@@ -525,3 +525,14 @@ export class ProjectConnectionError extends DomainError {
     this.name = 'ProjectConnectionError'
   }
 }
+
+/**
+ * 🔌 A escrita no ledger de um agente de projeto conectado ficou na FILA: a origem está fora do ar. Não é falha — entra
+ * na ordem quando ela voltar. A ferramenta responde isso ao agente (sucesso, com o aviso).
+ */
+export class LedgerQueuedError extends DomainError {
+  constructor(message = 'A origem do projeto está fora do ar: a escrita no ledger ficou na fila e entra quando ela voltar.') {
+    super(message)
+    this.name = 'LedgerQueuedError'
+  }
+}

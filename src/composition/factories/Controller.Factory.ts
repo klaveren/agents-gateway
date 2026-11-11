@@ -36,6 +36,7 @@ import { PackagesController } from '@infra/http/Packages.Controller'
 import { HooksController } from '@infra/http/Hooks.Controller'
 import { makeHooks } from './Hooks.Factory'
 import { makeProjects, useConnectedProjects } from './Projects.Factory'
+import { useConnectionsForLedger } from './Connected.Ledger'
 import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { ProjectsController } from '@infra/http/Projects.Controller'
 import { ImportController } from '@infra/http/Import.Controller'
@@ -485,7 +486,18 @@ export function makeAuditController(): AuditController {
 /** 🔌 A origem dos projetos conectados: o export, o histórico e os arquivos de sempre; o token de conexão do `makeAuth`. */
 export function makeConnectController(): ConnectController {
   const { repository, reader } = catalogHistoryParts()
-  const connect = new ConnectService({ history: repository, exporter: makeCatalogExport(), reader, files: makeResourceFiles(), secrets: makeResourceSecrets() })
+  const connect = new ConnectService({
+    history: repository,
+    exporter: makeCatalogExport(),
+    reader,
+    files: makeResourceFiles(),
+    secrets: makeResourceSecrets(),
+    ledger: makeLedger(),
+    agentProject: (agentId) => {
+      const agent = makeAgents().get(agentId)
+      return agent ? (agent.projectId ?? null) : undefined
+    },
+  })
   const tokens = makeAuth().accessTokens
   return new ConnectController({
     connect,
@@ -533,6 +545,7 @@ export function makeProjectConnections(): ProjectConnectionService {
   })
   const service = connections
   useConnectedProjects((projectId) => service.get(projectId))
+  useConnectionsForLedger(service)
   return connections
 }
 

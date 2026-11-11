@@ -1,6 +1,17 @@
-import { IRemoteCatalog, IRemoteChanges, IRemotePackage, RemoteUnauthorizedError, RemoteUnavailableError } from '@domain/ports/RemoteCatalog.Port'
+import type { ILedgerWrite } from '@domain/models/Ledger.Model'
+import {
+  IRemoteCatalog,
+  IRemoteChanges,
+  IRemoteLedger,
+  IRemotePackage,
+  RemoteRequestError,
+  RemoteUnauthorizedError,
+  RemoteUnavailableError,
+} from '@domain/ports/RemoteCatalog.Port'
 
 const TIMEOUT_MS = 30_000
+/** Os campos de data das respostas do ledger: chegam como texto e voltam a ser `Date` (as ferramentas formatam). */
+const DATE_KEYS = new Set(['createdAt', 'updatedAt', 'at'])
 const PACKAGE_TIMEOUT_MS = 120_000
 
 /**
@@ -36,6 +47,16 @@ export class RemoteClient implements IRemoteCatalog {
     return Buffer.from(base64, 'base64')
   }
 
+  ledger(agentId: string): IRemoteLedger {
+    const base = `/ledger/${encodeURIComponent(agentId)}`
+    return {
+      index: () => this.get(base),
+      context: (topic) => this.get(`${base}/contexts/${encodeURIComponent(topic)}`),
+      search: (query) => this.get(`${base}/search?q=${encodeURIComponent(query)}`),
+      write: (change: ILedgerWrite, conversationId?: string) => this.get(`${base}/write`, TIMEOUT_MS, { change, ...(conversationId ? { conversationId } : {}) }),
+    }
+  }
+
   async events(onVersion: (version: number) => void, signal: AbortSignal): Promise<void> {
     const res = await this.request('/events', signal)
     if (!res.body) throw new RemoteUnavailableError('the origin closed the event stream')
@@ -60,31 +81,47 @@ export class RemoteClient implements IRemoteCatalog {
     }
   }
 
-  private async get<T>(path: string, timeoutMs = TIMEOUT_MS): Promise<T> {
-    const res = await this.request(path, AbortSignal.timeout(timeoutMs))
-    const body = (await res.json().catch(() => undefined)) as { ok?: boolean; result?: T; message?: string } | undefined
-    if (!body?.ok) throw new RemoteUnavailableError(body?.message ?? `the origin answered ${res.status}`)
-    return body.result as T
+  private async get<T>(path: string, timeoutMs = TIMEOUT_MS, body?: unknown): Promise<T> {
+    const res = await this.request(path, AbortSignal.timeout(timeoutMs), body)
+    const text = await res.text().catch(() => '')
+    let envelope: { ok?: boolean; result?: T; message?: string; code?: string; details?: unknown } | undefined
+    try {
+      envelope = JSON.parse(text, (key, value) => (DATE_KEYS.has(key) && typeof value === 'string' ? new Date(value) : value))
+    } catch {
+      envelope = undefined
+    }
+    // ⚖️ O 404 do portão da origem tem o código da conexão: é credencial, não "não achei".
+    if (envelope?.code === 'connection_unauthorized') throw new RemoteUnauthorizedError(`the origin does not give this token the project ${this.projectId}`)
+    if (envelope?.ok) return envelope.result as T
+    if (!envelope || res.status >= 500) throw new RemoteUnavailableError(envelope?.message ?? `the origin answered ${res.status}`)
+    throw new RemoteRequestError(res.status, envelope.message ?? `the origin answered ${res.status}`, envelope.details)
   }
 
-  private async request(path: string, signal: AbortSignal): Promise<Response> {
+  private async request(path: string, signal: AbortSignal, body?: unknown): Promise<Response> {
     let res: Response
     try {
       res = await this.fetchImpl(`${this.base}${path}`, {
-        headers: { 'X-Tool-Authorization': `Bearer ${this.token}`, Accept: path === '/events' ? 'text/event-stream' : 'application/json' },
+        method: body === undefined ? 'GET' : 'POST',
+        headers: {
+          'X-Tool-Authorization': `Bearer ${this.token}`,
+          Accept: path === '/events' ? 'text/event-stream' : 'application/json',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal,
       })
     } catch (error) {
       throw new RemoteUnavailableError(`the origin did not answer: ${error instanceof Error ? error.message : String(error)}`)
     }
-    // ⚖️ 404 também é credencial: o token de outro projeto, ou a conta que saiu dele, ouve o mesmo que projeto inexistente.
-    if (res.status === 401 || res.status === 404) {
+    if (res.status === 401) {
       await res.body?.cancel().catch(() => undefined)
-      throw new RemoteUnauthorizedError(
-        res.status === 401 ? 'the connection token is invalid, expired or revoked' : `the origin does not give this token the project ${this.projectId}`,
-      )
+      throw new RemoteUnauthorizedError('the connection token is invalid, expired or revoked')
     }
-    if (!res.ok && path === '/events') throw new RemoteUnavailableError(`the origin answered ${res.status}`)
+    if (path === '/events' && !res.ok) {
+      await res.body?.cancel().catch(() => undefined)
+      if (res.status === 404) throw new RemoteUnauthorizedError(`the origin does not give this token the project ${this.projectId}`)
+      throw new RemoteUnavailableError(`the origin answered ${res.status}`)
+    }
     return res
   }
 }

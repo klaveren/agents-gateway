@@ -1,7 +1,11 @@
 import assert from 'node:assert'
 import { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
+import { makeAgents } from '@composition/factories/Agents.Factory'
 import { makeAuth } from '@composition/factories/Auth.Factory'
+import { makeLedger } from '@composition/factories/Ledger.Factory'
+import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
 import {
   makeAuthController,
   makeConnectController,
@@ -102,6 +106,24 @@ describe('projeto conectado: a origem (/connect)', () => {
     })
     assert.strictEqual(skill.status, 201, JSON.stringify(skill.body))
     assert.strictEqual((await call('/resources/banco/files', { method: 'PUT', token: admin, body: { files: [{ path: 'scripts/saldo.sh', sha256: sha, bytes: 11 }] } })).status, 200)
+    await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'claude-sonnet-5' } })
+    await call('/providers/claude/models', { method: 'PUT', token: admin, body: { modelId: 'claude-sonnet-5', enabled: true } })
+    for (const [id, projectId] of [
+      ['maya', 'logiccus'],
+      ['solta', undefined],
+    ] as const)
+      makeAgents().save(
+        {
+          id,
+          name: id,
+          ...(projectId ? { projectId } : {}),
+          providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
+          systemPrompt: 'faça',
+          modes: [EMode.AGENT],
+          allowedTools: [],
+        },
+        { rules: { knownTools: [] }, by: 'seed', creating: true },
+      )
   })
 
   after(() => stop())
@@ -175,6 +197,29 @@ describe('projeto conectado: a origem (/connect)', () => {
     await call('/resources/banco', { method: 'PUT', token: admin, body: { description: 'Banco do Brasil' } })
     assert.ok((await nextVersion()) > opened)
     await reader.cancel()
+  })
+
+  it('🔌 o ledger do agente do projeto, pela conexão: um ledger só (o daqui), com o autor e a conta da conexão', async () => {
+    assert.deepStrictEqual((await call('/connect/logiccus/ledger/maya', { token: connection })).body.result, {
+      index: { agentId: 'maya', contexts: [], lineCount: 0, warnings: [] },
+      prompt: null,
+    })
+    const written = await call('/connect/logiccus/ledger/maya/write', {
+      method: 'POST',
+      token: connection,
+      body: { change: { action: 'criar', topic: 'Build OOM', trigger: 'quando o build estourar memória no CI' }, conversationId: 'gw_local_1' },
+    })
+    assert.strictEqual(written.status, 200, JSON.stringify(written.body))
+    assert.deepStrictEqual(makeLedger().revisions('maya', 'build-oom')[0]!.by, { kind: 'agent', agentId: 'maya', via: 'ana@x.test', conversationId: 'gw_local_1' })
+    assert.strictEqual((await call('/connect/logiccus/ledger/maya/contexts/build-oom', { token: connection })).body.result.trigger, 'quando o build estourar memória no CI')
+    const invalid = await call('/connect/logiccus/ledger/maya/write', {
+      method: 'POST',
+      token: connection,
+      body: { change: { action: 'criar', topic: 'outro-tema', trigger: 'curto' } },
+    })
+    assert.deepStrictEqual([invalid.status, invalid.body.details[0].field], [422, 'trigger'])
+    // Agente de fora do projeto: como inexistente.
+    assert.strictEqual((await call('/connect/logiccus/ledger/solta', { token: connection })).status, 404)
   })
 
   it('⛔ a conta que sai do projeto perde a conexão', async () => {

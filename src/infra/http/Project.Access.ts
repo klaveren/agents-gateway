@@ -130,13 +130,14 @@ export function agentProjectOf(agentId: string): string | null | undefined {
 }
 
 /**
- * 🔌 O que muda num projeto conectado SEM mexer no catálogo: os valores das variáveis, o ledger (vai à origem), os
- * hooks e os agendamentos (a operação daqui), os membros, as contas, a própria conexão e o que só confere ou planeja.
+ * 🔌 O que muda num projeto conectado SEM mexer no catálogo: os valores das variáveis, os hooks e os agendamentos (a
+ * operação daqui), os membros, as contas, a própria conexão e o que só confere ou planeja. O ledger do agente conectado
+ * mora na origem: a tela daqui não o edita.
  */
 const CONNECTED_WRITABLE: readonly RegExp[] = [
   /^\/connections(\/|$)/,
   /^\/(agents\/:agentId|resources\/:resourceId)\/secrets\//,
-  /^\/agents\/:agentId\/(ledger|hooks|schedules)(\/|$)/,
+  /^\/agents\/:agentId\/(hooks|schedules)(\/|$)/,
   /^\/mcp-servers\/:id\/(env|secret|oauth|test|install|stop)(\/|$)/,
   /^\/projects\/:id\/members$/,
   /^\/projects\/:projectId\/(accounts|permissions\/test)(\/|$)/,

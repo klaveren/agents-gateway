@@ -21,6 +21,7 @@ import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRe
 import { DelegationSlot, makeDelegateTool } from '@infra/tools/Delegate.Tool'
 import { ILocalToolDeps, ITodoStore, makeLocalTools } from '@infra/tools/Local.Tools'
 import { makeSessionStore } from './Orchestrator.Factory'
+import { connectedLedgerDesk } from './Connected.Ledger'
 import { makeLedgerTools } from '@infra/tools/Ledger.Tools'
 import { makeLedger } from './Ledger.Factory'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
@@ -136,7 +137,7 @@ export function makeTools(): ITools {
             },
           }),
           // O ledger do agente (ver `Ledger.Tools`): toda conversa recebe as duas (ver `AgentProvider.withDocs`).
-          ...makeLedgerTools(makeLedger()),
+          ...makeLedgerTools(connectedLedgerDesk(makeLedger(), (agentId) => makeAgents().get(agentId)?.projectId)),
         ],
         (allowed) => makeDelegateTool(runnableTargets(allowed), delegation, lazyPermissions),
         containerProxy,
