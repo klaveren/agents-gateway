@@ -1,0 +1,27 @@
+#!/bin/sh
+# O ajudante do Agents Gateway instalado pelo .deb.
+case "${1:-ajuda}" in
+  status) exec systemctl status agents-gateway --no-pager ;;
+  logs) exec journalctl -u agents-gateway -f ;;
+  codigo)
+    [ -r /etc/agents-gateway/gateway.env ] || { echo "rode com sudo: sudo agents-gateway codigo" >&2; exit 1; }
+    sed -n 's/^SETUP_CODE=//p' /etc/agents-gateway/gateway.env ;;
+  url)
+    . /etc/agents-gateway/settings.env
+    host="$HOST"
+    [ "$host" = 0.0.0.0 ] && host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    echo "http://${host:-localhost}:$PORT" ;;
+  reiniciar) exec sudo systemctl restart agents-gateway ;;
+  configurar) exec sudo dpkg-reconfigure agents-gateway ;;
+  *)
+    cat <<USO
+agents-gateway <comando>
+  status       o serviço (systemd)
+  logs         o log ao vivo (journalctl)
+  codigo       o código de instalação do primeiro admin (sudo)
+  url          o endereço da tela
+  reiniciar    reinicia o serviço
+  configurar   muda a pasta de dados, o endereço e a porta
+USO
+    ;;
+esac

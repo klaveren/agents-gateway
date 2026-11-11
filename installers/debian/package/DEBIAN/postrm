@@ -1,0 +1,15 @@
+#!/bin/sh
+# Purge: apaga a configuração, os segredos e o usuário. ⛔ A pasta de dados (projetos, banco, cofre) fica.
+set -e
+if [ "$1" = purge ]; then
+  data="$(sed -n 's/^GATEWAY_DATA=//p' /etc/agents-gateway/settings.env 2>/dev/null || true)"
+  rm -rf /etc/agents-gateway
+  userdel agents-gateway >/dev/null 2>&1 || true
+  if [ -e /usr/share/debconf/confmodule ]; then
+    . /usr/share/debconf/confmodule
+    db_purge
+  fi
+  echo "A pasta de dados ficou em ${data:-/var/lib/agents-gateway} (apague à mão se não quiser mais)."
+fi
+[ -d /run/systemd/system ] && systemctl daemon-reload >/dev/null 2>&1 || true
+exit 0

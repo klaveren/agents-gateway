@@ -1,0 +1,8 @@
+#!/bin/sh
+# As perguntas da instalação (e do `dpkg-reconfigure agents-gateway`).
+set -e
+. /usr/share/debconf/confmodule
+db_input high agents-gateway/data_dir || true
+db_input medium agents-gateway/host || true
+db_input medium agents-gateway/port || true
+db_go || true
