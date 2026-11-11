@@ -35,6 +35,25 @@ describe('AccessTokensService', () => {
     assert.ok(!('tokenHash' in service.list(admin.id)[0]))
   })
 
+  it('🔌 o de conexão (agc_…) vale só como conexão do projeto dele: nunca vira sessão, e cai revogado ou vencido', () => {
+    const { service, admin, advance } = build()
+    const { token, accessToken } = service.create(admin.id, { name: 'meu gateway', expiresInDays: 1, projectId: 'logiccus' })
+
+    assert.match(token, /^agc_[A-Za-z0-9_-]{43}$/)
+    assert.strictEqual(accessToken.projectId, 'logiccus')
+    assert.strictEqual(service.exchange(token), undefined)
+    assert.strictEqual(service.exchange(`agw_${token.slice(4)}`), undefined)
+    assert.deepStrictEqual(service.connection(token), { tokenId: accessToken.id, userId: admin.id, email: 'root@x.test', projectId: 'logiccus' })
+    // O de acesso não é de conexão.
+    assert.strictEqual(service.connection(service.create(admin.id, { name: 'script', expiresInDays: 1 }).token), undefined)
+
+    advance(2 * DAY)
+    assert.strictEqual(service.connection(token), undefined)
+    const live = service.create(admin.id, { name: 'outro', expiresInDays: 30, projectId: 'logiccus' })
+    service.revoke(admin.id, live.accessToken.id)
+    assert.strictEqual(service.connection(live.token), undefined)
+  })
+
   it('a troca devolve um token de sessão da conta, com o papel de AGORA', () => {
     const { service, issuer, users, admin } = build()
     const { token } = service.create(admin.id, { name: 'script', expiresInDays: 30 })

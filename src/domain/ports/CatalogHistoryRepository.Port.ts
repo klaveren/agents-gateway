@@ -80,6 +80,10 @@ export interface ICatalogHistoryRepository {
   page(filter: IRevisionFilter, paging: { offset: number; limit: number }): IRevisionPage
   /** Grava a próxima revisão do item (`revision` = última + 1). */
   append(revision: TNewRevision): ICatalogRevision
+  /** 🔌 A VERSÃO do catálogo do projeto: o `id` da última revisão dele (0 = nenhuma). Só cresce. */
+  versionOf(projectId: string): number
+  /** 🔌 As revisões do projeto depois da versão `after`, da mais velha para a mais nova, sem o documento. */
+  since(projectId: string, after: number, limit: number): TRevisionSummary[]
 }
 
 /** O que o lote foi: um import (PR 9) ou a reversão de um lote. */

@@ -1558,7 +1558,15 @@ export const OPENAPI_DOCUMENT = {
           required: true,
           ...json({
             type: 'object',
-            properties: { name: { type: 'string', maxLength: 60 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 365 } },
+            properties: {
+              name: { type: 'string', maxLength: 60 },
+              expiresInDays: { type: 'integer', minimum: 1, maximum: 365 },
+              projectId: {
+                type: 'string',
+                description:
+                  'A CONNECTION token (`agc_…`) for this project: another gateway uses it to read the project catalog (`/connect/{projectId}/*`). It never becomes a session and works nowhere else. Only for members of the project (others get 404)',
+              },
+            },
             required: ['name', 'expiresInDays'],
           }),
         },
@@ -4715,6 +4723,99 @@ export const OPENAPI_DOCUMENT = {
         summary: "The signed-in caller's own usage: tokens per day, agent and model, and the heaviest conversations. Never carries cost",
         parameters: usageParams,
         responses: { '200': { description: 'OK', ...json(envelope(usageSummary(false))) }, '401': failures['401'] },
+      },
+    },
+    '/connect/{projectId}/version': {
+      get: {
+        summary:
+          'Connected projects: the catalog version of the project (the id of its last catalog revision; it only grows). Authenticated by a connection token (`agc_…`) of THIS project, in X-Tool-Authorization or Authorization; the account must still be a member',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { version: { type: 'integer' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/connect/{projectId}/events': {
+      get: {
+        summary: 'Connected projects: SSE stream with `catalog.version` ({ version }) on open and whenever the project catalog changes. At most 3 open streams per token',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'text/event-stream' },
+          '401': failures['401'],
+          '404': failures['404'],
+          '429': { description: 'Too many open streams', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/connect/{projectId}/package': {
+      get: {
+        summary:
+          'Connected projects: the whole project catalog (the masked export package), its version, the resource files it cites (fetch missing ones by sha256), the variable NAMES it needs (never values) and, with `since`, what changed since that version (one line per item)',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'since', in: 'query', schema: { type: 'integer', minimum: 0 }, description: 'The version the caller has' },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  version: { type: 'integer' },
+                  package: { type: 'object', properties: { manifest: { type: 'object' }, files: { type: 'object', additionalProperties: { type: 'string' } } } },
+                  files: { type: 'array', items: { type: 'object', properties: { sha256: { type: 'string' }, bytes: { type: 'integer' } } } },
+                  secrets: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        kind: { type: 'string', enum: ['agent', 'skill', 'command'] },
+                        id: { type: 'string' },
+                        name: { type: 'string' },
+                        description: { type: 'string' },
+                      },
+                    },
+                  },
+                  changes: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        kind: { type: 'string' },
+                        id: { type: 'string' },
+                        op: { type: 'string' },
+                        revisions: { type: 'integer' },
+                        at: { type: 'string', format: 'date-time' },
+                        by: { type: 'string' },
+                      },
+                    },
+                  },
+                  truncated: { type: 'boolean' },
+                },
+              }),
+            ),
+          },
+          '400': { description: 'Invalid `since`', ...json(failureEnvelope) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/connect/{projectId}/files/{sha256}': {
+      get: {
+        summary: 'Connected projects: one resource file cited by the project catalog, in base64. Files the project does not cite answer 404',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'sha256', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { sha256: { type: 'string' }, bytes: { type: 'integer' }, base64: { type: 'string' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
       },
     },
     '/audit': {

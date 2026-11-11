@@ -5,9 +5,11 @@ import {
   ACCESS_TOKEN_NAME_MAX,
   ACCESS_TOKEN_PREFIX,
   ACCESS_TOKENS_PER_USER,
+  CONNECTION_TOKEN_PREFIX,
   IAccessToken,
   IStoredAccessToken,
   isAccessToken,
+  isConnectionToken,
 } from '@domain/models/AccessToken.Model'
 import { IAccessTokenRepository } from '@domain/ports/AccessTokenRepository.Port'
 import { ITokenIssuer } from '@domain/ports/TokenIssuer.Port'
@@ -33,7 +35,8 @@ export class AccessTokensService {
   ) {}
 
   /** ⛔ O token em claro sai UMA vez, aqui; o banco guarda só o hash. */
-  create(userId: string, input: { name: string; expiresInDays: number }): { token: string; accessToken: IAccessToken } {
+  /** Com `projectId`, o token de CONEXÃO (`agc_`): quem chama confere antes que a conta é do projeto. */
+  create(userId: string, input: { name: string; expiresInDays: number; projectId?: string }): { token: string; accessToken: IAccessToken } {
     const issues: Array<{ field: string; message: string }> = []
     const name = input.name.trim()
     if (!name) issues.push({ field: 'name', message: 'required' })
@@ -45,16 +48,18 @@ export class AccessTokensService {
       issues.push({ field: 'name', message: `at most ${ACCESS_TOKENS_PER_USER} active tokens; revoke one first` })
     if (issues.length) throw new InvalidAccessTokenError(issues)
 
-    const token = `${ACCESS_TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`
+    const prefix = input.projectId ? CONNECTION_TOKEN_PREFIX : ACCESS_TOKEN_PREFIX
+    const token = `${prefix}${randomBytes(32).toString('base64url')}`
     const now = this.now()
     const stored: IStoredAccessToken = {
       id: `tok_${randomBytes(9).toString('base64url')}`,
       userId,
       name,
       tokenHash: hash(token),
-      prefix: token.slice(0, ACCESS_TOKEN_PREFIX.length + 4),
+      prefix: token.slice(0, prefix.length + 4),
       createdAt: now,
       expiresAt: new Date(now.getTime() + input.expiresInDays * DAY),
+      ...(input.projectId ? { projectId: input.projectId } : {}),
     }
     this.tokens.insert(stored)
     return { token, accessToken: withoutHash(stored) }
@@ -88,16 +93,34 @@ export class AccessTokensService {
   exchange(raw: string): string | undefined {
     if (!isAccessToken(raw)) return undefined
     const token = this.tokens.findByHash(hash(raw))
-    if (!token || !this.usable(token)) return undefined
+    // ⛔ O de conexão nunca vira sessão (mesmo que alguém o grave com o prefixo de acesso).
+    if (!token || token.projectId || !this.usable(token)) return undefined
 
     const user = this.users.findById(token.userId)
     if (!user || user.disabled) return undefined
-
-    const now = this.now()
-    if (!token.lastUsedAt || now.getTime() - token.lastUsedAt.getTime() >= LAST_USED_EVERY_MS) this.tokens.update(token.id, { lastUsedAt: now })
+    this.touch(token)
 
     // ⛔ A marca `via/tid`: a sessão derivada não gere tokens nem vira cookie, e cai quando este token cai (`isLive`).
     return this.sessions.issue({ sub: user.id, email: user.email, role: user.role, ver: user.sessionVersion, via: 'agw', tid: token.id }).token
+  }
+
+  /**
+   * O token de CONEXÃO → a conta e o projeto dele, ou nada. ⛔ Recusa revogado, vencido, de conta apagada ou desativada;
+   * a conta ainda ser do projeto quem confere é a rota (`Connect.Controller`).
+   */
+  connection(raw: string): { tokenId: string; userId: string; email: string; projectId: string } | undefined {
+    if (!isConnectionToken(raw)) return undefined
+    const token = this.tokens.findByHash(hash(raw))
+    if (!token?.projectId || !this.usable(token)) return undefined
+    const user = this.users.findById(token.userId)
+    if (!user || user.disabled) return undefined
+    this.touch(token)
+    return { tokenId: token.id, userId: user.id, email: user.email, projectId: token.projectId }
+  }
+
+  private touch(token: IAccessToken): void {
+    const now = this.now()
+    if (!token.lastUsedAt || now.getTime() - token.lastUsedAt.getTime() >= LAST_USED_EVERY_MS) this.tokens.update(token.id, { lastUsedAt: now })
   }
 
   /** O token de acesso `tokenId` da conta ainda vale (existe, não foi revogado, não venceu)? É o que mantém viva a sessão derivada dele. */

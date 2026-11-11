@@ -43,6 +43,8 @@ import { CatalogController } from '@infra/http/Catalog.Controller'
 import { catalogHistoryParts, makeCatalogHistory, makeCatalogHistoryQuery } from './CatalogHistory.Factory'
 import { CatalogRestoreUseCase } from '@application/CatalogRestore.Usecase'
 import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
+import { ConnectService } from '@application/Connect.Service'
+import { ConnectController } from '@infra/http/Connect.Controller'
 import { CatalogImportPlanner } from '@application/CatalogImport.Plan'
 import { CatalogImportApplier } from '@application/CatalogImport.Apply'
 import { ImportApplyUseCase } from '@application/ImportApply.Usecase'
@@ -220,7 +222,7 @@ export function makeSecretMaskController(): SecretMaskController {
 
 export function makeAuthController(): AuthController {
   const { accounts, proof, accessTokens } = makeAuth()
-  return new AuthController({ accounts, proof, accessTokens })
+  return new AuthController({ accounts, proof, accessTokens, projectRole: (projectId, userId) => makeProjects().roleOf(projectId, userId) })
 }
 
 /** ⚠️ Uma só: lê as mesmas configurações e o mesmo catálogo que o resto. */
@@ -473,4 +475,17 @@ export function makeImportController(): ImportController {
 export function makeAuditController(): AuditController {
   const configured = process.env.CONVERSATIONS_DB?.trim()
   return new AuditController({ repository: new SqliteAuditRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH), proof: makeAuth().proof })
+}
+
+/** 🔌 A origem dos projetos conectados: o export, o histórico e os arquivos de sempre; o token de conexão do `makeAuth`. */
+export function makeConnectController(): ConnectController {
+  const { repository, reader } = catalogHistoryParts()
+  const connect = new ConnectService({ history: repository, exporter: makeCatalogExport(), reader, files: makeResourceFiles(), secrets: makeResourceSecrets() })
+  const tokens = makeAuth().accessTokens
+  return new ConnectController({
+    connect,
+    ...(tokens ? { connection: (raw: string) => tokens.connection(raw) } : {}),
+    projectRole: (projectId, userId) => makeProjects().roleOf(projectId, userId),
+    events: makeCatalogEvents(),
+  })
 }

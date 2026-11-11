@@ -245,7 +245,7 @@ export const resetPasswordSchema = z.object({ password })
 export const changePasswordSchema = z.object({ current: password, password })
 
 /** Abrir ou fechar a conversa por link. Booleano estrito: `"false"` (texto) não pode abrir. */
-export const createAccessTokenSchema = z.object({ name: z.string().max(200), expiresInDays: z.number().int() })
+export const createAccessTokenSchema = z.object({ name: z.string().max(200), expiresInDays: z.number().int(), projectId: z.string().min(1).max(64).optional() })
 export const shareConversationSchema = z.object({ shared: z.boolean() })
 /** A lista INTEIRA de projetos com que o agente é compartilhado (`[]` = nenhum). */
 export const shareAgentSchema = z.object({ projects: z.array(z.string().max(64)).max(SHARE_MAX_PROJECTS) })
