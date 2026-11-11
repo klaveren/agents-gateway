@@ -9,10 +9,10 @@ Sem assinatura da Apple: é para esta máquina (o build assina ad-hoc).
 ## Gerar
 
 ```bash
-infra/macos/build-app.sh
+installers/macos/build-app.sh
 ```
 
-Gera `dist-mac/Agents-Gateway-<versão>.dmg` do que está **commitado** (`git archive HEAD`), com o Node 24 desta
+Gera `installers/macos/dist/Agents-Gateway-<versão>.dmg` do que está **commitado** (`git archive HEAD`), com o Node 24 desta
 máquina dentro do app. Precisa de `pnpm`, do Node 24 no `PATH` e das Command Line Tools (`swiftc`).
 
 ## Instalar e usar
@@ -38,7 +38,7 @@ máquina dentro do app. Precisa de `pnpm`, do Node 24 no `PATH` e das Command Li
   servidor reinicia na versão nova. ⚠️ Copiar por script (`ditto`, `cp`) para dentro de Applications é bloqueado pelo
   macOS (Gerenciamento de Apps) e deixa o app pela metade: se o Finder recusar substituir, mova o antigo para o Lixo antes.
 - **Estado do serviço:** `launchctl print gui/$(id -u)/com.agents-gateway.server`.
-- **Desinstalar:** `infra/macos/uninstall.sh` (tira o serviço; a pasta de trabalho fica). Depois, arraste o app para o Lixo.
+- **Desinstalar:** `installers/macos/uninstall.sh` (tira o serviço; a pasta de trabalho fica). Depois, arraste o app para o Lixo.
 
 ## Ícone
 

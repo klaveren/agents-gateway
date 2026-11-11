@@ -2,10 +2,10 @@
 # Gera o "Agents Gateway.app" (uma janela própria, WebKit) e o .dmg (uso pessoal: sem assinatura da Apple; assinatura ad-hoc, que basta para o app
 # construído nesta máquina). Do que está COMMITADO (`git archive HEAD`), com o Node desta máquina dentro do app.
 #
-#   infra/macos/build-app.sh            → dist-mac/Agents Gateway.app e dist-mac/Agents-Gateway-<versão>.dmg
+#   installers/macos/build-app.sh            → installers/macos/dist/Agents Gateway.app e installers/macos/dist/Agents-Gateway-<versão>.dmg
 set -eu
 ROOT="${0:A:h:h:h}"
-OUT="$ROOT/dist-mac"
+OUT="$ROOT/installers/macos/dist"
 STAGE="$OUT/stage"
 APP="$OUT/Agents Gateway.app"
 NODE_BIN="$(command -v node)"
@@ -29,9 +29,9 @@ cp -R "$STAGE/dist" "$STAGE/node_modules" "$STAGE/package.json" "$APP/Contents/R
 mkdir -p "$APP/Contents/Resources/app/web"
 cp -R "$STAGE/web/dist" "$APP/Contents/Resources/app/web/dist"
 cp "$NODE_BIN" "$APP/Contents/Resources/node"
-cp "$ROOT/infra/macos/run-server.sh" "$ROOT/infra/macos/service.sh" "$APP/Contents/Resources/"
+cp "$ROOT/installers/macos/run-server.sh" "$ROOT/installers/macos/service.sh" "$APP/Contents/Resources/"
 # A janela (WebKit): o executável do app. Precisa das Command Line Tools (`xcode-select --install`).
-swiftc -O -target arm64-apple-macos12.0 "$ROOT/infra/macos/App.swift" -o "$APP/Contents/MacOS/Agents Gateway"
+swiftc -O -target arm64-apple-macos12.0 "$ROOT/installers/macos/App.swift" -o "$APP/Contents/MacOS/Agents Gateway"
 chmod +x "$APP/Contents/MacOS/Agents Gateway" "$APP/Contents/Resources/run-server.sh" "$APP/Contents/Resources/service.sh" "$APP/Contents/Resources/node"
 
 echo "▶ ícone"
@@ -39,8 +39,8 @@ ICONSET="$OUT/AppIcon.iconset"
 mkdir -p "$ICONSET"
 # O desenho é o `AppIcon.svg`; o PNG de 1024 já vem gerado dele (`rsvg-convert -w 1024 AppIcon.svg -o AppIcon.png`).
 for size in 16 32 128 256 512; do
-  sips -z $size $size "$ROOT/infra/macos/AppIcon.png" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
-  sips -z $((size * 2)) $((size * 2)) "$ROOT/infra/macos/AppIcon.png" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+  sips -z $size $size "$ROOT/installers/macos/AppIcon.png" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+  sips -z $((size * 2)) $((size * 2)) "$ROOT/installers/macos/AppIcon.png" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
@@ -69,7 +69,7 @@ codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || echo "  (assinatura a
 
 # O ícone também no PRÓPRIO executável: é ele que o LaunchAgent roda, e os Itens de Início do macOS mostram o ícone do
 # arquivo do serviço. Depois da assinatura (o ícone fica num atributo do arquivo, fora do que ela confere).
-osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.setIconForFileOptions(\$.NSImage.alloc.initWithContentsOfFile('$ROOT/infra/macos/AppIcon.png'), '$APP/Contents/MacOS/Agents Gateway', 0)" >/dev/null
+osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.setIconForFileOptions(\$.NSImage.alloc.initWithContentsOfFile('$ROOT/installers/macos/AppIcon.png'), '$APP/Contents/MacOS/Agents Gateway', 0)" >/dev/null
 
 echo "▶ dmg"
 DMG_DIR="$OUT/dmg"
