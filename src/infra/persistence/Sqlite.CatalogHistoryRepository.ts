@@ -17,6 +17,7 @@ import {
   TBatchListItem,
   TBatchStatus,
   TRevisionSource,
+  TRevisionSummary,
 } from '@domain/ports/CatalogHistoryRepository.Port'
 
 /**
@@ -105,6 +106,15 @@ export class SqliteCatalogHistoryRepository implements ICatalogHistoryRepository
   }
 
   /** ⚖️ O item vai pela ordem das revisões; o escopo, pela data (o índice `catalog_revisions_scope`) e, no empate, pela ordem de gravação. */
+  versionOf(projectId: string): number {
+    return Number((this.db.prepare('SELECT MAX(id) AS version FROM catalog_revisions WHERE project_id = ?').get(projectId) as TRow).version ?? 0)
+  }
+
+  since(projectId: string, after: number, limit: number): TRevisionSummary[] {
+    const rows = this.db.prepare(`SELECT ${SUMMARY_COLUMNS} FROM catalog_revisions WHERE project_id = ? AND id > ? ORDER BY id LIMIT ?`).all(projectId, after, limit) as TRow[]
+    return rows.map(toRevision)
+  }
+
   page(filter: IRevisionFilter, paging: { offset: number; limit: number }): IRevisionPage {
     const where: string[] = []
     const params: TParam[] = []

@@ -1,4 +1,5 @@
 import { PermissionsService } from '@application/Permissions.Service'
+import { ConnectController } from './Connect.Controller'
 import { AuditController } from './Audit.Controller'
 import { SqliteAuditRepository } from '@infra/persistence/Sqlite.AuditRepository'
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
@@ -114,6 +115,9 @@ export const THROTTLED_PATHS = ['/auth/login', '/auth/setup', '/auth/password']
 /** ⚠️ O hook é público: a credencial dele é a chave do hook (ver `Hooks.Controller`), não uma conta. */
 export const PUBLIC_PATHS: readonly string[] = ['/health', '/health/drain', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login', HOOK_PATH, '/oauth/callback']
 
+/** As rotas da origem dos projetos conectados: o token de conexão é conferido no controller (`Connect.Controller`). */
+const CONNECT_PREFIX = '/connect/'
+
 export type TRouteMethod = 'get' | 'post' | 'put' | 'patch' | 'delete'
 
 export interface IRoute {
@@ -148,6 +152,8 @@ export class HttpServer {
     ledger?: LedgerController,
     /** A auditoria (ver `Audit.Controller`): grava as rotas que mudam algo e mostra em `GET /audit`. */
     private readonly audit: AuditController = new AuditController({ repository: new SqliteAuditRepository() }),
+    /** 🔌 A origem dos projetos conectados (ver `Connect.Controller`): o gateway de um dev usa um projeto desta instalação. */
+    connect: ConnectController = new ConnectController({}),
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -204,6 +210,12 @@ export class HttpServer {
       ledger ?? new LedgerController({}),
     )
     this.routes.push({ method: 'get', path: '/audit', handler: this.audit.list })
+    this.routes.push(
+      { method: 'get', path: '/connect/:projectId/version', handler: connect.version },
+      { method: 'get', path: '/connect/:projectId/events', handler: connect.events },
+      { method: 'get', path: '/connect/:projectId/package', handler: connect.catalogPackage },
+      { method: 'get', path: '/connect/:projectId/files/:sha256', handler: connect.file },
+    )
     this.setupRoutes()
     this.setupFrontend()
   }
@@ -279,7 +291,12 @@ export class HttpServer {
       // A auditoria anota a rota DENTRO do escopo da credencial (quem fez), e no fim da resposta (como terminou).
       const trail = this.audit.trail(method, routePath)
       const done = trail ? [trail, handler] : [handler]
-      const open = PUBLIC_PATHS.includes(routePath) ? [exchange, callerScope, ...done] : [exchange, identity, callerScope, ...done]
+      // 🔌 O `/connect` tem portão próprio (o token de conexão nunca vira sessão): nada do portão de sempre.
+      const open = routePath.startsWith(CONNECT_PREFIX)
+        ? [handler]
+        : PUBLIC_PATHS.includes(routePath)
+          ? [exchange, callerScope, ...done]
+          : [exchange, identity, callerScope, ...done]
       const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : open
       this.app[method](`${API_PREFIX}${routePath}`, ...chain)
     }

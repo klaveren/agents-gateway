@@ -14,6 +14,11 @@ export interface IAccessToken {
   expiresAt?: Date
   lastUsedAt?: Date
   revokedAt?: Date
+  /**
+   * 🔌 Token de CONEXÃO (`agc_…`): o gateway de outra máquina usa o projeto `projectId` desta (ver `Connect.Service`).
+   * ⛔ Nunca vira sessão da conta: só vale nas rotas `/connect/<projectId>/*`.
+   */
+  projectId?: string
 }
 
 /** ⛔ Só o hash é gravado: com o banco nas mãos, ninguém usa os tokens. */
@@ -22,10 +27,15 @@ export interface IStoredAccessToken extends IAccessToken {
 }
 
 export const ACCESS_TOKEN_PREFIX = 'agw_'
+export const CONNECTION_TOKEN_PREFIX = 'agc_'
 export const ACCESS_TOKEN_NAME_MAX = 60
 export const ACCESS_TOKENS_PER_USER = 20
 export const ACCESS_TOKEN_MAX_DAYS = 365
 
 export function isAccessToken(token: string): boolean {
   return token.startsWith(ACCESS_TOKEN_PREFIX)
+}
+
+export function isConnectionToken(token: string): boolean {
+  return token.startsWith(CONNECTION_TOKEN_PREFIX)
 }

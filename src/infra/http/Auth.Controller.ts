@@ -23,6 +23,8 @@ export interface IAuthControllerDeps {
   proof?: ICallerProof
   /** Os tokens de acesso pessoais. Ausente junto com as contas locais. */
   accessTokens?: AccessTokensService
+  /** O papel da conta no projeto (o token de conexão só sai para quem é dele). Ausente = nenhum token de conexão. */
+  projectRole?: (projectId: string, userId: string) => string | undefined
 }
 
 /** Marca, em `res.locals`, que a requisição chegou com um token de acesso (trocado na porta). */
@@ -125,6 +127,8 @@ export class AuthController {
       async () => {
         const id = await this.requireSession(res)
         const body = parseBody(createAccessTokenSchema, req.body)
+        // 🔌 O de conexão (`agc_`): só de quem é do projeto; o de fora ouve o mesmo que projeto inexistente.
+        if (body.projectId && !this.deps.projectRole?.(body.projectId, id)) throw new HttpError(404, 'not_found', `Project not found: ${body.projectId}`)
         const created = this.tokens.create(id, body)
         return { token: created.token, ...toTokenDto(created.accessToken) }
       },
@@ -348,7 +352,16 @@ function toUserDto(user: IUser) {
 
 /** Lista explícita: o hash nunca sai. */
 function toTokenDto(token: IAccessToken) {
-  return { id: token.id, name: token.name, prefix: token.prefix, createdAt: token.createdAt, expiresAt: token.expiresAt, lastUsedAt: token.lastUsedAt, revokedAt: token.revokedAt }
+  return {
+    id: token.id,
+    name: token.name,
+    prefix: token.prefix,
+    createdAt: token.createdAt,
+    expiresAt: token.expiresAt,
+    lastUsedAt: token.lastUsedAt,
+    revokedAt: token.revokedAt,
+    ...(token.projectId ? { projectId: token.projectId } : {}),
+  }
 }
 
 function toSessionDto(session: ISession) {

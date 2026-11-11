@@ -15,7 +15,8 @@ const SCHEMA = `
     created_at    TEXT NOT NULL,
     expires_at    TEXT,
     last_used_at  TEXT,
-    revoked_at    TEXT
+    revoked_at    TEXT,
+    project_id    TEXT
   );
   CREATE INDEX IF NOT EXISTS access_tokens_user ON access_tokens (user_id);
 `
@@ -31,12 +32,15 @@ export class SqliteAccessTokenRepository implements IAccessTokenRepository {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    // O token de conexão (`project_id`) chegou depois: a tabela de antes ganha a coluna.
+    const columns = this.db.prepare('PRAGMA table_info(access_tokens)').all() as TRow[]
+    if (!columns.some((column) => column.name === 'project_id')) this.db.exec('ALTER TABLE access_tokens ADD COLUMN project_id TEXT')
   }
 
   insert(token: IStoredAccessToken): void {
     this.db
-      .prepare('INSERT INTO access_tokens (id, user_id, name, token_hash, prefix, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(token.id, token.userId, token.name, token.tokenHash, token.prefix, token.createdAt.toISOString(), token.expiresAt?.toISOString() ?? null)
+      .prepare('INSERT INTO access_tokens (id, user_id, name, token_hash, prefix, created_at, expires_at, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(token.id, token.userId, token.name, token.tokenHash, token.prefix, token.createdAt.toISOString(), token.expiresAt?.toISOString() ?? null, token.projectId ?? null)
   }
 
   listByUser(userId: string): IStoredAccessToken[] {
@@ -67,5 +71,6 @@ function toToken(row: TRow): IStoredAccessToken {
     expiresAt: date(row.expires_at),
     lastUsedAt: date(row.last_used_at),
     revokedAt: date(row.revoked_at),
+    ...(typeof row.project_id === 'string' && row.project_id ? { projectId: row.project_id } : {}),
   }
 }
