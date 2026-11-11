@@ -49,6 +49,7 @@ plist="$(cat <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$LABEL</string>
+  <key>AssociatedBundleIdentifiers</key><string>com.agents-gateway.app</string>
   <key>ProgramArguments</key>
   <array><string>/bin/zsh</string><string>$RES/run-server.sh</string></array>
   <key>RunAtLoad</key><true/>
