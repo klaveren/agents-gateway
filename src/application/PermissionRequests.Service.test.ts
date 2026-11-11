@@ -36,7 +36,7 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
   }
   const asker = { by: 'root@x.test', agentId: 'theo', conversationId: 'c-1' }
   const screen = { by: 'root@x.test', onScreen: true }
-  const agentRules = { knownTools: ['read_doc', 'run_bash', 'search_web'] }
+  const agentRules = { knownTools: ['read_doc', 'run_bash', 'search_web', 'fetch_url'] }
   const theoRef = { agentId: 'theo' }
 
   let agents: AgentCatalog

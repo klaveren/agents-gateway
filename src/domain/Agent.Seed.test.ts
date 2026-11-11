@@ -74,7 +74,7 @@ describe('AGENT_SEED', () => {
     for (const agent of [...AGENT_SEED, ...ATLAS_AGENTS]) {
       const issues = agentIssues(agent, {
         takenIds: [],
-        knownTools: [UPDATE_TODOS_TOOL, 'search_web', 'run_bash', 'read_file', 'write_file'],
+        knownTools: [UPDATE_TODOS_TOOL, 'search_web', 'fetch_url', 'run_bash', 'read_file', 'write_file'],
         providerOf: (model) => (model.startsWith('claude') ? EProvider.CLAUDE : undefined),
         mcpServerExists: (server) => server === 'gateway',
         agentExists: (id) => id.startsWith('builder-'),

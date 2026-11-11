@@ -43,6 +43,7 @@ import { deliverFileTool, type IFileDeliveries, type IFileToolDeps, type IOwnFol
 import type { IEditDiagnostics } from './Edit.Diagnostics'
 import type { IAgentDiagnostics } from '@domain/models/Agent.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
+import { fetchUrlTool } from './Web.Fetch'
 import { IImportDesk, IRepositoryBrowser, makeImportTools } from './Import.Tools'
 
 export interface IExecOptions {
@@ -478,6 +479,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         }
       },
     },
+    fetchUrlTool(deps.permissions),
     {
       origin: 'local',
       name: 'run_bash',
