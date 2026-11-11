@@ -32,4 +32,4 @@ secrets.key
 
 # Notas locais de integração (a esteira, adiada): fora do git.
 docs/integration/
-dist-mac/
+installers/*/dist/
