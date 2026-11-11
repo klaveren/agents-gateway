@@ -18,8 +18,6 @@ export const CONNECTION_POLL_MS = 5 * 60_000
 /** A espera para reabrir o aviso ao vivo: começa curta e dobra até o teto. */
 const RETRY_MIN_MS = 5_000
 const RETRY_MAX_MS = 5 * 60_000
-/** Quantas vezes o plano é refeito tirando o que não entra (o que dependia do que saiu também pode sair). */
-const PLAN_ROUNDS = 3
 
 /** A ordem de apagar o que sumiu na origem: quem referencia antes de quem é referenciado. O projeto e as permissões dele nunca. */
 const REMOVAL_ORDER: readonly TCatalogKind[] = [...CATALOG_KINDS].reverse().filter((kind) => kind !== 'project' && kind !== 'project-permissions')
@@ -438,35 +436,49 @@ export class ProjectConnectionService {
 
     const models = { ...(await this.deps.models()), map: connection.modelMap }
     const parsed = parsePackage(pack.package.files, pack.package.manifest)
-    let documents = parsed.documents.map((document) => forLocal(document, models))
     const scope: TCatalogScope = { kind: 'project', projectId }
+    // ⚖️ O MCP global da origem que os agentes usam vem como do projeto; com o mesmo id de um global DAQUI, vale o daqui
+    // (o `gateway` de lá é a .4; o daqui é este gateway). Os agentes o alcançam pelo id, do mesmo jeito.
+    const globals = new Set(
+      this.deps.reader
+        .list({ kind: 'global' })
+        .filter((document) => document.kind === 'mcp')
+        .map((document) => document.id),
+    )
+    let documents = parsed.documents.filter((document) => !(document.kind === 'mcp' && globals.has(document.id))).map((document) => forLocal(document, models))
     const skipped: IConnectionSkipped[] = parsed.errors.map((error) => ({ ref: error.path, message: error.message }))
+    const leave = (refs: ReadonlySet<string>) => (documents = documents.filter((document) => !refs.has(itemRef(document.kind, document.id, document.projectId))))
 
     // O que não entra sai do lote, com o motivo; o resto entra (o que dependia do que saiu cai na rodada seguinte).
-    // O campo mascarado na origem vem com o marcador: a cópia o aceita (o segredo não viaja; recusar derrubaria quem o cita).
-    let planned = await this.deps.applier.plan({ documents, scope }, { acceptMasked: true })
-    for (let round = 0; round < PLAN_ROUNDS; round++) {
-      const blocked = planned.plan.items.filter((item) => item.op === 'error' || item.op === 'conflict')
-      if (!blocked.length) break
-      for (const item of blocked) skipped.push({ ref: item.ref, message: item.issues.map((issue) => `${issue.field}: ${issue.message}`).join('; ') || item.op })
-      const out = new Set(blocked.map((item) => item.ref))
-      documents = documents.filter((document) => !out.has(itemRef(document.kind, document.id, document.projectId)))
-      planned = await this.deps.applier.plan({ documents, scope }, { acceptMasked: true })
-    }
-
+    // ⛔ A gravação para no primeiro item que falha: ele sai, e o que ficou na fila grava na volta seguinte — antes, a
+    // fila inteira sumia sem aviso. Cada volta tira ao menos um item, então acaba.
     const who = `conexão ${connection.url} (${by})`
-    const result = await this.deps.applier.apply(
-      {
-        documents,
-        scope,
-        planHash: planned.plan.planHash,
-        confirm: planned.plan.widenings.map((widening) => widening.key),
-        provenance: { connection: connection.url, version: pack.version },
-        acceptMasked: true,
-      },
-      { by: who, viaAccessToken: false, administers: () => true },
-    )
-    if (result.failed) skipped.push({ ref: result.failed.ref, message: result.failed.message })
+    let applied = 0
+    for (;;) {
+      const planned = await this.deps.applier.plan({ documents, scope }, { mirror: true })
+      const blocked = planned.plan.items.filter((item) => item.op === 'error' || item.op === 'conflict')
+      if (blocked.length) {
+        for (const item of blocked) skipped.push({ ref: item.ref, message: item.issues.map((issue) => `${issue.field}: ${issue.message}`).join('; ') || item.op })
+        leave(new Set(blocked.map((item) => item.ref)))
+        continue
+      }
+      const result = await this.deps.applier.apply(
+        {
+          documents,
+          scope,
+          planHash: planned.plan.planHash,
+          confirm: planned.plan.widenings.map((widening) => widening.key),
+          provenance: { connection: connection.url, version: pack.version },
+          mirror: true,
+        },
+        { by: who, viaAccessToken: false, administers: () => true },
+      )
+      applied += result.applied.length
+      if (!result.failed) break
+      skipped.push({ ref: result.failed.ref, message: result.failed.message })
+      if (!result.pending?.length) break
+      leave(new Set([result.failed.ref]))
+    }
 
     // O espelho: o que o projeto tem aqui e a origem não tem mais.
     const kept = new Set(parsed.documents.map((document) => `${document.kind}/${document.id}`))
@@ -494,7 +506,7 @@ export class ProjectConnectionService {
     })
     // Mudou na origem enquanto atualizava: o aviso volta, já para a nova última.
     if (latest > pack.version) await this.check(projectId).catch(() => undefined)
-    return { version: pack.version, applied: result.applied.length, removed, skipped }
+    return { version: pack.version, applied, removed, skipped }
   }
 
   /** O aviso a partir da resposta da origem: a última versão e as mudanças desde a daqui. */
