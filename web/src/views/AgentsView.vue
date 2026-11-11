@@ -15,6 +15,7 @@ import ListFilter from '@/components/ListFilter.vue'
 import TagChips from '@/components/TagChips.vue'
 import { filterList } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
+import { homeProjectOf } from '@/lib/agentForm'
 import { pendingDraft } from '@/lib/builder'
 import type { IAgent, IAgentDetail, TMode, TSandboxLevel } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
@@ -111,12 +112,23 @@ onMounted(() => {
   if (projects.manages) void permissionRequests.lists.ensure('').catch(() => undefined)
 })
 
+/** O agente aberto pelo endereço é de outro projeto: troca o projeto em uso, como o seletor do topo. */
+async function followProject(agent: IAgentDetail) {
+  if (!agent.projectId || agent.projectId === projects.current) return
+  if (!projects.loaded) await projects.load().catch(() => undefined)
+  await agents.ensure().catch(() => undefined)
+  const home = homeProjectOf(agent, { current: projects.current, projects: projects.list.map((item) => item.id), listed: agents.list.map((item) => item.id) })
+  if (home) await projects.select(home).catch(() => undefined)
+}
+
 /** ⚠️ Cada leitura vale uma geração: a resposta de uma seleção anterior chega depois e não pode sobrescrever a atual. */
 let generation = 0
 async function loadDetail(id: string) {
   const token = ++generation
   try {
-    await agents.detail(id)
+    const loaded = await agents.detail(id)
+    if (token !== generation) return
+    await followProject(loaded)
     if (token !== generation) return
     const draft = takeDraft(id)
     if (draft) drafted.value = draft
