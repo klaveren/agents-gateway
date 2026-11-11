@@ -329,6 +329,13 @@ describe('CatalogImportPlanner (dry-run)', () => {
     assert.strictEqual(byRef(plan, 'spec/spec-x').op, 'error')
     assert.strictEqual(byRef(plan, 'spec/adr-a').op, 'conflict')
     assert.strictEqual(byRef(plan, 'skill/skill-a').op, 'conflict')
+    // 🔌 A cópia do projeto conectado aceita o marcador (o segredo da origem não viaja).
+    const accepted = await planner.planDocuments(
+      [edit(reader.read('skill', 'skill-a')!, { body: 'token [segredo:token do GitHub]' })],
+      { kind: 'project', projectId: 'alfa' },
+      { acceptMasked: true },
+    )
+    assert.strictEqual(byRef(accepted, 'skill/skill-a').op, 'update')
 
     const outside = await planner.planDocuments([agentDocument(agent({ id: 'lia', projectId: 'alfa' }), { resources: { skills: [], commands: [] }, initialContext: [] })], {
       kind: 'project',

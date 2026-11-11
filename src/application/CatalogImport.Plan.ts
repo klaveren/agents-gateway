@@ -58,6 +58,11 @@ export interface IPlanOptions {
   masked?: readonly ICatalogMasked[]
   /** Os arquivos do pacote fora do formato (do `parsePackage`): entram no plano e no hash. */
   fileErrors?: readonly ICatalogFilesError[]
+  /**
+   * 🔌 Aceita o campo mascarado (o marcador no lugar do valor): a cópia de um projeto CONECTADO nunca tem o segredo da
+   * origem — ele não viaja —, e recusar o item derrubaria em cascata tudo o que o cita.
+   */
+  acceptMasked?: boolean
 }
 
 type TIssues = TImportIssue[]
@@ -215,7 +220,7 @@ export class CatalogImportPlanner {
   async planWithTargets(documents: readonly ICatalogDocument[], scope: TCatalogScope, options: IPlanOptions = {}): Promise<IPlanWithTargets> {
     const view = new CatalogView(this.deps.reader.list({ kind: 'all' }))
     const masked = new Set((options.masked ?? []).map((item) => itemRef(item.kind, item.id, item.projectId)))
-    const drafts = this.classify(documents, scope, view, masked)
+    const drafts = this.classify(documents, scope, view, options.acceptMasked ? new Set() : masked, !!options.acceptMasked)
     const writing = (draft: IDraft) => draft.op === 'create' || draft.op === 'update'
 
     // O MCP que pede segredo que o cofre não tem entra desligado (o PR 9 aplica assim): é o desligado que se compara.
@@ -325,7 +330,7 @@ export class CatalogImportPlanner {
   }
 
   /** A operação de cada documento, antes das regras: normaliza, confere o escopo, a repetição e o id. */
-  private classify(documents: readonly ICatalogDocument[], scope: TCatalogScope, view: CatalogView, masked: ReadonlySet<string>): IDraft[] {
+  private classify(documents: readonly ICatalogDocument[], scope: TCatalogScope, view: CatalogView, masked: ReadonlySet<string>, acceptMasked = false): IDraft[] {
     const seen = new Set<string>()
     const drafts: IDraft[] = []
     for (const input of documents) {
@@ -365,7 +370,7 @@ export class CatalogImportPlanner {
         continue
       }
       // ⛔ O export mascarou um campo: o valor do pacote é o marcador, não o real. Não sobrescreve sem decisão.
-      if (masked.has(ref) || document.text.includes(MASK_MARK)) {
+      if (masked.has(ref) || (!acceptMasked && document.text.includes(MASK_MARK))) {
         draft.op = 'conflict'
         draft.issues.push({ field: 'body', message: 'a field was masked by the export (secret): the package does not carry the real value' })
         continue
