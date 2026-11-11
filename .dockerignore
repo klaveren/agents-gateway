@@ -19,3 +19,5 @@ data
 Dockerfile
 docker-compose.yml
 infra
+# Os instaladores (Mac, Debian) e o que eles geram não fazem parte da imagem.
+installers
