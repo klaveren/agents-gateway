@@ -56,6 +56,8 @@ export interface IProjectConnection {
   createdBy: string
   lastCheckedAt?: Date
   lastSyncedAt?: Date
+  /** Até quando o uso daqui já foi mandado à origem (reenvia os últimos dias: o de hoje ainda cresce). */
+  usageSentAt?: Date
 }
 
 /** Um aviso por projeto, sempre para a ÚLTIMA versão (nunca um por versão). */

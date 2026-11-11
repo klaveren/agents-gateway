@@ -224,6 +224,7 @@ export class HttpServer {
       { method: 'get', path: '/connect/:projectId/ledger/:agentId/contexts/:topic', handler: connect.ledgerContext },
       { method: 'get', path: '/connect/:projectId/ledger/:agentId/search', handler: connect.ledgerSearch },
       { method: 'post', path: '/connect/:projectId/ledger/:agentId/write', handler: connect.ledgerWrite },
+      { method: 'post', path: '/connect/:projectId/usage', handler: connect.usage },
       { method: 'get', path: '/connections', handler: connections.list },
       { method: 'post', path: '/connections', handler: connections.connect },
       { method: 'get', path: '/connections/:projectId', handler: connections.get },

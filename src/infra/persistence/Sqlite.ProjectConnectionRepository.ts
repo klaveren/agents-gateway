@@ -47,6 +47,8 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    const columns = this.db.prepare('PRAGMA table_info(project_connections)').all() as TRow[]
+    if (!columns.some((column) => column.name === 'usage_sent_at')) this.db.exec('ALTER TABLE project_connections ADD COLUMN usage_sent_at TEXT')
   }
 
   insert(connection: IProjectConnection, tokenSealed: string): void {
@@ -95,6 +97,7 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
     set('model_map', patch.modelMap && JSON.stringify(patch.modelMap))
     set('last_checked_at', patch.lastCheckedAt?.toISOString())
     set('last_synced_at', patch.lastSyncedAt?.toISOString())
+    set('usage_sent_at', patch.usageSentAt?.toISOString())
     if (!columns.length) return
     this.db
       .prepare(`UPDATE project_connections SET ${columns.map(([column]) => `${column} = ?`).join(', ')} WHERE project_id = ?`)
@@ -140,6 +143,7 @@ const json = <T>(value: unknown, fallback: T): T => {
 function toConnection(row: TRow): IProjectConnection {
   const lastCheckedAt = date(row.last_checked_at)
   const lastSyncedAt = date(row.last_synced_at)
+  const usageSentAt = date(row.usage_sent_at)
   return {
     projectId: String(row.project_id),
     url: String(row.url),
@@ -157,5 +161,6 @@ function toConnection(row: TRow): IProjectConnection {
     createdBy: String(row.created_by),
     ...(lastCheckedAt ? { lastCheckedAt } : {}),
     ...(lastSyncedAt ? { lastSyncedAt } : {}),
+    ...(usageSentAt ? { usageSentAt } : {}),
   }
 }
