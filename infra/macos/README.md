@@ -34,7 +34,9 @@ máquina dentro do app. Precisa de `pnpm`, do Node 24 no `PATH` e das Command Li
 - **No navegador também:** `http://localhost:3210` (o servidor é o mesmo).
 - **Arquivos que o agente entrega:** vão para Downloads. Links de fora abrem no navegador.
 - **Trocar a porta:** mude `PORT` no `config.env` e abra o app de novo.
-- **Atualizar:** gere o `.dmg` de novo e substitua o app em Applications; ao abrir, o servidor reinicia na versão nova.
+- **Atualizar:** gere o `.dmg` de novo e, **pelo Finder**, arraste o app para Applications substituindo o antigo; ao abrir, o
+  servidor reinicia na versão nova. ⚠️ Copiar por script (`ditto`, `cp`) para dentro de Applications é bloqueado pelo
+  macOS (Gerenciamento de Apps) e deixa o app pela metade: se o Finder recusar substituir, mova o antigo para o Lixo antes.
 - **Estado do serviço:** `launchctl print gui/$(id -u)/com.agents-gateway.server`.
 - **Desinstalar:** `infra/macos/uninstall.sh` (tira o serviço; a pasta de trabalho fica). Depois, arraste o app para o Lixo.
 
