@@ -70,9 +70,10 @@ const asName = (flag: string) => flag.replace(/-/g, '_')
 export class CatalogExportUseCase {
   constructor(private readonly deps: ICatalogExportDeps) {}
 
-  run(scope: TCatalogScope, by?: string): ICatalogPackage {
+  /** `extra`: documentos que entram junto do escopo (o projeto conectado leva os MCPs globais que os agentes dele usam). */
+  run(scope: TCatalogScope, by?: string, extra: readonly ICatalogDocument[] = []): ICatalogPackage {
     if (scope.kind === 'project' && !this.deps.reader.read('project', scope.projectId)) throw new ProjectNotFoundError(scope.projectId)
-    const masked = this.deps.reader.list(scope).map((document) => this.masked(document))
+    const masked = [...this.deps.reader.list(scope), ...extra].map((document) => this.masked(document))
     const entries = catalogFiles(masked.map((item) => item.document))
 
     const report: ICatalogMasked[] = []

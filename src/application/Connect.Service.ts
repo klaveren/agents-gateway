@@ -1,6 +1,6 @@
 import type { ICatalogPackage } from '@application/CatalogExport.Usecase'
 import type { TCatalogScope } from '@application/Catalog.Reader'
-import type { ICatalogDocument, TCatalogKind } from '@domain/Catalog.Document'
+import { canonicalize, documentFromText, ICatalogDocument, TCanonicalBody, TCatalogKind } from '@domain/Catalog.Document'
 import type { ICatalogHistoryRepository, TRevisionOp } from '@domain/ports/CatalogHistoryRepository.Port'
 import type { TSecretScope } from '@domain/models/ResourceSecret.Model'
 import type { ILedgerWrite } from '@domain/models/Ledger.Model'
@@ -13,7 +13,7 @@ export const CONNECT_CHANGES_LIMIT = 500
 
 export interface IConnectDeps {
   history: Pick<ICatalogHistoryRepository, 'versionOf' | 'since'>
-  exporter: { run(scope: TCatalogScope, by?: string): ICatalogPackage }
+  exporter: { run(scope: TCatalogScope, by?: string, extra?: readonly ICatalogDocument[]): ICatalogPackage }
   reader: { list(scope: TCatalogScope): ICatalogDocument[] }
   /** O conteúdo de um arquivo de recurso, pelo sha256 (o blob store). */
   files: { read(sha256: string): Buffer | undefined }
@@ -71,8 +71,9 @@ export class ConnectService {
   package(projectId: string, by: string, since?: number): IConnectPackage {
     const scope: TCatalogScope = { kind: 'project', projectId }
     const version = this.deps.history.versionOf(projectId)
-    const pack = this.deps.exporter.run(scope, by)
-    const documents = this.deps.reader.list(scope)
+    const borrowed = this.globalMcps(projectId)
+    const pack = this.deps.exporter.run(scope, by, borrowed)
+    const documents = [...this.deps.reader.list(scope), ...borrowed]
     const files = [...filesOf(documents).values()]
     const secrets = documents
       .filter((document) => SECRET_KINDS.has(document.kind))
@@ -122,6 +123,26 @@ export class ConnectService {
     const stored = rows.slice(0, REMOTE_USAGE_MAX_ROWS).map((row) => ({ ...row, key: remoteUsageKey(row), projectId, userId: account.userId, email: account.email }))
     this.deps.usage.upsert(stored, (this.deps.now ?? (() => new Date()))())
     return { received: stored.length }
+  }
+
+  /**
+   * Os MCPs GLOBAIS que os agentes do projeto usam (`mcp:<id>/…`), como se fossem do projeto: a cópia conectada não tem
+   * os globais da origem, e o agente que cita um MCP que não existe lá não entra. O do projeto, com o mesmo id, vence.
+   */
+  private globalMcps(projectId: string): ICatalogDocument[] {
+    const own = this.deps.reader.list({ kind: 'project', projectId })
+    const used = new Set(
+      own
+        .filter((document) => document.kind === 'agent')
+        .flatMap((document) => ((document.body as Record<string, unknown>).allowedTools as string[] | undefined) ?? [])
+        .map((tool) => /^mcp:([^/]+)\//.exec(tool)?.[1])
+        .filter((id): id is string => !!id),
+    )
+    const local = new Set(own.filter((document) => document.kind === 'mcp').map((document) => document.id))
+    return this.deps.reader
+      .list({ kind: 'global' })
+      .filter((document) => document.kind === 'mcp' && used.has(document.id) && !local.has(document.id))
+      .map((document) => documentFromText('mcp', document.id, projectId, canonicalize({ ...(document.body as Record<string, unknown>), projectId } as TCanonicalBody)))
   }
 
   /** ⛔ Só um arquivo que um documento do projeto cita; o resto responde como inexistente. */

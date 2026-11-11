@@ -23,6 +23,8 @@ export type IImportApplyRequest = TImportSource & {
   confirm?: readonly string[]
   /** Vai no resumo do lote, sem passar pelo documento canônico (a proveniência do importador: repositório, HEAD, fontes). */
   provenance?: Record<string, unknown>
+  /** 🔌 A cópia do projeto conectado aceita o campo mascarado (ver `IPlanOptions.acceptMasked`). */
+  acceptMasked?: boolean
 }
 
 /** Um passo gravado: o item (ou a parte dele) e a revisão que ganhou. */
@@ -116,7 +118,7 @@ export class CatalogImportApplier {
   }
 
   async apply(request: IImportApplyRequest, caller: IRestoreCaller): Promise<IImportApplyResult> {
-    const { plan, targets } = await this.plan(request, { viaAccessToken: caller.viaAccessToken })
+    const { plan, targets } = await this.plan(request, { viaAccessToken: caller.viaAccessToken, ...(request.acceptMasked ? { acceptMasked: true } : {}) })
     if (plan.planHash !== request.planHash) throw new CatalogPlanChangedError(plan)
     const blockers = blockersOf(plan)
     if (blockers.length) throw new CatalogImportBlockedError(blockers)

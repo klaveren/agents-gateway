@@ -443,14 +443,15 @@ export class ProjectConnectionService {
     const skipped: IConnectionSkipped[] = parsed.errors.map((error) => ({ ref: error.path, message: error.message }))
 
     // O que não entra sai do lote, com o motivo; o resto entra (o que dependia do que saiu cai na rodada seguinte).
-    let planned = await this.deps.applier.plan({ documents, scope })
+    // O campo mascarado na origem vem com o marcador: a cópia o aceita (o segredo não viaja; recusar derrubaria quem o cita).
+    let planned = await this.deps.applier.plan({ documents, scope }, { acceptMasked: true })
     for (let round = 0; round < PLAN_ROUNDS; round++) {
       const blocked = planned.plan.items.filter((item) => item.op === 'error' || item.op === 'conflict')
       if (!blocked.length) break
       for (const item of blocked) skipped.push({ ref: item.ref, message: item.issues.map((issue) => `${issue.field}: ${issue.message}`).join('; ') || item.op })
       const out = new Set(blocked.map((item) => item.ref))
       documents = documents.filter((document) => !out.has(itemRef(document.kind, document.id, document.projectId)))
-      planned = await this.deps.applier.plan({ documents, scope })
+      planned = await this.deps.applier.plan({ documents, scope }, { acceptMasked: true })
     }
 
     const who = `conexão ${connection.url} (${by})`
@@ -461,6 +462,7 @@ export class ProjectConnectionService {
         planHash: planned.plan.planHash,
         confirm: planned.plan.widenings.map((widening) => widening.key),
         provenance: { connection: connection.url, version: pack.version },
+        acceptMasked: true,
       },
       { by: who, viaAccessToken: false, administers: () => true },
     )
