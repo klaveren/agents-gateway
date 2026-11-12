@@ -1,5 +1,5 @@
 import { printsSecret } from '@domain/models/ResourceSecret.Model'
-import { terminalEnv } from '@domain/Agent.Identity'
+import { cliTerminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
 import { HANDOFF_MAX_CHARS, handoffText } from '@domain/Handoff.Policy'
@@ -260,7 +260,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       abortController: abort,
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
       // As variáveis do agente e a identidade de quem chama vão para o terminal do CLI (o Bash nativo) — ver `Agent.Identity`.
-      ...(env ? { env: terminalEnv(agent.env, env, context) } : {}),
+      ...(env ? { env: cliTerminalEnv(agent.env, env, context) } : {}),
       // Toda lane num diretório vazio por conversa: o `cwd` do processo é a pasta do gateway (`.env`, banco).
       cwd: workDir,
     }
@@ -707,13 +707,22 @@ export function cliEnv(connection: { key: string; baseUrl?: string; compatible: 
   return { ...base, ANTHROPIC_BASE_URL: connection.baseUrl, ANTHROPIC_AUTH_TOKEN: connection.key, ANTHROPIC_API_KEY: '' }
 }
 
-/** O `PreToolUse` com a decisão do portão: nega o que o portão nega e aplica o `updatedInput` (o Bash cercado). */
-function preToolUse(gate: CanUseTool, loop: (tool: string, args: unknown) => string | undefined = () => undefined): HookCallback {
+/**
+ * O `PreToolUse` com a decisão do portão: nega o que o portão nega e aplica o `updatedInput` (o Bash cercado).
+ *
+ * ⛔ O portão que LANÇA nega: para `Read`/`Glob`/`Grep` este hook é a única conferência, e um erro de hook não pode virar "sem decisão".
+ */
+export function preToolUse(gate: CanUseTool, loop: (tool: string, args: unknown) => string | undefined = () => undefined): HookCallback {
   return async (input, _toolUseId, { signal }) => {
     if (input.hook_event_name !== 'PreToolUse') return {}
     const repeated = loop(input.tool_name, input.tool_input ?? {})
     if (repeated) return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: repeated } }
-    const decision = await gate(input.tool_name, (input.tool_input ?? {}) as Record<string, unknown>, { signal, toolUseID: input.tool_use_id } as Parameters<CanUseTool>[2])
+    const decision = await Promise.resolve()
+      .then(() => gate(input.tool_name, (input.tool_input ?? {}) as Record<string, unknown>, { signal, toolUseID: input.tool_use_id } as Parameters<CanUseTool>[2]))
+      .catch((error: unknown) => {
+        console.error(`[claude] o portão falhou em ${input.tool_name}: ${error instanceof Error ? error.message : String(error)}`)
+        return { behavior: 'deny' as const, message: 'A conferência de permissão falhou: a ferramenta não rodou.' }
+      })
     if (decision?.behavior === 'allow')
       return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', ...(decision.updatedInput ? { updatedInput: decision.updatedInput } : {}) } }
     return {

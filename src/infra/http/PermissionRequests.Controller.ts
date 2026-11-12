@@ -121,12 +121,26 @@ export class PermissionRequestsController {
     return this.deps.service.rules({ agentId }, typeof project === 'string' ? { conversationProjectId: project } : {})
   }
 
+  /**
+   * Quem pede: a conta provada e — RÓTULO — o agente e a conversa dos cabeçalhos de identidade que o gateway manda ao
+   * próprio MCP. ⚠️ Não decide nada: quem pode pedir é a conta (admin); o rótulo só diz à pessoa de onde veio.
+   * ⛔ A conversa só fica no pedido se é uma sessão viva DA CONTA QUE PEDE: o aviso da decisão entra nela, e o rótulo de
+   * outra pessoa faria o texto do pedido cair na conversa de quem decide.
+   */
+  private async requester(req: Request, by: string): Promise<IPermissionRequester> {
+    const { agentId, conversationId } = identityOf(req)
+    const session = conversationId ? this.deps.liveSession?.(conversationId) : undefined
+    const resolved = session ? await resolveCaller(this.deps.proof) : undefined
+    const own = session && resolved && ownsSession(resolved, session.metadata) ? conversationId : undefined
+    return { by, ...(agentId ? { agentId } : {}), ...(own ? { conversationId: own } : {}) }
+  }
+
   /** `POST /agents/:agentId/permission-rules` e `POST /projects/:projectId/permission-rules` — restringe já; amplia como pedido. */
   async change(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { service, by } = await this.admin(refOf(req), 'changePermissionRules')
       const body = parseBody(changeSchema, req.body)
-      return service.change(refOf(req), body, requesterOf(req, by))
+      return service.change(refOf(req), body, await this.requester(req, by))
     })
   }
 
@@ -138,7 +152,7 @@ export class PermissionRequestsController {
       const body = parseBody(patchSchema, req.body)
       // Só o que veio: um padrão do esquema (`allowedTools: []`) não pode virar campo pedido.
       const patch = Object.fromEntries(Object.entries(body.patch).filter(([field]) => field in raw)) as TAgentPatch
-      return service.patchAgent(req.params.agentId as string, { patch, reason: body.reason }, requesterOf(req, by))
+      return service.patchAgent(req.params.agentId as string, { patch, reason: body.reason }, await this.requester(req, by))
     })
   }
 
@@ -150,7 +164,7 @@ export class PermissionRequestsController {
     await this.respond(res, async () => {
       const { service, by } = await this.admin({ agentId: req.params.agentId as string }, 'requestLocalTools')
       const body = parseBody(localToolsSchema, req.body)
-      return service.requestLocalTools(req.params.agentId as string, body, requesterOf(req, by))
+      return service.requestLocalTools(req.params.agentId as string, body, await this.requester(req, by))
     })
   }
 
@@ -256,7 +270,7 @@ export class PermissionRequestsController {
       const asked = body.project ?? this.receiverOf(body.scope, body.scopeId, identityOf(req).agentId)
       const { by, project } = await this.secretAdmin(body.scope, body.scopeId, 'requestSecret', asked)
       const { project: _asked, ...input } = body
-      return service.requestSecret({ ...input, ...(project !== ORIGIN_PROJECT ? { project } : {}) }, requesterOf(req, by))
+      return service.requestSecret({ ...input, ...(project !== ORIGIN_PROJECT ? { project } : {}) }, await this.requester(req, by))
     })
   }
 
@@ -358,15 +372,6 @@ function queryProject(req: Request): string | undefined {
 /** O alvo da rota: o agente (`/agents/:agentId/…`) ou o projeto (`/projects/:projectId/…`). */
 function refOf(req: Request): { agentId?: string; projectId?: string } {
   return typeof req.params.agentId === 'string' ? { agentId: req.params.agentId } : { projectId: req.params.projectId as string }
-}
-
-/**
- * Quem pede: a conta provada e — RÓTULO — o agente e a conversa dos cabeçalhos de identidade que o gateway manda ao
- * próprio MCP. ⚠️ Não decide nada: quem pode pedir é a conta (admin); o rótulo só diz à pessoa de onde veio.
- */
-function requesterOf(req: Request, by: string): IPermissionRequester {
-  const { agentId, conversationId } = identityOf(req)
-  return { by, ...(agentId ? { agentId } : {}), ...(conversationId ? { conversationId } : {}) }
 }
 
 /** Os cabeçalhos de identidade, se bem formados. ⚠️ Sozinhos não provam nada: quem decide confere contra a sessão viva. */

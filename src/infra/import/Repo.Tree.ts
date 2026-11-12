@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { Dirent, existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { Dirent, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { generatedSources } from '@domain/Import.Refs'
 import { IInventoryLink } from '@domain/models/ImportInventory.Model'

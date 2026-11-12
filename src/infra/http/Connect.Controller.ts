@@ -182,7 +182,7 @@ export class ConnectController {
 
   private ledgerOf(req: Request) {
     const { connect, connection } = this.gate(req)
-    return connect.ledger(connection.projectId, String(req.params.agentId ?? ''))
+    return connect.ledger(connection.projectId, String(req.params.agentId ?? ''), this.deps.projectRole?.(connection.projectId, connection.userId))
   }
 
   /** ⛔ O token de conexão, o projeto DELE na rota e a conta ainda no projeto. */

@@ -111,4 +111,21 @@ describe('ScheduleRunner', () => {
     assert.deepStrictEqual(await runner.tick(), [])
     assert.deepStrictEqual(executed, ['hora-cheia'])
   })
+
+  it('⛔ o registro que falha não vira rejeição solta nem prende o agendamento em "rodando"', async () => {
+    const { service, runner, executed } = setup('2026-10-28T10:30:00Z')
+    const schedule = service.get('agente', 'hora-cheia')
+    const finishRun = service.finishRun.bind(service)
+    service.finishRun = () => {
+      throw new Error('banco travado')
+    }
+    await runner.runNow(schedule)
+    service.finishRun = finishRun
+    await runner.runNow(schedule)
+    assert.deepStrictEqual(executed, ['hora-cheia', 'hora-cheia'])
+    assert.deepStrictEqual(
+      statuses(service).filter((status) => status === 'skipped'),
+      [],
+    )
+  })
 })

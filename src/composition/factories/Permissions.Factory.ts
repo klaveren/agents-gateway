@@ -5,6 +5,7 @@ import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepositor
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
 import { makeAgents } from './Agents.Factory'
 import { makeCatalogHistory } from './CatalogHistory.Factory'
+import { makeSecretMasker } from './SecretMask.Factory'
 
 let service: PermissionsService | undefined
 let repository: SqlitePermissionRepository | undefined
@@ -31,6 +32,8 @@ export function makePermissions(): PermissionsService {
     repository,
     (agentId) => makeAgents().get(agentId)?.permissions,
     () => system,
+    undefined,
+    (text, sessionId) => makeSecretMasker().text(text, sessionId),
   )
   service.history.use(() => makeCatalogHistory())
   return service

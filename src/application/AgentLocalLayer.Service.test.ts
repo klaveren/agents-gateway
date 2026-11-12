@@ -87,6 +87,21 @@ describe('camada local: o ajuste que um agente faz (patch_agent com localLayer)'
     assert.equal(view.layer.permissions.length, 1)
   })
 
+  it('⛔ a camada que muda durante o ajuste (a regra aprovada na tela, no meio da conferência) não é desfeita', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    let raced = false
+    service.useAgentValidation(async () => {
+      if (!raced) {
+        raced = true
+        service.localRules({ id: 'sre', projectId: 'logiccus' })!.save([{ category: 'terminal', pattern: 'npm test', decision: 'allow' }], 'dev')
+      }
+      return { rules: { knownTools: [], modelEnabled: () => true, mcpServerExists: () => true }, issues: () => [] }
+    })
+    const view = await service.adjust('logiccus', 'sre', { disabledTools: ['run_bash'] }, 'dev')
+    assert.deepEqual(view.layer.disabledTools, ['run_bash'])
+    assert.equal(view.layer.permissions.length, 1, 'a regra gravada no meio continua lá')
+  })
+
   it('⛔ não religa: mandar uma lista menor não tira nada do que já está desligado', async () => {
     const service = build([EMode.AGENT], ORIGIN)
     await service.adjust('logiccus', 'sre', { disabledTools: ['run_bash', 'save_agent'] }, 'dev')

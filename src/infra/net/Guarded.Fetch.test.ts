@@ -78,6 +78,22 @@ describe('Guarded.Fetch', () => {
     )
   })
 
+  it('⛔ quem respondeu de um endereço público não redireciona para o loopback nem para a rede local (só para o que a lista cita)', async () => {
+    // O primeiro salto é local (não há rede no teste); a classificação de quem RESPONDEU é que diz "público".
+    const asPublic = () => 'public'
+    const admin = guardedFetch(egressPolicy({ allowPrivate: true, listed: () => false }), asPublic)
+    seen.length = 0
+    await assert.rejects(() => admin(`http://127.0.0.1:${port}/redirect-localhost`, { method: 'POST', body: '{}' }), /endereço público não redireciona/)
+    assert.deepStrictEqual(
+      seen.map((entry) => entry.url),
+      ['/redirect-localhost'],
+    )
+    // O destino citado na lista continua valendo; e, sem salto público antes, o endereço cadastrado redireciona como sempre.
+    const cited = guardedFetch(egressPolicy({ allowPrivate: true, listed: (url) => url.hostname === 'localhost' }), asPublic)
+    assert.strictEqual((await cited(`http://127.0.0.1:${port}/redirect-localhost`)).status, 200)
+    assert.strictEqual((await guardedFetch(egressPolicy({ allowPrivate: true, listed: () => false }))(`http://127.0.0.1:${port}/redirect-localhost`)).status, 200)
+  })
+
   it('a lista: host, host:porta, IP e faixa CIDR', () => {
     const url = new URL('http://10.20.1.5:4003/x')
     assert.ok(hostListed(['10.20.0.0/16'], url, '10.20.1.5'))

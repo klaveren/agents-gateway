@@ -35,14 +35,19 @@ export class ScheduleRunner {
 
   start(): void {
     if (this.timer) return
-    void this.tick()
-    this.timer = setInterval(() => void this.tick(), TICK_MS)
+    this.safeTick()
+    this.timer = setInterval(() => this.safeTick(), TICK_MS)
     this.timer.unref?.()
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = undefined
+  }
+
+  /** ⛔ O ciclo do relógio nunca derruba o processo: a falha de um ciclo (o banco, uma execução) vai ao log e o próximo tenta de novo. */
+  private safeTick(): void {
+    this.tick().catch((error: unknown) => console.error(`[agenda] o ciclo falhou: ${error instanceof Error ? error.message : String(error)}`))
   }
 
   /** Uma conferência: dispara o que venceu e registra o que se perdeu. Devolve as execuções que começaram. */
@@ -104,12 +109,19 @@ export class ScheduleRunner {
       return
     }
     this.running.add(key)
-    const run = this.service.recordRun(schedule, { trigger, scheduledFor, status: 'running' })
+    // ⚖️ Tudo dentro do `try`: o registro que falha não deixa o agendamento preso em "rodando" para sempre.
     try {
-      const outcome = await this.execute(schedule)
+      const run = this.service.recordRun(schedule, { trigger, scheduledFor, status: 'running' })
+      let outcome: Awaited<ReturnType<TScheduleExecutor>>
+      try {
+        outcome = await this.execute(schedule)
+      } catch (error: unknown) {
+        outcome = { error: error instanceof Error ? error.message : String(error) }
+      }
       this.service.finishRun(schedule, run.id, outcome)
     } catch (error: unknown) {
-      this.service.finishRun(schedule, run.id, { error: error instanceof Error ? error.message : String(error) })
+      // ⛔ Quem dispara não espera (o relógio, o "rodar agora"): a falha do registro vai ao log, nunca vira rejeição solta.
+      console.error(`[agenda] ${key}: o registro da execução falhou: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       this.running.delete(key)
     }

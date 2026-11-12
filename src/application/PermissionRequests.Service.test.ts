@@ -430,5 +430,15 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
       assert.throws(() => service.requestSecret({ scope: 'command', scopeId: 'nao-existe', name: 'TOKEN', reason: 'x' }, asker), InvalidPermissionsError)
       assert.throws(() => service.requestSecret({ scope: 'agent', scopeId: 'theo', name: 'TOKEN', reason: ' ' }, asker), InvalidPermissionsError)
     })
+
+    it('⛔ teto de pedidos abertos por agente: o que passa do teto é recusado e nada é gravado', () => {
+      const before = service.list({ agentId: 'theo' }).length
+      for (let index = before; index < 100; index += 1) service.requestSecret({ scope: 'agent', scopeId: 'theo', name: `VAR_${index}`, reason: 'x' }, asker)
+      assert.throws(
+        () => service.requestSecret({ scope: 'agent', scopeId: 'theo', name: 'UMA_A_MAIS', reason: 'x' }, asker),
+        (error: unknown) => error instanceof InvalidPermissionsError && /too many open requests/.test(JSON.stringify(error.issues)),
+      )
+      assert.strictEqual(service.list({ agentId: 'theo' }).length, 100)
+    })
   })
 })

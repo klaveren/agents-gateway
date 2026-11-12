@@ -28,4 +28,31 @@ describe('ConnectService (a origem de um projeto conectado)', () => {
       [['mcp', 'agents-mcp', 'logiccus', 'logiccus']],
     )
   })
+
+  it('⛔ o ledger do agente só de admin (`adminOnly`): a conexão de um membro comum não lê nem escreve; a de quem administra, sim', () => {
+    const written: string[] = []
+    const service = new ConnectService({
+      history: { versionOf: () => 1, since: () => [] },
+      exporter: { run: () => ({ manifest: {} as never, files: {} }) },
+      reader: { list: () => [] },
+      files: { read: () => undefined },
+      ledger: {
+        index: () => ({}) as never,
+        context: () => ({}) as never,
+        search: () => ({}) as never,
+        promptSection: () => undefined,
+        write: (agentId) => (written.push(agentId), {} as never),
+      },
+      agentProject: (agentId) => (agentId === 'fora' ? 'outro' : 'logiccus'),
+      agentAdminOnly: (agentId) => agentId === 'restrito',
+    })
+    const change = { op: 'gatilho' } as never
+
+    assert.throws(() => service.ledger('logiccus', 'restrito', 'member'), /restrito/)
+    assert.throws(() => service.ledger('logiccus', 'restrito'), /restrito/)
+    assert.throws(() => service.ledger('logiccus', 'fora', 'admin'), /fora/)
+    service.ledger('logiccus', 'restrito', 'admin').write(change, { via: 'a@x' })
+    service.ledger('logiccus', 'comum', 'member').write(change, { via: 'm@x' })
+    assert.deepEqual(written, ['restrito', 'comum'])
+  })
 })

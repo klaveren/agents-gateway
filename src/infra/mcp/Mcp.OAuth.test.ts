@@ -61,6 +61,23 @@ function provider() {
 }
 
 describe('McpOAuth', () => {
+  it('⛔ sem `fetchFn` injetado (produção), a descoberta e a troca passam pela política de saída: metadado da nuvem nunca', async () => {
+    const original = globalThis.fetch
+    const reached: string[] = []
+    globalThis.fetch = (async (input: unknown) => {
+      reached.push(String(input instanceof Request ? input.url : input))
+      return new Response('{}', { status: 404 })
+    }) as typeof fetch
+    try {
+      const hostile = { ...server, url: 'http://169.254.169.254/mcp', oauth: { clientId: 'c', authorizationServer: 'http://169.254.169.254' } }
+      const oauth = new McpOAuth({ get: () => hostile }, vault())
+      await oauth.start('gmail', 'ana', 'https://gw.test/v1/oauth/callback').catch(() => undefined)
+      assert.deepStrictEqual(reached, [])
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
   it('começa com PKCE e state, troca o código pelo token da pessoa (com o client secret), e o state não serve duas vezes', async () => {
     const credentials = vault()
     const { fetchFn, posts } = provider()

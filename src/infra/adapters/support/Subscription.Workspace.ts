@@ -1,4 +1,4 @@
-import { accessSync, constants, mkdirSync, realpathSync, rmSync } from 'node:fs'
+import { accessSync, constants, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
@@ -14,6 +14,14 @@ export function sessionWorkspace(sessionId: string, root = workspacesRoot()): st
   // ⛔ 0700: o `/tmp` é de todos os usuários da máquina; a pasta de uma conversa é só do gateway.
   mkdirSync(root, { recursive: true, mode: 0o700 })
   mkdirSync(dir, { recursive: true, mode: 0o700 })
+  // ⛔ O `mkdir` aceita calado o que JÁ existia: uma pasta (ou um link) que outro usuário da máquina plantou no
+  // `/tmp` antes de nós viraria o `cwd` do CLI. Só serve a pasta de verdade, nossa, onde mais ninguém escreve.
+  for (const path of [root, dir]) {
+    const stat = lstatSync(path)
+    const uid = process.getuid?.()
+    if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o022) !== 0)
+      throw new Error(`A pasta de trabalho ${path} não é só do gateway (é um link, é de outro usuário ou outros escrevem nela): remova-a e tente de novo.`)
+  }
   return dir
 }
 

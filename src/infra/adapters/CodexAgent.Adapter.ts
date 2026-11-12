@@ -1,4 +1,4 @@
-import { terminalEnv } from '@domain/Agent.Identity'
+import { cliTerminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
 import { cliArgumentBytes, cliArgumentIssue, promptParts } from '@domain/CliArgument.Policy'
@@ -212,7 +212,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
       const codex = new Codex({
         // Num projeto, o HOME é `<projeto>/.home`: os dotfiles do Codex não sujam a pasta do projeto.
         // As variáveis do agente e a identidade de quem chama, para o shell do Codex (ver `Agent.Identity`).
-        env: terminalEnv(
+        env: cliTerminalEnv(
           agent.env,
           subscriptionEnv({
             HOME: context.workFolder ? join(context.workFolder.projectDir, '.home') : agent.projectId ? projectHome(agent.projectId) : workspace,

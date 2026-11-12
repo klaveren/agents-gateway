@@ -23,6 +23,8 @@ export interface IConnectDeps {
   ledger?: Pick<LedgerService, 'index' | 'context' | 'search' | 'write' | 'promptSection'>
   /** O projeto do agente (`null` = global; `undefined` = não existe). */
   agentProject?: (agentId: string) => string | null | undefined
+  /** O agente é só de admin (`adminOnly`)? */
+  agentAdminOnly?: (agentId: string) => boolean
   /** Onde fica o uso que os gateways conectados mandam. */
   usage?: { upsert(rows: readonly IRemoteUsageRow[], at: Date): void }
   now?: () => Date
@@ -101,10 +103,14 @@ export class ConnectService {
   /**
    * 🔌 O LEDGER DE UM AGENTE DO PROJETO, pela conexão: o ledger é UM só, o daqui — o gateway do dev lê e escreve nele
    * ao vivo. ⛔ Só agente do projeto da conexão; o resto responde como inexistente.
+   *
+   * ⛔ O agente só de admin (`adminOnly`) é de quem ADMINISTRA o projeto: a conexão de um membro comum não lê nem escreve
+   * o ledger dele (o gatilho escrito ali entra no prompt de todas as conversas do agente, na origem).
    */
-  ledger(projectId: string, agentId: string) {
+  ledger(projectId: string, agentId: string, role?: string) {
     const ledger = this.deps.ledger
     if (!ledger || this.deps.agentProject?.(agentId) !== projectId) throw new LedgerNotFoundError('agent', agentId)
+    if (this.deps.agentAdminOnly?.(agentId) && role !== 'admin') throw new LedgerNotFoundError('agent', agentId)
     return {
       index: () => ({ index: ledger.index(agentId), prompt: ledger.promptSection(agentId) ?? null }),
       context: (topic: string) => ledger.context(agentId, topic),

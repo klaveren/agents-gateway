@@ -14,6 +14,7 @@ const TIMEOUT_MS = 30_000
 /** Os campos de data das respostas do ledger: chegam como texto e voltam a ser `Date` (as ferramentas formatam). */
 const DATE_KEYS = new Set(['createdAt', 'updatedAt', 'at'])
 const PACKAGE_TIMEOUT_MS = 120_000
+const MAX_EVENT_FRAME = 1_000_000
 
 /**
  * 🔌 O CLIENTE DA ORIGEM (as rotas `/connect/<projeto>/*` do outro gateway), com o token de conexão no
@@ -44,6 +45,8 @@ export class RemoteClient implements IRemoteCatalog {
   }
 
   async file(sha256: string): Promise<Buffer> {
+    // O nome vem do pacote da origem e entra no caminho do pedido: só o que é um sha256.
+    if (!/^[a-f0-9]{64}$/.test(sha256)) throw new RemoteRequestError(422, 'a origem mandou um arquivo com identificador inválido')
     const { base64 } = await this.get<{ base64: string }>(`/files/${sha256}`)
     return Buffer.from(base64, 'base64')
   }
@@ -83,6 +86,11 @@ export class RemoteClient implements IRemoteCatalog {
         }
         end = buffer.indexOf('\n\n')
       }
+      // ⛔ Um aviso tem dezenas de bytes: o fluxo que nunca fecha um quadro não cresce na memória daqui.
+      if (buffer.length > MAX_EVENT_FRAME) {
+        await reader.cancel().catch(() => undefined)
+        throw new RemoteUnavailableError('a origem mandou um aviso ao vivo inválido')
+      }
     }
   }
 
@@ -114,10 +122,16 @@ export class RemoteClient implements IRemoteCatalog {
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        // ⛔ O token vai num cabeçalho nosso, que o `fetch` NÃO tira ao seguir um redirecionamento: não segue.
+        redirect: 'manual',
         signal,
       })
     } catch (error) {
       throw new RemoteUnavailableError(`a origem não respondeu (${error instanceof Error ? error.message : String(error)})`)
+    }
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel().catch(() => undefined)
+      throw new RemoteUnavailableError('a origem redirecionou para outro endereço: use o endereço final dela na conexão')
     }
     if (res.status === 401) {
       await res.body?.cancel().catch(() => undefined)

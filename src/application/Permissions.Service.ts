@@ -33,6 +33,8 @@ export class PermissionsService implements IPermissionChecker {
     /** Regras de sistema da instalação (a pasta de dados do gateway, em caminho absoluto). */
     private readonly system: () => readonly IPermissionRule[] = () => [],
     private readonly now: () => Date = () => new Date(),
+    /** ⛔ A máscara de segredos: o comando de terminal vai ao registro (e à tela) já mascarado. */
+    private readonly mask: (text: string, sessionId?: string) => string = (text) => text,
   ) {}
 
   projectRules(projectId: string) {
@@ -88,7 +90,7 @@ export class PermissionsService implements IPermissionChecker {
         ...(asker.agentId ? { agentId: asker.agentId } : {}),
         ...(asker.sessionId ? { sessionId: asker.sessionId } : {}),
         category: subject.category,
-        subject: subject.value,
+        subject: this.mask(subject.value, asker.sessionId),
         allowed: verdict.allowed,
         layer: verdict.layer,
         ...(verdict.rule ? { pattern: verdict.rule.pattern } : {}),

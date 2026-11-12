@@ -1,4 +1,4 @@
-import { terminalEnv } from '@domain/Agent.Identity'
+import { cliTerminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
 import { cliArgumentIssue, promptParts } from '@domain/CliArgument.Policy'
@@ -161,7 +161,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     if (grant) writeTurnToolsPlugin(workspace, this.turnTools!.url, { 'X-Turn-Grant': grant })
     const child = this.spawn(antigravityBin(), antigravityArgs(prompt, record.model, native.conversationId), {
       cwd: workspace,
-      env: terminalEnv(agent.env, subscriptionEnv({ HOME: home }), context),
+      env: cliTerminalEnv(agent.env, subscriptionEnv({ HOME: home }), context),
       stdio: ['ignore', 'pipe', 'pipe'],
       signal: abort.signal,
     })
