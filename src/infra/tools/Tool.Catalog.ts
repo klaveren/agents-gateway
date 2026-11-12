@@ -87,7 +87,7 @@ export class ToolCatalog {
     return this.local.map((tool) => tool.name).filter((name) => name !== PROPOSE_DRAFT_TOOL && !IMPORT_TOOLS.includes(name) && !LEDGER_TOOLS.includes(name))
   }
 
-  /** As locais que o agente escolheu — e, se ele pode delegar (`agent:<id>`), a `delegate_to_agent` dele. */
+  /** As locais que o agente escolheu — e, se ele pode delegar (`agent:<id>`), o `talk` dele. */
   localFor(allowed: readonly string[]): ILocalTool[] {
     const tools = this.local.filter((tool) => allowed.includes(tool.name))
     const delegates = delegatesOf(allowed)

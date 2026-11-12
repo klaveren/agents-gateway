@@ -104,7 +104,7 @@ describe('AGENT_SEED', () => {
     const { when, body } = ATLAS_TRIGGERS[0]
     assert.match(when, /migrar ou importar/)
     assert.match(body, /ORQUESTRA/)
-    assert.match(body, /import_items[\s\S]*plano[\s\S]*delegate_to_agent[\s\S]*preview_system_prompt/)
+    assert.match(body, /import_items[\s\S]*plano[\s\S]*talk[\s\S]*preview_system_prompt/)
     // O que é da pessoa: o segredo ele só pede, nunca recebe.
     assert.match(body, /request_secret/)
   })

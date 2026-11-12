@@ -152,18 +152,7 @@ describe('MCP do próprio gateway (integração)', () => {
   })
 
   it('⛔ o membro só vê as ferramentas comuns; o admin vê as de admin e as de escrita (SELF_MCP_WRITE=0 desliga a escrita)', async () => {
-    const common = [
-      'get_conversation',
-      'get_turn',
-      'list_agents',
-      'list_conversations',
-      'list_permission_rules',
-      'list_projects',
-      'my_usage',
-      'send_message',
-      'start_conversation',
-      'switch_model',
-    ]
+    const common = ['get_conversation', 'list_agents', 'list_conversations', 'list_permission_rules', 'list_projects', 'my_usage', 'switch_model', 'talk']
     const adminRead = [
       'catalog_history',
       'get_agent',
@@ -244,7 +233,7 @@ describe('MCP do próprio gateway (integração)', () => {
         pro.filter((tool) => !LITE_HIDDEN_MCP_TOOLS.has(tool)),
       )
       for (const tool of ['save_hook', 'list_schedules', 'list_projects', 'save_doc', 'install_package']) assert.ok(!lite.includes(tool), tool)
-      for (const tool of ['save_agent', 'list_models', 'my_usage', 'save_permission_rules', 'start_conversation']) assert.ok(lite.includes(tool), tool)
+      for (const tool of ['save_agent', 'list_models', 'my_usage', 'save_permission_rules', 'talk']) assert.ok(lite.includes(tool), tool)
       assert.strictEqual((await call('/auth/status')).result.edition, 'lite')
     } finally {
       delete process.env.GATEWAY_EDITION
@@ -372,17 +361,17 @@ describe('MCP do próprio gateway (integração)', () => {
       new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Tool-Authorization': `Bearer ${admin}`, 'x-gateway-agent': 'agent-x' } } }),
     )
     const listed = (await client.listTools()).tools.map((tool) => tool.name)
-    for (const name of ['start_conversation', 'send_message', 'get_turn']) assert.strictEqual(listed.includes(name), false, name)
+    for (const name of ['talk', 'start_conversation', 'send_message', 'get_turn']) assert.strictEqual(listed.includes(name), false, name)
     assert.strictEqual(listed.includes('list_agents'), true)
   })
 
-  it('get_turn de conversa que não existe vira isError, sem esperar', async () => {
-    const result = (await (await connect(member)).callTool({ name: 'get_turn', arguments: { sessionId: 'nao-existe', turn: 0, waitSeconds: 5 } })) as { isError?: boolean }
+  it('talk acompanhando turno de conversa que não existe vira isError, sem esperar', async () => {
+    const result = (await (await connect(member)).callTool({ name: 'talk', arguments: { conversation: 'nao-existe', turn: 0, wait: 5 } })) as { isError?: boolean }
     assert.strictEqual(result.isError, true)
   })
 
   it('erro da API vira isError com a mensagem, sem derrubar o cliente', async () => {
-    const result = (await (await connect(member)).callTool({ name: 'start_conversation', arguments: { agentId: 'nao-existe' } })) as { isError?: boolean }
+    const result = (await (await connect(member)).callTool({ name: 'talk', arguments: { to: 'nao-existe' } })) as { isError?: boolean }
     assert.strictEqual(result.isError, true)
     assert.match(json(result).message, /nao-existe/)
   })
@@ -743,7 +732,7 @@ describe('MCP do próprio gateway (integração)', () => {
     await withGrant({ agentId: 'atlas' }, async (client) => {
       // ⛔ O agente é o do TURNO, mesmo sem o cabeçalho de identidade (ele o tiraria): as ferramentas de conversa não existem.
       const listed = (await client.listTools()).tools.map((tool) => tool.name)
-      for (const name of ['start_conversation', 'send_message', 'get_turn']) assert.strictEqual(listed.includes(name), false, name)
+      for (const name of ['talk', 'start_conversation', 'send_message', 'get_turn']) assert.strictEqual(listed.includes(name), false, name)
       for (const target of [other, none]) {
         assert.strictEqual(json(await run(client, 'get_conversation', { sessionId: target })).status, 403, 'get_conversation')
         assert.strictEqual(json(await run(client, 'switch_model', { sessionId: target, reasoning: null })).status, 403, 'PATCH /sessions/:id')
@@ -756,8 +745,8 @@ describe('MCP do próprio gateway (integração)', () => {
     // Uma concessão sem agente (não é o que o turno registra): as ferramentas existem e a trava de projeto segura.
     await withGrant({}, async (client) => {
       for (const target of [other, none]) {
-        assert.strictEqual(json(await run(client, 'send_message', { sessionId: target, message: 'oi', waitSeconds: 0 })).status, 403, 'send_message')
-        assert.strictEqual(json(await run(client, 'get_turn', { sessionId: target, turn: 0, waitSeconds: 0 })).status, 403, 'get_turn')
+        assert.strictEqual(json(await run(client, 'talk', { conversation: target, message: 'oi', wait: 0 })).status, 403, 'talk message')
+        assert.strictEqual(json(await run(client, 'talk', { conversation: target, turn: 0, wait: 0 })).status, 403, 'talk turn')
       }
     })
   })

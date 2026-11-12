@@ -8,7 +8,7 @@ export interface IPanelAccess {
   get(sessionId: string): Promise<IConversationPanel>
   markDelivered?(sessionId: string, ids: readonly string[]): Promise<void>
 }
-import { DELEGATE_TOOL_NAME, DELEGATED_BY } from '@domain/models/Delegation.Model'
+import { DELEGATE_TOOL_NAME, DELEGATED_BY, delegatesOf, LEGACY_DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
 import { offers, targetFor } from '@domain/Agent.Policy'
 import { conversationNote, IAmbient, IAmbientSecrets } from '@domain/Ambient.Policy'
 import { agentFolderAccess, hasTerminal, hasWatch, resolveCapabilities } from '@domain/Capability.Catalog'
@@ -677,6 +677,7 @@ export class AgentProvider implements IAgentProvider {
       ...(folder ? { directory: folder.dir } : home ? { directory: projectWorkspacePath(home) } : {}),
       ...this.agentFolderOf(agent, projectOf(metadata)),
       ...(hasTerminal(agent.allowedTools) ? { terminal: true } : {}),
+      ...(delegatesOf(agent.allowedTools).length ? { talk: { legacy: agent.systemPrompt.includes(LEGACY_DELEGATE_TOOL_NAME) } } : {}),
       // ⛔ Na conversa de delegação a vigia recusa (quem arma é a conversa principal): a regra não a oferece.
       ...(hasWatch(agent.allowedTools) && !metadata?.[DELEGATED_BY] ? { watch: true } : {}),
       ...(this.secrets?.ambientFor(agent, projectOf(metadata)) ? { secrets: this.secrets.ambientFor(agent, projectOf(metadata))! } : {}),
@@ -1018,7 +1019,7 @@ const FAILURE_LABEL: Readonly<Record<TProviderFailure, string>> = {
 
 /** O aviso que entra no turno quando o cliente do modelo corta a chamada de delegação (ver o laço do `sendMessage`). */
 const DELEGATION_CUT_NOTICE =
-  '[gateway] A sua chamada a delegate_to_agent foi cortada pelo cliente do modelo, mas a conversa com o outro agente CONTINUA no gateway. Não repita o pedido: a resposta dele entra nesta conversa, como mensagem, quando ele terminar. Enquanto isso, siga com o que não depende dela ou diga à pessoa que está esperando.'
+  '[gateway] A sua chamada a talk foi cortada pelo cliente do modelo, mas a conversa com o outro agente CONTINUA no gateway. Não repita o pedido: a resposta dele entra nesta conversa, como mensagem, quando ele terminar. Enquanto isso, siga com o que não depende dela ou diga à pessoa que está esperando.'
 
 /** O resultado de ferramenta que o CLI inventa quando a chamada cai no meio ("The tool call was interrupted…"). */
 function interruptedCall(event: IAgentEvent): boolean {

@@ -19,7 +19,7 @@ import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRepository'
-import { DelegationSlot, makeDelegateTool } from '@infra/tools/Delegate.Tool'
+import { DelegationSlot, makeTalkTool } from '@infra/tools/Talk.Tool'
 import { ILocalToolDeps, ITodoStore, makeLocalTools } from '@infra/tools/Local.Tools'
 import { makeSessionStore } from './Orchestrator.Factory'
 import { connectedLedgerDesk } from './Connected.Ledger'
@@ -36,7 +36,7 @@ import { makeImportBuild, makeRepositoryBrowse } from './ImportBuild.Factory'
 import { watchDesk } from './Watches.Factory'
 
 export interface ITools {
-  /** Onde a ferramenta `delegate_to_agent` encontra o serviço (preenchido em `makeUsecases`). */
+  /** Onde a ferramenta `talk` do agente encontra o serviço (preenchido em `makeUsecases`). */
   delegation: DelegationSlot
   mcp: McpRegistry
   /** O login OAuth de cada pessoa nos MCPs remotos (ver `McpOAuth`). */
@@ -152,7 +152,7 @@ export function makeTools(): ITools {
           // O ledger do agente (ver `Ledger.Tools`): toda conversa recebe as duas (ver `AgentProvider.withDocs`).
           ...makeLedgerTools(connectedLedgerDesk(makeLedger(), (agentId) => makeAgents().get(agentId)?.projectId)),
         ],
-        (allowed) => makeDelegateTool(runnableTargets(allowed), delegation, lazyPermissions),
+        (allowed) => makeTalkTool(runnableTargets(allowed), delegation, lazyPermissions),
         containerProxy,
         lazyPermissions,
       ),

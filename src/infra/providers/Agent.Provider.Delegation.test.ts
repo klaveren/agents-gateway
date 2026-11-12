@@ -11,7 +11,7 @@ import { adapterKey, AgentProvider } from './Agent.Provider'
 
 /** A delegação cortada pelo cliente do modelo (o "interrupted" do CLI): o agente fica sabendo que a conversa segue. */
 describe('AgentProvider — delegação cortada pelo cliente do modelo', () => {
-  it('⚖️ o "interrupted" na delegate_to_agent põe o aviso no turno: a outra conversa segue e a resposta chega aqui', async () => {
+  it('⚖️ o "interrupted" no talk põe o aviso no turno: a outra conversa segue e a resposta chega aqui', async () => {
     const agent: IAgent = { id: 'maya', name: 'Maya', providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }], systemPrompt: 'p', modes: [EMode.CHAT], allowedTools: [] }
     const store = new SessionStore()
     const seen: string[] = []
@@ -31,12 +31,12 @@ describe('AgentProvider — delegação cortada pelo cliente do modelo', () => {
       async *sendMessage(_agent, sessionId, input): AsyncIterable<IAgentEvent> {
         seen.push(input.text)
         if (seen.length === 1) {
-          yield { type: 'tool.started', sessionId, timestamp: new Date(), payload: { tool: 'delegate_to_agent', args: {} } }
+          yield { type: 'tool.started', sessionId, timestamp: new Date(), payload: { tool: 'talk', args: {} } }
           yield {
             type: 'tool.error',
             sessionId,
             timestamp: new Date(),
-            payload: { tool: 'delegate_to_agent', message: 'The tool call was interrupted before a result was received.' },
+            payload: { tool: 'talk', message: 'The tool call was interrupted before a result was received.' },
           }
         }
         yield { type: 'message.completed', sessionId, timestamp: new Date() }
