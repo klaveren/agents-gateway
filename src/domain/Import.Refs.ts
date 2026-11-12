@@ -10,8 +10,12 @@ const EXTENSIONS = 'md|mdx|mdc|markdown|ya?ml|jsonc?|toml|txt'
 /**
  * Um pedaço CORINGA ou MARCADOR dentro de um nome: glob (`*`, `?`, `[…]`), `{x}`, `<x>`, `$X`/`${X}`, `%X%`, `...`. Entra
  * no token para o caminho sair INTEIRO (`{alias}-memory.md`, não o caco `-memory.md`) e ser classificado depois.
+ *
+ * ⛔ Nenhuma alternativa pode casar o mesmo texto de dois jeitos (o `+` do segmento repete): `*` é UM asterisco, `...`
+ * já é o `.` da classe, e o nome depois do `$` vai até o fim da palavra. Com sobreposição, uma linha de `*` ou de `.`
+ * sem extensão no fim custa tempo exponencial e prende o servidor na varredura.
  */
-const WILD = String.raw`\*{1,2}|\?|\[[^\]\s/]*\]|\{[^{}\s/]*\}|<[^<>\s/]+>|\$\{?[A-Za-z_]\w*\}?|%[A-Za-z_]\w*%|\.\.\.`
+const WILD = String.raw`\*|\?|\[[^\]\s/]*\]|\{[^{}\s/]*\}|<[^<>\s/]+>|\$\{?[A-Za-z_]\w*(?!\w)\}?|%[A-Za-z_]\w*%`
 const SEGMENT = String.raw`(?:[A-Za-z0-9_.@-]|${WILD})+`
 /**
  * Um caminho com extensão de texto. O lado esquerdo não pode ser parte de URL nem de outra palavra (nem continuação de
@@ -25,6 +29,8 @@ const URL = /^[a-z][a-z0-9+.-]*:/i
 const FENCE = /^ {0,3}(`{3,}|~{3,})/
 /** Linha de árvore de pastas desenhada (`├── a.md`): é ilustração, não citação. */
 const TREE_DRAWING = /[├└│┌┐┘┬┴┼]/
+/** Teto da linha lida atrás de citação: o que passa disso (minificado, base64) não é prosa que cita arquivo. */
+const LINE_MAX = 4000
 
 /** Uma citação achada no texto. `example`: TODA vez que aparece é em bloco de código ou árvore desenhada. `call`: seguida de `(` (`r.json()`). */
 export interface ICitation {
@@ -62,7 +68,8 @@ export function citationsIn(text: string): ICitation[] {
     if (!call) delete known.call
   }
   let fence: string | undefined
-  for (const line of text.split('\n')) {
+  for (const whole of text.split('\n')) {
+    const line = whole.length > LINE_MAX ? whole.slice(0, LINE_MAX) : whole
     const marker = FENCE.exec(line)?.[1]
     if (marker && (!fence || (marker[0] === fence[0] && marker.length >= fence.length))) {
       fence = fence ? undefined : marker

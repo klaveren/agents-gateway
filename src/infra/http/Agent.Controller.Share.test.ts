@@ -166,6 +166,11 @@ describe('AgentController: compartilhar o agente com outro projeto', () => {
   it('⛔ o admin do projeto que recebe LÊ o agente (só leitura) e não edita, não apaga, não compartilha: 404', async () => {
     const read = await call(BIA, 'getAgent', { params: { agentId: 'agente-alfa' } })
     assert.deepStrictEqual([read.status, read.body?.result.sharedFrom, read.body?.result.sharedWith], [200, 'alfa', ['beta']])
+    // ⛔ Sem o hash dos arquivos: com ele, o arquivo privado da origem entrava na lista de um agente do beta e era lido por lá.
+    const stored = agents.get('agente-alfa')!
+    repository.save({ ...stored, files: [{ path: 'notas/privado.md', sha256: 'a'.repeat(64), bytes: 3 }] }, 'seed')
+    assert.deepStrictEqual((await call(BIA, 'getAgent', { params: { agentId: 'agente-alfa' } })).body?.result.files, [{ path: 'notas/privado.md', sha256: '', bytes: 3 }])
+    repository.save(stored, 'seed')
     assert.strictEqual((await call(CAIO, 'getAgent', { params: { agentId: 'agente-alfa' } })).status, 404)
     assert.strictEqual((await call(DORA, 'getAgent', { params: { agentId: 'agente-alfa' } })).status, 404, 'membro não administra')
     assert.strictEqual((await call(BIA, 'updateAgent', { params: { agentId: 'agente-alfa' }, body: body('agente-alfa', 'alfa') })).status, 404)

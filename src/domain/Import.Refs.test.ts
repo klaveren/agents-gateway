@@ -8,6 +8,15 @@ describe('Import.Refs — as citações de um arquivo importado', () => {
     assert.deepStrictEqual(extractCitations(text), ['./p.md', '../b.md', '.agents/specs/a.md', 'specs/c.yaml'])
   })
 
+  it('⛔ linha de `*`, de `.` ou de `$nome` sem extensão no fim não prende a varredura (tempo linear)', () => {
+    const lines = ['*'.repeat(3000), '.'.repeat(3000), '$aaaaaaaaaaaa'.repeat(250), '*.?a$b'.repeat(600), `${'x'.repeat(50_000)} a.md`]
+    const started = Date.now()
+    assert.deepStrictEqual(extractCitations(lines.join('\n')), [])
+    assert.ok(Date.now() - started < 2000, `levou ${Date.now() - started} ms`)
+    // O coringa continua saindo inteiro no token.
+    assert.deepStrictEqual(extractCitations('veja .agents/**/*.md, docs/.../x.md e ${DIR}/b.yaml'), ['.agents/**/*.md', 'docs/.../x.md', '${DIR}/b.yaml'])
+  })
+
   it('cabeçalho de gerado devolve as fontes; sem marcador, não é gerado', () => {
     assert.deepStrictEqual(generatedSources('<!-- NÃO EDITAR: edite as fontes: a/x.md, b/y.md -->\n\ncorpo cita z.md'), ['a/x.md', 'b/y.md'])
     assert.deepStrictEqual(generatedSources('// DO NOT EDIT\n'), [])

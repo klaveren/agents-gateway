@@ -1,6 +1,6 @@
 import { extractCitations, fileTokens, frontmatter, resolveCitation } from '@domain/Import.Refs'
 import { IDetectedItem, IDetectedReach, IFormatDetector, IRepoTree } from '@domain/ports/FormatDetector.Port'
-import { globToRegex } from '@domain/Permission.Policy'
+import { pathGlobMatches } from '@domain/Permission.Policy'
 import { under } from './AgentsDir.Detector'
 
 const CONFIGS = ['opencode.json', 'opencode.jsonc', '.opencode/opencode.json', '.opencode/opencode.jsonc']
@@ -51,11 +51,12 @@ export function expandInstructions(tree: IRepoTree, configPath: string, pattern:
   if (!clean || clean.startsWith('/') || clean.startsWith('~') || /^[A-Za-z]:\//.test(clean) || clean.split('/').includes('..'))
     return { paths: [], refused: 'fora da raiz do repositório' }
   const dir = configPath.includes('/') ? configPath.slice(0, configPath.lastIndexOf('/') + 1) : ''
-  const regex = globToRegex(`${dir}${clean}`)
+  // ⛔ O padrão é do repositório (não nosso): casa sem regex, em tempo proporcional ao padrão × caminho.
+  const glob = `${dir}${clean}`
   const paths: string[] = []
   for (const entry of tree.entries())
     for (const path of [entry.path, ...entry.aliases])
-      if (regex.test(path)) {
+      if (pathGlobMatches(glob, path)) {
         if (!paths.includes(entry.path)) paths.push(entry.path)
         break
       }

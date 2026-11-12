@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { commandMatches, decide, hostMatches, IPermissionRule, pathMatches, permissionIssues } from './Permission.Policy'
+import { commandMatches, decide, globToRegex, hostMatches, IPermissionRule, pathGlobMatches, pathMatches, permissionIssues } from './Permission.Policy'
 
 const rule = (category: IPermissionRule['category'], pattern: string, decision: IPermissionRule['decision'] = 'allow'): IPermissionRule => ({ category, pattern, decision })
 const cmd = (text: string) => ({ category: 'terminal' as const, value: text, argv: text.split(' ') })
@@ -222,5 +222,38 @@ describe('Permission.Policy', () => {
     assert.deepStrictEqual(permissionIssues([rule('terminal', 'ls')]), [])
     const issues = permissionIssues([{ category: 'x', pattern: '', decision: 'talvez' }])
     assert.strictEqual(issues.length, 3)
+  })
+})
+
+describe('Permission.Policy — o casador de glob sem regex', () => {
+  it('decide igual ao `globToRegex` (padrões e textos sorteados, com barra, ponto e quebra de linha)', () => {
+    const inPattern = ['a', 'b', '/', '.', '*', '*', '?', '*', '/']
+    const inText = ['a', 'b', '/', '.', 'a', '/', '\n']
+    let seed = 20261112
+    const pick = (size: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed % size)
+    const make = (alphabet: string[], max: number) => Array.from({ length: pick(max + 1) }, () => alphabet[pick(alphabet.length)]).join('')
+    let matched = 0
+    for (let round = 0; round < 40_000; round += 1) {
+      const pattern = make(inPattern, 9)
+      const text = make(inText, 10)
+      const expected = globToRegex(pattern).test(text)
+      if (expected) matched += 1
+      assert.strictEqual(pathGlobMatches(pattern, text), expected, `${JSON.stringify(pattern)} em ${JSON.stringify(text)}`)
+    }
+    assert.ok(matched > 1000, 'o sorteio cobre casos que casam')
+  })
+
+  it('⛔ padrão com muitos coringas contra caminho fundo ou comprido: responde na hora (o regex levaria horas)', () => {
+    const started = Date.now()
+    assert.strictEqual(pathGlobMatches(`${'**/a/'.repeat(14)}x.md`, `${'a/'.repeat(40)}q`), false)
+    assert.strictEqual(pathGlobMatches(`${'**/'.repeat(14)}x.md`, `${'a/'.repeat(40)}q`), false)
+    assert.strictEqual(pathGlobMatches(`${'*a'.repeat(12)}b`, 'a'.repeat(255)), false)
+    assert.strictEqual(pathMatches(`${'**/a/'.repeat(14)}x.md`, `${'a/'.repeat(40)}x.md`), true)
+    assert.ok(Date.now() - started < 1000, `levou ${Date.now() - started} ms`)
+  })
+
+  it('o `**` casa pasta com quebra de linha no nome: a negação `**/.env` não é contornada por ela', () => {
+    assert.strictEqual(pathMatches('**/.env', 'a\nb/.env'), true)
+    assert.strictEqual(globToRegex('**/.env').test('a\nb/.env'), true)
   })
 })

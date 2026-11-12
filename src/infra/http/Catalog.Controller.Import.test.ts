@@ -12,6 +12,7 @@ import { tarGz } from '@infra/catalog/Tar.Archive'
 import { identityFromToken, withCaller } from '@infra/mcp/Caller.Identity'
 import { SqliteCatalogHistoryRepository } from '@infra/persistence/Sqlite.CatalogHistoryRepository'
 import { CatalogController, EXPORT_ROOT } from './Catalog.Controller'
+import { useProjectAccess } from './Project.Access'
 
 const at = new Date('2026-10-30T12:00:00.000Z')
 
@@ -43,7 +44,7 @@ describe('POST /catalog/import/plan (só admin, dry-run)', () => {
     withCaller(as ? { token: as, ...identityFromToken(as) } : {}, async () => {
       const reply: TReply = { status: 0 }
       const res = {
-        locals: options.viaToken ? { viaAccessToken: true } : {},
+        locals: options.viaToken ? { viaAccessToken: true } : { viaSessionCookie: true },
         status(code: number) {
           reply.status = code
           return this
@@ -115,5 +116,31 @@ describe('POST /catalog/import/plan (só admin, dry-run)', () => {
     assert.strictEqual((await call(ADMIN, { files: changed }, { target: unwired })).status, 404)
     assert.strictEqual((await call(ADMIN, { files: { 'a.md': 1 } })).status, 422)
     assert.strictEqual((await call(ADMIN, {})).status, 422)
+  })
+
+  it('⛔ admin só de um projeto, em `all` com documentos: o item global de mesmo id é conflito e o texto dele não sai', async () => {
+    const members: Record<string, Record<string, 'admin' | 'member'>> = { alfa: { u_ana: 'admin' }, beta: { u_bia: 'admin' } }
+    useProjectAccess({
+      roles: {
+        exists: (id) => id in members,
+        roleOf: (id, userId) => (userId ? members[id]?.[userId] : undefined),
+        projectsOf: (userId) => Object.keys(members).filter((id) => members[id]![userId]),
+      },
+      agentProject: () => undefined,
+    })
+    try {
+      const global = documents.find((document) => document.id === 'spec-g')!
+      const mine = { kind: 'spec', id: 'spec-g', projectId: 'alfa', body: { ...global.body, projectId: 'alfa', title: 'Meu', body: 'Meu corpo' } }
+      const reply = await call(MEMBER, { documents: [mine] })
+      assert.strictEqual(reply.status, 200, JSON.stringify(reply.body))
+      const item = reply.body.result.items[0]
+      assert.strictEqual(item.op, 'conflict')
+      assert.strictEqual(item.currentHash, undefined)
+      assert.ok(!JSON.stringify(reply.body).includes('Global'), 'o texto do item global não sai no plano')
+      // O documento de um projeto que ela não administra: 404, como antes.
+      assert.strictEqual((await call(MEMBER, { documents: [{ ...mine, projectId: 'beta', body: { ...mine.body, projectId: 'beta' } }] })).status, 404)
+    } finally {
+      useProjectAccess(undefined)
+    }
   })
 })

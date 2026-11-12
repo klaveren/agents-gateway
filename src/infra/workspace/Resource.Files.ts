@@ -1,26 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto'
-import {
-  chmodSync,
-  closeSync,
-  constants,
-  existsSync,
-  fstatSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmdirSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { FILE_DIRS, filePathIssue, IResourceFile, RESOURCE_FILE_MAX_BYTES, RESOURCE_FILES_MAX_COUNT, TFileOwnerKind } from '@domain/models/ResourceFile.Model'
 import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { dataDir, projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
+import { readRegular } from './File.Regular'
 
 /** A pasta global dos arquivos de recurso: `<dados>/global`. */
 export function globalResourcesDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -280,24 +264,6 @@ export function realAgentFolder(dir: string): boolean {
     return lstatSync(dir).isDirectory()
   } catch {
     return false
-  }
-}
-
-/**
- * ⛔ Lê um arquivo comum da pasta do agente sem seguir link nem esperar um FIFO: entre a listagem e a leitura o agente
- * pode trocar o arquivo. O tamanho é conferido ANTES de ler (um arquivo enorme não vai para a memória). Nada se não
- * for arquivo comum ou passar do teto.
- */
-function readRegular(path: string, maxBytes: number): Buffer | undefined {
-  let fd: number | undefined
-  try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-    const stat = fstatSync(fd)
-    return stat.isFile() && stat.size <= maxBytes ? readFileSync(fd) : undefined
-  } catch {
-    return undefined
-  } finally {
-    if (fd !== undefined) closeSync(fd)
   }
 }
 

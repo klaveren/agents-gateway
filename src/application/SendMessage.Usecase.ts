@@ -317,6 +317,11 @@ function maskEvent(event: IAgentEvent, mask: ITurnMask, sessionId: string): IAge
     case 'tool.result':
     case 'tool.error':
       return { ...event, payload: mask.deep(event.payload, sessionId) } as IAgentEvent
+    // ⛔ O texto do erro e do aviso vem de fora (o provedor devolve a chave recusada, a URL com o token): vai ao
+    // histórico, à resposta e ao aviso externo como o resto.
+    case 'warning':
+    case 'error':
+      return { ...event, payload: { ...event.payload, message: mask.text(event.payload.message, sessionId) } }
     default:
       return event
   }

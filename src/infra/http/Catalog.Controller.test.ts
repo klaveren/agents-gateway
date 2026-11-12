@@ -241,11 +241,12 @@ describe('POST /catalog/history/restore e /catalog/batches/:id/revert (rollback,
   const controller = new CatalogController({ history: new CatalogHistoryQuery(new SqliteCatalogHistoryRepository(':memory:'), { read: () => undefined }), proof, restore })
 
   type TReply = { status: number; body?: { ok: boolean; result?: any; code?: string; details?: any } } // eslint-disable-line @typescript-eslint/no-explicit-any
-  const call = (as: string, handler: 'restore' | 'revertBatch', body: unknown, options: { params?: Record<string, string>; viaToken?: boolean } = {}) =>
+  const call = (as: string, handler: 'restore' | 'revertBatch', body: unknown, options: { params?: Record<string, string>; viaToken?: boolean; header?: boolean } = {}) =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
       const reply: TReply = { status: 0 }
       const res = {
-        locals: options.viaToken ? { viaAccessToken: true } : {},
+        // A tela chega pelo cookie (`viaSessionCookie`); `header` = a credencial no cabeçalho (o agente, o cliente MCP).
+        locals: options.viaToken ? { viaAccessToken: true } : options.header ? {} : { viaSessionCookie: true },
         status(code: number) {
           reply.status = code
           return this
@@ -276,10 +277,19 @@ describe('POST /catalog/history/restore e /catalog/batches/:id/revert (rollback,
       { request: seen[0].request, caller },
       {
         request: { item: { kind: 'mcp', itemId: 'alfa.n8n' }, revision: 2, expectedRevision: 5, confirm: ['k'] },
-        caller: { by: 'u_root@x.test', viaAccessToken: false },
+        caller: { by: 'u_root@x.test', viaAccessToken: false, onScreen: true, gatewayAdmin: true },
       },
     )
     assert.strictEqual(typeof administers, 'function', 'a trava do sharedWith pergunta o que quem pede administra')
+  })
+
+  it('⛔ credencial no cabeçalho (o agente, o cliente MCP): não é a tela, e o caso de uso fica sabendo', async () => {
+    seen.length = 0
+    await call(ADMIN, 'restore', body, { header: true })
+    assert.strictEqual(seen[0].caller.onScreen, false)
+    seen.length = 0
+    await call(ADMIN, 'revertBatch', { confirm: ['k'] }, { params: { batchId: 'lote-1' }, header: true })
+    assert.strictEqual(seen[0].caller.onScreen, false)
   })
 
   it('token de acesso: o controller o distingue da sessão, e a ampliação vira 403', async () => {

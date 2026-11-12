@@ -429,6 +429,16 @@ export class CatalogShareForbiddenError extends DomainError {
 }
 
 /**
+ * ⛔ A troca grava um MCP PRIVILEGIADO (roda no host: `process`, `container`; ou recebe a credencial de quem conversa:
+ * `auth: caller`) e quem pede não é o admin do gateway — a mesma regra do cadastro pela tela de MCPs.
+ */
+export class CatalogPrivilegedMcpError extends DomainError {
+  constructor(public readonly servers: readonly string[]) {
+    super(`Only a gateway administrator writes an MCP server that runs on the host or receives the caller's credential: ${servers.join(', ')}`)
+  }
+}
+
+/**
  * ⛔ O PLANO MUDOU: o `planHash` do pedido não é o do plano recalculado agora (alguém mexeu no catálogo, ou o pacote é
  * outro). Nada foi gravado; volta o plano novo para a pessoa rever.
  */

@@ -1,12 +1,12 @@
 import assert from 'node:assert'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { parseJsonc } from './Opencode.Detector'
 import { repositoryExclusion } from '@domain/Import.Ignore'
-import { listRepoFiles, readRepoFile, readRepoText, readRepoTree, REPO_TEXT_MAX_BYTES } from './Repo.Tree'
+import { listRepoFiles, readRepoBytes, readRepoFile, readRepoText, readRepoTree, REPO_FILE_MAX_BYTES, REPO_TEXT_MAX_BYTES } from './Repo.Tree'
 
 describe('Repo.Tree — a árvore contida de um repositório', () => {
   const base = mkdtempSync(join(tmpdir(), 'gw-repo-tree-'))
@@ -31,6 +31,26 @@ describe('Repo.Tree — a árvore contida de um repositório', () => {
     assert.strictEqual(tree.resolve('atalho/b/x.md'), 'a/b/x.md')
     assert.strictEqual(tree.read('atalho/b/x.md')?.text, 'x')
     assert.strictEqual(tree.read('../fora.md'), undefined)
+  })
+
+  it('⛔ arquivo acima do teto não vai para a memória; o que virou link depois da varredura não é seguido', () => {
+    const root = join(base, 'grande')
+    mkdirSync(root)
+    writeFileSync(join(root, 'ok.md'), 'ok')
+    writeFileSync(join(root, 'enorme.md'), 'x')
+    truncateSync(join(root, 'enorme.md'), REPO_FILE_MAX_BYTES + 1)
+    writeFileSync(join(root, 'troca.md'), 'antes')
+    writeFileSync(join(base, 'segredo-de-fora.txt'), 'de fora')
+    const tree = readRepoTree(root, { mask: (text) => text })
+    assert.strictEqual(tree.read('ok.md')?.text, 'ok')
+    assert.strictEqual(tree.read('enorme.md'), undefined)
+    assert.strictEqual(readRepoBytes(root, 'enorme.md'), undefined)
+    assert.strictEqual(readRepoFile(root, 'enorme.md', { mask: (text) => text }), undefined)
+    // Depois da varredura, o arquivo vira link para fora: a leitura não o segue.
+    unlinkSync(join(root, 'troca.md'))
+    symlinkSync(join(base, 'segredo-de-fora.txt'), join(root, 'troca.md'))
+    assert.strictEqual(tree.read('troca.md'), undefined)
+    assert.strictEqual(readRepoBytes(root, 'troca.md'), undefined)
   })
 
   it('o texto sai mascarado e marcado; o cru nunca', () => {

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { TCatalogScope } from '@application/Catalog.Reader'
 import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
 import type { CatalogImportApplier, TImportSource } from '@application/CatalogImport.Apply'
-import { CatalogImportPlanner, IPackageInput, scopeOfManifest } from '@application/CatalogImport.Plan'
+import { CatalogImportPlanner, IPackageInput, IPlanOptions, scopeOfManifest } from '@application/CatalogImport.Plan'
 import { CatalogRestoreUseCase, IRestoreCaller } from '@application/CatalogRestore.Usecase'
 import { CatalogHistoryQuery, IHistoryItem, IHistoryPaging, THistoryScope, TRevisionRef } from '@application/CatalogHistory.Query'
 import type { IProjectCaller } from '@application/Projects.Service'
@@ -15,6 +15,7 @@ import type { ICatalogBatch, ICatalogBatchRepository, TBatchKind, TRevisionSumma
 import { TProtocolKind } from '@domain/models/Protocol.Model'
 import { tarGz, untarGz } from '@infra/catalog/Tar.Archive'
 import { viaAccessToken } from './Auth.Controller'
+import { viaSessionCookie } from './Session.Cookie'
 import { resolveCaller } from './Caller.Access'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
@@ -205,12 +206,12 @@ export class CatalogController {
         const body = parseBody(planSchema, req.body) as { documents: z.infer<typeof documentsSchema> }
         const documents = documentsOf(body.documents)
         await this.requireScope('catalogImportPlan', scope ?? { kind: 'all' }, true, documents)
-        return this.importPlanner('catalogImportPlan').planDocuments(documents, scope ?? { kind: 'all' }, options)
+        return this.importPlanner('catalogImportPlan').planDocuments(documents, scope ?? { kind: 'all' }, { ...options, ...(await this.standing()).plan })
       }
       const input = packageOf(req.body)
       const effective = scope ?? packageScope(input)
       await this.requireScope('catalogImportPlan', effective ?? { kind: 'all' }, true)
-      return this.importPlanner('catalogImportPlan').planPackage(input, { ...(effective ? { scope: effective } : {}), ...options })
+      return this.importPlanner('catalogImportPlan').planPackage(input, { ...(effective ? { scope: effective } : {}), ...options, ...(await this.standing()).plan })
     })
   }
 
@@ -235,7 +236,7 @@ export class CatalogController {
       if (!this.deps.importApplier) throw this.deny('catalogImportApply', 'import apply is not wired')
       return this.deps.importApplier.apply(
         { ...source, ...(effective ? { scope: effective } : {}), planHash: body.planHash, ...(body.confirm ? { confirm: body.confirm } : {}) },
-        { by, viaAccessToken: viaAccessToken(res), administers: await this.administered() },
+        { by, viaAccessToken: viaAccessToken(res), onScreen: viaSessionCookie(res), administers: await this.administered(), ...(await this.standing()).caller },
       )
     })
   }
@@ -347,7 +348,22 @@ export class CatalogController {
   private async writer(operation: string, res: Response, scopes: ReadonlyArray<string | null>): Promise<{ restore: CatalogRestoreUseCase; caller: IRestoreCaller }> {
     const by = await requireProjectsAdmin(this.deps.proof, scopes.length ? scopes : [null], operation)
     if (!this.deps.restore) throw this.deny(operation, 'restore is not wired')
-    return { restore: this.deps.restore, caller: { by, viaAccessToken: viaAccessToken(res), administers: await this.administered() } }
+    return {
+      restore: this.deps.restore,
+      caller: { by, viaAccessToken: viaAccessToken(res), onScreen: viaSessionCookie(res), administers: await this.administered(), ...(await this.standing()).caller },
+    }
+  }
+
+  /**
+   * ⛔ O que quem pede administra, para o plano e para quem grava: o admin do gateway (só ele grava o MCP privilegiado,
+   * ver `gatePrivileged`) e, para quem NÃO administra tudo, o alcance (`reach`) — o plano em `all` com documentos não
+   * pode ler nem sobrescrever o item de um escopo que ele não administra.
+   */
+  private async standing(): Promise<{ plan: Pick<IPlanOptions, 'reach'>; caller: Pick<IRestoreCaller, 'gatewayAdmin' | 'reach'> }> {
+    const view = await adminView(this.deps.proof)
+    if (view && unrestricted(view)) return { plan: {}, caller: { gatewayAdmin: true } }
+    const reach = (projectId: string | undefined) => !!view && administers(view, projectId)
+    return { plan: { reach }, caller: { gatewayAdmin: !!view?.gateway, reach } }
   }
 
   /** ⛔ Os projetos que quem pede administra: a trava de `sharedWith` (ver `gateShares`) só deixa acrescentar esses. */

@@ -64,6 +64,12 @@ export interface IPlanOptions {
    * os agentes que o citam. O segredo que falta aparece no cartão da conexão.
    */
   mirror?: boolean
+  /**
+   * ⛔ Os escopos que quem pede administra (`undefined` = o global). Com o plano em `all` por quem não administra tudo, o
+   * item que já existe fora disso é conflito — o id é um só entre os escopos, e sem isso o admin de um projeto leria
+   * (no diff) e sobrescreveria o item de outro. Ausente: vale só o escopo do plano.
+   */
+  reach?: (projectId: string | undefined) => boolean
 }
 
 type TIssues = TImportIssue[]
@@ -221,7 +227,7 @@ export class CatalogImportPlanner {
   async planWithTargets(documents: readonly ICatalogDocument[], scope: TCatalogScope, options: IPlanOptions = {}): Promise<IPlanWithTargets> {
     const view = new CatalogView(this.deps.reader.list({ kind: 'all' }))
     const masked = new Set((options.masked ?? []).map((item) => itemRef(item.kind, item.id, item.projectId)))
-    const drafts = this.classify(documents, scope, view, options.mirror ? new Set() : masked, !!options.mirror)
+    const drafts = this.classify(documents, scope, view, options.mirror ? new Set() : masked, !!options.mirror, options.reach)
     const writing = (draft: IDraft) => draft.op === 'create' || draft.op === 'update'
 
     // O MCP que pede segredo que o cofre não tem entra desligado (o PR 9 aplica assim): é o desligado que se compara.
@@ -331,7 +337,15 @@ export class CatalogImportPlanner {
   }
 
   /** A operação de cada documento, antes das regras: normaliza, confere o escopo, a repetição e o id. */
-  private classify(documents: readonly ICatalogDocument[], scope: TCatalogScope, view: CatalogView, masked: ReadonlySet<string>, mirror = false): IDraft[] {
+  private classify(
+    documents: readonly ICatalogDocument[],
+    scope: TCatalogScope,
+    view: CatalogView,
+    masked: ReadonlySet<string>,
+    mirror = false,
+    reach?: (projectId: string | undefined) => boolean,
+  ): IDraft[] {
+    const reachable = (document: Pick<ICatalogDocument, 'projectId'>) => inScope(document, scope) && (!reach || reach(document.projectId))
     const seen = new Set<string>()
     const drafts: IDraft[] = []
     for (const input of documents) {
@@ -350,7 +364,7 @@ export class CatalogImportPlanner {
         continue
       }
       seen.add(keyOfDocument(document))
-      if (!inScope(document, scope)) {
+      if (!reachable(document)) {
         draft.issues.push({ field: 'projectId', message: `outside the plan scope (${scopeLabel(scope)})` })
         continue
       }
@@ -360,12 +374,13 @@ export class CatalogImportPlanner {
         draft.issues.push({ field: 'id', message: `already used by the ${current.kind} ${current.id}` })
         continue
       }
-      draft.current = current
-      if (current && !inScope(current, scope)) {
+      // ⛔ O item de outro escopo NÃO vira o `current` do rascunho: o diff do plano levaria o texto dele a quem não o lê.
+      if (current && !reachable(current)) {
         draft.op = 'conflict'
         draft.issues.push({ field: 'id', message: `already exists outside the plan scope (${current.projectId ? `project ${current.projectId}` : 'global'})` })
         continue
       }
+      draft.current = current
       if (current?.hash === document.hash) {
         draft.op = 'unchanged'
         continue

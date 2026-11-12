@@ -5,6 +5,7 @@ import {
   CatalogRestoreInvalidError,
   CatalogRevisionConflictError,
   CatalogRevisionNotFoundError,
+  CatalogPrivilegedMcpError,
   CatalogShareForbiddenError,
   CatalogWideningConfirmationError,
   CatalogWideningForbiddenError,
@@ -30,10 +31,23 @@ export interface IRestoreCaller {
   by: string
   viaAccessToken: boolean
   /**
+   * ⛔ O pedido veio da TELA (cookie de login com a prova de navegador)? `false` = credencial no cabeçalho (o agente, o
+   * cliente MCP): ampliação é recusada mesmo com `confirm`, como no token de acesso. Ausente = quem chama é o próprio
+   * servidor (o espelho do projeto conectado), que não passa por rota.
+   */
+  onScreen?: boolean
+  /**
    * ⛔ O projeto é administrado por quem pede? Acrescentar projeto ao `sharedWith` exige o admin dele (`gateShares`).
    * Ausente = não administra nenhum: a trava recusa por padrão.
    */
   administers?: (projectId: string) => boolean
+  /**
+   * ⛔ Quem pede é o admin do GATEWAY? Só ele grava o MCP privilegiado (`gatePrivileged`). Ausente = não é: a trava
+   * recusa por padrão.
+   */
+  gatewayAdmin?: boolean
+  /** ⛔ Os escopos que quem pede administra (`undefined` = o global): vai ao plano do import (ver `IPlanOptions.reach`). */
+  reach?: (projectId: string | undefined) => boolean
 }
 
 export interface IRestoreRequest {
@@ -153,6 +167,7 @@ export class CatalogRestoreUseCase {
     const widenings = wideningsOf(current, target)
     gateWidenings(widenings, request.confirm, caller)
     gateShares(current, target, caller)
+    gatePrivileged([{ current, target }], caller)
     const prepared = await this.prepare(target, current)
     // A preparação esperou (as regras do momento): confere de novo, já sem nada assíncrono até gravar.
     this.fresh(request.item, request.expectedRevision)
@@ -214,9 +229,16 @@ export class CatalogRestoreUseCase {
       planned.push({ ...item, current, target, widenings: wideningsOf(current, target), expected: latest?.revision ?? 0, order: first.id })
     }
 
+    // ⛔ O lote pode ter MOVIDO o item de escopo: desfazer grava no escopo de ANTES também, que as revisões do lote
+    // (o "depois") não mostram a quem autoriza. Fora do alcance de quem pede, o lote não existe.
+    const reach = caller.reach
+    if (reach && planned.some((item) => [item.current, item.target].some((document) => document && !reach(document.projectId))))
+      throw new CatalogRevisionNotFoundError(`batch ${request.batchId}`)
+
     const widenings = planned.flatMap((item) => item.widenings)
     gateWidenings(widenings, request.confirm, caller)
     for (const item of planned) gateShares(item.current, item.target, caller)
+    gatePrivileged(planned, caller)
 
     const batch = repository.createBatch({
       id: this.newId(),
@@ -342,7 +364,7 @@ export function gateWidenings(widenings: readonly IWidening[], confirm: readonly
     if (confirm?.length) throw new CatalogWideningConfirmationError(refs)
     return
   }
-  if (caller.viaAccessToken) throw new CatalogWideningForbiddenError(refs)
+  if (caller.viaAccessToken || caller.onScreen === false) throw new CatalogWideningForbiddenError(refs)
   if (!confirm || !confirmsWidenings(confirm, widenings)) throw new CatalogWideningConfirmationError(refs)
 }
 
@@ -356,6 +378,27 @@ export function gateShares(current: ICatalogDocument | undefined, target: ICatal
   const added = sharedOf(target).filter((project) => !had.has(project))
   const denied = added.filter((project) => !caller.administers?.(project))
   if (denied.length) throw new CatalogShareForbiddenError(denied)
+}
+
+/** O MCP que roda no host ou recebe a credencial de quem conversa (a mesma regra de `McpServers.Controller`). */
+function privilegedMcp(document: ICatalogDocument | undefined): boolean {
+  if (document?.kind !== 'mcp') return false
+  const { kind, auth } = document.body
+  return kind === 'process' || kind === 'container' || auth === 'caller'
+}
+
+/**
+ * ⛔ A TRAVA DO MCP PRIVILEGIADO: gravar (criar ou trocar) um MCP que roda no host (`process`, `container`) ou que
+ * recebe a credencial de quem conversa (`auth: caller`) — ou trocar um que já era assim — é só do admin do gateway,
+ * como no cadastro pela tela. Sem isso o admin de um projeto traria, por import, restauração ou reversão, um comando
+ * que roda no servidor fora do cerco. Remover não pede nada (tira alcance).
+ */
+export function gatePrivileged(changes: ReadonlyArray<{ current?: ICatalogDocument; target?: ICatalogDocument }>, caller: IRestoreCaller): void {
+  if (caller.gatewayAdmin) return
+  const denied = changes
+    .filter(({ current, target }) => target && current?.hash !== target.hash && (privilegedMcp(current) || privilegedMcp(target)))
+    .map(({ target }) => target!.id)
+  if (denied.length) throw new CatalogPrivilegedMcpError([...new Set(denied)])
 }
 
 /** O `sharedWith` do documento (só skill, command, spec e conhecimento o têm). */

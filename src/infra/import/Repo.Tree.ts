@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto'
-import { Dirent, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { Dirent, readdirSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { generatedSources } from '@domain/Import.Refs'
 import { IInventoryLink } from '@domain/models/ImportInventory.Model'
 import { IRepoEntry, IRepoFile, IRepoText, IRepoTree, TRepoRefusal } from '@domain/ports/FormatDetector.Port'
 import { estimateTokens } from '@domain/Token.Estimate'
+import { readRegular } from '@infra/workspace/File.Regular'
 import { IGitPlace, safeGitSync } from '@infra/workspace/Git.Safe'
 
 /** Pastas de dependência, de build e de cache: nunca são recurso agêntico, e pesam. O relatório conta quantas pulou. */
@@ -179,7 +180,8 @@ export function readRepoTree(root: string, options: IRepoTreeOptions): IRepoTree
       // ⛔ De novo na leitura: o arquivo pode ter virado link para fora depois da varredura.
       const absolute = realpathSync(join(realRoot, real))
       if (!inside(realRoot, absolute)) throw new Error('fora do repositório')
-      const buffer = readFileSync(absolute)
+      const buffer = readRegular(absolute, REPO_FILE_MAX_BYTES)
+      if (!buffer) throw new Error('não é arquivo comum, ou passa do teto')
       const sha256 = createHash('sha256').update(buffer).digest('hex')
       const base = { path: real, aliases: [...files.get(real)!.aliases].sort(), bytes: buffer.length, sha256 }
       if (buffer.subarray(0, BINARY_SNIFF).includes(0)) file = { ...base, tokens: 0, binary: true, text: '', secret: false }
@@ -245,12 +247,19 @@ export function readRepoBytes(root: string, path: string): Buffer | undefined {
   try {
     const realRoot = realpathSync(root)
     const absolute = realpathSync(join(realRoot, clean))
-    if (!inside(realRoot, absolute) || hasIgnoredSegment(toPosix(relative(realRoot, absolute))) || !statSync(absolute).isFile()) return undefined
-    return readFileSync(absolute)
+    if (!inside(realRoot, absolute) || hasIgnoredSegment(toPosix(relative(realRoot, absolute)))) return undefined
+    return readRegular(absolute, REPO_FILE_MAX_BYTES)
   } catch {
     return undefined
   }
 }
+
+/**
+ * ⛔ O arquivo que a análise e a importação leem inteiro para a memória. O repositório é de quem escreve nele (o agente
+ * também): acima disto não é definição de agente nem arquivo de recurso (que tem teto de 1 MB), e fica como ilegível.
+ * A leitura é sempre pelo `readRegular`: sem seguir link no último nome, com o tamanho conferido no descritor aberto.
+ */
+export const REPO_FILE_MAX_BYTES = 8 * 1024 * 1024
 
 /** O arquivo de texto que a navegação do construtor lê (acima disto, recusa: mascarar e paginar não compensam). */
 export const REPO_TEXT_MAX_BYTES = 2 * 1024 * 1024
@@ -309,7 +318,8 @@ export function readRepoText(root: string, path: string, options: IRepoTreeOptio
   const stats = statSync(found.absolute)
   if (!stats.isFile()) return 'not_found'
   if (stats.size > REPO_TEXT_MAX_BYTES) return 'too_large'
-  const buffer = readFileSync(found.absolute)
+  const buffer = readRegular(found.absolute, REPO_TEXT_MAX_BYTES)
+  if (!buffer) return 'not_found'
   if (buffer.subarray(0, BINARY_SNIFF).includes(0)) return 'binary'
   return { path: found.rel, bytes: buffer.length, text: options.mask(buffer.toString('utf8')) }
 }
