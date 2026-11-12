@@ -25,6 +25,7 @@ export interface IAccountSshIdentity {
   certificate?: string
   hostPatterns: string[]
   knownHosts: string
+  user?: string
 }
 
 /** As contas que dão credencial ao `git clone` por https. */
@@ -182,7 +183,13 @@ export class ProjectAccountsService {
       if (account.kind === 'ssh-ca' || account.kind === 'ssh-key') {
         try {
           const identity = account.kind === 'ssh-ca' ? await this.sshCertificate(account, secret, 'comando') : { privateKey: secret, certificate: account.public.certificate }
-          ssh.push({ id: account.id, ...identity, hostPatterns: account.public.hostPatterns ?? [], knownHosts: account.public.knownHosts ?? '' })
+          ssh.push({
+            id: account.id,
+            ...identity,
+            hostPatterns: account.public.hostPatterns ?? [],
+            knownHosts: account.public.knownHosts ?? '',
+            ...(account.public.username ? { user: account.public.username } : {}),
+          })
         } catch (error: unknown) {
           problems.push(`conta ${account.id}: ${error instanceof Error ? error.message : String(error)}`)
         }

@@ -23,12 +23,14 @@ describe('Ssh.Kit (a pasta SSH de um comando)', () => {
           certificate: 'ssh-ed25519-cert-v01@openssh.com AAAA',
           hostPatterns: ['*.empresa1.com'],
           knownHosts: 'srv.empresa1.com ssh-ed25519 AAAAx',
+          user: 'deploy',
         },
       ],
       '/node /h/.gateway-connect.cjs %h %p',
     )
     const config = readFileSync(join(dir, 'config'), 'utf8')
     assert.match(config, /Host \*\.empresa1\.com\n {2}IdentityFile .*ident-0\n {2}CertificateFile .*ident-0-cert\.pub/)
+    assert.match(config, /CertificateFile .*ident-0-cert\.pub\n {2}User deploy/)
     assert.match(config, /StrictHostKeyChecking yes/)
     assert.match(config, /IdentitiesOnly yes/)
     assert.match(config, /ProxyCommand \/node \/h\/\.gateway-connect\.cjs %h %p/)

@@ -51,7 +51,10 @@ export const CALLBACK_SECRET_MIN = 32
 export interface IProjectAccountPublic {
   /** GitHub: a organização ou o usuário dono dos repositórios (o credential helper do git vale só para ele). */
   owner?: string
-  /** Git HTTPS (servidor próprio): a URL em que a conta vale (o credential helper só para ela) e o usuário. */
+  /**
+   * Git HTTPS (servidor próprio): a URL em que a conta vale (o credential helper só para ela) e o usuário. SSH: o usuário
+   * remoto padrão (o `User` do ssh) — sem ele, o ssh entra com o usuário do processo, que muda de máquina para máquina.
+   */
   baseUrl?: string
   username?: string
   /** GitHub App: o id do app e o da instalação. */
@@ -191,6 +194,7 @@ export function accountIssues(kind: TProjectAccountKind, input: IProjectAccountP
     if (!lines.length || lines.some((line) => line.trim().split(/\s+/).length < 3)) issues.push('knownHosts: linhas do known_hosts (host tipo chave), como as do ssh-keyscan')
     if ((input.knownHosts ?? '').length > 16_384) issues.push('knownHosts: grande demais')
     if ((input.hostPatterns ?? []).some((pattern) => !SSH_HOST_PATTERN.test(pattern))) issues.push('hostPatterns: nomes ou padrões de host (ex.: *.empresa1.com)')
+    if (input.username !== undefined && input.username !== '' && !SSH_PRINCIPAL.test(input.username)) issues.push('username: o usuário remoto (ex.: deploy)')
   }
   if (kind === 'ssh-ca') {
     if (!input.principals?.length || input.principals.length > 20 || input.principals.some((name) => !SSH_PRINCIPAL.test(name)))
