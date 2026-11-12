@@ -1,6 +1,6 @@
 {
   "name": "agents-gateway",
-  "version": "1.0.0-alpha.4",
+  "version": "1.0.0-alpha.5",
   "description": "Gateway that runs Claude, GPT and Gemini in two lanes: chat (plain SDK) and agent (official Agents SDK).",
   "main": "dist/main.js",
   "engines": {
