@@ -1,17 +1,25 @@
 // O app do Agents Gateway no Mac: uma janela própria (WebKit) com a tela do gateway, e o servidor em segundo plano.
 //
 // ⚖️ A janela é só a tela: quem sobe e mantém o servidor é o LaunchAgent (ver `service.sh`). Fechar a janela não para o
-// servidor; abrir o app de novo só reabre a tela.
+// servidor; abrir o app de novo só reabre a tela. Quem para, inicia e reinicia o servidor é o menu Servidor.
 // ⚖️ A mesma janela abre a tela de OUTROS gateways (menu Servidor): cada um com o próprio login, sem passar pelo daqui.
 //
 // Compilado pelo `build-app.sh`: swiftc -O -target arm64-apple-macos12.0 App.swift -o "Agents Gateway"
 import Cocoa
 import WebKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandlerWithReply {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandlerWithReply {
   private var window: NSWindow!
   private var web: WKWebView!
   private var home: URL?
+  /// O servidor deste Mac está parado: a janela não tenta abrir a tela dele.
+  private var stopped = false
+  /// O que está em andamento com o servidor deste Mac ("iniciando", "parando"…); `nil`: nada.
+  private var activity: String? { didSet { refreshStatusLine() } }
+  /// A porta do servidor deste Mac, dita pelo `service.sh`.
+  private var port: Int?
+  /// A linha de estado do menu Servidor ("Este Mac: rodando na porta 3210").
+  private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
   private let resources = Bundle.main.resourceURL!
   private let config = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Application Support/Agents Gateway/config.env")
@@ -74,31 +82,147 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     return panel.runModal() == .OK ? panel.url?.path : nil
   }
 
-  /// Roda o `service.sh` (grava a configuração, garante o LaunchAgent, espera o servidor) e abre o endereço que ele devolve.
-  private func startService(folder: String?) {
-    web.loadHTMLString(Self.waiting, baseURL: nil)
+  /// O `service.sh` no modo pedido (`nil`: garantir o servidor no ar): o que ele imprimiu e, quando falha, o motivo.
+  private func service(_ mode: String?, folder: String? = nil) -> (ok: Bool, printed: String, reason: String) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+    process.arguments = [resources.appendingPathComponent("service.sh").path] + (mode.map { [$0] } ?? [])
+    var env = ProcessInfo.processInfo.environment
+    if let folder { env["AG_DATA"] = folder }
+    process.environment = env
+    let out = Pipe(), err = Pipe()
+    process.standardOutput = out
+    process.standardError = err
+    do { try process.run() } catch { return (false, "", "Não consegui rodar o serviço: \(error.localizedDescription)") }
+    process.waitUntilExit()
+    let printed = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let reason = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    return (process.terminationStatus == 0, printed, reason)
+  }
+
+  /// Garante o servidor no ar (grava a configuração, garante o LaunchAgent, espera responder) e abre o endereço dele.
+  /// `restart`: reinicia mesmo sem nada ter mudado. `reveal: false`: a janela fica onde está (na tela de outro servidor).
+  /// `fromMenu`: a falha só avisa (na abertura do app, ela oferece tentar de novo ou fechar).
+  private func startService(folder: String?, restart: Bool = false, reveal: Bool = true, fromMenu: Bool = false) {
+    activity = restart ? "reiniciando" : "iniciando"
+    // Reiniciar devolve a pessoa à página em que ela estava.
+    let back = restart && reveal ? web.url.flatMap { isHome($0) ? $0 : nil } : nil
+    if reveal { web.loadHTMLString(Self.waiting, baseURL: nil) }
     DispatchQueue.global(qos: .userInitiated).async {
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-      process.arguments = [self.resources.appendingPathComponent("service.sh").path]
-      var env = ProcessInfo.processInfo.environment
-      if let folder { env["AG_DATA"] = folder }
-      process.environment = env
-      let out = Pipe(), err = Pipe()
-      process.standardOutput = out
-      process.standardError = err
-      do { try process.run() } catch {
-        DispatchQueue.main.async { self.fail("Não consegui iniciar o servidor: \(error.localizedDescription)") }
-        return
-      }
-      process.waitUntilExit()
-      let address = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-      let reason = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      let result = self.service(restart ? "restart" : nil, folder: folder)
       DispatchQueue.main.async {
-        guard process.terminationStatus == 0, let url = URL(string: address) else { return self.fail(reason.isEmpty ? "O servidor não subiu." : reason) }
+        self.activity = nil
+        self.refreshStatus()
+        guard result.ok, let url = URL(string: result.printed) else {
+          let reason = result.reason.isEmpty ? "O servidor não subiu." : result.reason
+          // Na abertura do app não há o que mostrar sem o servidor; pelo menu, a janela segue onde está.
+          if fromMenu, reveal { self.show(Self.localId) }
+          return fromMenu ? self.warn("Não consegui \(restart ? "reiniciar" : "iniciar") o servidor deste Mac", reason) : self.fail(reason)
+        }
+        self.stopped = false
         self.home = URL(string: "\(url.scheme ?? "http")://\(url.host ?? "localhost"):\(url.port ?? 3210)/")
-        self.web.load(URLRequest(url: url))
+        if reveal { self.web.load(URLRequest(url: back ?? url)) }
       }
+    }
+  }
+
+  /// Para o servidor deste Mac. ⚖️ É o que libera o app para ser trocado por uma versão nova: com o servidor rodando de
+  /// dentro dele, o Finder não consegue substituir o app.
+  private func stopService() {
+    activity = "parando"
+    DispatchQueue.global(qos: .userInitiated).async {
+      let result = self.service("stop")
+      DispatchQueue.main.async {
+        self.activity = nil
+        self.refreshStatus()
+        guard result.ok else { return self.warn("Não consegui parar o servidor deste Mac", result.reason) }
+        self.stopped = true
+        if self.current == Self.localId { self.show(Self.localId) }
+      }
+    }
+  }
+
+  private func warn(_ title: String, _ text: String) {
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = text
+    alert.addButton(withTitle: "OK")
+    _ = alert.runModal()
+  }
+
+  /// Pergunta ao `service.sh` se o servidor deste Mac está no ar e em que porta, e põe isso no menu. ⚖️ Quem responde é o
+  /// launchd, não a memória do app: o servidor pode ter sido parado ou iniciado por fora (o Terminal, o login).
+  private func refreshStatus() {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let parts = self.service("status").printed.split(separator: " ")
+      DispatchQueue.main.async {
+        guard parts.count == 2, let port = Int(parts[1]) else { return }
+        self.port = port
+        if self.activity == nil { self.stopped = parts[0] == "stopped" }
+        self.refreshStatusLine()
+      }
+    }
+  }
+
+  private func refreshStatusLine() {
+    let at = port.map { " na porta \($0)" } ?? ""
+    statusLine.title = "\(Self.localName): " + (activity.map { "\($0)…" } ?? (stopped ? "parado" : "rodando\(at)"))
+    serverMenu.update()
+  }
+
+  /// O menu Servidor confere o estado de verdade a cada vez que abre.
+  func menuWillOpen(_ menu: NSMenu) { refreshStatus() }
+
+  /// Quantas conversas rodam agora no servidor deste Mac (`nil`: ele não respondeu). Só a própria máquina recebe o número.
+  private func runningTurns(_ done: @escaping (Int?) -> Void) {
+    guard let port = port ?? home.map(Self.port), let url = URL(string: "http://127.0.0.1:\(port)/v1/health?turns=1") else { return done(nil) }
+    var request = URLRequest(url: url)
+    request.timeoutInterval = 3
+    URLSession.shared.dataTask(with: request) { data, _, _ in
+      let reply = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+      let running = (reply?["result"] as? [String: Any])?["running"] as? Int
+      DispatchQueue.main.async { done(running) }
+    }.resume()
+  }
+
+  /// ⛔ Parar e reiniciar cortam o que estiver rodando: a pessoa confirma sabendo quantas conversas são.
+  private func confirmCut(_ title: String, button: String, note: String = "", then act: @escaping () -> Void) {
+    activity = "conferindo"
+    runningTurns { running in
+      self.activity = nil
+      let cut: String
+      switch running {
+      case .some(0): cut = "Nenhuma conversa está rodando agora."
+      case .some(1): cut = "⚠️ Há 1 conversa rodando agora neste Mac: ela é interrompida."
+      case .some(let count): cut = "⚠️ Há \(count) conversas rodando agora neste Mac: elas são interrompidas."
+      case .none: cut = "As conversas que estiverem rodando neste Mac são interrompidas."
+      }
+      let alert = NSAlert()
+      alert.messageText = title
+      alert.informativeText = [cut, note].filter { !$0.isEmpty }.joined(separator: "\n\n")
+      alert.addButton(withTitle: button)
+      alert.addButton(withTitle: "Cancelar")
+      if alert.runModal() == .alertFirstButtonReturn { act() }
+    }
+  }
+
+  @objc private func startLocal(_ sender: Any?) { startService(folder: nil, reveal: current == Self.localId, fromMenu: true) }
+
+  @objc private func stopLocal(_ sender: Any?) {
+    let note = "Os agendamentos e os gatilhos não rodam enquanto ele estiver parado. Ele volta em Servidor → Iniciar o servidor deste Mac, ao abrir o app de novo ou no próximo login."
+    confirmCut("Parar o servidor deste Mac?", button: "Parar", note: note) { self.stopService() }
+  }
+
+  @objc private func restartLocal(_ sender: Any?) {
+    confirmCut("Reiniciar o servidor deste Mac?", button: "Reiniciar") { self.startService(folder: nil, restart: true, reveal: self.current == Self.localId, fromMenu: true) }
+  }
+
+  /// Iniciar só com o servidor parado; parar e reiniciar só com ele no ar; nenhum dos três no meio de uma dessas operações.
+  func validateMenuItem(_ item: NSMenuItem) -> Bool {
+    switch item.action {
+    case #selector(startLocal(_:)): return activity == nil && stopped
+    case #selector(stopLocal(_:)), #selector(restartLocal(_:)): return activity == nil && !stopped
+    default: return true
     }
   }
 
@@ -240,6 +364,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
   /// Carrega o início do servidor na janela. `false`: não existe (ou o daqui ainda não subiu).
   @discardableResult
   private func show(_ id: String) -> Bool {
+    if id == Self.localId, stopped {
+      web.loadHTMLString(Self.stoppedPage, baseURL: nil)
+      // A página parada não tem endereço: o `didCommit` não a reconhece, quem marca a janela como "Este Mac" é aqui.
+      current = Self.localId
+      window.title = "Agents Gateway"
+      rebuildServerMenu()
+      return true
+    }
     guard let url = id == Self.localId ? home : servers.first(where: { $0.id == id })?.url else { return false }
     web.load(URLRequest(url: url))
     return true
@@ -251,7 +383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
   /// O cadastro mora na tela deste Mac (menu da conta → Servidores).
   @objc private func manageServers(_ sender: Any?) {
-    if let home { web.load(URLRequest(url: home.appendingPathComponent("servers"))) }
+    if stopped { show(Self.localId) } else if let home { web.load(URLRequest(url: home.appendingPathComponent("servers"))) }
   }
 
   private func rebuildServerMenu() {
@@ -268,6 +400,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     let manage = NSMenuItem(title: "Gerenciar servidores…", action: #selector(manageServers(_:)), keyEquivalent: "")
     manage.target = self
     serverMenu.addItem(manage)
+    serverMenu.addItem(.separator())
+    serverMenu.addItem(statusLine)
+    for (title, action) in [("Iniciar o servidor deste Mac", #selector(startLocal(_:))), ("Parar o servidor deste Mac…", #selector(stopLocal(_:))), ("Reiniciar o servidor deste Mac…", #selector(restartLocal(_:)))] {
+      let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      entry.target = self
+      serverMenu.addItem(entry)
+    }
+    refreshStatusLine()
   }
 
   /// O servidor da janela é o do endereço carregado: o título e a marca do menu seguem ele, venha a troca de onde vier.
@@ -475,6 +615,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     ])
     let holder = NSMenuItem(title: serverMenu.title, action: nil, keyEquivalent: "")
     holder.submenu = serverMenu
+    serverMenu.delegate = self
     main.addItem(holder)
     rebuildServerMenu()
     submenu("Janela", [
@@ -483,6 +624,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     ])
     NSApp.mainMenu = main
   }
+
+  private static let stoppedPage = """
+  <html><body style="margin:0;height:100vh;display:grid;place-items:center;background:#09090b;color:#a1a1aa;font:15px/1.6 -apple-system">
+  <div style="text-align:center;max-width:460px;padding:24px"><div style="font-size:28px;color:#71717a;margin-bottom:8px">◎</div>
+  <div style="color:#e4e4e7;font-size:17px;margin-bottom:10px">O servidor deste Mac está parado</div>
+  Para voltar: menu <b>Servidor → Iniciar o servidor deste Mac</b>.<br><br>
+  Para atualizar o app: saia dele (⌘Q), arraste a versão nova para a pasta Aplicativos e abra.</div>
+  </body></html>
+  """
 
   private static let waiting = """
   <html><body style="margin:0;height:100vh;display:grid;place-items:center;background:#09090b;color:#a1a1aa;font:15px -apple-system">
