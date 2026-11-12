@@ -34,6 +34,10 @@ conferidos pelo checksum; Claude e Codex vêm nas dependências. Precisa de `pnp
   reinicia na nova.
 - **No navegador também:** `http://localhost:3210` (o servidor é o mesmo).
 - **Arquivos que o agente entrega:** vão para Downloads. Links de fora abrem no navegador.
+- **Outros servidores:** a mesma janela abre a tela de outro gateway, com o login dele. Cadastro: menu da conta →
+  Servidores (só na tela de Este Mac). Troca: o menu do projeto, ou o menu Servidor (⌘1 é Este Mac, ⌘2 em diante os
+  outros). O app guarda só o nome e o endereço. `http` só na rede local (IP privado, nome sem ponto, `.local`); fora dela,
+  `https`. Na primeira vez o macOS pergunta se o app pode achar dispositivos na rede local: Permitir.
 - **Trocar a porta:** mude `PORT` no `config.env` e abra o app de novo.
 - **Atualizar:** gere o `.dmg` de novo e, **pelo Finder**, arraste o app para Applications substituindo o antigo; ao abrir, o
   servidor reinicia na versão nova. ⚠️ Copiar por script (`ditto`, `cp`) para dentro de Applications é bloqueado pelo

@@ -92,6 +92,7 @@ cat >"$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>NSLocalNetworkUsageDescription</key><string>Para abrir os gateways que você cadastrou na rede local.</string>
 </dict>
 </plist>
 PLIST
