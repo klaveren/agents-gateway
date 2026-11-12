@@ -59,6 +59,8 @@ const resourceSchema = z.object({
     .max(200)
     .optional(),
   tags,
+  /** As variáveis fixas (`{ NOME: valor }`, nunca segredo). Ausente na edição = mantém; `{}` tira todas. */
+  env: z.record(z.string().max(80), z.string().max(5_000)).optional(),
 })
 const filesSchema = z.object({
   files: z.array(z.object({ path: z.string().max(400), sha256: z.string().max(64), bytes: z.number() })).max(1_000),

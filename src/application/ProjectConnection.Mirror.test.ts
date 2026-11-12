@@ -40,7 +40,7 @@ function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[
     repository,
     box: { seal: (plain) => plain, open: (box) => box },
     client: () => client,
-    projects: { exists: () => true, create: () => undefined },
+    projects: { exists: () => true, create: () => undefined, keepEnv: (id, env) => void steps.push(`keep-env ${id} ${JSON.stringify(env)}`) },
     files: { has: () => true, put: () => ({ sha256: '' }) },
     applier: {
       plan: async ({ documents }: { documents: ICatalogDocument[] }) => {
@@ -144,5 +144,21 @@ describe('projeto conectado: a cópia', () => {
     service.disconnect('logiccus', 'dev')
     assert.deepEqual(steps, ['apply logiccus', 'release logiccus'])
     assert.equal(repository.get('logiccus'), undefined)
+  })
+
+  it('🔌 as fixas desta máquina: gravadas na conexão com as regras do projeto; ao desconectar, passam para o projeto', () => {
+    const { service, steps, repository } = build([])
+    assert.deepEqual(service.setLocalEnv('logiccus', { API_BASE_URL: 'http://localhost:4000' }).localEnv, { API_BASE_URL: 'http://localhost:4000' })
+    for (const env of [{ minusculo: 'x' }, { API_TOKEN: 'x' }, { PATH: '/tmp' }] as Array<Record<string, string>>)
+      assert.throws(() => service.setLocalEnv('logiccus', env), /Project is invalid|invalid/i, JSON.stringify(env))
+    assert.deepEqual(repository.get('logiccus')?.localEnv, { API_BASE_URL: 'http://localhost:4000' })
+    service.disconnect('logiccus', 'dev')
+    assert.deepEqual(steps, ['apply logiccus', 'keep-env logiccus {"API_BASE_URL":"http://localhost:4000"}', 'release logiccus'])
+    // Vazia, a conexão não leva nada ao projeto.
+    const other = build([])
+    other.service.setLocalEnv('logiccus', {})
+    assert.equal(other.repository.get('logiccus')?.localEnv, undefined)
+    other.service.disconnect('logiccus', 'dev')
+    assert.deepEqual(other.steps, ['apply logiccus', 'release logiccus'])
   })
 })

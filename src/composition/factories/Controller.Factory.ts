@@ -599,7 +599,11 @@ export function makeProjectConnections(): ProjectConnectionService {
     repository,
     box: makeSecretBox(),
     client: (url, projectId, token) => new RemoteClient(url, projectId, token),
-    projects: makeProjects(),
+    projects: {
+      exists: (id) => makeProjects().exists(id),
+      create: (input, by, source, creatorId) => makeProjects().create(input, by, source, creatorId),
+      keepEnv: (id, env, by) => makeProjects().update(id, { env: { ...makeProjects().get(id).env, ...env } }, by),
+    },
     files: makeResourceFiles(),
     applier: makeCatalogImportApplier(),
     reader: catalogHistoryParts().reader,

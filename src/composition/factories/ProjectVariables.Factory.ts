@@ -6,7 +6,7 @@ import { makeAgents } from './Agents.Factory'
 import { makeAuth } from './Auth.Factory'
 import { makeCredentials } from './Credentials.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
-import { makeProjects } from './Projects.Factory'
+import { connectedLocalEnv, makeProjects } from './Projects.Factory'
 import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { makeTools } from './Tools.Factory'
 
@@ -31,7 +31,10 @@ export function makeProjectVariablesController(): ProjectVariablesController {
 /** As fixas do projeto (`IProject.env`); projeto que não existe, nenhuma. */
 export function projectFixedEnv(projectId: string | undefined): Readonly<Record<string, string>> | undefined {
   if (!projectId || !makeProjects().exists(projectId)) return undefined
-  return makeProjects().get(projectId).env
+  // 🔌 Projeto conectado: as desta máquina por cima das que vêm da origem.
+  const local = connectedLocalEnv(projectId)
+  const env = makeProjects().get(projectId).env
+  return local && Object.keys(local).length ? { ...env, ...local } : env
 }
 
 /**

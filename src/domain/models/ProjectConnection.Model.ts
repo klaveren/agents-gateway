@@ -52,6 +52,11 @@ export interface IProjectConnection {
   secrets: IConnectionSecret[]
   /** `provider/modelo` da origem → `provider/modelo` daqui (ver `Connect.Policy`). */
   modelMap: Record<string, string>
+  /**
+   * As variáveis FIXAS desta máquina (texto comum: o endereço de um serviço local), por cima das fixas que vêm da origem
+   * (`IProject.env`, só leitura aqui). Nunca vão para a origem; ao desconectar, passam para o projeto. Ausente = nenhuma.
+   */
+  localEnv?: Record<string, string>
   createdAt: Date
   createdBy: string
   lastCheckedAt?: Date

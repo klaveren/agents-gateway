@@ -1247,6 +1247,12 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
         body: z.string().optional().describe('The rule itself, imperative and short'),
         enabled: z.boolean().optional(),
         tags: z.array(z.string()).optional().describe('Free words to group and filter in the lists (normalized to lowercase-hyphen); absent on update = keep, [] removes all'),
+        env: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            'Fixed variables { NAME: value } (plain text, never a secret: a service URL, a region): once the resource is loaded in a conversation they go to the agent terminal. Secrets are set by a person on the screen. Absent on update = keep, {} removes all',
+          ),
         importedFrom,
       },
     },

@@ -3,7 +3,8 @@ import type { CatalogImportApplier } from '@application/CatalogImport.Apply'
 import { CATALOG_KINDS, ICatalogDocument, TCatalogKind } from '@domain/Catalog.Document'
 import { itemRef, parsePackage } from '@domain/Catalog.Import'
 import { forLocal, ILocalModels } from '@domain/Connect.Policy'
-import { InvalidLedgerError, LedgerQueuedError, ProjectConnectionError } from '@domain/errors/Domain.Error'
+import { InvalidLedgerError, InvalidProjectError, LedgerQueuedError, ProjectConnectionError } from '@domain/errors/Domain.Error'
+import { projectEnvIssues } from './Projects.Service'
 import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
 import { IConnectionChange, IConnectionSkipped, IProjectConnection } from '@domain/models/ProjectConnection.Model'
 import type { IProjectConnectionRepository, TConnectionPatch } from '@domain/ports/ProjectConnectionRepository.Port'
@@ -27,7 +28,12 @@ export interface IProjectConnectionDeps {
   /** O cofre do token (`SecretBox`). */
   box: { seal(plain: string, owner: string): string; open(box: string, owner: string): string | undefined }
   client: (url: string, remoteProjectId: string, token: string) => IRemoteCatalog
-  projects: { exists(id: string): boolean; create(input: { id: string; name: string; description?: string }, by: string, source: 'api', creatorId?: string): unknown }
+  projects: {
+    exists(id: string): boolean
+    create(input: { id: string; name: string; description?: string }, by: string, source: 'api', creatorId?: string): unknown
+    /** Soma estas fixas às do projeto (as de mesmo nome trocam): o que desconectar leva da máquina para o projeto. */
+    keepEnv?(id: string, env: Readonly<Record<string, string>>, by: string): void
+  }
   files: { has(sha256: string): boolean; put(content: Buffer): { sha256: string } }
   applier: Pick<CatalogImportApplier, 'plan' | 'apply'>
   reader: { list(scope: TCatalogScope): ICatalogDocument[] }
@@ -152,11 +158,23 @@ export class ProjectConnectionService {
     return this.require(projectId)
   }
 
+  /** As fixas DESTA MÁQUINA (ver `IProjectConnection.localEnv`): a lista inteira, com as regras das fixas do projeto. */
+  setLocalEnv(projectId: string, env: Record<string, string>): IProjectConnection {
+    this.require(projectId)
+    const issues = projectEnvIssues(env)
+    if (issues.length) throw new InvalidProjectError(issues)
+    this.deps.repository.update(projectId, { localEnv: env })
+    return this.require(projectId)
+  }
+
   /** Desconecta: o projeto fica, como um projeto comum daqui (editável), e o token é esquecido. */
   disconnect(projectId: string, by = 'system'): void {
     this.require(projectId)
     // ⚠️ Antes de esquecer a conexão: a camada local só vale em projeto conectado, e o agente não pode perder o que tinha.
     this.deps.layers?.applyAll(projectId, by)
+    // Idem as fixas desta máquina: passam para o projeto, que agora é daqui (a de mesmo nome que veio da origem cede).
+    const localEnv = this.require(projectId).localEnv
+    if (localEnv && Object.keys(localEnv).length) this.deps.projects.keepEnv?.(projectId, localEnv, by)
     this.deps.localMcps?.release(projectId)
     this.deps.repository.remove(projectId)
   }

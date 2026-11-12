@@ -125,11 +125,14 @@ function gatewayAdminIds(): string[] {
 }
 
 /** O projeto conectado (ver `ProjectConnection.Service`); a fábrica dele é registrada na composição, sem volta entre as duas. */
-let connectedProject: (projectId: string) => { url: string } | undefined = () => undefined
+let connectedProject: (projectId: string) => { url: string; localEnv?: Record<string, string> } | undefined = () => undefined
 
-export function useConnectedProjects(lookup: (projectId: string) => { url: string } | undefined): void {
+export function useConnectedProjects(lookup: (projectId: string) => { url: string; localEnv?: Record<string, string> } | undefined): void {
   connectedProject = lookup
 }
+
+/** As fixas desta máquina de um projeto conectado (ver `IProjectConnection.localEnv`); outro projeto, nenhuma. */
+export const connectedLocalEnv = (projectId: string): Readonly<Record<string, string>> | undefined => connectedProject(projectId)?.localEnv
 
 /** O projeto é conectado? (Para quem decide fora das rotas, como a camada local dos agentes.) */
 export const isConnectedProject = (projectId: string): boolean => !!connectedProject(projectId)

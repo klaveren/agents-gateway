@@ -159,6 +159,14 @@ describe('CatalogRestoreUseCase — restaurar uma revisão', () => {
     assert.deepStrictEqual(guidance.resource('tabela').triggers, [deploy])
   })
 
+  it('as variáveis fixas da skill entram na revisão: voltar traz as de antes (e tira as que vieram depois)', async () => {
+    const { guidance, restore } = build()
+    guidance.createResource({ id: 'tabela', kind: 'skill', description: 'Tabelas', body: 'v1', env: { GRAFANA_URL: 'https://a' } }, 'ana')
+    guidance.updateResource('tabela', { env: { GRAFANA_URL: 'https://b', REGIAO: 'x' } }, 'bia')
+    await restore.restore({ item: { kind: 'skill', itemId: 'tabela' }, revision: 1, expectedRevision: 2 }, ADMIN)
+    assert.deepStrictEqual(guidance.resource('tabela').env, { GRAFANA_URL: 'https://a' })
+  })
+
   it('as tags entram na revisão: voltar traz as de antes', async () => {
     const { guidance, restore } = build()
     guidance.createResource({ id: 'tabela', kind: 'skill', description: 'Tabelas', body: 'v1', tags: ['infra'] }, 'ana')
