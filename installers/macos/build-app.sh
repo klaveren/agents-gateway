@@ -25,7 +25,9 @@ BUILD="$VERSION+$(git -C "$ROOT" rev-parse --short HEAD)"
 [ ! -e "$OUT/Agents-Gateway-$VERSION.dmg" ] || { echo "a versão $VERSION já tem instalador: suba a versão (npm version prerelease --no-git-tag-version), commit, e rode de novo" >&2; exit 1 }
 
 echo "▶ montagem limpa do HEAD ($(git -C "$ROOT" rev-parse --short HEAD))"
-rm -rf "$OUT"
+# ⛔ Só a montagem é refeita: o cache dos downloads (micromamba, agy) e os instaladores das versões anteriores ficam.
+mkdir -p "$OUT"
+find "$OUT" -mindepth 1 -maxdepth 1 ! -name cache ! -name '*.dmg' -exec rm -rf {} +
 mkdir -p "$STAGE"
 git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$STAGE"
 
@@ -111,5 +113,5 @@ cp -R "$APP" "$DMG_DIR/"
 ln -s /Applications "$DMG_DIR/Applications"
 hdiutil create -volname "Agents Gateway" -srcfolder "$DMG_DIR" -ov -format UDZO "$OUT/Agents-Gateway-$VERSION.dmg" >/dev/null
 rm -rf "$STAGE" "$DMG_DIR" "$ICONSET"
-# O cache do micromamba fica (o próximo build não baixa de novo).
+# O cache (micromamba, agy) fica: o próximo build não baixa de novo.
 echo "✅ $OUT/Agents-Gateway-$VERSION.dmg"
