@@ -43,6 +43,8 @@ export interface ILedgerContextSummary {
   updatedAt: string
   updatedBy: TLedgerAuthor
   warnings: ILedgerWarning[]
+  /** O tema é da BASE do agente global (no projeto, só leitura: escrever nele copia o tema para o projeto). */
+  base?: boolean
 }
 
 export interface ILedgerContext extends ILedgerContextSummary {

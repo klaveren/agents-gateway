@@ -10,16 +10,23 @@ import { keyedResource } from '@/lib/resource'
  * meio da conversa); "Atualizar" relê.
  */
 export const useLedgerStore = defineStore('ledger', () => {
-  const base = (agentId: string) => `/agents/${encodeURIComponent(agentId)}/ledger`
+  /**
+   * O caminho do ledger do DONO: o agente (`atlas`) ou o agente global num projeto (`atlas@bh`, que vira `?project=bh`).
+   * O resto do caminho entra antes da query.
+   */
+  const route = (owner: string, path = '') => {
+    const [agentId = '', project] = owner.split('@')
+    return `/agents/${encodeURIComponent(agentId)}/ledger${path}${project ? `?project=${encodeURIComponent(project)}` : ''}`
+  }
   const split = (key: string) => key.split('\u0000') as [string, string]
-  const indexes = keyedResource((agentId) => api<ILedgerIndex>(base(agentId)))
+  const indexes = keyedResource((agentId) => api<ILedgerIndex>(route(agentId)))
   const contexts = keyedResource((key) => {
     const [agentId, topic] = split(key)
-    return api<ILedgerContext>(`${base(agentId)}/contexts/${encodeURIComponent(topic)}`)
+    return api<ILedgerContext>(route(agentId, `/contexts/${encodeURIComponent(topic)}`))
   })
   const revisions = keyedResource((key) => {
     const [agentId, topic] = split(key)
-    return api<ILedgerRevision[]>(`${base(agentId)}/contexts/${encodeURIComponent(topic)}/revisions`)
+    return api<ILedgerRevision[]>(route(agentId, `/contexts/${encodeURIComponent(topic)}/revisions`))
   })
 
   /** A resposta da escrita na store: o índice, o contexto (ou a saída dele) e o histórico, se aberto. */
@@ -33,7 +40,7 @@ export const useLedgerStore = defineStore('ledger', () => {
   }
 
   const write = async (agentId: string, path: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) =>
-    apply(agentId, await api<ILedgerWriteResult>(`${base(agentId)}${path}`, { method, ...(body === undefined ? {} : { body }) }))
+    apply(agentId, await api<ILedgerWriteResult>(route(agentId, path), { method, ...(body === undefined ? {} : { body }) }))
   const topicPath = (topic: string) => `/contexts/${encodeURIComponent(topic)}`
 
   const create = (agentId: string, input: { topic: string; trigger: string; playbook?: string }) => write(agentId, '/contexts', 'POST', input)
@@ -45,12 +52,13 @@ export const useLedgerStore = defineStore('ledger', () => {
 
   /** A busca nas linhas (e nos playbooks): lida na hora, não guardada. */
   function search(agentId: string, q: string): Promise<{ contexts: ILedgerIndex['contexts']; lines: Array<ILedgerLine & { topic: string }> }> {
-    return api(`${base(agentId)}/search`, { query: { q } })
+    const [owner, project] = agentId.split('@')
+    return api(route(owner ?? agentId, '/search'), { query: { q, ...(project ? { project } : {}) } })
   }
 
   /** "Exportar": o `.tar.gz` com a pasta antiga (`<agente>-ledger/index.md` + `contextos/<tema>.md`), baixado pelo navegador. */
   async function download(agentId: string): Promise<void> {
-    const response = await fetch(url(`${base(agentId)}/export`), { headers: authHeaders() })
+    const response = await fetch(url(route(agentId, '/export')), { headers: authHeaders() })
     if (!response.ok) {
       const envelope = (await response.json().catch(() => undefined)) as { message?: string; code?: string } | undefined
       throw new ApiError(response.status, envelope?.code, envelope?.message ?? `HTTP ${response.status}`)

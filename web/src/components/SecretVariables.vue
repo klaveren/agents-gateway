@@ -14,7 +14,8 @@
    * Quem valida é o servidor (422 vira mensagem no campo); a dica do nome é só aviso.
    */
   /** `loadNote: false`: sem a linha de skill/command (as do projeto valem sempre). */
-  const props = defineProps<{ basePath: string; scopeLabel: string; project?: string; loadNote?: boolean }>()
+  /** `missingNote`: o que dizer da variável sem valor neste projeto (o agente global usa o da base). */
+  const props = defineProps<{ basePath: string; scopeLabel: string; project?: string; loadNote?: boolean; missingNote?: string }>()
   const secrets = useResourceSecretsStore()
   /** `project`: os valores são DESTE projeto (skill/command): vai como `?project=` em todas as rotas. */
   const key = computed(() => (props.project ? `${props.basePath}?project=${encodeURIComponent(props.project)}` : props.basePath))
@@ -136,7 +137,7 @@
           </template>
         </div>
         <p v-if="secret.description" class="text-sm text-zinc-300">{{ secret.description }}</p>
-        <p v-if="secret.configured === false || !secret.updatedAt" class="text-[11px] text-amber-300" data-test="secret-missing">Ainda sem valor neste projeto: a skill usa esta variável.</p>
+        <p v-if="secret.configured === false || !secret.updatedAt" class="text-[11px] text-amber-300" data-test="secret-missing">{{ missingNote ?? 'Ainda sem valor neste projeto: a skill usa esta variável.' }}</p>
         <p v-else class="text-[11px] text-zinc-500">
           Definida em {{ fullTime(secret.updatedAt) }}
           <template v-if="secret.updatedBy">por {{ secret.updatedBy }}</template>

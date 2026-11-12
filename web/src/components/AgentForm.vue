@@ -4,7 +4,7 @@
   import { lite, LITE_HIDDEN_AGENT_TABS, LITE_HIDDEN_PERMISSIONS, LITE_HIDDEN_TOOLS } from '@/lib/edition'
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
-  import { ApiError } from '@/lib/api'
+  import { api, ApiError } from '@/lib/api'
   import ImportIssues from '@/components/ImportIssues.vue'
   import TagsInput from '@/components/TagsInput.vue'
   import { tagNames } from '@/lib/listFilter'
@@ -109,7 +109,8 @@
   const enabledMcp = computed(() =>
     mcpServersFor(
       mcp.list.filter((server) => server.enabled),
-      form.value.projectId,
+      // Na camada do projeto, o global vê também os MCPs DAQUELE projeto (só nas conversas dele).
+      projectLayer.value ? projects.current : form.value.projectId,
     ),
   )
   /**
@@ -384,14 +385,84 @@
   const sharedFrom = computed(() => (props.creating || !props.agent ? undefined : props.sharedFrom ?? sharedFromOf(props.agent, projects.current)))
   /** 🔌 Agente de projeto conectado: só leitura (vem da origem); as Variáveis (valores daqui) seguem editáveis. */
   const connectedOrigin = computed(() => connections.originOf(props.creating ? form.value.projectId || projects.current : props.agent?.projectId))
-  const locked = computed(() => globalLocked.value || !!sharedFrom.value || !!connectedOrigin.value)
+  /**
+   * ⚖️ A CAMADA DO PROJETO do agente GLOBAL: com um projeto no seletor e quem o administra, Modelos, Ferramentas, MCPs,
+   * Delegação e Permissões gravam o que ESTE projeto acrescenta ou desliga na base (vale só nas conversas dele). O admin
+   * do gateway escolhe entre a base e o projeto; quem só administra o projeto edita só a camada.
+   */
+  const layerScope = ref<'base' | 'project'>(auth.isAdmin ? 'base' : 'project')
+  const canProjectLayer = computed(() => !props.creating && !!props.agent && !props.agent.projectId && !!projects.current && projects.manages)
+  const projectLayer = computed(() => canProjectLayer.value && (!auth.isAdmin || layerScope.value === 'project'))
+  const currentProjectName = computed(() => projects.list.find((item) => item.id === projects.current)?.name ?? projects.current)
+  const locked = computed(() => globalLocked.value || !!sharedFrom.value || !!connectedOrigin.value || projectLayer.value)
   /**
    * 🔌 A CAMADA LOCAL: no agente de projeto conectado, Modelos, Ferramentas, MCPs, Delegação e Permissões aceitam o que
    * ESTA máquina acrescenta, e a ferramenta, o MCP e a delegação que vieram da origem podem ser desligados aqui. O
    * Salvar dessas guias grava só a camada; as regras de permissão da origem continuam travadas.
    */
   const LAYER_TABS: readonly TTab[] = ['modelos', 'ferramentas', 'delegacao', 'mcps', 'sdk']
-  const layerMode = computed(() => !!connectedOrigin.value && !props.creating && !!props.agent?.projectId && !sharedFrom.value)
+  const connectedLayer = computed(() => !!connectedOrigin.value && !props.creating && !!props.agent?.projectId && !sharedFrom.value)
+  const layerMode = computed(() => connectedLayer.value || projectLayer.value)
+  /** O projeto da camada: o do agente conectado, ou o do seletor (a camada do projeto do global). */
+  const layerProject = computed(() => (projectLayer.value ? projects.current : props.agent?.projectId) || undefined)
+  /** As rotas da camada: a local do projeto conectado ou a do projeto do agente global. */
+  const projectLayerPath = (projectId: string, agentId: string) => `/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}/layer`
+  const layerApi = {
+    read: (projectId: string, agentId: string) =>
+      projectLayer.value ? api<IAgentLocalLayerView>(projectLayerPath(projectId, agentId)) : connections.readLocal(projectId, agentId),
+    save: (projectId: string, agentId: string, layer: Parameters<typeof connections.saveLocal>[2]) =>
+      projectLayer.value ? api<IAgentLocalLayerView>(projectLayerPath(projectId, agentId), { method: 'PUT', body: layer }) : connections.saveLocal(projectId, agentId, layer),
+    remove: (projectId: string, agentId: string) =>
+      projectLayer.value ? api<IAgentLocalLayerView>(projectLayerPath(projectId, agentId), { method: 'DELETE' }) : connections.removeLocal(projectId, agentId),
+  }
+  /** As palavras da camada: a do projeto conectado (origem, esta máquina) ou a do projeto do global (base, este projeto). */
+  const W = computed(() =>
+    projectLayer.value
+      ? {
+          origin: 'base',
+          Origin: 'Da base',
+          offHere: 'base · desligado neste projeto',
+          OriginOff: 'Da base, desligado neste projeto:',
+          mine: 'Deste projeto',
+          models: 'Modelos deste projeto',
+          localChoice: 'escolha do projeto',
+          originModels: 'os da base',
+          modelsOn: 'O agente roda neste projeto com os provedores e modelos marcados abaixo. Os da base não mudam.',
+          modelsOff: 'O agente usa os modelos da base. Para outros neste projeto, escolha os deste projeto.',
+          backModels: 'Voltar aos da base',
+          pickModels: 'Escolher modelos deste projeto',
+          hint: 'O que é da base aparece marcado como "base": dá para desligar neste projeto. O resto vale só nas conversas deste projeto.',
+          fixed: 'Estes ajustes são da base e não mudam aqui.',
+          modelsHint: 'Vem da base. Para mudar neste projeto, escolha os modelos deste projeto na guia Modelos.',
+          save: 'Salvar camada do projeto',
+          discard: 'Descartar camada do projeto',
+          discardTitle: 'Descartar a camada deste projeto',
+          discardMessage: 'Neste projeto o agente volta a rodar como a base: saem os modelos, as ferramentas, as delegações e as regras do projeto, e volta o que foi desligado.',
+          readError: 'a camada deste projeto',
+        }
+      : {
+          origin: 'origem',
+          Origin: 'Da origem',
+          offHere: 'origem · desligado aqui',
+          OriginOff: 'Da origem, desligado aqui:',
+          mine: 'Desta máquina',
+          models: 'Modelos desta máquina',
+          localChoice: 'escolha local',
+          originModels: 'os da origem',
+          modelsOn: 'O agente roda aqui com os provedores e modelos marcados abaixo. Os da origem não mudam.',
+          modelsOff: 'O agente usa os modelos que vieram da origem. Se eles não existem aqui, escolha os desta máquina.',
+          backModels: 'Voltar aos da origem',
+          pickModels: 'Escolher modelos desta máquina',
+          hint: '{{ W.hint }}',
+          fixed: 'Estes ajustes vêm da origem e não mudam aqui.',
+          modelsHint: 'Vem da origem. Para mudar aqui, escolha os modelos desta máquina na guia Modelos.',
+          save: 'Salvar ajustes locais',
+          discard: 'Descartar ajustes locais',
+          discardTitle: 'Descartar os ajustes locais',
+          discardMessage: 'O agente volta a rodar como veio da origem: saem os modelos, as ferramentas, as delegações e as regras desta máquina, e volta o que foi desligado aqui.',
+          readError: 'os ajustes locais deste agente',
+        },
+  )
   /** A camada como o servidor a tem (a origem e o que é daqui). Sem ela (ainda lendo, ou falhou), tudo segue travado. */
   const local = ref<IAgentLocalLayerView>()
   /** Os modelos são os desta máquina (substituem os da origem) ou os que vieram dela. */
@@ -404,7 +475,7 @@
   /** A ferramenta do gateway que veio ligada da origem (a automática, só a que ela não desligou). */
   const toolFromOrigin = (name: string) => layerMode.value && originHasTool(originTools.value, name)
   /** A etiqueta do que veio da origem: ligado como lá, ou desligado nesta máquina. */
-  const originTag = (on: boolean) => (on ? 'origem' : 'origem · desligado aqui')
+  const originTag = (on: boolean) => (on ? W.value.origin : W.value.offHere)
   const originTone = (on: boolean) => (on ? 'text-sky-300' : 'text-amber-300')
   /** O que veio da origem e esta máquina desligou (as automáticas pelo nome), para a lista "Desligado aqui" de cada guia. */
   const originOff = computed(() => (layerMode.value && local.value ? disabledTools(originTools.value, form.value.allowedTools) : []))
@@ -733,46 +804,50 @@
       ...(provider.network ? { network: true } : {}),
     }))
 
+  /** O formulário com o agente gravado (e a camada por cima, se ela é dele). */
+  function fillFrom(agent: IAgentDetail | undefined) {
+    added.clear()
+    modelSearch.value = ''
+    droppedModels.value = Object.fromEntries((agent?.providers ?? []).map((provider) => [provider.id, provider.disabledModels ?? []]))
+    form.value = agent
+      ? {
+          id: agent.id,
+          name: agent.name,
+          providers: formProviders(agent),
+          soul: agent.soul ?? '',
+          systemPrompt: agent.systemPrompt,
+          reasoningEfforts: [...(agent.reasoningEfforts ?? [])],
+          modes: [...agent.modes],
+          allowedTools: [...agent.allowedTools],
+          role: agent.role ?? null,
+          adminOnly: !!agent.adminOnly,
+          projectId: agent.projectId ?? null,
+          permissions: (agent.permissions ?? []).map((rule) => ({ ...rule })),
+          terminal: agent.terminal ? { ...agent.terminal } : null,
+          diagnostics: agent.diagnostics ? { ...agent.diagnostics } : null,
+          triggers: (agent.triggers ?? []).map((trigger) => ({ ...trigger })),
+          tags: [...(agent.tags ?? [])],
+          modelGroup: agent.modelGroup ?? null,
+        }
+      : blank()
+    envList.value = envRows(agent?.env)
+    agentFiles.value = (agent?.files ?? []).map((file) => ({ ...file }))
+    issues.value = {}
+    failure.value = undefined
+    applyDefaultProvider()
+    // 🔌 O agente foi relido: a camada local volta por cima (a dele; a de outro agente sai).
+    applyLocal(local.value?.agentId === agent?.id ? local.value : undefined)
+  }
   watch(
     () => [props.agent, props.creating] as const,
-    ([agent]) => {
-      added.clear()
-      modelSearch.value = ''
-      droppedModels.value = Object.fromEntries((agent?.providers ?? []).map((provider) => [provider.id, provider.disabledModels ?? []]))
-      form.value = agent
-        ? {
-            id: agent.id,
-            name: agent.name,
-            providers: formProviders(agent),
-            soul: agent.soul ?? '',
-            systemPrompt: agent.systemPrompt,
-            reasoningEfforts: [...(agent.reasoningEfforts ?? [])],
-            modes: [...agent.modes],
-            allowedTools: [...agent.allowedTools],
-            role: agent.role ?? null,
-            adminOnly: !!agent.adminOnly,
-            projectId: agent.projectId ?? null,
-            permissions: (agent.permissions ?? []).map((rule) => ({ ...rule })),
-            terminal: agent.terminal ? { ...agent.terminal } : null,
-            diagnostics: agent.diagnostics ? { ...agent.diagnostics } : null,
-            triggers: (agent.triggers ?? []).map((trigger) => ({ ...trigger })),
-            tags: [...(agent.tags ?? [])],
-            modelGroup: agent.modelGroup ?? null,
-          }
-        : blank()
-      envList.value = envRows(agent?.env)
-      agentFiles.value = (agent?.files ?? []).map((file) => ({ ...file }))
-      issues.value = {}
-      failure.value = undefined
-      applyDefaultProvider()
-      // 🔌 O agente foi relido: a camada local volta por cima (a dele; a de outro agente sai).
-      applyLocal(local.value?.agentId === agent?.id ? local.value : undefined)
-    },
+    ([agent]) => fillFrom(agent),
     { immediate: true },
   )
 
   /** 🔌 O formulário das guias da camada: o da origem com o que esta máquina acrescentou por cima. */
-  function applyLocal(view: IAgentLocalLayerView | undefined) {
+  function applyLocal(found: IAgentLocalLayerView | undefined) {
+    // Resposta sem a forma da camada (rota que não existe nesta versão do servidor): como sem camada.
+    const view = found?.origin && found.layer ? found : undefined
     local.value = view
     localModels.value = !!view?.layer.providers?.length
     if (!view || !props.agent) return
@@ -783,19 +858,26 @@
   }
   /** Relê a camada gravada (o formulário volta a ela): depois de uma aprovação que escreveu ali por fora do Salvar. */
   async function reloadLocal(agent: IAgentDetail) {
-    if (!layerMode.value || !agent.projectId) return
-    const view = await connections.readLocal(agent.projectId, agent.id).catch(() => undefined)
+    const projectId = layerProject.value
+    if (!layerMode.value || !projectId) return
+    const view = await layerApi.read(projectId, agent.id).catch(() => undefined)
     if (view && props.agent?.id === agent.id) applyLocal(view)
   }
   const layerError = ref<string>()
   watch(
-    () => [props.agent?.id, layerMode.value] as const,
-    async ([agentId, on]) => {
+    () => [props.agent?.id, layerMode.value, layerProject.value] as const,
+    async ([agentId, on, projectId]) => {
       layerError.value = undefined
-      const projectId = props.agent?.projectId
-      if (!on || !agentId || !projectId) return applyLocal(undefined)
+      if (!on || !agentId || !projectId) {
+        // Saiu do modo camada (o admin voltou à base): o formulário volta ao agente gravado.
+        if (local.value && props.agent) {
+          local.value = undefined
+          fillFrom(props.agent)
+        }
+        return applyLocal(undefined)
+      }
       try {
-        const view = await connections.readLocal(projectId, agentId)
+        const view = await layerApi.read(projectId, agentId)
         if (props.agent?.id === agentId) applyLocal(view)
       } catch (error) {
         layerError.value = error instanceof Error ? error.message : String(error)
@@ -832,7 +914,7 @@
     }
     try {
       applyLocal(
-        await connections.saveLocal(view.projectId, view.agentId, {
+        await layerApi.save(view.projectId, view.agentId, {
           ...(localModels.value ? { providers: form.value.providers.filter((target) => target.models.length) } : {}),
           allowedTools: layerTools(view.origin.allowedTools, form.value.allowedTools),
           disabledTools: disabledTools(view.origin.allowedTools, form.value.allowedTools),
@@ -857,7 +939,7 @@
     issues.value = {}
     failure.value = undefined
     try {
-      applyLocal(await connections.removeLocal(view.projectId, view.agentId))
+      applyLocal(await layerApi.remove(view.projectId, view.agentId))
       await agents.reloadLists().catch(() => undefined)
     } catch (error) {
       failure.value = error instanceof Error ? error.message : String(error)
@@ -1026,8 +1108,20 @@
     </nav>
     <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" :layer="layerMode" />
     <p v-else-if="sharedFrom" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="shared-readonly">Compartilhado por {{ scopeLabel(sharedFrom, projects.list) }}: só leitura aqui; a manutenção é lá.</p>
+    <div v-else-if="canProjectLayer" class="flex flex-wrap items-center gap-2 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="project-layer">
+      <span class="min-w-0 flex-1">
+        <template v-if="projectLayer">
+          Camada de <strong>{{ currentProjectName }}</strong>: Modelos, Ferramentas, MCPs, Delegação e Permissões mudam só neste projeto. A base é do administrador do gateway.
+        </template>
+        <template v-else>Editando a base: vale em todos os projetos que não mudaram na camada deles.</template>
+      </span>
+      <span v-if="auth.isAdmin" class="flex gap-1">
+        <button type="button" class="chip" :class="{ on: layerScope === 'base' }" data-test="layer-scope-base" @click="layerScope = 'base'">Base</button>
+        <button type="button" class="chip" :class="{ on: layerScope === 'project' }" data-test="layer-scope-project" @click="layerScope = 'project'">{{ currentProjectName }}</button>
+      </span>
+    </div>
     <p v-else-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
-    <p v-if="layerError" class="text-sm text-rose-300">Não foi possível ler os ajustes locais deste agente ({{ layerError }}).</p>
+    <p v-if="layerError" class="text-sm text-rose-300">Não foi possível ler {{ W.readError }} ({{ layerError }}).</p>
     <fieldset :disabled="locked && !layerTab" class="contents">
     <fieldset v-show="tab === 'agente'" class="grid gap-4 sm:grid-cols-2">
       <label class="field">
@@ -1159,15 +1253,15 @@
       <!-- 🔌 Os modelos da origem podem nem existir aqui: a escolha local SUBSTITUI a dela, só nesta máquina. -->
       <section v-if="layerMode && local" class="tool-card" data-test="layer-models">
         <header>
-          <h3>Modelos desta máquina</h3>
-          <span class="count">{{ localModels ? 'escolha local' : 'os da origem' }}</span>
+          <h3>{{ W.models }}</h3>
+          <span class="count">{{ localModels ? W.localChoice : W.originModels }}</span>
         </header>
         <div class="flex flex-wrap items-center gap-2 p-3">
           <p class="hint min-w-0 flex-1">
-            {{ localModels ? 'O agente roda aqui com os provedores e modelos marcados abaixo. Os da origem não mudam.' : 'O agente usa os modelos que vieram da origem. Se eles não existem aqui, escolha os desta máquina.' }}
+            {{ localModels ? W.modelsOn : W.modelsOff }}
           </p>
-          <button v-if="localModels" type="button" class="btn btn-sm btn-secondary" data-test="layer-models-origin" @click="useLocalModels(false)">Voltar aos da origem</button>
-          <button v-else type="button" class="btn btn-sm btn-secondary" data-test="layer-models-local" @click="useLocalModels(true)">Escolher modelos desta máquina</button>
+          <button v-if="localModels" type="button" class="btn btn-sm btn-secondary" data-test="layer-models-origin" @click="useLocalModels(false)">{{ W.backModels }}</button>
+          <button v-else type="button" class="btn btn-sm btn-secondary" data-test="layer-models-local" @click="useLocalModels(true)">{{ W.pickModels }}</button>
         </div>
       </section>
       <fieldset :disabled="layerMode && !localModels" class="contents">
@@ -1246,7 +1340,7 @@
       <section class="tool-card">
         <header>
           <h3>Modos e raciocínio</h3>
-          <span v-if="layerMode" class="count">da origem</span>
+          <span v-if="layerMode" class="count">{{ W.Origin.toLowerCase() }}</span>
         </header>
         <div class="grid gap-4 p-3 sm:grid-cols-2">
       <div class="field">
@@ -1313,9 +1407,9 @@
         </button>
       </nav>
       <!-- Um bloco por assunto, no desenho das permissões: o título, quantas estão marcadas e o que o bloco quer dizer. -->
-      <p v-if="layerMode" class="hint" data-test="layer-hint">O que veio da origem aparece marcado como "origem": dá para desligar aqui, e a atualização não religa. O resto é desta máquina.</p>
+      <p v-if="layerMode" class="hint" data-test="layer-hint">{{ W.hint }}</p>
       <div v-if="originOffIn('tool').length" class="flex flex-wrap items-center gap-1.5" data-test="origin-off-tool">
-        <span class="text-xs text-amber-300">Da origem, desligado aqui:</span>
+        <span class="text-xs text-amber-300">{{ W.OriginOff }}</span>
         <button v-for="entry in originOffIn('tool')" :key="entry" type="button" class="chip font-mono text-xs" title="Clique para religar" @click="restoreOrigin(entry)">{{ entry }} ↺</button>
       </div>
       <div v-show="toolsTab === 'gateway'" class="flex flex-col gap-3" role="tabpanel">
@@ -1443,7 +1537,7 @@
         </small>
       </div>
       <div v-show="toolsTab === 'config'" class="flex flex-col gap-4" role="tabpanel">
-      <p v-if="layerMode" class="hint">Estes ajustes vêm da origem e não mudam aqui.</p>
+      <p v-if="layerMode" class="hint">{{ W.fixed }}</p>
       <fieldset :disabled="layerMode" class="contents">
       <div class="flex flex-col gap-2">
         <h3 class="text-sm font-medium text-zinc-200">Terminal</h3>
@@ -1509,9 +1603,9 @@
       </div>
     </fieldset>
     <fieldset v-show="tab === 'delegacao'" class="flex flex-col gap-3">
-      <p v-if="layerMode" class="hint">O que veio da origem aparece marcado como "origem": dá para desligar aqui, e a atualização não religa. O resto é desta máquina.</p>
+      <p v-if="layerMode" class="hint">{{ W.hint }}</p>
       <div v-if="originOffIn('agent').length" class="flex flex-wrap items-center gap-1.5" data-test="origin-off-agent">
-        <span class="text-xs text-amber-300">Da origem, desligado aqui:</span>
+        <span class="text-xs text-amber-300">{{ W.OriginOff }}</span>
         <button v-for="entry in originOffIn('agent')" :key="entry" type="button" class="chip font-mono text-xs" title="Clique para religar" @click="restoreOrigin(entry)">{{ entry }} ↺</button>
       </div>
       <section class="tool-card">
@@ -1571,9 +1665,9 @@
       <template v-if="!lite">
         <p class="hint">Marcar acima dá a ferramenta; a regra libera a chamada. Precisa dos dois: a regra pode estar aqui ou nas permissões do projeto.</p>
         <template v-if="originRules.some((rule) => rule.category === 'delegate')">
-          <h4 class="text-xs font-medium text-sky-300">Da origem</h4>
+          <h4 class="text-xs font-medium text-sky-300">{{ W.Origin }}</h4>
           <PermissionRules :model-value="originRules" readonly only="delegate" />
-          <h4 class="text-xs font-medium text-zinc-300">Desta máquina</h4>
+          <h4 class="text-xs font-medium text-zinc-300">{{ W.mine }}</h4>
         </template>
         <PermissionRules v-model="form.permissions!" only="delegate" />
       </template>
@@ -1585,10 +1679,10 @@
           <em class="font-normal text-zinc-500">— o agente usa só o que estiver marcado.</em>
         </span>
         <p v-if="layerMode" class="hint font-normal">
-          O que veio da origem aparece marcado como "origem": dá para desligar aqui, só neste agente, e a atualização não religa. Para desligar um MCP para todos os agentes desta máquina, ou cadastrar outro, use a tela MCPs.
+          {{ W.hint }} Para desligar um MCP para todos os agentes, ou cadastrar outro, use a tela MCPs.
         </p>
         <div v-if="originOffIn('mcp').length" class="flex flex-wrap items-center gap-1.5 font-normal" data-test="origin-off-mcp">
-        <span class="text-xs text-amber-300">Da origem, desligado aqui:</span>
+        <span class="text-xs text-amber-300">{{ W.OriginOff }}</span>
         <button v-for="entry in originOffIn('mcp')" :key="entry" type="button" class="chip font-mono text-xs" title="Clique para religar" @click="restoreOrigin(entry)">{{ entry }} ↺</button>
       </div>
         <div v-if="enabledMcp.length" class="flex flex-col gap-2">
@@ -1673,9 +1767,9 @@
         </PermissionCategoryTabs>
         <template v-if="permissionPane === 'rules'">
           <template v-if="originRules.some((rule) => rule.category === permissionSection)">
-            <h4 class="text-xs font-medium text-sky-300">Da origem · a negação daqui vale sempre</h4>
+            <h4 class="text-xs font-medium text-sky-300">{{ W.Origin }} · a negação de lá vale sempre</h4>
             <PermissionRules :model-value="originRules" readonly :only="permissionSection" />
-            <h4 class="text-xs font-medium text-zinc-300">Desta máquina</h4>
+            <h4 class="text-xs font-medium text-zinc-300">{{ W.mine }}</h4>
           </template>
           <PermissionRules v-model="form.permissions!" :only="permissionSection" />
           <PermissionTester
@@ -1689,7 +1783,7 @@
         <div v-else class="flex flex-col gap-3">
           <p class="text-xs text-zinc-500">Só no modo Agente: o quanto o CLI do provedor (por assinatura) alcança do servidor, no sandbox dele.</p>
           <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
-          <p v-if="layerMode && !localModels" class="hint">Vem da origem. Para mudar aqui, escolha os modelos desta máquina na guia Modelos.</p>
+          <p v-if="layerMode && !localModels" class="hint">{{ W.modelsHint }}</p>
           <fieldset :disabled="layerMode && !localModels" class="contents">
           <section v-for="section in accessSections" :key="section.entry.target.provider" class="tool-card">
             <header>
@@ -1799,7 +1893,8 @@
 
     <!-- O ledger (a memória durável do agente) tem o próprio cadastro, como os hooks: fora do Salvar do agente. -->
     <section v-if="tab === 'memoria'">
-      <AgentLedger v-if="agent && !creating" :agent-id="agent.id" />
+      <!-- O global com a camada do projeto: o ledger dele NESTE projeto (a base aparece marcada). -->
+      <AgentLedger v-if="agent && !creating" :agent-id="projectLayer ? `${agent.id}@${projects.current}` : agent.id" />
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
@@ -1867,7 +1962,14 @@
         </header>
         <div class="p-3">
           <p v-if="sharedFrom && agent && !creating" class="mb-2 text-sm text-sky-200" data-test="shared-secrets">Valores deste projeto (não vêm do projeto de origem)</p>
-          <SecretVariables v-if="agent && !creating && !globalLocked" :base-path="`/agents/${encodeURIComponent(agent.id)}`" :project="sharedFrom ? projects.current : undefined" scope-label="deste agente (sempre disponíveis para ele)" />
+          <p v-if="projectLayer && agent && !creating" class="mb-2 text-sm text-sky-200" data-test="project-layer-secrets">Valores de {{ currentProjectName }}: onde o projeto não definiu, vale o da base.</p>
+          <SecretVariables
+            v-if="agent && !creating && (!globalLocked || projectLayer)"
+            :base-path="`/agents/${encodeURIComponent(agent.id)}`"
+            :project="sharedFrom || projectLayer ? projects.current : undefined"
+            :missing-note="projectLayer ? 'Sem valor neste projeto: vale o da base.' : undefined"
+            scope-label="deste agente (sempre disponíveis para ele)"
+          />
           <p v-else-if="globalLocked" class="text-sm text-zinc-400">Só quem administra o gateway cadastra variável secreta de agente global.</p>
           <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para cadastrar variável secreta.</p>
         </div>
@@ -1880,8 +1982,8 @@
       <button v-if="!locked" type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar agente' }}
       </button>
-      <button v-else-if="layerTab" type="submit" :disabled="saving" class="btn btn-primary" data-test="layer-save">{{ saving ? 'Salvando…' : 'Salvar ajustes locais' }}</button>
-      <button v-if="layerTab && hasLayer" type="button" :disabled="saving" class="btn btn-secondary" data-test="layer-discard" @click="confirmingDiscard = true">Descartar ajustes locais</button>
+      <button v-else-if="layerTab" type="submit" :disabled="saving" class="btn btn-primary" data-test="layer-save">{{ saving ? 'Salvando…' : W.save }}</button>
+      <button v-if="layerTab && hasLayer" type="button" :disabled="saving" class="btn btn-secondary" data-test="layer-discard" @click="confirmingDiscard = true">{{ W.discard }}</button>
       <button v-if="!creating && agent && !connectedOrigin" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar agente</button>
       <button v-if="!creating && agent && !locked" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar agente</button>
     </div>
@@ -1896,8 +1998,8 @@
     />
     <ConfirmDialog
       :open="confirmingDiscard"
-      :title="`Descartar os ajustes locais de ${agent?.name ?? ''}?`"
-      message="O agente volta a rodar como veio da origem: saem os modelos, as ferramentas, as delegações e as regras desta máquina, e volta o que foi desligado aqui."
+      :title="`${W.discardTitle} de ${agent?.name ?? ''}?`"
+      :message="W.discardMessage"
       action="Descartar"
       :busy="saving"
       @confirm="discardLayer"
