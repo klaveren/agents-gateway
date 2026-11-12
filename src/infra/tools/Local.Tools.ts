@@ -29,7 +29,7 @@ import {
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { cliToolResultDirs } from '@infra/adapters/support/Cli.ToolResults'
 import { projectAliases } from '@infra/workspace/Work.Folder'
-import { commandDirOf, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/accounts/Ssh.Kit'
+import { commandDirOf, ISshKitIdentity, removeSshKit, writeSshKit, writeSshRoute } from '@infra/accounts/Ssh.Kit'
 import { CLUSTER_SECRET_REFUSAL, dumpsClusterSecret } from '@domain/Secret.Mask'
 import { BACKGROUND_LIMITS, backgroundMaxProcesses, BackgroundProcesses, backgroundProcesses, clipOutput, startCommand, tailOf } from './Background.Processes'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
@@ -349,9 +349,10 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     try {
       // ⛔ A chave SSH do comando numa pasta PRIVADA do servidor (a de dados, que nenhum comando lê; só este recebe leitura
       // dela), nunca no HOME do projeto que os agentes dividem. Escrita ANTES do cerco, que a libera só para este comando.
-      const kitBin = accounts?.ssh?.length
-        ? writeSshKit(privateDir, accounts.ssh, `${process.execPath} ${join(place.scratchBase ?? root, '.home', '.gateway-connect.cjs')} %h %p`).bin
-        : undefined
+      // Entre aspas: no app do Mac o Node mora em "Agents Gateway.app" (o ProxyCommand roda num shell).
+      const viaGate = `"${process.execPath}" "${join(place.scratchBase ?? root, '.home', '.gateway-connect.cjs')}" %h %p`
+      // No Mac, sem conta SSH, o ssh comum também sai pela porta do gateway (lá não há o interceptador de TCP do Linux).
+      const kitBin = accounts?.ssh?.length ? writeSshKit(privateDir, accounts.ssh, viaGate).bin : process.platform === 'darwin' ? writeSshRoute(privateDir, viaGate).bin : undefined
       const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts, tcp })
       wrapped = true
       // As variáveis do agente por baixo, a identidade de quem chama por cima (ver `Agent.Identity`); as contas do projeto vêm depois.

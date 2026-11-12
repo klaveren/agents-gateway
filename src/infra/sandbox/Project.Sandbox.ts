@@ -287,7 +287,8 @@ export class ProjectSandbox implements IProjectSandbox {
       NO_PROXY: noProxyFor(this.platform),
       no_proxy: noProxyFor(this.platform),
       // SSH e git por SSH: pelo CONNECT da porta, com o auxiliar (o `nc` do Mac não fala o proxy).
-      GIT_SSH_COMMAND: `ssh -o ControlMaster=no -o ControlPath=none -o ProxyCommand='${process.execPath} ${connector} %h %p'`,
+      // Entre aspas: no app do Mac o Node mora em "Agents Gateway.app".
+      GIT_SSH_COMMAND: `ssh -o ControlMaster=no -o ControlPath=none -o ProxyCommand='"${process.execPath}" "${connector}" %h %p'`,
     }
     const prelude = Object.entries(scoped)
       .map(([name, value]) => `export ${name}=${quote(value)}`)
