@@ -4,6 +4,10 @@
 #   - garante o LaunchAgent (sobe no login, volta se cair) apontando para este app, e o reinicia quando algo mudou;
 #   - espera o servidor responder e imprime o endereço que a janela abre (o setup já com o código, no primeiro uso).
 # Sai com 1 (e o motivo no stderr) se o servidor não subir.
+#
+# `service.sh restart`: o mesmo, reiniciando o servidor de qualquer jeito.
+# `service.sh stop`: só para o servidor (menu Servidor do app; é o que libera o app para ser trocado por uma versão nova).
+# `service.sh status`: só diz o estado, `running <porta>` ou `stopped <porta>`.
 set -u
 RES="${0:A:h}"
 CONTENTS="${RES:h}"
@@ -22,7 +26,31 @@ APP_VERSION=""
 SETUP_CODE=""
 [ -f "$CONFIG" ] && source "$CONFIG"
 
+# Tira o serviço do launchd e espera o processo sair de fato (o launchd dá 20 s a ele antes de matar).
+stop_service() {
+  launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null
+  for _ in {1..30}; do
+    launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || return 0
+    sleep 1
+  done
+  return 1
+}
+
+# ⚖️ Parar não desfaz a instalação: o LaunchAgent fica no lugar, e o servidor volta ao abrir o app, no "Iniciar" do menu ou
+# no próximo login.
+if [ "${1:-}" = stop ]; then
+  stop_service || { echo "o servidor não parou. Veja o log em $LOGDIR/server.log" >&2; exit 1 }
+  exit 0
+fi
+
+# No ar = carregado no launchd: é ele quem mantém o processo vivo.
+if [ "${1:-}" = status ]; then
+  if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then print -r -- "running $PORT"; else print -r -- "stopped $PORT"; fi
+  exit 0
+fi
+
 restart=0
+[ "${1:-}" = restart ] && restart=1
 if [ -n "${AG_DATA:-}" ] && [ "${AG_DATA%/}" != "$GATEWAY_DATA" ]; then
   GATEWAY_DATA="${AG_DATA%/}"
   restart=1
@@ -70,8 +98,7 @@ fi
 if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
   launchctl bootstrap "$DOMAIN" "$PLIST"
 elif [ "$restart" = 1 ]; then
-  launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null
-  sleep 1
+  stop_service
   launchctl bootstrap "$DOMAIN" "$PLIST"
 fi
 
