@@ -1,7 +1,7 @@
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { AGENT_SEED, ATLAS_AGENTS, atlasLitePrompt } from '@domain/Agent.Seed'
 import { gatewayEdition, withoutLiteTools, withoutLiteTriggers } from '@domain/Edition.Policy'
-import { AGENT_MIGRATIONS } from '@domain/Agent.Migrations'
+import { applyAgentMigrations } from '@domain/Agent.Migrations'
 import { builderAgent, importBuilderAgent, PROTOCOLS } from '@domain/Builder.Agents'
 import { IAgentSettings } from '@domain/models/Settings.Model'
 import { IAgent } from '@domain/models/Agent.Model'
@@ -42,9 +42,7 @@ export function makeAgents(): AgentCatalog {
   stored = repository
   // A semente (ver `AGENT_SEED`): o Atlas Admin, em toda edição.
   repository.seedOnce(AGENT_SEED, 'seed')
-  for (const migration of AGENT_MIGRATIONS)
-    for (const id of migration.agentIds === '*' ? repository.list().map((agent) => agent.id) : migration.agentIds)
-      repository.migrateOnce(migration.key, id, migration.change, 'seed')
+  applyAgentMigrations(repository)
   // ⚖️ Na lite, a semente (o Atlas) perde uma vez as ferramentas do MCP do gateway que a lite não registra: na tela e na
   // conversa, ele só tem o que existe. Vale para a instalação nova e para a que passou a ser lite.
   if (gatewayEdition() === 'lite')

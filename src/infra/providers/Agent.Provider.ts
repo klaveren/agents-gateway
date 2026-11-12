@@ -8,10 +8,10 @@ export interface IPanelAccess {
   get(sessionId: string): Promise<IConversationPanel>
   markDelivered?(sessionId: string, ids: readonly string[]): Promise<void>
 }
-import { DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
+import { DELEGATE_TOOL_NAME, DELEGATED_BY } from '@domain/models/Delegation.Model'
 import { offers, targetFor } from '@domain/Agent.Policy'
 import { conversationNote, IAmbient, IAmbientSecrets } from '@domain/Ambient.Policy'
-import { agentFolderAccess, hasTerminal, resolveCapabilities } from '@domain/Capability.Catalog'
+import { agentFolderAccess, hasTerminal, hasWatch, resolveCapabilities } from '@domain/Capability.Catalog'
 import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
 import { benchKeyOf, DEFAULT_COOLDOWN_MINUTES, fallbackChain, groupOf, IFallbackStep, IModelGroup, nextStep, stepKey, switchesOn, withGroupTargets } from '@domain/Fallback.Policy'
 import { HANDOFF_MAX_CHARS, handoffText, ITranscriptTurn } from '@domain/Handoff.Policy'
@@ -668,6 +668,8 @@ export class AgentProvider implements IAgentProvider {
       ...(folder ? { directory: folder.dir } : home ? { directory: projectWorkspacePath(home) } : {}),
       ...this.agentFolderOf(agent, projectOf(metadata)),
       ...(hasTerminal(agent.allowedTools) ? { terminal: true } : {}),
+      // ⛔ Na conversa de delegação a vigia recusa (quem arma é a conversa principal): a regra não a oferece.
+      ...(hasWatch(agent.allowedTools) && !metadata?.[DELEGATED_BY] ? { watch: true } : {}),
       ...(this.secrets?.ambientFor(agent, projectOf(metadata)) ? { secrets: this.secrets.ambientFor(agent, projectOf(metadata))! } : {}),
       ...(this.panels ? { panel: true } : {}),
     }
@@ -979,7 +981,7 @@ function liveUsage(stored: IStoredUsage | undefined): IUsage {
  * de novo a cada turno, pela mesma regra da criação. A worktree que sumiu falha o turno com o motivo, nunca cai na
  * pasta do projeto inteiro.
  */
-function workFolderOf(metadata: Record<string, unknown> | undefined, projectId: string | undefined): IContextWorkFolder | undefined {
+export function workFolderOf(metadata: Record<string, unknown> | undefined, projectId: string | undefined): IContextWorkFolder | undefined {
   const repository = metadata?.[REPOSITORY_METADATA_KEY]
   if (typeof repository !== 'string' || !projectId) return undefined
   const worktree = metadata?.[WORKTREE_METADATA_KEY]

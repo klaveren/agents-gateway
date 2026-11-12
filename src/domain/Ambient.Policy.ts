@@ -22,6 +22,8 @@ export interface IAmbient {
   panel?: boolean
   /** O agente tem o terminal: a linha da pasta temporária (o `/tmp` dele some a cada comando). */
   terminal?: boolean
+  /** O agente arma vigia nesta conversa (ver `Watch.Model`): a regra de espera cita as ferramentas. Ausente: só a proibição. */
+  watch?: boolean
 }
 
 /** Os NOMES das variáveis secretas: as do agente e as de cada skill ou command que ele pode carregar. */
@@ -45,6 +47,7 @@ export function ambientSection(ambient: IAmbient): string {
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
   if (ambient.files) lines.push(agentFolderLine(ambient.files))
   if (ambient.terminal) lines.push(TEMP_LINE)
+  lines.push(waitLine(ambient))
   if (ambient.panel)
     lines.push(
       '- Arquivo para a pessoa (CSV, relatório, imagem, PDF): entregue com `deliver_file` — ela baixa pelo botão na conversa. Ela não abre a sua pasta; não mande o caminho.',
@@ -60,6 +63,19 @@ export function ambientSection(ambient: IAmbient): string {
     )
   if (ambient.secrets) lines.push('', secretsSection(ambient.secrets))
   return lines.join('\n')
+}
+
+/**
+ * ⛔ A PROMESSA VAZIA: o agente só fala quando recebe mensagem, e "quando terminar eu te aviso" sem nada conferindo deixava
+ * a pessoa esperando um aviso que não vinha. Todo agente recebe a proibição; quem arma vigia recebe o caminho.
+ */
+export function waitLine(ambient: Pick<IAmbient, 'watch' | 'terminal'>): string {
+  const head = '- Você não volta sozinho a esta conversa: só fala quando recebe mensagem.'
+  if (!ambient.watch) return `${head} Não prometa avisar depois ("te aviso quando…"): nada o traz de volta. Diga o que ficou pendente e que é preciso perguntar de novo.`
+  const tools = ambient.terminal
+    ? '`watch_start` (um comando confere de tempos em tempos; a conversa retoma quando ele sair com 0) ou `wake_me` (acorda num horário, para o que só uma ferramenta enxerga)'
+    : '`wake_me` (acorda esta conversa num horário; você confere e continua)'
+  return `${head} Para esperar algo: se é curto (até uns minutos), espere DENTRO do turno e confira antes de responder; se é longo, arme uma vigia — ${tools}. Só prometa "te aviso quando…" com a vigia armada; sem ela, diga que é preciso perguntar de novo.`
 }
 
 /**

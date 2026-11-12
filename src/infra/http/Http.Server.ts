@@ -620,6 +620,8 @@ function buildRoutes(
     { method: 'post', path: '/sessions/:id/turns', handler: controller.startTurn },
     { method: 'get', path: '/sessions/:id/turns/:turn', handler: controller.turnStatus },
     { method: 'get', path: '/sessions/:id/changes', handler: controller.changes },
+    { method: 'get', path: '/sessions/:id/watches', handler: controller.listWatches },
+    { method: 'delete', path: '/sessions/:id/watches/:watchId', handler: controller.stopWatch },
     { method: 'get', path: '/sessions/:id/live', handler: controller.sessionLive },
     { method: 'post', path: '/sessions/:id/cancel', handler: controller.cancelSession },
   ]

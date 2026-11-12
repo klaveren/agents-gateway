@@ -25,6 +25,8 @@ import { LedgerController } from '@infra/http/Ledger.Controller'
 import { makeLedger } from './Ledger.Factory'
 import { SchedulesController } from '@infra/http/Schedules.Controller'
 import { makeScheduleRunner, makeSchedules } from './Schedules.Factory'
+import { makeWatches, useWatchNotice } from './Watches.Factory'
+import { identityFromToken, withCaller } from '@infra/mcp/Caller.Identity'
 import { dockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { GuidanceController } from '@infra/http/Guidance.Controller'
 import { makeGuidance } from './Guidance.Factory'
@@ -160,7 +162,11 @@ export function makeController(): AgentController {
     repositoryAllowed: (agentId, projectId, repository) => makePermissions().test({ agentId, projectId }, { category: 'repository', value: repository }).allowed,
     maskText: (text) => makeSecretMasker().text(text),
     callbackSecret: (url, projectId) => callbackSecret(url, projectId ? (host) => makeProjectAccounts().callbackSecret(projectId, host) : undefined),
-    sessionEnded: (sessionId) => backgroundProcesses().stopSession(sessionId),
+    sessionEnded: (sessionId) => {
+      backgroundProcesses().stopSession(sessionId)
+      makeWatches().cancelSession(sessionId)
+    },
+    watches: makeWatches(),
   })
   // ⛔ O turno de fundo do Importador amarrado ao contexto de quem pediu (a identidade da requisição): a fila roda depois,
   // e o turno passa pelas mesmas regras do `POST …/turns`.
@@ -191,6 +197,9 @@ export function makeController(): AgentController {
     delivery: () => AsyncResource.bind((conversationId: string, text: string) => controller.serverNotice(conversationId, text)),
   })
   makePermissionRequests().useDecisionListener((request, decider) => notices.decided(request, decider))
+  // ⛔ O aviso de uma vigia entra na conversa em nome da conta DONA (a sessão sem senha dela), fora de qualquer requisição:
+  // as mesmas regras do `POST …/turns` — só a conversa dela, nunca a de delegação, e nada abre com o gateway drenando.
+  useWatchNotice((token, sessionId, text) => withCaller({ token, ...identityFromToken(token) }, () => controller.serverNotice(sessionId, text)))
   return controller
 }
 

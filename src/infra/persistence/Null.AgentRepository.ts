@@ -40,6 +40,15 @@ export class NullAgentRepository implements IAgentRepository {
     if (next) this.save(next, by)
   }
 
+  migrateAllOnce(key: string, change: (agent: IAgent) => IAgent | undefined, by: string): void {
+    if (this.migrated.has(key)) return
+    this.migrated.add(key)
+    for (const current of [...this.agents.values()]) {
+      const next = change(current)
+      if (next) this.save(next, by)
+    }
+  }
+
   delete(id: string): boolean {
     return this.agents.delete(id)
   }

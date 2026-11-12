@@ -38,6 +38,7 @@ import { bootIssues, bootWarnings } from '@infra/http/Boot.Checks'
 import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
 import { makeTools } from '@composition/factories/Tools.Factory'
 import { makeScheduleRunner } from '@composition/factories/Schedules.Factory'
+import { makeWatchRunner } from '@composition/factories/Watches.Factory'
 import { warnIfProofDisabled } from '@infra/http/Caller.Proof'
 import { HttpServer } from '@infra/http/Http.Server'
 
@@ -134,6 +135,7 @@ async function bootstrap() {
   listening = true
   // O relógio dos agendamentos: depois de o servidor subir — ele executa pela API deste processo.
   makeScheduleRunner().start()
+  makeWatchRunner().start()
   // 🔌 O vigia dos projetos conectados: o aviso de atualização (a conexão sai daqui; a origem não nos alcança).
   makeProjectConnections().start()
 }

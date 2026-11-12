@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
+import { waitLine } from '@domain/Ambient.Policy'
 import { composeSystemPrompt } from './Prompt.Helper'
 
 describe('composeSystemPrompt — soul', () => {
@@ -37,11 +38,11 @@ describe('composeSystemPrompt — soul', () => {
     })
     assert.match(
       prompt,
-      /^Responda sobre o CRM\.\n\n## Ambiente\n- Agente: a\.\n- Projeto: Alfa \(projectId "alfa"\)\.\n- Diretório de trabalho: \/dados\/projects\/alfa — [^\n]+\n\n## Regras do ambiente\n1\. \*\*A\*\* — b$/,
+      /^Responda sobre o CRM\.\n\n## Ambiente\n- Agente: a\.\n- Projeto: Alfa \(projectId "alfa"\)\.\n- Diretório de trabalho: \/dados\/projects\/alfa — [^\n]+\n- Você não volta sozinho a esta conversa[^\n]+\n\n## Regras do ambiente\n1\. \*\*A\*\* — b$/,
     )
     assert.strictEqual(
       composeSystemPrompt(agent, { ambient: { agentId: 'a' } }),
-      'Responda sobre o CRM.\n\n## Ambiente\n- Agente: a.\n- Diretório de trabalho: uma pasta vazia, só desta conversa.',
+      `Responda sobre o CRM.\n\n## Ambiente\n- Agente: a.\n- Diretório de trabalho: uma pasta vazia, só desta conversa.\n${waitLine({})}`,
     )
   })
 })

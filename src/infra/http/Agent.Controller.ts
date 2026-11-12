@@ -6,7 +6,7 @@ import { ERROR_KINDS, REFUSAL_STATUSES, type TRefusalOrigin } from '@domain/mode
 import { maskText } from '@domain/Secret.Mask'
 import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
 import { IModelGroup, modelGroupIssues, NO_MODEL_GROUP } from '@domain/Fallback.Policy'
-import { agentFolderAccess, CAPABILITIES, hasTerminal, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
+import { agentFolderAccess, CAPABILITIES, hasTerminal, hasWatch, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
 import { agentUnavailable, IAvailabilityFacts, TAgentUnavailable, targetUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
 import { clientMetadata } from '@domain/Session.Metadata'
 import { metaPlaceholderKeys } from '@infra/sandbox/Egress.Proxy'
@@ -29,6 +29,7 @@ import { NATIVE_TOOLS } from '@domain/Native.Tools'
 import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { isSubscription } from '@domain/Subscription.Policy'
 import { delegationMaxDepth } from '@domain/models/Delegation.Model'
+import type { IWatch } from '@domain/models/Watch.Model'
 import { mcpServerKey, mcpServesProject } from '@domain/models/McpServer.Model'
 import { compactAtPercent } from '@domain/Compaction.Policy'
 import { loopLimits } from '@domain/Loop.Policy'
@@ -177,8 +178,10 @@ export interface IAgentControllerDeps {
   agents: AgentCatalog
   /** O agente pode ser ativado neste repositório do projeto (permissão `repository`)? Ausente = sim. */
   repositoryAllowed?: (agentId: string, projectId: string, repository: string) => boolean
-  /** A conversa foi apagada: o que roda por ela (os processos em segundo plano) para. */
+  /** A conversa foi apagada: o que roda por ela (os processos em segundo plano, as vigias) para. */
   sessionEnded?: (sessionId: string) => void
+  /** As vigias das conversas (ver `Watch.Model`), para a tela. Ausente = a rota responde vazio. */
+  watches?: { list(sessionId: string, limit?: number): IWatch[]; stop(sessionId: string, id: string, reason?: string): IWatch | undefined }
   /**
    * O segredo do aviso de fim de turno para este endereço: o do projeto da conversa (a conta `turn-callback`), senão o da
    * instalação (`TURN_CALLBACK_HOSTS`). Ausente, ou sem segredo = o endereço não serve.
@@ -304,6 +307,8 @@ export class AgentController {
     this.conversationStats = this.conversationStats.bind(this)
     this.getConversationTurns = this.getConversationTurns.bind(this)
     this.getConversationTodos = this.getConversationTodos.bind(this)
+    this.listWatches = this.listWatches.bind(this)
+    this.stopWatch = this.stopWatch.bind(this)
     this.shareConversation = this.shareConversation.bind(this)
     this.deleteConversation = this.deleteConversation.bind(this)
     this.archiveConversation = this.archiveConversation.bind(this)
@@ -814,6 +819,7 @@ export class AgentController {
         ...(agent.projectId ? { directory: projectWorkspacePath(agent.projectId) } : {}),
         ...(files ? { files } : {}),
         ...(hasTerminal(agent.allowedTools) ? { terminal: true } : {}),
+        ...(hasWatch(agent.allowedTools) ? { watch: true } : {}),
       }
       // As variáveis secretas (só os nomes), como o `AgentProvider` põe na conversa.
       const secrets = this.usecases.secrets?.ambientFor(agent.id, [
@@ -1721,6 +1727,46 @@ export class AgentController {
       const todos = (await this.usecases.conversations.todos?.(id)) ?? { items: [] }
       return { sessionId: id, items: todos.items, ...(todos.updatedAt ? { updatedAt: todos.updatedAt } : {}) }
     })
+  }
+
+  /**
+   * As vigias ATIVAS da conversa (ver `Watch.Model`): o que o agente deixou o gateway conferindo. ⛔ Só a conversa de quem
+   * pede (de outra pessoa é 404, como o resto da sessão): a vigia mostra o comando que o agente roda.
+   */
+  async listWatches(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      await this.requireOwnedConversation(id)
+      const active = (this.usecases.watches?.list(id, 50) ?? []).filter((watch) => watch.status === 'active')
+      return { sessionId: id, watches: active.map((watch) => this.toWatchDto(watch)) }
+    })
+  }
+
+  /** A pessoa cancela uma vigia da conversa dela, pela tela. A vigia encerrada (ou de outra conversa) é 404. */
+  async stopWatch(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const watchId = req.params.watchId as string
+      await this.requireOwnedConversation(id)
+      const stopped = this.usecases.watches?.stop(id, watchId, 'cancelada pela pessoa, na tela')
+      if (!stopped) throw new HttpError(404, 'not_found', `Watch not found: ${watchId}`)
+      return this.toWatchDto(stopped)
+    })
+  }
+
+  private toWatchDto(watch: IWatch) {
+    return {
+      id: watch.id,
+      kind: watch.kind,
+      label: watch.label,
+      ...(watch.command ? { command: this.usecases.maskText?.(watch.command) ?? watch.command } : {}),
+      ...(watch.everySeconds ? { everySeconds: watch.everySeconds } : {}),
+      status: watch.status,
+      createdAt: watch.createdAt,
+      deadlineAt: watch.deadlineAt,
+      checks: watch.checks,
+      ...(watch.endReason ? { endReason: watch.endReason } : {}),
+    }
   }
 
   /**

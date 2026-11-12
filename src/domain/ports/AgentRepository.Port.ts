@@ -30,6 +30,12 @@ export interface IAgentRepository {
    * mexer. Agente que não existe (apagado) fica como está.
    */
   migrateOnce(key: string, agentId: string, change: (agent: IAgent) => IAgent | undefined, by: string): void
+  /**
+   * Aplica UMA VEZ por banco (`migration:<key>`) uma mudança em TODOS os agentes que existem agora. Ao contrário da
+   * `migrateOnce` agente a agente, o que for criado depois não é tocado: serve para ligar algo em todos sem religar,
+   * no boot seguinte, o que alguém criou desligado.
+   */
+  migrateAllOnce(key: string, change: (agent: IAgent) => IAgent | undefined, by: string): void
 }
 
 /**

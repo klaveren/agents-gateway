@@ -265,8 +265,12 @@ export const ATLAS_TRIGGERS: readonly IAgentTrigger[] = [
   { id: 'install-missing-tool', when: 'Faltar um programa ou pacote neste servidor para uma tarefa.', body: ATLAS_INSTALL_STEPS },
 ]
 
-/** O Atlas Admin tem `start_conversation` e `send_message` (vêm com "todas as ferramentas"): só usa a pedido. */
-export const ATLAS_TALK_LINE =
+/**
+ * A linha que mandava o Atlas Admin só conversar com outro agente a pedido. ⚠️ SAIU da semente: agente nenhum recebe
+ * `start_conversation` nem `send_message` (ver `PEOPLE_ONLY_GATEWAY_TOOLS`). Fica aqui para a migração `atlas-talk-line`
+ * reconhecer e tirar de quem a ganhou.
+ */
+export const LEGACY_ATLAS_TALK_LINE =
   'Conversar com outro agente (start_conversation, send_message) só quando a pessoa pedir: o seu jeito de pôr outro agente para trabalhar é a delegação.'
 /** O repositório do projeto quase nunca nasceu para o gateway: o Atlas confere a fila do importador e oferece migrar. */
 export const ATLAS_IMPORT_LINE =
@@ -283,7 +287,6 @@ const ATLAS_ADMIN_BUILDERS_SECTION = ATLAS_BUILDERS_SECTION.replace(LEGACY_ATLAS
 
 /** O prompt do Atlas Admin: o que vale em toda conversa — os projetos, o que é cada item do catálogo e a regra dos construtores. */
 export const ATLAS_ADMIN_PROMPT = `${ATLAS_INTRO}
-${ATLAS_TALK_LINE}
 
 ${ATLAS_PROJECTS_SECTION}
 - ${ATLAS_IMPORT_LINE}
@@ -310,7 +313,7 @@ const ATLAS_ADMIN: IAgent = {
   name: 'Atlas Admin',
   systemPrompt: ATLAS_ADMIN_PROMPT,
   triggers: [...ATLAS_TRIGGERS],
-  allowedTools: ['cap:web.search', 'cap:todos', ...HOST_TOOLS, ATLAS_ALL_GATEWAY_TOOLS, ...BUILDER_DELEGATIONS],
+  allowedTools: ['cap:web.search', 'cap:todos', 'cap:watch', ...HOST_TOOLS, ATLAS_ALL_GATEWAY_TOOLS, ...BUILDER_DELEGATIONS],
   permissions: ATLAS_ADMIN_PERMISSIONS,
   adminOnly: true,
 }
@@ -350,7 +353,7 @@ ${ATLAS_AGENTS_LOOKUP}`
 /** O do Atlas dos usuários (e o do Atlas Admin de antes): os preços numa seção. */
 const ATLAS_LITE_PROMPT = `${ATLAS_LITE_BASE}\n\n${ATLAS_PRICES_SECTION}`
 /** O do Atlas Admin: os preços estão no trigger `update-model-prices`, o único que a lite mantém (ver `LITE_HIDDEN_TRIGGERS`). */
-export const ATLAS_ADMIN_LITE_PROMPT = `${ATLAS_LITE_BASE}\n${ATLAS_TALK_LINE}\n\n${LEGACY_ATLAS_HOST_SECTION}`
+export const ATLAS_ADMIN_LITE_PROMPT = `${ATLAS_LITE_BASE}\n\n${LEGACY_ATLAS_HOST_SECTION}`
 /** O prompt da lite do Atlas Admin de antes: a migração `atlas-triggers` o troca pelo de hoje. */
 export const LEGACY_ATLAS_ADMIN_LITE_PROMPT = `${ATLAS_LITE_PROMPT}\n\n${LEGACY_ATLAS_HOST_SECTION}`
 

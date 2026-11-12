@@ -1,8 +1,9 @@
 import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
+import { WATCH_TOOLS } from './models/Watch.Model'
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import { agentIssues } from './Agent.Policy'
-import { AGENT_MIGRATIONS, atlasTriggersPrompt } from './Agent.Migrations'
+import { AGENT_MIGRATIONS, applyAgentMigrations, atlasTriggersPrompt, withoutAtlasTalkLine } from './Agent.Migrations'
 import {
   AGENT_SEED,
   ATLAS_ADMIN_LITE_PROMPT,
@@ -12,11 +13,11 @@ import {
   ATLAS_HOOKS_SECTION,
   ATLAS_IMPORT_LINE,
   ATLAS_PRICES_SECTION,
-  ATLAS_TALK_LINE,
   ATLAS_TRIGGERS,
   BUILDER_DELEGATIONS,
   LEGACY_ATLAS_ADMIN_LITE_PROMPT,
   LEGACY_ATLAS_ADMIN_PROMPT,
+  LEGACY_ATLAS_TALK_LINE,
 } from './Agent.Seed'
 import { triggerIssues } from './Agent.Policy'
 import { IAgent } from './models/Agent.Model'
@@ -29,9 +30,7 @@ import { EProvider } from './enums/EProvider.Enum'
 /** O que o boot faz (ver `makeAgents`): a semente e, depois, cada migração nos agentes dela. */
 function boot(repository: IAgentRepository): void {
   repository.seedOnce(AGENT_SEED, 'seed')
-  for (const migration of AGENT_MIGRATIONS)
-    for (const id of migration.agentIds === '*' ? repository.list().map((agent) => agent.id) : migration.agentIds)
-      repository.migrateOnce(migration.key, id, migration.change, 'seed')
+  applyAgentMigrations(repository)
 }
 
 const TRIGGER_IDS = ['migrate-environment', 'update-model-prices', 'create-hook', 'create-schedule', 'install-missing-tool']
@@ -130,9 +129,11 @@ describe('AGENT_SEED', () => {
       assert.match(agent.systemPrompt, /## Construtores[\s\S]*Nunca confirme por conta própria/)
     }
     assert.ok(atlas.allowedTools.every((tool) => !/send_message|start_conversation|save_rule|save_doc|save_resource|save_agent/.test(tool)))
-    // O Admin tem todas (o curinga): a regra é do prompt — gravar é do construtor, conversar só a pedido.
+    // O Admin tem todas (o curinga): a regra é do prompt — gravar é do construtor.
     assert.match(admin.systemPrompt, /Você tem as ferramentas de gravar \(save_\*, patch_agent\), mas NÃO cria nem reescreve/)
-    assert.ok(admin.systemPrompt.includes(ATLAS_TALK_LINE))
+    // Conversar com outro agente não é ferramenta de agente: o prompt não a cita.
+    assert.ok(!/start_conversation|send_message/.test(admin.systemPrompt))
+    assert.ok(admin.allowedTools.includes('cap:watch'))
     assert.ok(!admin.systemPrompt.includes('Você não tem mais o save_agent'))
   })
 
@@ -140,7 +141,7 @@ describe('AGENT_SEED', () => {
     for (const agent of [...AGENT_SEED, ...ATLAS_AGENTS]) {
       const issues = agentIssues(agent, {
         takenIds: [],
-        knownTools: [UPDATE_TODOS_TOOL, 'search_web', 'fetch_url', 'run_bash', 'read_file', 'write_file'],
+        knownTools: [UPDATE_TODOS_TOOL, ...WATCH_TOOLS, 'search_web', 'fetch_url', 'run_bash', 'read_file', 'write_file'],
         providerOf: (model) => (model.startsWith('claude') ? EProvider.CLAUDE : undefined),
         mcpServerExists: (server) => server === 'gateway',
         agentExists: (id) => id.startsWith('builder-'),
@@ -289,7 +290,7 @@ describe('atlas-triggers', () => {
     assert.strictEqual(repository.list().find((agent) => agent.id === 'atlas-admin')?.triggers?.length, 4)
   })
 
-  it('o prompt que quem administra editou: a seção mexida fica, as iguais às da semente saem, as duas linhas novas entram', () => {
+  it('o prompt que quem administra editou: a seção mexida fica, as iguais às da semente saem, a linha do importador entra', () => {
     const edited = ATLAS_HOOKS_SECTION.replace('## Hooks', '## Hooks (do meu jeito)')
     const changed = migration.change(legacyAdmin(`${LEGACY_ATLAS_ADMIN_PROMPT.replace(ATLAS_HOOKS_SECTION, edited)}\n\n## Minha seção\nfica`))!
 
@@ -298,7 +299,8 @@ describe('atlas-triggers', () => {
     assert.ok(!changed.systemPrompt.includes(ATLAS_PRICES_SECTION))
     for (const section of ['## Agendamentos', '## Migrar um ambiente', '## Instalar o que falta']) assert.ok(!changed.systemPrompt.includes(section), section)
     assert.ok(!/\n{3,}/.test(changed.systemPrompt))
-    assert.ok(changed.systemPrompt.endsWith(`${ATLAS_TALK_LINE}\n${ATLAS_IMPORT_LINE}`))
+    assert.ok(changed.systemPrompt.endsWith(`\n\n${ATLAS_IMPORT_LINE}`))
+    assert.ok(!changed.systemPrompt.includes(LEGACY_ATLAS_TALK_LINE))
     assert.match(changed.systemPrompt, /pelo trigger install-missing-tool/)
     assert.match(changed.systemPrompt, /Você tem as ferramentas de gravar/)
     // Os triggers entram do mesmo jeito; o que o agente já tinha com o mesmo id não é sobrescrito.
@@ -314,9 +316,9 @@ describe('atlas-triggers', () => {
     assert.deepStrictEqual(changed.allowedTools, legacyAdmin().allowedTools)
   })
 
-  it('um prompt todo de quem administra só ganha as duas linhas; na lite, só a de conversar', () => {
-    assert.strictEqual(atlasTriggersPrompt('meu prompt', 'pro'), `meu prompt\n\n${ATLAS_TALK_LINE}\n${ATLAS_IMPORT_LINE}`)
-    assert.strictEqual(atlasTriggersPrompt('meu prompt', 'lite'), `meu prompt\n\n${ATLAS_TALK_LINE}`)
+  it('um prompt todo de quem administra só ganha a linha do importador; na lite, nada', () => {
+    assert.strictEqual(atlasTriggersPrompt('meu prompt', 'pro'), `meu prompt\n\n${ATLAS_IMPORT_LINE}`)
+    assert.strictEqual(atlasTriggersPrompt('meu prompt', 'lite'), 'meu prompt')
     assert.strictEqual(atlasTriggersPrompt(ATLAS_ADMIN_PROMPT, 'pro'), ATLAS_ADMIN_PROMPT)
     // A lite de antes (o prompt lite da semente antiga) vira a lite de agora: os preços são trigger.
     assert.strictEqual(atlasTriggersPrompt(LEGACY_ATLAS_ADMIN_LITE_PROMPT, 'lite'), ATLAS_ADMIN_LITE_PROMPT)
@@ -329,4 +331,66 @@ describe('atlas-triggers', () => {
       assert.strictEqual(old.change(ATLAS_AGENTS[1]), undefined, key)
     }
   })
+})
+
+describe('atlas-talk-line', () => {
+  const migration = AGENT_MIGRATIONS.find((item) => item.key === 'atlas-talk-line')!
+  const admin = ATLAS_AGENTS[1]
+
+  it('só o Atlas Admin; a linha sai de onde a semente de antes e a migração dos triggers a puseram', () => {
+    assert.deepStrictEqual(migration.agentIds, ['atlas-admin'])
+    // A semente de antes: logo depois da abertura (pro e lite).
+    const [intro, ...rest] = ATLAS_ADMIN_PROMPT.split('\n\n')
+    const seeded = [`${intro}\n${LEGACY_ATLAS_TALK_LINE}`, ...rest].join('\n\n')
+    assert.strictEqual(migration.change({ ...admin, systemPrompt: seeded })?.systemPrompt, ATLAS_ADMIN_PROMPT)
+    const [liteIntro, ...liteRest] = ATLAS_ADMIN_LITE_PROMPT.split('\n\n')
+    // Na lite a linha vinha depois da última seção da base, antes da do sistema operacional.
+    const lite = ATLAS_ADMIN_LITE_PROMPT.replace('\n\n## Sistema operacional', `\n${LEGACY_ATLAS_TALK_LINE}\n\n## Sistema operacional`)
+    assert.notStrictEqual(lite, ATLAS_ADMIN_LITE_PROMPT)
+    assert.strictEqual(migration.change({ ...admin, systemPrompt: lite })?.systemPrompt, ATLAS_ADMIN_LITE_PROMPT)
+    assert.ok(liteIntro && liteRest.length)
+    // A migração dos triggers: no fim do prompt de quem administra, sozinha (lite) ou antes da do importador.
+    assert.strictEqual(withoutAtlasTalkLine(`meu prompt\n\n${LEGACY_ATLAS_TALK_LINE}\n${ATLAS_IMPORT_LINE}`), `meu prompt\n\n${ATLAS_IMPORT_LINE}`)
+    assert.strictEqual(withoutAtlasTalkLine(`meu prompt\n\n${LEGACY_ATLAS_TALK_LINE}`), 'meu prompt')
+  })
+
+  it('quem reescreveu a linha, ou já não a tem, fica como está', () => {
+    assert.strictEqual(migration.change(admin), undefined)
+    const mine = `${ATLAS_ADMIN_PROMPT}\nConversar com outro agente (start_conversation) quando eu mandar.`
+    assert.strictEqual(migration.change({ ...admin, systemPrompt: mine }), undefined)
+  })
+})
+
+describe('watch-capability', () => {
+  const migration = AGENT_MIGRATIONS.find((item) => item.key === 'watch-capability')!
+  const base = { ...ATLAS_AGENTS[0], allowedTools: ['cap:terminal'] }
+
+  it('todo agente que conversa com gente ganha as vigias; o subagente e quem já as tem, não', () => {
+    assert.deepStrictEqual(migration.change({ ...base, id: 'maya' })?.allowedTools, ['cap:terminal', 'cap:watch'])
+    assert.strictEqual(migration.change({ ...base, id: 'sub', role: 'subagent' }), undefined)
+    assert.strictEqual(migration.change({ ...base, id: 'tem', allowedTools: ['cap:watch'] }), undefined)
+    assert.strictEqual(migration.change({ ...base, id: 'avulsa', allowedTools: ['wake_me'] }), undefined)
+  })
+
+  for (const [name, make] of [
+    ['em memória', () => new NullAgentRepository()],
+    ['no SQLite', () => new SqliteAgentRepository(':memory:')],
+  ] as const)
+    it(`uma vez por banco (${name}): quem desligou depois e quem nasceu depois ficam como estão`, () => {
+      const repository = make()
+      repository.save({ ...base, id: 'maya' }, 'admin')
+      repository.save({ ...base, id: 'sub', role: 'subagent' }, 'admin')
+      boot(repository)
+      const tools = (id: string) => repository.list().find((agent) => agent.id === id)?.allowedTools
+      assert.deepStrictEqual(tools('maya'), ['cap:terminal', 'cap:watch'])
+      assert.deepStrictEqual(tools('sub'), ['cap:terminal'])
+      assert.ok(tools('atlas-admin')?.includes('cap:watch'))
+
+      // Quem administra desligou na Maya e criou a Argos sem vigia: o boot seguinte não religa nenhuma das duas.
+      repository.save({ ...base, id: 'maya' }, 'admin')
+      repository.save({ ...base, id: 'argos' }, 'admin')
+      boot(repository)
+      assert.deepStrictEqual(tools('maya'), ['cap:terminal'])
+      assert.deepStrictEqual(tools('argos'), ['cap:terminal'])
+    })
 })

@@ -48,6 +48,8 @@ import { fetchUrlTool } from './Web.Fetch'
 import { discoveredGitSync } from '@infra/workspace/Git.Safe'
 import { gitGuard, IGitGuardOptions } from './Git.Guard'
 import { IImportDesk, IRepositoryBrowser, makeImportTools } from './Import.Tools'
+import { makeWatchTools, type WatchDesk } from './Watch.Tools'
+import { WATCH_LIMITS } from '@domain/models/Watch.Model'
 
 export interface IExecOptions {
   cwd: string
@@ -133,6 +135,8 @@ export interface ILocalToolDeps {
   }
   /** Os arquivos entregues à pessoa (ver `ConversationFile.Model`). Ausente = sem `deliver_file`. */
   deliveries?: IFileDeliveries
+  /** O balcão das vigias (ver `Watch.Tools`). Ausente = sem `watch_start`, `wake_me`, `watch_list` nem `watch_stop`. */
+  watches?: WatchDesk
   /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
   permissions?: IPermissionChecker
   /** As variáveis de ambiente fixas de cada agente (o campo `env` dele). Ausente = nenhuma. */
@@ -474,6 +478,56 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         }
       : {}),
   }
+  /** O `run_bash` inteiro (recusas, cerco, segredos), sem o detector de laço nem a máscara: quem chama aplica a sua. */
+  async function bashCore(command: string, context: IExecutionContext | undefined, askedSeconds?: number): Promise<IToolResult> {
+    const denied = await guardRefusal(command, context)
+    if (denied) {
+      return { status: 'error', result: policyRefusal(denied, command) }
+    }
+    if (dumpsClusterSecret(command)) return { status: 'error', result: CLUSTER_SECRET_REFUSAL }
+    const printing = secretPrintRefusal(command, context, deps.secrets)
+    if (printing) return { status: 'error', result: printing }
+    if (deps.permissions) return guardedBash(command, context, deps.permissions, askedSeconds)
+
+    // ⛔ Agente de projeto: o comando roda PRESO à pasta do projeto, ou não roda (sem cerco, recusa).
+    let line = command
+    if (context?.projectId) {
+      try {
+        line = await sandbox.wrap(command, context.projectId)
+      } catch (error: unknown) {
+        return { status: 'error', result: `${toMessage(error)}. O run_bash de agente de projeto fica bloqueado até o cerco funcionar.` }
+      }
+    }
+
+    try {
+      // ⛔ Ambiente MÍNIMO: o shell herdava o `process.env` inteiro — chaves de API, `AUTH_SECRET`,
+      // `SECRETS_KEY` —, e um `env` bastava para levar tudo. E o `cwd` é o diretório vazio da conversa —
+      // ou, no agente de projeto, a pasta do projeto (que vence o `BASH_CWD`: é nela que o cerco deixa gravar).
+      const cwd = context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash')
+      const { stdout, stderr } = await run(line, {
+        cwd,
+        timeout: policy.timeoutMs,
+        maxBuffer: EXEC_BUFFER_BYTES,
+        env: terminalEnv(envOf(context), subscriptionEnv({ HOME: cwd }), context),
+        ...(context?.projectId ? { shell: SANDBOX_SHELL } : {}),
+      })
+      const output = stdout || stderr || 'Command executed successfully with no output.'
+      return { status: 'success', result: truncate(output, policy.maxOutputChars) }
+    } catch (error: unknown) {
+      // Comando cercado: a linha embrulhada (a política do cerco) não interessa a quem lê; a saída de erro, sim.
+      const failure = error as { stderr?: string; code?: number }
+      if (context?.projectId && failure.stderr) return { status: 'error', result: truncate(`Exit code ${failure.code ?? 1}: ${failure.stderr.trim()}`, policy.maxOutputChars) }
+      return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
+    } finally {
+      if (line !== command) sandbox.done?.()
+    }
+  }
+  // ⚖️ A conferência da vigia é o MESMO terminal do agente, no limite dela e já mascarada (ver `Watch.Tools`).
+  deps.watches?.useBash(async (command, context) => {
+    const outcome = await bashCore(command, context, WATCH_LIMITS.checkTimeoutSeconds)
+    return deps.mask ? { ...outcome, result: deps.mask.text(outcome.result, context.sessionId) } : outcome
+  })
+
   const tools: ILocalTool[] = [
     {
       origin: 'local',
@@ -515,50 +569,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         additionalProperties: false,
       },
       async execute(args, context): Promise<IToolResult> {
-        const command = String(args.command ?? '')
-
-        const denied = await guardRefusal(command, context)
-        if (denied) {
-          return { status: 'error', result: policyRefusal(denied, command) }
-        }
-        if (dumpsClusterSecret(command)) return { status: 'error', result: CLUSTER_SECRET_REFUSAL }
-        const printing = secretPrintRefusal(command, context, deps.secrets)
-        if (printing) return { status: 'error', result: printing }
         const asked = Number(args.timeoutSeconds)
-        if (deps.permissions) return guardedBash(command, context, deps.permissions, Number.isFinite(asked) ? asked : undefined)
-
-        // ⛔ Agente de projeto: o comando roda PRESO à pasta do projeto, ou não roda (sem cerco, recusa).
-        let line = command
-        if (context?.projectId) {
-          try {
-            line = await sandbox.wrap(command, context.projectId)
-          } catch (error: unknown) {
-            return { status: 'error', result: `${toMessage(error)}. O run_bash de agente de projeto fica bloqueado até o cerco funcionar.` }
-          }
-        }
-
-        try {
-          // ⛔ Ambiente MÍNIMO: o shell herdava o `process.env` inteiro — chaves de API, `AUTH_SECRET`,
-          // `SECRETS_KEY` —, e um `env` bastava para levar tudo. E o `cwd` é o diretório vazio da conversa —
-          // ou, no agente de projeto, a pasta do projeto (que vence o `BASH_CWD`: é nela que o cerco deixa gravar).
-          const cwd = context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash')
-          const { stdout, stderr } = await run(line, {
-            cwd,
-            timeout: policy.timeoutMs,
-            maxBuffer: EXEC_BUFFER_BYTES,
-            env: terminalEnv(envOf(context), subscriptionEnv({ HOME: cwd }), context),
-            ...(context?.projectId ? { shell: SANDBOX_SHELL } : {}),
-          })
-          const output = stdout || stderr || 'Command executed successfully with no output.'
-          return { status: 'success', result: truncate(output, policy.maxOutputChars) }
-        } catch (error: unknown) {
-          // Comando cercado: a linha embrulhada (a política do cerco) não interessa a quem lê; a saída de erro, sim.
-          const failure = error as { stderr?: string; code?: number }
-          if (context?.projectId && failure.stderr) return { status: 'error', result: truncate(`Exit code ${failure.code ?? 1}: ${failure.stderr.trim()}`, policy.maxOutputChars) }
-          return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
-        } finally {
-          if (line !== command) sandbox.done?.()
-        }
+        return bashCore(String(args.command ?? ''), context, Number.isFinite(asked) ? asked : undefined)
       },
     },
     ...(deps.permissions && !deps.exec ? backgroundTools(processes, (command, name, context) => startBackground(command, name, context, deps.permissions!), guardRefusal) : []),
@@ -574,6 +586,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
     ...(deps.panels ? [conversationPanelTool(deps.panels)] : []),
     ...(deps.deliveries ? [deliverFileTool(fileDeps, deps.deliveries, (sessionId) => workspaceFor(undefined, sessionId))] : []),
+    ...(deps.watches ? makeWatchTools(deps.watches) : []),
   ]
   // ⛔ A chamada repetida é recusada antes de rodar (ver `Loop.Policy`); a edição que deu certo ganha o diagnóstico do
   // pacote (ver `Edit.Diagnostics`); e toda saída passa pela máscara (ver `Secret.Mask`): o `read_file` de uma config, a

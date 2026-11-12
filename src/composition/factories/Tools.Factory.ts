@@ -32,6 +32,7 @@ import { DEFAULT_MCP_SERVER, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { makeAgents } from './Agents.Factory'
 import { makeCredentials } from './Credentials.Factory'
 import { makeImportBuild, makeRepositoryBrowse } from './ImportBuild.Factory'
+import { watchDesk } from './Watches.Factory'
 
 export interface ITools {
   /** Onde a ferramenta `delegate_to_agent` encontra o serviço (preenchido em `makeUsecases`). */
@@ -122,6 +123,7 @@ export function makeTools(): ITools {
             todos: todoStore(),
             panels: panelStore(),
             deliveries: deliveryStore(),
+            watches: watchDesk(),
             permissions: lazyPermissions,
             agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
             agentFolder: (agentId, conversationProject) => agentFolderOf(agentId, conversationProject),

@@ -1,8 +1,9 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { capabilityRuns, capability, resolveCapabilities, toCapabilities } from './Capability.Catalog'
+import { capabilityRuns, capability, hasWatch, resolveCapabilities, toCapabilities } from './Capability.Catalog'
 import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
+import { WAKE_ME_TOOL, WATCH_LIST_TOOL, WATCH_START_TOOL, WATCH_STOP_TOOL, WATCH_TOOLS } from './models/Watch.Model'
 
 const all = ['cap:terminal', 'cap:files.read', 'cap:files.write', 'cap:web.search', 'cap:web.fetch', 'cap:todos', 'mcp:gateway/list_agents']
 const resolve = (protocol: EProvider, mode = EMode.AGENT, official = true) => resolveCapabilities(all, { protocol, mode, official })
@@ -111,5 +112,25 @@ describe('Capability.Catalog', () => {
       'sdk:openai:code_interpreter',
       'cap:todos',
     ])
+  })
+  it('Vigias: as quatro do gateway em todo provedor; ⛔ sem o terminal, a vigia por comando some e sobra o despertador', () => {
+    for (const protocol of [EProvider.CLAUDE, EProvider.OPENAI, EProvider.CODEX]) {
+      const withTerminal = resolveCapabilities(['cap:terminal', 'cap:watch'], { protocol, mode: EMode.AGENT, official: true })
+      assert.deepStrictEqual(
+        withTerminal.allowedTools.filter((tool) => WATCH_TOOLS.includes(tool)),
+        [...WATCH_TOOLS],
+      )
+      assert.deepStrictEqual(withTerminal.unavailable, [])
+      const alone = resolveCapabilities(['cap:watch'], { protocol, mode: EMode.AGENT, official: true })
+      assert.deepStrictEqual(alone.allowedTools, [WAKE_ME_TOOL, WATCH_LIST_TOOL, WATCH_STOP_TOOL])
+    }
+    assert.ok(!resolveCapabilities(['cap:watch', WATCH_START_TOOL], { protocol: EProvider.OPENAI, mode: EMode.AGENT, official: true }).allowedTools.includes(WATCH_START_TOOL))
+  })
+
+  it('hasWatch: pela capacidade ou por uma das ferramentas', () => {
+    assert.ok(hasWatch(['cap:todos', 'cap:watch']))
+    assert.ok(hasWatch([WAKE_ME_TOOL]))
+    assert.ok(!hasWatch(['cap:todos', 'run_bash']))
+    assert.strictEqual(capability('cap:watch')?.label, 'Vigias')
   })
 })
