@@ -17,6 +17,15 @@ body {
   @apply bg-zinc-950 text-zinc-100 antialiased;
 }
 
+/*
+ * ⚠️ O navegador dá ao <fieldset> `min-inline-size: min-content`: ele cresce até caber o conteúdo inteiro. Uma barra de
+ * guias que rola de lado (overflow-x-auto) dentro dele nunca rolava — empurrava a tela, cortada na borda. Em `:where`, sem
+ * peso: a classe de quem quiser outro mínimo vence.
+ */
+:where(fieldset) {
+  min-inline-size: 0;
+}
+
 /* A resposta do agente vem de `renderMarkdown` (escapada antes de marcar). */
 .prose-agent :where(pre) {
   @apply my-2 overflow-x-auto rounded-lg bg-black/40 p-3 text-[13px] leading-relaxed;

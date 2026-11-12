@@ -4,6 +4,7 @@
   import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
   import { fixPattern, PERMISSION_SECTIONS, patternWarning } from '@/lib/permissions'
   import type { IPermissionRule, TPermissionCategory } from '@/lib/types'
+  import { useAccountsStore } from '@/stores/accounts'
   import { useAgentsStore } from '@/stores/agents'
   import { useMcpStore } from '@/stores/mcp'
   import { useProjectsStore } from '@/stores/projects'
@@ -70,9 +71,42 @@
       ],
     })),
   ])
+  /**
+   * ⚖️ As CONTAS também se escolhem numa lista: as do projeto em uso (Projeto → Contas). O aviso de fim de turno não entra
+   * (nunca vai ao terminal). Sem acesso às contas (quem não administra), a lista fica só com o curinga.
+   */
+  const accounts = useAccountsStore()
+  watch(
+    () => projects.current,
+    (projectId) => void (projectId && accounts.lists.ensure(projectId).catch(() => undefined)),
+    { immediate: true },
+  )
+  const accountGroups = computed(() => [
+    { label: 'Curingas', options: [{ value: '*', label: 'Todas as contas do projeto (*)' }] },
+    {
+      label: 'Contas do projeto',
+      options: (projects.current ? (accounts.lists.get(projects.current) ?? []) : [])
+        .filter((account) => account.kind !== 'turn-callback')
+        .map((account) => ({ value: account.id, label: account.label && account.label !== account.id ? `${account.label} (${account.id})` : account.id })),
+    },
+  ])
   /** A lista de cada categoria que se escolhe (as outras são padrões digitados). */
   const groupsOf = (category: TPermissionCategory) =>
-    category === 'delegate' ? delegateGroups.value : category === 'skill' ? skillGroups.value : category === 'mcp' ? mcpGroups.value : undefined
+    category === 'delegate'
+      ? delegateGroups.value
+      : category === 'skill'
+        ? skillGroups.value
+        : category === 'mcp'
+          ? mcpGroups.value
+          : category === 'account'
+            ? accountGroups.value
+            : undefined
+  const choiceLabel: Partial<Record<TPermissionCategory, [string, string]>> = {
+    delegate: ['Agente', 'Escolha o agente…'],
+    skill: ['Skill', 'Escolha a skill…'],
+    mcp: ['Ferramenta MCP', 'Escolha a ferramenta…'],
+    account: ['Conta', 'Escolha a conta…'],
+  }
   const known = (category: TPermissionCategory, pattern: string) => !pattern || !!groupsOf(category)?.some((group) => group.options.some((option) => option.value === pattern))
 
   function add(category: TPermissionCategory) {
@@ -101,11 +135,11 @@
             v-if="groupsOf(section.category)"
             :value="rule.pattern"
             :disabled="readonly"
-            :aria-label="section.category === 'delegate' ? 'Agente' : section.category === 'skill' ? 'Skill' : 'Ferramenta MCP'"
+            :aria-label="choiceLabel[section.category]?.[0]"
             class="input min-w-0 flex-1 text-[13px]"
             @change="update(index, { pattern: ($event.target as HTMLSelectElement).value })"
           >
-            <option value="" disabled>{{ section.category === 'delegate' ? 'Escolha o agente…' : section.category === 'skill' ? 'Escolha a skill…' : 'Escolha a ferramenta…' }}</option>
+            <option value="" disabled>{{ choiceLabel[section.category]?.[1] }}</option>
             <option v-if="!known(section.category, rule.pattern)" :value="rule.pattern">{{ rule.pattern }}</option>
             <optgroup v-for="group in groupsOf(section.category)" :key="group.label" :label="group.label">
               <option v-for="option in group.options" :key="option.value" :value="option.value">{{ option.label }}</option>
