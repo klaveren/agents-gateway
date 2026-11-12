@@ -174,4 +174,24 @@ describe('McpView', () => {
     expect(host.textContent).toContain('Remover MCP')
     expect(host.textContent).toContain('Testar conexão')
   })
+
+  it('🔌 trocar o escopo acende o Salvar MCP, e é ele quem move (sem botão à parte)', async () => {
+    const host = await mount('/mcp/alfa.crm', true, true)
+    const footer = host.querySelector<HTMLButtonElement>('[data-test="save-footer"] button')!
+    expect(footer.disabled).toBe(true)
+    const scope = [...host.querySelectorAll('select')].find((select) => select.textContent?.includes('Global'))!
+    scope.value = ''
+    scope.dispatchEvent(new Event('change'))
+    await nextTick()
+    expect(footer.disabled).toBe(false)
+    expect([...host.querySelectorAll('button')].some((button) => button.textContent?.trim() === 'Mover')).toBe(false)
+
+    vi.mocked(api).mockImplementation(async (path: string, init?: { method?: string }) =>
+      init?.method === 'PUT' ? { ...server, key: 'crm', projectId: undefined } : path === '/mcp-servers' ? [server] : [],
+    )
+    footer.click()
+    for (let i = 0; i < 4; i++) await nextTick()
+    await new Promise((resolve) => setTimeout(resolve))
+    expect(api).toHaveBeenCalledWith('/mcp-servers/alfa.crm', { method: 'PUT', body: { projectId: null } })
+  })
 })
