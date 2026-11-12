@@ -1,3 +1,5 @@
+import type { IAgentTrigger } from './models/Agent.Model'
+
 /**
  * ⚖️ A EDIÇÃO da instalação: nasce com o deploy (`GATEWAY_EDITION=lite`) e não muda. A lite mostra menos (a tela e o MCP
  * do gateway); o que ela não tem não é barrado na API — é apresentação, não plano.
@@ -60,4 +62,15 @@ export const LITE_HIDDEN_MCP_TOOLS: ReadonlySet<string> = new Set([
 /** As ferramentas do agente sem as do MCP do gateway que a lite não tem (`mcp:gateway/save_hook`…): o resto fica. */
 export function withoutLiteTools(tools: readonly string[]): string[] {
   return tools.filter((tool) => !(tool.startsWith('mcp:gateway/') && LITE_HIDDEN_MCP_TOOLS.has(tool.slice('mcp:gateway/'.length))))
+}
+
+/**
+ * Os triggers da semente do Atlas que a lite não tem: cada um manda usar ferramenta que ela não registra (o importador,
+ * hooks, agendamentos, pacotes). Fica o `update-model-prices`.
+ */
+export const LITE_HIDDEN_TRIGGERS: ReadonlySet<string> = new Set(['migrate-environment', 'create-hook', 'create-schedule', 'install-missing-tool'])
+
+/** Os triggers do agente sem os que a lite não tem; o resto (os que quem administra criou) fica. */
+export function withoutLiteTriggers(triggers: readonly IAgentTrigger[]): IAgentTrigger[] {
+  return triggers.filter((trigger) => !LITE_HIDDEN_TRIGGERS.has(trigger.id))
 }

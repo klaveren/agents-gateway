@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { ATLAS_AGENTS, atlasLitePrompt } from './Agent.Seed'
-import { gatewayEdition, LITE_HIDDEN_MCP_TOOLS, withoutLiteTools } from './Edition.Policy'
+import { ATLAS_AGENTS, ATLAS_TRIGGERS, atlasLitePrompt } from './Agent.Seed'
+import { gatewayEdition, LITE_HIDDEN_MCP_TOOLS, withoutLiteTools, withoutLiteTriggers } from './Edition.Policy'
 
 describe('Edition.Policy', () => {
   it('a edição vem de GATEWAY_EDITION: só `lite` é lite; o resto, PRO', () => {
@@ -22,8 +22,22 @@ describe('Edition.Policy', () => {
         left.every((tool) => !(tool.startsWith('mcp:gateway/') && LITE_HIDDEN_MCP_TOOLS.has(tool.slice(12)))),
         agent.id,
       )
-      assert.ok(left.length < agent.allowedTools.length, agent.id)
     }
+    // O Atlas dos usuários tem a lista nome a nome e perde as escondidas; o Admin tem o curinga, que fica — ele só
+    // alcança o que a lite registra.
+    const [atlas, admin] = ATLAS_AGENTS
+    assert.ok(withoutLiteTools(atlas.allowedTools).length < atlas.allowedTools.length)
+    assert.deepStrictEqual(withoutLiteTools(admin.allowedTools), admin.allowedTools)
+  })
+
+  it('os triggers do Atlas na lite: só o que ela tem ferramenta para fazer (os preços); os de outro agente ficam', () => {
+    assert.deepStrictEqual(
+      withoutLiteTriggers(ATLAS_TRIGGERS).map((trigger) => trigger.id),
+      ['update-model-prices'],
+    )
+    for (const { body } of withoutLiteTriggers(ATLAS_TRIGGERS)) for (const tool of LITE_HIDDEN_MCP_TOOLS) assert.ok(!new RegExp(`\\b${tool}\\b`).test(body), tool)
+    const mine = { id: 'meu-trigger', when: 'quando', body: 'corpo' }
+    assert.deepStrictEqual(withoutLiteTriggers([mine]), [mine])
   })
 
   it('o prompt lite da semente não cita ferramenta que a lite não tem; prompt editado não é trocado', () => {
