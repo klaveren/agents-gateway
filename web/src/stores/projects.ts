@@ -4,7 +4,7 @@ import { api } from '@/lib/api'
 import { lite, LITE_PROJECT } from '@/lib/edition'
 import { keyedResource } from '@/lib/resource'
 import { readLocal, writeLocal } from '@/lib/storage'
-import type { IProject, IProjectMember, TProjectRole } from '@/lib/types'
+import type { IProject, IProjectMcpVar, IProjectMember, TProjectRole } from '@/lib/types'
 import { useAgentsStore } from './agents'
 import { useAuthStore } from './auth'
 import { useConversationsStore } from './conversations'
@@ -101,7 +101,7 @@ export const useProjectsStore = defineStore('projects', () => {
     return created
   }
 
-  async function update(id: string, change: { name?: string; description?: string }): Promise<void> {
+  async function update(id: string, change: { name?: string; description?: string; env?: Record<string, string>; mcpEnv?: IProjectMcpVar[] }): Promise<void> {
     putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}`, { method: 'PUT', body: change }))
   }
 

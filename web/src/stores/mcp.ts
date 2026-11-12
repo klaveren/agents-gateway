@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 import { keyedResource } from '@/lib/resource'
 import type { IMcpContainer, IMcpOAuth, IMcpProcess, IMcpServer, IMcpTool, TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
 import { useAgentsStore } from './agents'
+import { useProjectsStore } from './projects'
 
 export interface INewMcpServer {
   id: string
@@ -37,7 +38,11 @@ export const useMcpStore = defineStore('mcp', () => {
    * projeto alheio, o servidor responde 404 — a lista global nunca vem.
    */
   const byProject = keyedResource((projectId) => api<IMcpServer[]>('/mcp-servers', { query: { project: projectId } }))
-  const toolLists = keyedResource((key) => api<IMcpTool[]>(`/mcp-servers/${encodeURIComponent(key)}/tools`))
+  // O MCP que pede valor ao projeto lista as ferramentas com os valores do projeto do seletor.
+  const toolLists = keyedResource((key) => {
+    const project = useProjectsStore().current
+    return api<IMcpTool[]>(`/mcp-servers/${encodeURIComponent(key)}/tools`, project ? { query: { project } } : {})
+  })
 
   const list = computed<IMcpServer[]>({
     get: () => all.get('') ?? [],
@@ -123,14 +128,14 @@ export const useMcpStore = defineStore('mcp', () => {
   }
 
   /** ⚖️ Testar é a releitura deliberada: o estado da conexão e as ferramentas, agora. */
-  async function test(id: string): Promise<{ ok: boolean; tools: number; message?: string }> {
-    const result = await api<{ ok: boolean; tools: number; message?: string }>(`/mcp-servers/${encodeURIComponent(id)}/test`, { method: 'POST' })
+  /** `project`: os valores que o MCP pede ao projeto vêm deste (o seletor do topo). */
+  async function test(id: string, project?: string): Promise<{ ok: boolean; tools: number; message?: string }> {
+    const result = await api<{ ok: boolean; tools: number; message?: string }>(`/mcp-servers/${encodeURIComponent(id)}/test`, {
+      method: 'POST',
+      ...(project ? { query: { project } } : {}),
+    })
     await Promise.all([load(), loadTools(id)])
     return result
-  }
-
-  async function saveEnv(id: string, name: string, value: string): Promise<void> {
-    put(await api<IMcpServer>(`/mcp-servers/${encodeURIComponent(id)}/env/${encodeURIComponent(name)}`, { method: 'PUT', body: { value } }))
   }
 
   /** A resposta só traz quantas pararam: o estado do servidor é relido. */
@@ -182,7 +187,6 @@ export const useMcpStore = defineStore('mcp', () => {
     oauthStart,
     oauthDisconnect,
     clearSecret,
-    saveEnv,
     stop,
     install,
     test,

@@ -316,7 +316,13 @@ export function makeMcpProxyController(): McpProxyController {
   const { mcp } = makeTools()
   // 🔌 O agente que RODA (com a camada local do projeto conectado): o MCP que só a camada liga tem de passar pela ponte,
   // e o que ela desliga, não.
-  return new McpProxyController({ registry: mcp, proof: makeAuth().proof, session: (id) => mcp.session(id), agent: (id) => makeAgents().get(id) })
+  return new McpProxyController({
+    registry: mcp,
+    proof: makeAuth().proof,
+    session: (id) => mcp.session(id),
+    agent: (id) => makeAgents().get(id),
+    mask: (text, sessionId) => makeSecretMasker().text(text, sessionId),
+  })
 }
 
 export function makePackagesController(): PackagesController {

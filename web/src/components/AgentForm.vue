@@ -1847,7 +1847,7 @@
         <div class="flex flex-col gap-2 p-3">
         <p class="hint">
           Texto comum, em todo terminal deste agente (o dele e o dos CLIs): a autoria do git (GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL…), idioma, região. O que o gateway monta
-          (HOME, PATH, a identidade) vence. Segredo não mora aqui: vai em Secretas, logo abaixo, ou nas contas do projeto.
+          (HOME, PATH, a identidade) vence. As do projeto (Ambiente → Variáveis) ficam por baixo: a daqui vence a de mesmo nome. Segredo não mora aqui: vai em Secretas, logo abaixo.
         </p>
         <div v-for="(row, index) in envList" :key="index" class="flex flex-wrap items-center gap-2">
           <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="GIT_AUTHOR_NAME" :aria-label="`Nome da variável ${index + 1}`" />
