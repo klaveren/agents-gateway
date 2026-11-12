@@ -8,6 +8,8 @@ export interface ISshKitIdentity {
   certificate?: string
   hostPatterns: string[]
   knownHosts: string
+  /** O usuário remoto padrão (`User`). Ausente: o do processo. */
+  user?: string
 }
 
 /**
@@ -50,6 +52,7 @@ export function writeSshKit(dir: string, identities: readonly ISshKitIdentity[],
       `Host ${identity.hostPatterns.length ? identity.hostPatterns.join(' ') : '*'}`,
       `  IdentityFile ${key}`,
       ...(identity.certificate ? [`  CertificateFile ${key}-cert.pub`] : []),
+      ...(identity.user ? [`  User ${identity.user}`] : []),
     ].join('\n')
   })
   const config = join(dir, 'config')

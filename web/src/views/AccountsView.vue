@@ -125,7 +125,7 @@ async function save() {
         ...(kind === 'secret-env' ? { envName: envName.trim() } : {}),
         ...(kind === 'turn-callback' ? { callbackHost: callbackHost.trim().toLowerCase() } : {}),
         ...(kind === 'gcp-service-account' && gcpProject.trim() ? { gcpProject: gcpProject.trim() } : {}),
-        ...(isSsh ? { knownHosts, hostPatterns: list(hostPatterns) } : {}),
+        ...(isSsh ? { knownHosts, hostPatterns: list(hostPatterns), ...(username.trim() ? { username: username.trim() } : {}) } : {}),
         ...(kind === 'ssh-ca' ? { principals: list(principals), ...(validityMinutes.trim() ? { validityMinutes: Number(validityMinutes) } : {}) } : {}),
         ...(kind === 'ssh-key' && certificate.trim() ? { certificate: certificate.trim() } : {}),
       },
@@ -307,7 +307,8 @@ watch(
             <div class="grid gap-3 sm:grid-cols-2">
               <label v-if="form.kind === 'ssh-ca'" class="field">Usuários remotos (principals)<input v-model="form.principals" class="input font-mono" placeholder="deploy, app" /></label>
               <label v-if="form.kind === 'ssh-ca'" class="field">Validade do certificado (minutos, até 60)<input v-model="form.validityMinutes" class="input font-mono" inputmode="numeric" placeholder="10" /></label>
-              <label class="field sm:col-span-2">Hosts em que vale (vazio = todos)<input v-model="form.hostPatterns" class="input font-mono" placeholder="*.empresa1.com git.empresa1.com" /></label>
+              <label class="field">Hosts em que vale (vazio = todos)<input v-model="form.hostPatterns" class="input font-mono" placeholder="*.empresa1.com git.empresa1.com" /></label>
+              <label class="field">Usuário remoto (vazio = o do servidor do gateway)<input v-model="form.username" class="input font-mono" placeholder="deploy" autocomplete="off" /></label>
             </div>
             <label class="field">
               known_hosts aceitos (servidor fora da lista é recusado)
@@ -374,6 +375,7 @@ watch(
             <p class="text-xs text-zinc-500">
               <template v-if="account.public.owner">dono {{ account.public.owner }} · </template>
               <template v-if="account.public.baseUrl">{{ account.public.username }} em {{ account.public.baseUrl }} · </template>
+              <template v-else-if="account.public.username">usuário {{ account.public.username }} · </template>
               <template v-if="account.public.appId">App {{ account.public.appId }}, instalação {{ account.public.installationId }} · </template>
               <template v-if="account.public.repositories?.length">repositórios {{ account.public.repositories.join(', ') }} · </template>
               <template v-if="account.public.envName">variável {{ account.public.envName }} · </template>
