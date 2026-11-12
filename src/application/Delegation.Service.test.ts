@@ -7,7 +7,7 @@ import { ISession } from '@domain/models/Session.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 import { NullConversationRepository } from '@infra/persistence/Null.ConversationRepository'
 import { CreateSessionUseCase } from './CreateSession.Usecase'
-import { DelegationService } from './Delegation.Service'
+import { DelegationService, IStoredConversation, ownIssue } from './Delegation.Service'
 import { SendMessageUseCase } from './SendMessage.Usecase'
 
 describe('DelegationService', () => {
@@ -182,5 +182,78 @@ describe('DelegationService', () => {
       /not a delegation/,
     )
     assert.match(JSON.stringify(await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', message: 'x' }, {})), /needs the calling conversation/)
+  })
+  it('⚖️ continua a conversa da PESSOA com o agente: mensagem com cabeçalho, e a conversa viva não sai da memória', async () => {
+    const { sessions, service: base } = build({ owner: { id: 'ana' }, project: 'bh' })
+    const internals = base as unknown as { provider: IAgentProvider; createSession: CreateSessionUseCase; sendMessage: SendMessageUseCase }
+    const released: string[] = []
+    const service = new DelegationService(
+      internals.provider,
+      internals.createSession,
+      internals.sendMessage,
+      () => 2,
+      () => [EMode.CHAT],
+      undefined,
+      (id) => released.push(id),
+    )
+    sessions.set('da-ana', session('da-ana', 'integra', { owner: { id: 'ana' }, project: 'bh' }))
+    const result = await service.delegate({ allowed: ['integra'], agentId: 'integra', sessionId: 'da-ana', message: 'oi' }, { sessionId: 'pai' })
+    assert.ok(result.ok)
+    assert.match(result.reply, /^\[integra\] \[Mensagem do agente redator \(conversa pai\), em nome da mesma pessoa/)
+    assert.match(result.reply, /\n\noi$/)
+    assert.deepStrictEqual(released, [])
+
+    sessions.set('rodando', { ...session('rodando', 'integra', { owner: { id: 'ana' }, project: 'bh' }), status: 'running' })
+    assert.match(JSON.stringify(await service.delegate({ allowed: ['integra'], agentId: 'integra', sessionId: 'rodando', message: 'x' }, { sessionId: 'pai' })), /running a turn/)
+  })
+
+  it('⛔ a conversa que não é filha: só da mesma pessoa e conta, no mesmo projeto, com o agente pedido, e nunca a filha de outra', () => {
+    const parent = { id: 'pai', agentId: 'atlas', metadata: { owner: { id: 'ana', account: 'c1' }, project: 'bh' } }
+    const target = (metadata: Record<string, unknown>, agentId = 'integra'): IStoredConversation => ({ agentId, metadata })
+    assert.strictEqual(ownIssue(parent, target({ owner: { id: 'ana', account: 'c1' }, project: 'bh' }), 's', 'integra'), undefined)
+    assert.match(ownIssue(parent, target({ owner: { id: 'bia', account: 'c1' }, project: 'bh' }), 's', 'integra') ?? '', /another person/)
+    assert.match(ownIssue(parent, target({ owner: { id: 'ana', account: 'c2' }, project: 'bh' }), 's', 'integra') ?? '', /another person/)
+    assert.match(ownIssue(parent, target({ project: 'bh' }), 's', 'integra') ?? '', /another person/)
+    assert.match(ownIssue(parent, target({ owner: { id: 'ana', account: 'c1' }, project: 'xpto' }), 's', 'integra') ?? '', /another project/)
+    assert.match(ownIssue(parent, target({ owner: { id: 'ana', account: 'c1' }, project: 'bh' }, 'outro'), 's', 'integra') ?? '', /is with outro/)
+    assert.match(ownIssue(parent, target({ owner: { id: 'ana', account: 'c1' }, project: 'bh', delegatedBy: 'x' }), 's', 'integra') ?? '', /not a delegation/)
+    // Sem dono na conversa que chama, nada continua.
+    assert.match(ownIssue({ ...parent, metadata: {} }, target({}), 's', 'integra') ?? '', /another person/)
+  })
+
+  it('⚖️ a conversa da pessoa que não está viva volta pelo histórico (e sai ao fim); a recusada não volta', async () => {
+    const { sessions, service: base } = build({ owner: { id: 'ana' }, project: 'bh' })
+    const internals = base as unknown as { provider: IAgentProvider; createSession: CreateSessionUseCase; sendMessage: SendMessageUseCase }
+    const stored = new Map<string, IStoredConversation>([
+      ['gravada', { agentId: 'integra', metadata: { owner: { id: 'ana' }, project: 'bh' } }],
+      ['de-outro', { agentId: 'integra', metadata: { owner: { id: 'bia' }, project: 'bh' } }],
+    ])
+    const resumed: Array<[string, string]> = []
+    const released: string[] = []
+    const service = new DelegationService(
+      internals.provider,
+      internals.createSession,
+      internals.sendMessage,
+      () => 2,
+      () => [EMode.CHAT],
+      async (id) => {
+        const found = stored.get(id)
+        return found && { agentId: found.agentId, delegatedBy: found.metadata?.delegatedBy }
+      },
+      (id) => released.push(id),
+      async (id, accept, via) => {
+        const found = stored.get(id)!
+        const issue = accept(found)
+        if (issue) return issue
+        resumed.push([id, via])
+        sessions.set(id, session(id, found.agentId, found.metadata))
+        return undefined
+      },
+    )
+    const back = await service.delegate({ allowed: ['integra'], agentId: 'integra', sessionId: 'gravada', message: 'oi' }, { sessionId: 'pai' })
+    assert.deepStrictEqual([back.ok, resumed, released], [true, [['gravada', 'pai']], ['gravada']])
+    const other = await service.delegate({ allowed: ['integra'], agentId: 'integra', sessionId: 'de-outro', message: 'x' }, { sessionId: 'pai' })
+    assert.match(other.ok ? '' : other.error, /another person/)
+    assert.strictEqual(resumed.length, 1)
   })
 })

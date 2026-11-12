@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  agentFacingTools,
   defaultLanes,
   envDuplicates,
   envRecord,
@@ -142,5 +143,13 @@ describe('homeProjectOf', () => {
   })
   it('⛔ projeto que quem abriu não vê: não troca', () => {
     expect(homeProjectOf({ id: 'x', projectId: 'secreto' }, here)).toBeUndefined()
+  })
+})
+
+describe('agentFacingTools', () => {
+  it('⛔ do MCP do gateway, a tela do agente não oferece as ferramentas de conversa; dos outros, tudo', () => {
+    const tools = [{ name: 'list_agents' }, { name: 'send_message' }, { name: 'start_conversation' }, { name: 'get_turn' }]
+    expect(agentFacingTools('gateway', tools).map((tool) => tool.name)).toEqual(['list_agents'])
+    expect(agentFacingTools('outro', tools)).toHaveLength(4)
   })
 })

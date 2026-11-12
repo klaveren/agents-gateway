@@ -27,13 +27,16 @@ export function makeDelegateTool(allowed: readonly string[], slot: DelegationSlo
     origin: 'local',
     name: DELEGATE_TOOL_NAME,
     description:
-      'Ask another agent to do part of the work and wait for its answer. Opens a linked conversation with it (or continues one with `sessionId`). Use it for what that agent is better at; give it everything it needs in `message`.',
+      'Ask another agent to do part of the work and wait for its answer. This is the ONLY way to talk to another agent (agents do not get start_conversation or send_message). Opens a linked conversation with it, or continues one with `sessionId`: a previous delegation, or a conversation the same person already has with that agent in this project (the person gives you its id). Use it for what that agent is better at; give it everything it needs in `message`.',
     inputSchema: {
       type: 'object',
       properties: {
         agentId: { type: 'string', enum: [...allowed], description: 'The agent to ask.' },
         message: { type: 'string', description: 'The full request for that agent — it does not see this conversation.' },
-        sessionId: { type: 'string', description: 'Optional: continue a previous delegation (the sessionId it returned).' },
+        sessionId: {
+          type: 'string',
+          description: "Optional: continue a previous delegation (the sessionId it returned) or the person's own conversation with that agent (its id, e.g. gw_…).",
+        },
       },
       required: ['agentId', 'message'],
       additionalProperties: false,

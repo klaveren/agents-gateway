@@ -726,6 +726,8 @@ export class AgentProvider implements IAgentProvider {
     if (parent && parent !== input.delegatedBy) throw new ConversationNotResumableError(stored.id, 'it belongs to a delegation, resumed only by the conversation that opened it')
 
     const last = input.turns[input.turns.length - 1]
+    const via = input.adminVia
+    const inherited = !!via && this.adminSessions.has(via) && this.adminSessions.get(via) === (this.getAgent(stored.agentId).projectId ?? null)
     const created = await this.createSession({
       agentId: stored.agentId,
       provider: last?.provider ?? stored.provider,
@@ -733,7 +735,7 @@ export class AgentProvider implements IAgentProvider {
       mode: stored.mode as EMode,
       ...(last?.effort ? { reasoning: last.effort } : {}),
       ...(stored.metadata ? { metadata: stored.metadata } : {}),
-      ...(input.adminAccess ? { adminAccess: true } : {}),
+      ...(input.adminAccess || inherited ? { adminAccess: true } : {}),
       ...(typeof parent === 'string' ? { delegated: true, parentSessionId: parent } : {}),
     })
     if (!this.sessions.adopt(created.id, stored.id)) return
