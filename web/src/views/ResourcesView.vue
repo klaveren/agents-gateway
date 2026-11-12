@@ -29,6 +29,7 @@ import { attachableDocs, attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeT
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IAgentTrigger, IResource, TImportIssueMatch, TResourceKind } from '@/lib/types'
+import { envDuplicates, envRecord, envRows, type IEnvRow } from '@/lib/agentForm'
 import { useScopedDocs } from '@/composables/useCatalogLists'
 import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
@@ -98,7 +99,8 @@ const info = computed(() => KIND[props.kind])
 /** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
 const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', uma: 'um', a: 'o' } : { nova: 'Nova', nenhuma: 'Nenhuma', uma: 'uma', a: 'a' }))
 
-const form = ref({ id: '', description: '', tags: [] as string[], body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[], triggers: [] as IAgentTrigger[] })
+const form = ref({ id: '', description: '', tags: [] as string[], body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[], triggers: [] as IAgentTrigger[], env: [] as IEnvRow[] })
+const envRepeated = computed(() => envDuplicates(form.value.env))
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
 type TResourceTab = 'edit' | 'instructions' | 'triggers' | 'attachments' | 'files' | 'variables' | 'share' | 'issues' | 'history'
 const HASH_TAB: Record<string, TResourceTab> = {
@@ -148,7 +150,8 @@ const dirty = computed(() => {
     formScope.value !== (resource.projectId ?? GLOBAL_SCOPE) ||
     form.value.docIds.join() !== resource.docIds.join() ||
     attachedRefs(form.value.docIds, form.value.docRefs).join() !== attachedRefs(resource.docIds, resource.docRefs ?? []).join() ||
-    JSON.stringify(form.value.triggers) !== JSON.stringify(resource.triggers ?? [])
+    JSON.stringify(form.value.triggers) !== JSON.stringify(resource.triggers ?? []) ||
+    JSON.stringify(envRecord(form.value.env) ?? {}) !== JSON.stringify(resource.env ?? {})
   )
 })
 
@@ -177,6 +180,7 @@ watch(
         docIds: [],
         docRefs: [],
         triggers: [],
+        env: [],
       }
       applyDraft(kind)
       return
@@ -198,6 +202,7 @@ watch(
         docIds: [...resource.docIds],
         docRefs: [...(resource.docRefs ?? [])],
         triggers: copyTriggers(resource.triggers),
+        env: envRows(resource.env),
       }
       applyDraft(kind, resource.id)
     } catch (failure) {
@@ -226,8 +231,9 @@ function applyDraft(kind: TResourceKind, id?: string) {
     project: draft.projectId ?? projects.current ?? '',
     docIds: [...draft.docIds],
     docRefs: [...draft.docRefs],
-    // O rascunho não traz triggers: ficam os do recurso aberto.
+    // O rascunho não traz triggers nem variáveis: ficam os do recurso aberto.
     triggers: form.value.triggers,
+    env: form.value.env,
   }
   note.value = 'Rascunho do construtor aplicado: revise e salve.'
 }
@@ -282,6 +288,7 @@ async function save() {
     docIds,
     docRefs: attachedRefs(docIds, form.value.docRefs),
     triggers: form.value.triggers,
+    env: envRecord(form.value.env) ?? {},
   }
   try {
     if (adding.value) {
@@ -295,6 +302,7 @@ async function save() {
         form.value.docIds = [...loaded.value.docIds]
         form.value.docRefs = [...(loaded.value.docRefs ?? [])]
         form.value.triggers = copyTriggers(loaded.value.triggers)
+        form.value.env = envRows(loaded.value.env)
       }
       // Os arquivos vão no mesmo Salvar.
       await filesPart.value?.commit()
@@ -356,9 +364,9 @@ const extraTabs = computed(() =>
     { id: 'triggers' as const, label: `Triggers${form.value.triggers.length ? ` (${form.value.triggers.length})` : ''}` },
     { id: 'attachments' as const, label: `Anexos${form.value.docIds.length ? ` (${form.value.docIds.length})` : ''}` },
   { id: 'files' as const, label: `Arquivos${loaded.value?.files?.length ? ` (${loaded.value.files.length})` : ''}` },
-    // As variáveis secretas (só admin; o valor entra e nunca volta).
-    // O item compartilhado também tem a guia: os valores são DESTE projeto.
-    ...(projects.manages && !globalLocked.value ? [{ id: 'variables' as const, label: 'Variáveis' }] : []),
+    // As variáveis: as fixas (com o Salvar) e as secretas (só admin; o valor entra e nunca volta).
+    // O item compartilhado também tem a guia: as fixas são da origem (só leitura); os valores secretos, DESTE projeto.
+    ...(projects.manages && !globalLocked.value ? [{ id: 'variables' as const, label: `Variáveis${form.value.env.length ? ` (${form.value.env.length})` : ''}` }] : []),
     // Compartilhar: só o item de um projeto, e do projeto dono (quem recebe não repassa).
     ...(canShare.value ? [{ id: 'share' as const, label: `Compartilhar${loaded.value?.sharedWith?.length ? ` (${loaded.value.sharedWith.length})` : ''}` }] : []),
     ...(importIssues.value.length ? [{ id: 'issues' as const, label: `Problemas da importação (${importIssues.value.length})` }] : []),
@@ -410,7 +418,7 @@ function onInvalid(event: Event) {
 
     <template #detail>
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" :edit-label="info.one.charAt(0).toUpperCase() + info.one.slice(1)" :extra="extraTabs" :history="!adding" /></div>
-      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'triggers' || tab === 'attachments' || tab === 'files'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
+      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'triggers' || tab === 'attachments' || tab === 'files' || tab === 'variables'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
         <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
         <p v-else-if="sharedFrom" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="shared-readonly">Compartilhado por {{ scopeLabel(sharedFrom, projects.list) }}: só leitura aqui; a manutenção é lá.</p>
@@ -488,6 +496,42 @@ function onInvalid(event: Event) {
           />
         </div>
         </fieldset>
+        <!-- ⚖️ As duas formas de variável do terminal, juntas: as fixas (texto, no registro do item, gravadas com o Salvar) e as
+             secretas (cifradas; o valor só entra, gravado à parte). Chegam ao mesmo terminal; a secreta vence a fixa. -->
+        <div v-if="loaded && tab === 'variables'" class="flex flex-col gap-3" data-test="resource-variables">
+          <fieldset :disabled="locked" class="contents">
+            <section class="tool-card">
+              <header>
+                <h3>Fixas</h3>
+                <span class="count">{{ form.env.length || 'nenhuma' }} · salvas com o botão Salvar</span>
+              </header>
+              <div class="flex flex-col gap-2 p-3">
+                <p class="hint">
+                  Texto comum (endereço de um serviço, região): carregada {{ kind === 'command' ? 'o command' : 'a skill' }}, vão ao terminal do agente, por cima das do agente e
+                  do projeto. Segredo não mora aqui: vai em Secretas, logo abaixo.
+                </p>
+                <div v-for="(row, index) in form.env" :key="index" class="flex flex-wrap items-center gap-2" data-test="resource-fixed-row">
+                  <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="GRAFANA_URL" :aria-label="`Nome da variável ${index + 1}`" @keydown.enter.prevent />
+                  <input v-model="row.value" class="input min-w-0 flex-1 font-mono text-xs" placeholder="valor" :aria-label="`Valor da variável ${index + 1}`" @keydown.enter.prevent />
+                  <button type="button" class="btn btn-sm btn-danger" @click="form.env.splice(index, 1)">Remover</button>
+                </div>
+                <button type="button" class="btn btn-sm btn-ghost self-start" data-test="resource-fixed-add" @click="form.env.push({ name: '', value: '' })">+ Variável</button>
+                <small v-for="name in envRepeated" :key="`dup-${name}`" class="error">{{ name }} aparece mais de uma vez</small>
+                <small v-for="m in issues.env" :key="m" class="error" data-test="resource-fixed-error">{{ m }}</small>
+              </div>
+            </section>
+          </fieldset>
+          <section class="tool-card">
+            <header>
+              <h3>Secretas</h3>
+              <span class="count">cifradas · cada uma é gravada na hora, à parte do Salvar</span>
+            </header>
+            <div class="p-3">
+              <p v-if="sharedFrom" class="mb-2 text-sm text-sky-200" data-test="shared-secrets">Valores deste projeto (não vêm do projeto de origem)</p>
+              <SecretVariables :base-path="`/resources/${encodeURIComponent(loaded.id)}`" :project="secretsProject" :scope-label="kind === 'command' ? 'deste command (valem depois que ele é carregado na conversa)' : 'desta skill (valem depois que ela é carregada na conversa)'" />
+            </div>
+          </section>
+        </div>
         <SaveFooter v-if="!locked" submit :label="`${adding ? 'Criar' : 'Salvar'} ${info.one}`" :busy="busy" :disabled="!(dirty || !!filesPart?.dirty)" :pending="!adding && (dirty || !!filesPart?.dirty)">
           <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>
           <template v-if="!adding" #end>
@@ -502,11 +546,6 @@ function onInvalid(event: Event) {
       <section v-else-if="loaded && tab === 'share' && canShare" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
         <ShareProjects :owner="loaded.projectId ?? ''" :shared="loaded.sharedWith ?? []" :save="saveShares" />
-      </section>
-      <section v-else-if="loaded && tab === 'variables'" class="mx-auto flex max-w-3xl flex-col gap-3">
-        <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
-        <p v-if="sharedFrom" class="text-sm text-sky-200" data-test="shared-secrets">Valores deste projeto (não vêm do projeto de origem)</p>
-        <SecretVariables :base-path="`/resources/${encodeURIComponent(loaded.id)}`" :project="secretsProject" :scope-label="kind === 'command' ? 'deste command (valem depois que ele é carregado na conversa)' : 'desta skill (valem depois que ela é carregada na conversa)'" />
       </section>
       <section v-else-if="loaded && tab === 'history'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
@@ -548,5 +587,20 @@ function onInvalid(event: Event) {
 }
 .error {
   @apply text-xs font-normal text-rose-300;
+}
+.input:disabled {
+  @apply opacity-60;
+}
+.tool-card {
+  @apply rounded-xl border border-zinc-800;
+}
+.tool-card > header {
+  @apply flex flex-wrap items-baseline gap-2 border-b border-zinc-800 px-3 py-2;
+}
+.tool-card h3 {
+  @apply text-sm font-medium text-zinc-200;
+}
+.tool-card .count {
+  @apply text-xs text-zinc-500;
 }
 </style>

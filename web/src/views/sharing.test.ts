@@ -190,4 +190,30 @@ describe('aba Variáveis', () => {
     await click(q(host, 'tab-variables'))
     expect(api).toHaveBeenCalledWith('/resources/deploy/secrets?project=alfa')
   })
+  it('fixas: aparecem na guia com as secretas e vão no Salvar do item (a lista inteira)', async () => {
+    const host = await mount(ResourcesView, { kind: 'skill', id: 'deploy' }, 'alfa', { '/resources/deploy': skill({ env: { GRAFANA_URL: 'https://g' } }) })
+    await click(q(host, 'tab-variables'))
+    expect(q(host, 'tab-variables')?.textContent).toContain('Variáveis (1)')
+    const rows = host.querySelectorAll('[data-test="resource-fixed-row"]')
+    expect(rows).toHaveLength(1)
+    await click(q(host, 'resource-fixed-add'))
+    const inputs = [...host.querySelectorAll<HTMLInputElement>('[data-test="resource-fixed-row"] input')]
+    inputs[2]!.value = 'REGIAO'
+    inputs[2]!.dispatchEvent(new Event('input'))
+    inputs[3]!.value = 'sa-east-1'
+    inputs[3]!.dispatchEvent(new Event('input'))
+    await flush()
+    host.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }))
+    await flush()
+    const saved = vi.mocked(api).mock.calls.find(([path, init]) => path === '/resources/deploy' && (init as { method?: string } | undefined)?.method === 'PUT')
+    expect((saved?.[1] as { body: { env: Record<string, string> } }).body.env).toEqual({ GRAFANA_URL: 'https://g', REGIAO: 'sa-east-1' })
+  })
+
+  it('fixas da skill compartilhada: só leitura (são da origem); as secretas seguem deste projeto', async () => {
+    const host = await mount(ResourcesView, { kind: 'skill', id: 'deploy' }, 'beta', { '/resources/deploy': skill({ sharedWith: ['beta'], env: { GRAFANA_URL: 'https://g' } }) })
+    await click(q(host, 'tab-variables'))
+    const name = host.querySelector<HTMLInputElement>('[data-test="resource-fixed-row"] input')!
+    expect(name.closest('fieldset')?.disabled).toBe(true)
+    expect(host.textContent).toContain('Valores deste projeto')
+  })
 })

@@ -30,6 +30,8 @@ export interface IProjectConnection {
   skipped: Array<{ ref: string; message: string }>
   secrets: Array<{ kind: string; id: string; name: string; description?: string }>
   modelMap: Record<string, string>
+  /** As variáveis fixas DESTA MÁQUINA, por cima das que vêm da origem (nunca vão para lá). */
+  localEnv?: Record<string, string>
   lastCheckedAt?: string
   lastSyncedAt?: string
 }
@@ -107,6 +109,11 @@ export const useConnectionsStore = defineStore('connections', () => {
     put(await api<IProjectConnection>(`/connections/${encodeURIComponent(projectId)}/token`, { method: 'PUT', body: { token } }))
   }
 
+  /** As variáveis fixas DESTA MÁQUINA (a lista inteira), por cima das da origem. */
+  async function setLocalEnv(projectId: string, env: Record<string, string>): Promise<void> {
+    put(await api<IProjectConnection>(`/connections/${encodeURIComponent(projectId)}/env`, { method: 'PUT', body: { env } }))
+  }
+
   async function disconnect(projectId: string): Promise<void> {
     await api(`/connections/${encodeURIComponent(projectId)}`, { method: 'DELETE' })
     list.value = list.value.filter((item) => item.projectId !== projectId)
@@ -127,5 +134,5 @@ export const useConnectionsStore = defineStore('connections', () => {
     return api<IAgentLocalLayerView>(localPath(projectId, agentId), { method: 'DELETE' })
   }
 
-  return { list, byProject, attention, originOf, refresh, reset, follow, connect, check, sync, replaceToken, disconnect, readLocal, saveLocal, removeLocal }
+  return { list, byProject, attention, originOf, refresh, reset, follow, connect, check, sync, replaceToken, setLocalEnv, disconnect, readLocal, saveLocal, removeLocal }
 })
