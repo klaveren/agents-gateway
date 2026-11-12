@@ -23,6 +23,7 @@ import {
   sweepCommandLogs,
   sweepMountPoints,
   systemReadAllowlist,
+  withMacLocalPorts,
   writeFolders,
 } from './Project.Sandbox'
 
@@ -336,6 +337,56 @@ describe('ProjectSandbox', () => {
     sandbox.done()
     await new Promise((resolve) => setImmediate(resolve))
     assert.strictEqual(srt.cleanups.count, 2)
+  })
+
+  it('⚖️ Mac: a porta local da regra exata entra no perfil depois da porta do gateway; sem o encaixe, o comando é recusado', async () => {
+    const project = join(root, 'projeto-portas')
+    mkdirSync(project, { recursive: true })
+    let gatePort = 0
+    const srt = fakeSrt()
+    const load = async () => {
+      const loaded = await srt.load()
+      const manager = loaded.SandboxManager
+      return {
+        SandboxManager: {
+          ...manager,
+          initialize: async (config: { network: { httpProxyPort: number } }) => void (gatePort = config.network.httpProxyPort),
+          // Como o runtime: o perfil com a regra da porta do gateway, e o comando depois (o teste do status roda de verdade).
+          wrapWithSandbox: async (command: string) =>
+            command === 'true' ? command : `sandbox-exec -p '(version 1)\n(allow network-outbound (remote ip "localhost:${gatePort}"))\n; fim' sh -c ${command}`,
+        },
+      }
+    }
+    const mac = new ProjectSandbox(env, load, 'darwin')
+    const line = await mac.wrapWith('npm run dev', project, (base) => cercoPlan({}, { ...base, system: [] }), 'tok-portas', { localPorts: [4000, 4000, 70000] })
+    mac.done()
+    assert.match(
+      line,
+      new RegExp(
+        `localhost:${gatePort}"\\)\\)\\n\\(allow network-bind \\(local ip "localhost:4000"\\)\\)\\n\\(allow network-inbound \\(local ip "localhost:4000"\\)\\)\\n\\(allow network-outbound \\(remote ip "localhost:4000"\\)\\)\\n; fim`,
+      ),
+    )
+    assert.strictEqual(line.match(/localhost:4000/g)?.length, 3)
+    assert.doesNotMatch(line, /70000/)
+    // No Linux a porta vira encaminhador, não regra de perfil.
+    const linux = new ProjectSandbox(env, load, 'linux')
+    assert.doesNotMatch(await linux.wrapWith('ls', project, (base) => cercoPlan({}, { ...base, system: [] }), 'tok-portas-l', { localPorts: [4000] }), /network-bind/)
+    linux.done()
+    // ⛔ O perfil sem o encaixe: nada abre, e o comando não sai.
+    assert.throws(() => withMacLocalPorts("sandbox-exec -p '(version 1)' sh -c ls", 3999, [4000]), /portas locais \(4000\) não foram abertas/)
+    assert.strictEqual(withMacLocalPorts('igual', 3999, []), 'igual')
+    assert.strictEqual(withMacLocalPorts('igual', 3999, [3999]), 'igual')
+  })
+
+  it('⚖️ Mac de verdade (sandbox-exec): a porta liberada ouve e conecta; a vizinha, não', () => {
+    if (process.platform !== 'darwin') return
+    const [gate, open, closed] = [47_311, 47_312, 47_313]
+    const base = `(version 1)\n(allow default)\n(deny network*)\n(allow network-outbound (remote ip "localhost:${gate}"))`
+    const profile = withMacLocalPorts(base, gate, [open])
+    const probe = `const net=require('net');const p=Number(process.argv[1]);const s=net.createServer().listen(p,'127.0.0.1',()=>net.connect(p,'127.0.0.1',()=>{console.log('ok');process.exit(0)}).on('error',e=>{console.log(e.code);process.exit(0)})).on('error',e=>{console.log(e.code);process.exit(0)})`
+    const run = (port: number) => execFileSync('/usr/bin/sandbox-exec', ['-p', profile, process.execPath, '-e', probe, String(port)], { encoding: 'utf8' }).trim()
+    assert.strictEqual(run(open), 'ok')
+    assert.strictEqual(run(closed), 'EPERM')
   })
 
   it('⚖️ o prelúdio: no Linux o loopback do cerco vai direto (NO_PROXY); no Mac segue pelo portão (vazio)', async () => {
