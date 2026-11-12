@@ -49,6 +49,20 @@ describe('DelegationsPanel', () => {
     expect(host.querySelectorAll('[data-child]')).toHaveLength(2)
   })
 
+  it('a ordem é a da última interação: a mais recente em cima, e a que começa a rodar sobe na hora', async () => {
+    const at = (id: string, agentId: string, updatedAt: string) => ({ ...child(id, agentId, 0), updatedAt }) as IConversation
+    const host = await mount([at('a', 'agent-sre', '2026-11-11T10:00:00.000Z'), at('b', 'agent-god', '2026-11-11T12:00:00.000Z'), at('c', 'agent-qa', '2026-11-11T11:00:00.000Z')])
+    host.querySelector<HTMLButtonElement>('[data-test="delegations-toggle"]')!.click()
+    await nextTick()
+    const order = () => [...host.querySelectorAll('[data-child]')].map((link) => link.getAttribute('data-child'))
+    expect(order()).toEqual(['b', 'c', 'a'])
+
+    useConversationsStore().running = new Set(['a'])
+    await nextTick()
+    await nextTick()
+    expect(order()).toEqual(['a', 'b', 'c'])
+  })
+
   it('todas acabaram: concluídas', async () => {
     const host = await mount([child('a', 'agent-sre', 1000)])
     expect(host.querySelector('[data-test="delegations-toggle"]')!.textContent).toContain('1 de 1 · concluídas')
