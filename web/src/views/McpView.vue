@@ -85,7 +85,7 @@ import { computed, onMounted, ref, watch } from 'vue'
   /** As tags que os MCPs já usam (as sugestões do campo). */
   const knownTags = computed(() => tagNames(mcp.list))
   const listed = computed(() => filterList(inScope.value, { query: query.value, tag: tag.value }, (server) => [server.id, server.name]))
-  /** O escopo escolhido na edição (`''` = global): mover é um passo à parte, porque muda a chave e quem pode usar. */
+  /** O escopo escolhido na edição (`''` = global): vai com o Salvar do rodapé; muda a chave e quem pode usar. */
   const moveTo = ref('')
   const moveDirty = computed(() => !!selected.value && moveTo.value !== (selected.value.projectId ?? ''))
 
@@ -341,14 +341,11 @@ import { computed, onMounted, ref, watch } from 'vue'
     }
   }
 
-  const save = () =>
-    run(async () => {
-      await mcp.update(selected.value!.key, {
-        ...edit.value!,
-        headerName: edit.value!.auth === 'header' ? edit.value!.headerName : undefined,
-        oauth: edit.value!.auth === 'oauth' ? oauthPayload(edit.value!.oauth) : undefined,
-      })
-    })
+  const remotePayload = () => ({
+    ...edit.value!,
+    headerName: edit.value!.auth === 'header' ? edit.value!.headerName : undefined,
+    oauth: edit.value!.auth === 'oauth' ? oauthPayload(edit.value!.oauth) : undefined,
+  })
   /** Sem os campos vazios (o servidor descobre o que faltar). */
   function oauthPayload(oauth?: { clientId: string; scopes?: string; authorizationServer?: string }) {
     if (!oauth) return undefined
@@ -376,24 +373,10 @@ import { computed, onMounted, ref, watch } from 'vue'
     run(async () => {
       await mcp.update(selected.value!.key, { enabled: !selected.value!.enabled })
     })
-  /** ⛔ O servidor recusa (409) se algum agente perderia o MCP: a mensagem diz quem. A chave muda, e a rota vai junto. */
-  const move = () =>
-    run(async () => {
-      const moved = await mcp.update(selected.value!.key, { projectId: moveTo.value || null })
-      await router.replace(`/mcp/${moved.key}`)
-    })
   const containerDirty = computed(() => !!selected.value?.container && JSON.stringify(selected.value.container) !== JSON.stringify(containerPayload(containerDraft.value)))
-  const saveContainer = () =>
-    run(async () => {
-      await mcp.update(selected.value!.key, { name: edit.value!.name, tags: edit.value!.tags, container: containerPayload(containerDraft.value) })
-    })
   const processDirty = computed(
     () => !!selected.value?.process && JSON.stringify(processPayload(withProcessDefaults(selected.value.process))) !== JSON.stringify(processPayload(processDraft.value)),
   )
-  const saveProcess = () =>
-    run(async () => {
-      await mcp.update(selected.value!.key, { name: edit.value!.name, tags: edit.value!.tags, process: processPayload(processDraft.value) })
-    })
   /** O Salvar do rodapé: o que o tipo do MCP grava (contêiner, processo ou remoto), e se há o que gravar. */
   const mcpDirty = computed(() => {
     const server = selected.value
@@ -402,7 +385,22 @@ import { computed, onMounted, ref, watch } from 'vue'
     if (server.kind === 'process') return processDirty.value || edit.value.name !== server.name || tagsChanged.value
     return dirty.value
   })
-  const saveMcp = () => (selected.value?.kind === 'container' ? saveContainer() : selected.value?.kind === 'process' ? saveProcess() : save())
+  const mcpPayload = () => {
+    const kind = selected.value!.kind
+    if (kind === 'container') return { name: edit.value!.name, tags: edit.value!.tags, container: containerPayload(containerDraft.value) }
+    if (kind === 'process') return { name: edit.value!.name, tags: edit.value!.tags, process: processPayload(processDraft.value) }
+    return remotePayload()
+  }
+  /**
+   * Um salvar só: a configuração e o escopo trocado vão na mesma gravação.
+   * ⛔ O servidor recusa (409) se algum agente perderia o MCP: a mensagem diz quem. Trocou o escopo, a chave muda e a rota vai junto.
+   */
+  const saveMcp = () =>
+    run(async () => {
+      const key = selected.value!.key
+      const saved = await mcp.update(key, { ...(mcpDirty.value ? mcpPayload() : {}), ...(moveDirty.value ? { projectId: moveTo.value || null } : {}) })
+      if (saved.key !== key) await router.replace(`/mcp/${saved.key}`)
+    })
   const install = () =>
     run(async () => {
       installResult.value = undefined
@@ -754,7 +752,7 @@ import { computed, onMounted, ref, watch } from 'vue'
             </div>
           </template>
 
-          <form v-if="selected.kind === 'remote'" class="flex flex-col gap-3" @submit.prevent="save">
+          <form v-if="selected.kind === 'remote'" class="flex flex-col gap-3" @submit.prevent="saveMcp">
             <div class="grid gap-3 sm:grid-cols-2">
               <label class="field">
                 Nome
@@ -899,10 +897,9 @@ import { computed, onMounted, ref, watch } from 'vue'
                     Projeto {{ project.name }}{{ connections.originOf(project.id) ? ' — desta máquina' : '' }}
                   </option>
                 </select>
-                <button v-if="moveDirty && !lite" type="button" class="btn btn-secondary" :disabled="busy" @click="move">Mover</button>
               </div>
               <small class="hint">
-                Mover leva junto a chave e as variáveis. ⛔ Recusado se algum agente ficaria sem o MCP — tire dele antes.
+                Trocar o escopo vale ao salvar, e leva junto a chave e as variáveis. ⛔ Recusado se algum agente ficaria sem o MCP — tire dele antes.
               </small>
               <small v-if="editError && moveDirty" class="error">{{ editError }}</small>
             </label>
@@ -916,8 +913,8 @@ import { computed, onMounted, ref, watch } from 'vue'
           </div>
           <!-- Um salvar só por tela: a configuração do MCP (o tipo dele decide o que grava). Os segredos gravam na hora, acima. -->
           </fieldset>
-          <SaveFooter v-if="!locked" label="Salvar MCP" :busy="busy" :disabled="!mcpDirty" :pending="mcpDirty" @save="saveMcp">
-            <span v-if="mcpDirty && selected.kind === 'process'" class="text-xs text-zinc-500">As execuções em andamento serão encerradas.</span>
+          <SaveFooter v-if="!locked" label="Salvar MCP" :busy="busy" :disabled="!mcpDirty && !moveDirty" :pending="mcpDirty || moveDirty" @save="saveMcp">
+            <span v-if="(mcpDirty || moveDirty) && selected.kind === 'process'" class="text-xs text-zinc-500">As execuções em andamento serão encerradas.</span>
           </SaveFooter>
         </template>
       </section>
