@@ -4,6 +4,7 @@
   import { useResource } from '@/composables/useResource'
   import { initials } from '@/lib/format'
   import { useAboveBar, usePopover } from '@/lib/popover'
+  import { loadServers, serverList } from '@/lib/servers'
   import { useAuthStore } from '@/stores/auth'
   import { usePermissionRequestsStore } from '@/stores/permissionRequests'
   import { useProjectsStore } from '@/stores/projects'
@@ -11,7 +12,7 @@
   import Icon from './Icon.vue'
 
   /**
-   * O menu da conta: o avatar abre um submenu com quem está logado, o perfil, o sobre (a versão) e o sair.
+   * O menu da conta: o avatar abre um submenu com quem está logado, o perfil, os servidores (no app do Mac), o sobre (a versão) e o sair.
    * `placement`: no trilho (desktop) abre para o lado; na barra inferior (celular), para cima.
    */
   defineProps<{ placement: 'side' | 'up' }>()
@@ -27,6 +28,9 @@
   const requests = usePermissionRequestsStore()
   const { data: allRequests } = useResource(requests.lists, () => (projects.managesAny ? '' : undefined))
   const pending = computed(() => (projects.managesAny ? (allRequests.value ?? []).filter((request) => request.status === 'pending').length : 0))
+
+  // O cadastro dos servidores só existe no app do Mac, e só a tela deste Mac cadastra (ver `lib/servers`).
+  void loadServers()
 
   const about = ref(false)
   function showAbout() {
@@ -103,6 +107,10 @@
         <Icon name="bell" class="h-4 w-4 text-zinc-400" />
         Notificações
         <span v-if="pending" class="ml-auto rounded-full bg-amber-500 px-1.5 text-[10px] leading-4 font-semibold text-zinc-950" data-test="notifications-pill">{{ pending }}</span>
+      </RouterLink>
+      <RouterLink v-if="serverList?.manage" to="/servers" role="menuitem" class="flex items-center gap-2.5 px-3 py-2.5 text-zinc-200 hover:bg-zinc-800" data-test="servers-item" @click="open = false">
+        <Icon name="globe" class="h-4 w-4 text-zinc-400" />
+        Servidores
       </RouterLink>
       <button type="button" role="menuitem" class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800" data-test="about-item" @click="showAbout">
         <Icon name="info" class="h-4 w-4 text-zinc-400" />

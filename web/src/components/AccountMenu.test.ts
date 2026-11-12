@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { api } from '@/lib/api'
+import { forgetServers } from '@/lib/servers'
 import { useAuthStore } from '@/stores/auth'
 import AccountMenu from './AccountMenu.vue'
 
@@ -48,6 +49,8 @@ afterEach(() => {
   app = undefined
   document.body.innerHTML = ''
   vi.mocked(api).mockReset()
+  delete (globalThis as { webkit?: unknown }).webkit
+  forgetServers()
 })
 
 describe('AccountMenu — Sobre', () => {
@@ -80,5 +83,39 @@ describe('AccountMenu — Sobre', () => {
     await openAbout(await mount(new Error('fora do ar')))
     expect(test('about-error')!.textContent).toContain('Não foi possível ler a versão.')
     expect(test('about-version')).toBeNull()
+  })
+})
+
+describe('AccountMenu — Servidores', () => {
+  const install = (manage: boolean) =>
+    ((globalThis as { webkit?: unknown }).webkit = {
+      messageHandlers: { gatewayServers: { postMessage: async () => ({ current: manage ? 'local' : 's4', manage, servers: [{ id: 'local', name: 'Este Mac', local: true }] }) } },
+    })
+
+  async function menu() {
+    const host = await mount({})
+    host.querySelector('button')!.click()
+    await flush()
+    return host
+  }
+
+  it('no app, na tela deste Mac, o item leva ao cadastro', async () => {
+    install(true)
+    await menu()
+    expect(test('servers-item')!.textContent).toContain('Servidores')
+    expect(test('servers-item')!.getAttribute('href')).toBe('/servers')
+  })
+
+  it('no navegador, e na tela de outro servidor, o item não aparece', async () => {
+    await menu()
+    expect(test('servers-item')).toBeNull()
+    app!.unmount()
+    document.body.innerHTML = ''
+    forgetServers()
+
+    install(false)
+    await menu()
+    expect(test('about-item')).not.toBeNull()
+    expect(test('servers-item')).toBeNull()
   })
 })
