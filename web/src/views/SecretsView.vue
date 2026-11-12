@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import ConfirmDialog from '@/components/ConfirmDialog.vue'
   import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, ref, watch } from 'vue'
   import { ApiError } from '@/lib/api'
@@ -60,8 +61,13 @@ import { computed, ref, watch } from 'vue'
     }
   }
 
-  async function removeValue(value: ISecretValue) {
-    if (!confirm(`Parar de mascarar "${value.label}"?`)) return
+  /** O valor que espera a confirmação de remover (na tela: o `confirm()` nativo não abre em navegador embutido). */
+  const removing = ref<ISecretValue>()
+
+  async function removeValue() {
+    const value = removing.value
+    removing.value = undefined
+    if (!value) return
     actionError.value = undefined
     await store.removeValue(value.id).catch((failure) => (actionError.value = messageOf(failure)))
   }
@@ -139,7 +145,7 @@ import { computed, ref, watch } from 'vue'
             <code class="text-xs text-zinc-500">{{ value.id }}</code>
             <span v-if="value.last4" class="text-xs text-zinc-500">…{{ value.last4 }}</span>
             <span class="ml-auto text-xs text-zinc-500">{{ value.updatedBy }} · {{ fullTime(value.updatedAt) }}</span>
-            <button class="btn btn-ghost btn-sm text-rose-300" @click="removeValue(value)">Remover</button>
+            <button class="btn btn-ghost btn-sm text-rose-300" @click="removing = value">Remover</button>
           </li>
         </ul>
         <p v-else class="text-xs text-zinc-500">Nenhum cadastrado. As contas dos projetos e as chaves dos providers já entram sozinhas.</p>
@@ -194,6 +200,8 @@ import { computed, ref, watch } from 'vue'
       <!-- Um salvar só por tela: os nomes. Os valores mascarados gravam na hora (Adicionar). -->
       <SaveFooter label="Salvar nomes" :disabled="!namesDirty" :pending="namesDirty" @save="saveNames" />
     </section>
+
+    <ConfirmDialog :open="!!removing" :title="`Parar de mascarar &quot;${removing?.label}&quot;?`" action="Remover" @confirm="removeValue" @cancel="removing = undefined" />
   </div>
 </template>
 

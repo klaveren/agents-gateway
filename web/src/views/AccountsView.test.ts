@@ -82,4 +82,37 @@ describe('AccountsView — Git HTTPS (servidor próprio)', () => {
     expect(host.textContent).toContain('agente em https://git.infoccus.com.br/infoccus')
     expect(host.textContent).toContain('o agente vê o segredo')
   })
+
+  it('apaga pela confirmação da própria tela (o confirm() nativo não abre em navegador embutido)', async () => {
+    const { host, calls } = await mount()
+    vi.mocked(api).mockImplementation(async (path: string, init?: { method?: string; body?: unknown }) => {
+      calls.push({ path, init })
+      if (path === '/projects/p1/accounts' && !init?.method) return { accounts: [saved] }
+      return init?.method === 'PUT' ? saved : {}
+    })
+    ;[...host.querySelectorAll('button')].find((button) => button.textContent?.includes('Nova conta'))!.click()
+    await flush()
+    fill(host.querySelector('select'), 'git-https')
+    await flush()
+    fill(host.querySelector('input[placeholder="github-empresa1"]'), 'infoccus')
+    fill(host.querySelector('input[placeholder="https://git.empresa.com.br/grupo"]'), 'https://git.infoccus.com.br/infoccus')
+    fill(host.querySelector('input[placeholder="agente"]'), 'agente')
+    fill(host.querySelector('textarea'), 'tok-wxyz')
+    await flush()
+    host.querySelector('form')!.dispatchEvent(new Event('submit'))
+    await flush()
+
+    const native = vi.spyOn(window, 'confirm')
+    ;[...host.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Apagar')!.click()
+    await flush()
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    expect(dialog.textContent).toContain('Apagar a conta infoccus?')
+    expect(calls.some((call) => call.init?.method === 'DELETE')).toBe(false)
+    ;[...dialog.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Apagar')!.click()
+    await flush()
+
+    expect(native).not.toHaveBeenCalled()
+    expect(calls.find((call) => call.init?.method === 'DELETE')?.path).toBe('/projects/p1/accounts/infoccus')
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+  })
 })

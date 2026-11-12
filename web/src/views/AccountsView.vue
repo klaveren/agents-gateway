@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
@@ -138,9 +139,13 @@ async function save() {
   }
 }
 
-async function remove(account: IProjectAccount) {
-  if (!confirm(`Apagar a conta ${account.id}? Os agentes deixam de recebê-la na hora.`)) return
-  if (!project.value) return
+/** A conta que espera a confirmação de apagar (na tela: o `confirm()` nativo não abre em navegador embutido). */
+const removing = ref<IProjectAccount>()
+
+async function remove() {
+  const account = removing.value
+  removing.value = undefined
+  if (!account || !project.value) return
   actionError.value = undefined
   await store.remove(project.value.id, account.id).catch((failure) => (actionError.value = String(failure)))
 }
@@ -334,7 +339,7 @@ watch(
               <span class="ml-auto flex gap-1">
                 <button type="button" class="btn btn-ghost btn-sm" @click="test(account)">Testar</button>
                 <button type="button" class="btn btn-ghost btn-sm" @click="startEdit(account)">Editar</button>
-                <button type="button" class="btn btn-ghost btn-sm text-rose-300" @click="remove(account)">Apagar</button>
+                <button type="button" class="btn btn-ghost btn-sm text-rose-300" @click="removing = account">Apagar</button>
               </span>
             </div>
             <p class="text-xs text-zinc-500">
@@ -366,6 +371,14 @@ watch(
         <p v-else-if="editing === null" class="text-xs text-zinc-500">Nenhuma conta neste projeto.</p>
       </template>
     </section>
+
+    <ConfirmDialog
+      :open="!!removing"
+      :title="`Apagar a conta ${removing?.id}?`"
+      message="Os agentes deixam de recebê-la na hora."
+      @confirm="remove"
+      @cancel="removing = undefined"
+    />
   </div>
 </template>
 
