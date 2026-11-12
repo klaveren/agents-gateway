@@ -419,7 +419,15 @@ export class ProjectSandbox implements IProjectSandbox {
         ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
         // ⚖️ Socket Unix liberado no Linux (o `tsx`, o pre-commit, servidores de linguagem abrem um no TMPDIR): é seguro
         // SÓ porque os do host ficam fora de alcance (`hostSocketDirs`); os abstratos, a rede própria do cerco isola.
-        network: { allowedDomains: [], deniedDomains: [], httpProxyPort: port, socksProxyPort: port, ...(process.platform === 'linux' ? { allowAllUnixSockets: true } : {}) },
+        // ⛔ No Mac, só DENTRO das pastas de trabalho (a dos projetos e a das conversas sem projeto, onde mora o TMPDIR do
+        // comando): o `tsx` do build passa; o do Docker, o do ssh-agent e os do usuário seguem fora.
+        network: {
+          allowedDomains: [],
+          deniedDomains: [],
+          httpProxyPort: port,
+          socksProxyPort: port,
+          ...(process.platform === 'linux' ? { allowAllUnixSockets: true } : process.platform === 'darwin' ? { allowUnixSockets: macSocketDirs(this.env) } : {}),
+        },
         filesystem: { denyRead: [], allowWrite: [], denyWrite: [] },
       })
       return SandboxManager
@@ -1048,6 +1056,17 @@ export function writeConnector(home: string): string {
 
 function quote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * As pastas em que um comando cercado no Mac pode abrir e alcançar Unix socket: a dos projetos (`<dados>/projects`) e a das
+ * conversas sem projeto (`<tmp>/gateway-sub`), pelo caminho REAL (o `/var` do Mac é link para `/private/var`).
+ */
+export function macSocketDirs(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [join(dataDir(env), 'projects'), join(tmpdir(), 'gateway-sub')].map((dir) => {
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    return realpathSync(dir)
+  })
 }
 
 let shared: IProjectSandbox | undefined
