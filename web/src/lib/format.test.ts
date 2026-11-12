@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { redactUrl, sizeHint } from './format'
+import { redactUrl, sizeHint, tokens } from './format'
 
 describe('sizeHint', () => {
   it('mostra caracteres e tokens estimados, sem teto; diz quando pesa', () => {
@@ -18,5 +18,23 @@ describe('redactUrl', () => {
   it('o que não é URL: corta a consulta e o usuário mesmo assim', () => {
     expect(redactUrl('//user:pw@host/mcp?key=1')).toBe('//host/mcp')
     expect(redactUrl('')).toBe('')
+  })
+})
+
+describe('tokens', () => {
+  it('k, M, B e T: o número nunca passa de 999 na unidade', () => {
+    expect(tokens(undefined)).toBe('0')
+    expect(tokens(999)).toBe('999')
+    expect(tokens(1_500)).toBe('1.5k')
+    expect(tokens(58_700_000)).toBe('58.7M')
+    expect(tokens(2_110_000_000)).toBe('2.11B')
+    expect(tokens(2_043_600_000)).toBe('2.04B')
+    expect(tokens(3_250_000_000_000)).toBe('3.25T')
+  })
+
+  it('o arredondamento que chegaria a 1000 sobe de unidade', () => {
+    expect(tokens(999_960)).toBe('1.0M')
+    expect(tokens(999_960_000)).toBe('1.00B')
+    expect(tokens(999_940)).toBe('999.9k')
   })
 })

@@ -15,11 +15,21 @@ export function fullTime(iso: string | undefined): string {
   return iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''
 }
 
+const TOKEN_UNITS = ['k', 'M', 'B', 'T']
+
+/** Tokens em k, M, B (bilhões) e T (trilhões). A unidade sobe quando o arredondamento chegaria a 1000 (nunca "2110.0M"). */
 export function tokens(value: number | undefined): string {
   const n = value ?? 0
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
-  return String(n)
+  if (n < 1_000) return String(n)
+  let scaled = n / 1_000
+  let unit = 0
+  // De B em diante, duas casas: 2.04B e 2.10B não podem virar o mesmo "2.0B".
+  const digits = () => (unit >= 2 ? 2 : 1)
+  while (unit < TOKEN_UNITS.length - 1 && Number(scaled.toFixed(digits())) >= 1000) {
+    scaled /= 1_000
+    unit++
+  }
+  return `${scaled.toFixed(digits())}${TOKEN_UNITS[unit]}`
 }
 
 /**
