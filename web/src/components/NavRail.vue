@@ -16,8 +16,11 @@
   const auth = useAuthStore()
   const conversations = useConversationsStore()
   const projects = useProjectsStore()
-  /** O menu Projeto: quem está num projeto (o admin dele vê tudo; o membro, os MCPs do projeto, só leitura). */
-  const projectMenu = computed(() => !!auth.user && !!projects.current)
+  /**
+   * O menu Projeto: quem está num projeto (o admin dele vê tudo; o membro, os MCPs do projeto, só leitura).
+   * O admin do gateway sem papel no projeto não tem item aqui: os MCPs dele estão no menu Sistema.
+   */
+  const projectMenu = computed(() => !!auth.user && !!projects.current && (projects.manages || !auth.isAdmin))
 
   const section = computed(() => {
     const name = String(route.name ?? '')
