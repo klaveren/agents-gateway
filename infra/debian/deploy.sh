@@ -18,8 +18,10 @@ REVISION="$(git rev-parse --short "$REF")"
 echo "🚀 $REF ($REVISION) → $HOST"
 
 # Só as variáveis do setup atravessam, entre aspas simples (o valor não é interpretado pelo shell remoto).
+# O commit vai junto (`GATEWAY_REVISION`): o servidor recebe um `git archive`, sem git para perguntar.
+export GATEWAY_REVISION="$REVISION"
 forward=""
-for name in GATEWAY_USER GATEWAY_HOME GATEWAY_DATA GATEWAY_HOST GATEWAY_PORT GATEWAY_ENV NODE_BIN SKIP_APT DEPLOY_WAIT_MINUTES DEPLOY_DRAIN; do
+for name in GATEWAY_REVISION GATEWAY_USER GATEWAY_HOME GATEWAY_DATA GATEWAY_HOST GATEWAY_PORT GATEWAY_ENV NODE_BIN SKIP_APT DEPLOY_WAIT_MINUTES DEPLOY_DRAIN; do
   if [[ -n "${!name:-}" ]]; then forward+=" $name='${!name//\'/}'"; fi
 done
 

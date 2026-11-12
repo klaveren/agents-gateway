@@ -15,6 +15,7 @@
 #                                            existir — numa migração, ponha nele os valores da instalação antiga ANTES
 #   NODE_BIN=                                o node (≥ 22.13; 24 recomendado). Vazio: o do PATH, ou instala o 24 oficial
 #   SKIP_APT=1                               não mexe nos pacotes do sistema
+#   GATEWAY_REVISION=                        o commit deste código, para o "Sobre" (o `deploy.sh` manda; num clone, o git diz)
 set -euo pipefail
 
 GATEWAY_USER="${GATEWAY_USER:-gateway}"
@@ -65,22 +66,26 @@ if [[ "${SKIP_APT:-}" != 1 ]]; then
 fi
 
 # --- 2. Binários fora do apt, verificados por checksum ---
+# ⛔ Numa pasta só do root, de nome sorteado: em `/tmp/<nome fixo>` outro usuário da máquina poderia pôr a pasta antes e
+# trocar o binário entre o checksum e a instalação.
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
 fetch() { # url sha destino
   local tmp
-  tmp="$(mktemp)"
+  tmp="$(mktemp -p "$WORK")"
   curl -fsSL "$1" -o "$tmp"
   echo "$2  $tmp" | sha256sum -c --quiet - || die "checksum não confere: $1"
   mv "$tmp" "$3"
 }
 if [[ "$(/usr/local/bin/agy --version 2>/dev/null || true)" != *"$AGY_VERSION"* ]]; then
   log "agy $AGY_VERSION"
-  fetch "https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/agy_cli_linux_${AGY_ARCH}.tar.gz" "$AGY_SHA" /tmp/agy.tar.gz
-  mkdir -p /tmp/agy && tar -xzf /tmp/agy.tar.gz -C /tmp/agy && install -m 0755 /tmp/agy/antigravity /usr/local/bin/agy && rm -rf /tmp/agy /tmp/agy.tar.gz
+  fetch "https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/agy_cli_linux_${AGY_ARCH}.tar.gz" "$AGY_SHA" "$WORK/agy.tar.gz"
+  mkdir "$WORK/agy" && tar -xzf "$WORK/agy.tar.gz" -C "$WORK/agy" && install -m 0755 "$WORK/agy/antigravity" /usr/local/bin/agy
 fi
 if [[ "$(/usr/local/bin/micromamba --version 2>/dev/null || true)" != "${MICROMAMBA_VERSION%-*}" ]]; then
   log "micromamba $MICROMAMBA_VERSION"
-  fetch "https://github.com/mamba-org/micromamba-releases/releases/download/${MICROMAMBA_VERSION}/micromamba-linux-${MAMBA_ARCH}" "$MAMBA_SHA" /tmp/micromamba
-  install -m 0755 /tmp/micromamba /usr/local/bin/micromamba && rm -f /tmp/micromamba
+  fetch "https://github.com/mamba-org/micromamba-releases/releases/download/${MICROMAMBA_VERSION}/micromamba-linux-${MAMBA_ARCH}" "$MAMBA_SHA" "$WORK/micromamba"
+  install -m 0755 "$WORK/micromamba" /usr/local/bin/micromamba
 fi
 
 # --- 3. O usuário e as pastas ---
@@ -104,8 +109,8 @@ if ! node_ok "${NODE_BIN:-/nonexistent}"; then
     file="node-v$NODE_VERSION-linux-$NODE_ARCH.tar.xz"
     sha="$(curl -fsSL "$base/SHASUMS256.txt" | awk -v f="$file" '$2==f{print $1}')"
     [[ -n "$sha" ]] || die "Sem checksum do Node para $file"
-    fetch "$base/$file" "$sha" "/tmp/$file"
-    tar -xJf "/tmp/$file" -C /opt && rm -f "/tmp/$file"
+    fetch "$base/$file" "$sha" "$WORK/$file"
+    tar -xJf "$WORK/$file" -C /opt
   fi
   NODE_BIN="$NODE_DIR_OFFICIAL/bin/node"
 fi
@@ -123,6 +128,13 @@ as_user() { sudo -u "$GATEWAY_USER" -H env PATH="$NODE_DIR:/usr/local/bin:/usr/b
 log "Build (backend e tela)"
 as_user bash -c "cd '$GATEWAY_HOME' && corepack pnpm install --frozen-lockfile --reporter=silent && corepack pnpm run build >/dev/null"
 as_user bash -c "cd '$GATEWAY_HOME/web' && corepack pnpm install --frozen-lockfile --reporter=silent && corepack pnpm build >/dev/null"
+
+# O build que o "Sobre" mostra (`<versão>+<commit>`, como o app do Mac). Só letras, números, ponto e hífen chegam à unit.
+REVISION="${GATEWAY_REVISION:-$(git -C "$SOURCE" rev-parse --short HEAD 2>/dev/null || true)}"
+[[ "$REVISION" =~ ^[0-9a-f]{4,40}$ ]] || REVISION=""
+VERSION="$("$NODE_BIN" -p "require('$GATEWAY_HOME/package.json').version" 2>/dev/null || true)"
+[[ "$VERSION" =~ ^[0-9A-Za-z.-]+$ ]] || VERSION=""
+BUILD="${VERSION:-desconhecida}${REVISION:++$REVISION}"
 
 # --- 6. As chaves do serviço: criadas uma vez, nunca sobrescritas ---
 if [[ ! -f "$GATEWAY_ENV" ]]; then
@@ -164,6 +176,7 @@ Environment=PORT=$GATEWAY_PORT
 Environment=CONVERSATIONS_DB=$GATEWAY_DATA/gateway.db
 # O cerco lê só o liberado (provado com scripts/cerco-check.ts); o arquivo de ambiente desliga com CERCO_READ_ALLOWLIST=0.
 Environment=CERCO_READ_ALLOWLIST=1
+Environment=GATEWAY_BUILD=${REVISION:+$BUILD}
 EnvironmentFile=$GATEWAY_ENV
 ExecStart=$NODE_BIN dist/main.js
 Restart=always
@@ -228,7 +241,7 @@ systemctl enable --now "$SERVICE-backup.timer" >/dev/null 2>&1
 # --- 9. Conferência ---
 for _ in $(seq 1 30); do
   if curl -fsS "http://$GATEWAY_HOST:$GATEWAY_PORT/v1/health" >/dev/null 2>&1; then
-    log "✅ No ar: http://$GATEWAY_HOST:$GATEWAY_PORT ($(git -C "$SOURCE" rev-parse --short HEAD 2>/dev/null || echo 'sem git'))"
+    log "✅ No ar: http://$GATEWAY_HOST:$GATEWAY_PORT ($BUILD)"
     journalctl -u "$SERVICE" --since '-2min' --no-pager -o cat | grep '\[setup\]' || true
     exit 0
   fi
