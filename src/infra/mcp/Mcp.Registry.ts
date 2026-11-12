@@ -79,7 +79,7 @@ export class McpRegistry {
   constructor(
     private readonly servers: IMcpServerRepository,
     private readonly secrets: ICredentialSource,
-    private readonly make: TMcpClientFactory = (config, options) => new McpServerClient(config.url, {}, { allowPrivate: !config.projectId, ...options }),
+    private readonly make: TMcpClientFactory = (config, options) => new McpServerClient(config.url, {}, options),
     /** Headers fixos por servidor (ninguém usa na composição; fica para o teste e para quem monta à mão). */
     readonly fixedHeaders: (config: IMcpServerConfig) => Record<string, string> | undefined = () => undefined,
   ) {}
