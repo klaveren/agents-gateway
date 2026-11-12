@@ -4,6 +4,7 @@
   import { url } from '@/lib/api'
   import { bytes, CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
   import { renderMarkdown } from '@/lib/markdown'
+  import { gatewayNotice } from '@/lib/notice'
   import type { ITurn } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
   import Icon from './Icon.vue'
@@ -28,6 +29,8 @@
   }
 
   const request = computed(() => props.turn?.request ?? props.pending?.request ?? '')
+  /** O turno que o GATEWAY abriu (a vigia que disparou, a decisão de um pedido): é aviso, não fala da pessoa. */
+  const notice = computed(() => gatewayNotice(request.value))
   const files = computed(() => props.turn?.files?.length ?? props.pending?.files ?? 0)
   const text = computed(() => props.turn?.text ?? props.pending?.text ?? '')
   const reasoning = computed(() => props.turn?.reasoning ?? props.pending?.reasoning ?? '')
@@ -113,7 +116,15 @@
 
 <template>
   <div class="flex flex-col gap-2">
-    <div v-if="request || files" class="ml-auto max-w-[78%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3.5 py-2 text-sm whitespace-pre-wrap wrap-anywhere text-white shadow">
+    <div v-if="notice" class="mx-auto max-w-[85%] rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-1.5 text-center text-xs text-zinc-400" data-test="gateway-notice">
+      <span class="font-semibold text-zinc-300">Aviso do gateway</span> · {{ notice.what }}
+      <span v-if="turn" class="text-zinc-500"> · {{ shortTime(turn.at) }}</span>
+      <details v-if="notice.detail" class="mt-1 text-left">
+        <summary class="cursor-pointer text-center text-zinc-500 select-none">o que o agente recebeu</summary>
+        <pre class="mt-1 max-h-48 overflow-auto font-mono text-[11px] whitespace-pre-wrap wrap-anywhere text-zinc-400">{{ notice.detail }}</pre>
+      </details>
+    </div>
+    <div v-else-if="request || files" class="ml-auto max-w-[78%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3.5 py-2 text-sm whitespace-pre-wrap wrap-anywhere text-white shadow">
       {{ request }}
       <div v-if="files" class="mt-1 text-xs text-emerald-100/80">📎 {{ files }} anexo(s)</div>
       <div v-if="turn" class="mt-0.5 text-right text-[11px] text-emerald-100/70">{{ shortTime(turn.at) }}</div>

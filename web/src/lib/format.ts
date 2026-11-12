@@ -15,6 +15,24 @@ export function fullTime(iso: string | undefined): string {
   return iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''
 }
 
+/** Uma duração curta, como o gateway a escreve: "40 s", "2 min", "1 h 30 min", "3 dias". */
+export function span(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds} s`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`
+  return `${Math.round(hours / 24)} dias`
+}
+
+/** Há quanto tempo: "agora" no primeiro minuto, depois "há 2 min", "há 1 h 5 min", "há 3 dias". */
+export function ago(iso: string | undefined, now = new Date()): string {
+  if (!iso) return ''
+  const elapsed = now.getTime() - new Date(iso).getTime()
+  return elapsed < 60_000 ? 'agora' : `há ${span(elapsed)}`
+}
+
 const TOKEN_UNITS = ['k', 'M', 'B', 'T']
 
 /** Tokens em k, M, B (bilhões) e T (trilhões). A unidade sobe quando o arredondamento chegaria a 1000 (nunca "2110.0M"). */

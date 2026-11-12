@@ -24,6 +24,7 @@
   import TokensMenu from './TokensMenu.vue'
   import SessionTuner from './SessionTuner.vue'
   import TodoPanel from './TodoPanel.vue'
+  import WatchesPanel from './WatchesPanel.vue'
   import TurnBubbles from './TurnBubbles.vue'
   import { copyText } from '@/lib/clipboard'
 
@@ -522,6 +523,7 @@
       </aside>
     </div>
     <TodoPanel v-if="thread.todos.length" :items="thread.todos" />
+    <WatchesPanel v-if="thread.watches.length" :items="thread.watches" :stop="thread.stopWatch" />
     <ChangesPanel v-if="changesOpen && thread.sessionId" :session-id="thread.sessionId" :refresh-key="changesRefresh" @close="changesOpen = false" @count="changesCount = $event" />
     <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
     <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">

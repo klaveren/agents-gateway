@@ -336,7 +336,8 @@
     systemPrompt: '',
     reasoningEfforts: [],
     modes: ['chat', 'agent'],
-    allowedTools: [],
+    // A vigia nasce ligada: sem ela o agente não tem como cumprir um "te aviso quando…".
+    allowedTools: ['cap:watch'],
     role: null,
     adminOnly: false,
     projectId: projects.current ?? null,
@@ -497,7 +498,7 @@
     return [...listed, ...LEDGER_TOOLS.filter((ledger) => !listed.some((tool) => tool.name === ledger.name)).map((tool) => ({ ...tool, dangerous: false }))]
   })
   /** As capacidades que só o gateway executa (nenhum provedor tem a sua): vão no grupo "Do gateway". */
-  const GATEWAY_CAPABILITIES: readonly string[] = ['cap:todos', 'cap:triggers']
+  const GATEWAY_CAPABILITIES: readonly string[] = ['cap:todos', 'cap:watch', 'cap:triggers']
   const serverCapabilities = computed(() => agents.capabilities.filter((item) => !GATEWAY_CAPABILITIES.includes(item.id)))
   // Editar triggers fica de fora da lite, que não tem triggers.
   const gatewayCapabilities = computed(() => agents.capabilities.filter((item) => GATEWAY_CAPABILITIES.includes(item.id) && !(lite.value && item.id === 'cap:triggers')))

@@ -114,3 +114,20 @@ describe('TurnBubbles — arquivo entregue', () => {
     expect(links[0]!.textContent).toContain('2 KB')
   })
 })
+
+describe('TurnBubbles — aviso do gateway', () => {
+  it('o turno que o gateway abriu é um aviso no meio, não o balão de quem fala; o resto fica recolhido', async () => {
+    const host = await mount({ request: '[Aviso do gateway, não é mensagem da pessoa: a vigia "servidor voltar" disparou.]\nComando conferido: test -f pronto' })
+    const notice = host.querySelector('[data-test="gateway-notice"]')!
+    expect(notice.textContent).toContain('Aviso do gateway')
+    expect(notice.textContent).toContain('A vigia "servidor voltar" disparou.')
+    expect(notice.querySelector('details pre')?.textContent).toBe('Comando conferido: test -f pronto')
+    expect(host.querySelector('.bg-emerald-600\\/90')).toBeNull()
+  })
+
+  it('a fala da pessoa segue no balão dela', async () => {
+    const host = await mount({ request: 'oi' })
+    expect(host.querySelector('[data-test="gateway-notice"]')).toBeNull()
+    expect(host.querySelector('.bg-emerald-600\\/90')?.textContent).toContain('oi')
+  })
+})
