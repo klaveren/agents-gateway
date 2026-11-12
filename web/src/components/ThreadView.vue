@@ -126,8 +126,9 @@
     return typeof from === 'string' ? (agents.byId.get(from)?.name ?? from) : 'outro agente'
   })
   const children = ref<IConversation[]>([])
+  // Relida também quando uma conversa começa ou para de rodar: a filha contactada no meio do turno aparece e sobe na hora.
   watch(
-    () => [header.value?.id, thread.turns.length] as const,
+    () => [header.value?.id, thread.turns.length, conversations.running] as const,
     async ([id]) => {
       if (!id) return (children.value = [])
       const page = await api<{ sessions: IConversation[] }>('/conversations', { query: { delegatedBy: id, limit: 50 } }).catch(() => ({ sessions: [] }))
