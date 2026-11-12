@@ -98,10 +98,15 @@ describe('ConversationRow: deslizar', () => {
     const host = await mount(ConversationRow, rowProps())
     const slide = sized(host)
 
+    // No lugar, as ações ficam invisíveis: cobertas, vazavam um fio de cor na borda arredondada da linha.
+    const actions = host.querySelector('[data-testid="conversation-actions"]')!
+    expect(actions.classList.contains('invisible')).toBe(true)
+
     await drag(slide, 300, 200)
 
     expect(offsetOf(slide)).toBe('translateX(-144px)')
     expect(openRowId.value).toBe('a')
+    expect(actions.classList.contains('invisible')).toBe(false)
   })
 
   it('um arrasto curto volta ao lugar', async () => {
@@ -112,6 +117,7 @@ describe('ConversationRow: deslizar', () => {
 
     expect(offsetOf(slide)).toBe('translateX(0px)')
     expect(openRowId.value).toBeUndefined()
+    expect(host.querySelector('[data-testid="conversation-actions"]')!.classList.contains('invisible')).toBe(true)
   })
 
   it('deslizar até o fim arquiva na hora', async () => {
