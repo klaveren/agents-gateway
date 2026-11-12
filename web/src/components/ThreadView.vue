@@ -154,6 +154,10 @@
   })
   const contextWindow = computed(() => agent.value?.providers.find((provider) => provider.id === currentProvider.value)?.contextLength?.[currentModel.value ?? ''])
   const context = computed(() => contextMeter(contextUsed.value, contextWindow.value))
+  // A janela do modelo sem listagem (a assinatura) o servidor aprende no primeiro turno: os agentes são relidos para o anel aparecer.
+  watch(contextUsed, (used) => {
+    if (used && contextWindow.value === undefined && agent.value) void agents.load().catch(() => undefined)
+  })
 
   /**
    * O aviso antes do turno que mudou de provider, de modelo ou de nível em relação ao anterior. Só compara

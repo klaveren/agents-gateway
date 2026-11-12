@@ -399,6 +399,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
               cacheWriteTokens: message.usage.cache_creation_input_tokens ?? 0,
               outputTokens: message.usage.output_tokens,
               ...(lastContext !== undefined ? { contextTokens: lastContext } : {}),
+              ...windowOf(message.modelUsage, record.model),
             },
           }
 
@@ -719,6 +720,19 @@ function preToolUse(gate: CanUseTool, loop: (tool: string, args: unknown) => str
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: decision && 'message' in decision ? decision.message : 'denied' },
     }
   }
+}
+
+/**
+ * A janela de contexto do modelo DA CONVERSA, como o runtime a informa no `result` (`modelUsage`, uma entrada por modelo
+ * usado no turno: o da conversa e os dos subagentes). A chave pode vir com sufixo (`claude-opus-5-5[1m]`) ou datada.
+ * Sem entrada do modelo da conversa, nada: a janela de um subagente não é a dela.
+ */
+export function windowOf(modelUsage: Record<string, { contextWindow?: number }> | undefined, model: string): { contextWindow?: number } {
+  const bare = (id: string) => id.replace(/\[.*\]$/, '')
+  const entries = Object.entries(modelUsage ?? {})
+  const match = entries.find(([id]) => id === model) ?? entries.find(([id]) => bare(id) === model || bare(id).startsWith(`${model}-`))
+  const window = match?.[1].contextWindow
+  return typeof window === 'number' && window > 0 ? { contextWindow: window } : {}
 }
 
 /** O `PostToolUse` de toda ferramenta: a mensagem que chegou com o turno rodando vai ao modelo como contexto do resultado. */

@@ -111,6 +111,22 @@ describe('ModelCatalogService', () => {
     assert.strictEqual(catalog.contextOf('claude-sub', 'so-aqui'), undefined)
   })
 
+  it('a janela que o runtime informou vale para o modelo sem listagem; a da listagem não é trocada', () => {
+    const catalog = build()
+    catalog.addModel('claude-sub', 'claude-fable-5-1', 'root')
+    catalog.learnContext('claude-sub', 'claude-fable-5-1', 1_000_000)
+    assert.strictEqual(catalog.contextOf('claude-sub', 'claude-fable-5-1'), 1_000_000)
+    catalog.learnContext('claude-sub', 'claude-fable-5-1', 200_000)
+    assert.strictEqual(catalog.contextOf('claude-sub', 'claude-fable-5-1'), 200_000, 'sem listagem, vale o que o runtime disse por último')
+
+    catalog.sync('claude', [{ id: 'claude-opus-5-5', contextLength: 1_000_000 }], 'root')
+    catalog.learnContext('claude', 'claude-opus-5-5', 200_000)
+    assert.strictEqual(catalog.contextOf('claude', 'claude-opus-5-5'), 1_000_000)
+
+    catalog.learnContext('claude-sub', 'fora-do-catalogo', 200_000)
+    assert.strictEqual(catalog.list('claude-sub').length, 1, 'modelo fora do catálogo não é criado')
+  })
+
   it('⛔ utilizável = ativado E disponível: modelo que sumiu da listagem deixa de valer', () => {
     const catalog = build()
     catalog.sync('agregador', [{ id: 'a' }, { id: 'b' }], 'root')

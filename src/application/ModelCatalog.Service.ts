@@ -57,6 +57,17 @@ export class ModelCatalogService {
     return this.catalog.get(providerId, modelId)?.contextLength ?? this.catalog.list().find((model) => model.modelId === modelId && model.contextLength)?.contextLength
   }
 
+  /**
+   * A janela que o RUNTIME informou ao rodar o modelo (o Claude Code, no fim do turno): é o que dá janela ao modelo da
+   * assinatura, que não tem listagem. ⚖️ A LISTAGEM VENCE: o modelo sincronizado que já tem janela fica como está.
+   */
+  learnContext(providerId: string, modelId: string, window: number): void {
+    const model = this.catalog.get(providerId, modelId)
+    if (!model || !Number.isInteger(window) || window <= 0 || model.contextLength === window) return
+    if (model.syncedAt && model.contextLength) return
+    this.catalog.update(providerId, modelId, { contextLength: window })
+  }
+
   isEnabled(providerId: string, modelId: string): boolean {
     const model = this.catalog.get(providerId, modelId)
     return model?.enabled === true && model.available

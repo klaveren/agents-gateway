@@ -33,6 +33,11 @@ export interface IUsage {
    * não é o tamanho de contexto nenhum. No turno e na sessão vale o da ÚLTIMA chamada (`addUsage`).
    */
   contextTokens?: number
+  /**
+   * A JANELA do modelo, quando o runtime a informa junto com o consumo (o Claude Code, no fim do turno). É um fato do
+   * modelo, não um consumo: não se soma nem se guarda no turno — vai ao catálogo de modelos (`learnContext`).
+   */
+  contextWindow?: number
 }
 
 const USAGE_FIELDS = ['inputTokens', 'outputTokens', 'reasoningTokens', 'cacheReadTokens', 'cacheWriteTokens'] as const

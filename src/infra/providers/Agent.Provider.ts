@@ -123,6 +123,9 @@ export class AgentProvider implements IAgentProvider {
 
     /** O nome de um projeto, para o "## Ambiente" do system prompt (ver `Ambient.Policy`). Ausente = só o id. */
     private readonly projectName?: (projectId: string) => string | undefined,
+
+    /** A janela que o runtime informou num turno (`IUsage.contextWindow`): vai ao catálogo de modelos. Ausente = não se guarda. */
+    private readonly learnContext?: (provider: string, model: string, window: number) => void,
   ) {
     /**
      * Uma leitura no boot, e depois só quando muda.
@@ -421,7 +424,7 @@ export class AgentProvider implements IAgentProvider {
           }
           if (event.type === 'message.aborted' || event.type === 'error') stopped = true
           // Somar o usage aqui vale para as seis implementações de uma vez.
-          if (event.type === 'usage') this.sessions.addUsage(record, event.payload)
+          if (event.type === 'usage') this.noteUsage(record, event.payload)
           else if (event.type === 'text.delta') turn.text += event.payload.text
           else if (event.type === 'tool.started') turn.tools.push(event.payload.tool)
           if (event.type === 'tool.started') this.loops?.observe(sessionId, { type: 'tool.started', tool: event.payload.tool, args: event.payload.args })
@@ -523,12 +526,18 @@ export class AgentProvider implements IAgentProvider {
    * como turno, só o consumo. ⛔ Ferramenta ou erro no meio: desiste, e vale a transcrição recortada. Nas lanes de chat o
    * `return` encerra o gerador antes de a ferramenta rodar; nas de SDK (OpenAI Agents, ADK) ela pode já ter rodado.
    */
+  /** O consumo entra na conta da sessão; a janela que veio junto (ver `IUsage.contextWindow`) vai ao catálogo. */
+  private noteUsage(record: ISessionRecord, usage: IUsage): void {
+    this.sessions.addUsage(record, usage)
+    if (usage.contextWindow) this.learnContext?.(record.provider, record.model, usage.contextWindow)
+  }
+
   private async *summarize(record: ISessionRecord, agent: IAgent, adapter: IAgentAdapter, context: IExecutionContext): AsyncGenerator<IAgentEvent, string | undefined> {
     let text = ''
     try {
       for await (const event of adapter.sendMessage(agent, record.id, { text: COMPACT_REQUEST }, context)) {
         if (event.type === 'usage') {
-          this.sessions.addUsage(record, event.payload)
+          this.noteUsage(record, event.payload)
           yield event
         } else if (event.type === 'text.delta') text += event.payload.text
         else if (event.type === 'tool.started' || event.type === 'error') return undefined
