@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import ListPager from './ListPager.vue'
+import { usePaged } from '@/composables/usePaged'
 import { tokens, usd } from '@/lib/format'
 import type { IUsageFigure } from '@/lib/types'
 import { USAGE_SEGMENTS, usageSegments } from '@/lib/usageSegments'
@@ -23,6 +25,8 @@ const hover = ref<number>()
 const showTable = ref(false)
 
 const output = (day: IUsageFigure) => day.usage.outputTokens + day.usage.reasoningTokens
+/** A tabela (a visão sem gráfico): só os dias com uso, de página em página. */
+const dayPage = usePaged(computed(() => props.days.filter((item) => item.turns)))
 const max = computed(() => Math.max(1, ...props.days.map((day) => day.usage.inputTokens + output(day))))
 /** Um teto "redondo" para o eixo: 1, 2 ou 5 × 10ⁿ acima do máximo. */
 const ceiling = computed(() => {
@@ -121,7 +125,7 @@ function topRounded(x: number, top: number, width: number, height: number): stri
         </tr>
       </thead>
       <tbody class="text-zinc-300">
-        <tr v-for="day in days.filter((item) => item.turns)" :key="day.date" class="border-t border-zinc-800">
+        <tr v-for="day in dayPage.items.value" :key="day.date" class="border-t border-zinc-800">
           <td class="py-1">{{ label(day.date) }}</td>
           <td>{{ tokens(day.usage.inputTokens) }}</td>
           <td>{{ tokens(day.usage.cacheReadTokens) }}</td>
@@ -132,6 +136,7 @@ function topRounded(x: number, top: number, width: number, height: number): stri
         </tr>
       </tbody>
     </table>
+    <ListPager v-model="dayPage.page.value" :pages="dayPage.pages.value" :total="dayPage.total.value" :size="dayPage.size" />
   </div>
 </template>
 

@@ -2,6 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
+import ListPager from '@/components/ListPager.vue'
+import { usePaged } from '@/composables/usePaged'
 import { ApiError } from '@/lib/api'
 import type { IPackageHit, TPackageSource } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
@@ -19,6 +21,7 @@ const loadError = ref<string>()
 const source = ref<TPackageSource>('conda')
 const query = ref('')
 const hits = ref<IPackageHit[]>([])
+const hitPage = usePaged(hits)
 const searching = ref(false)
 const searchError = ref<string>()
 /** O pacote em instalação ou remoção agora (o servidor faz uma operação por vez). */
@@ -40,6 +43,8 @@ const installed = computed(() => packages.state?.packages ?? [])
 const requested = computed(() => installed.value.filter((entry) => entry.explicit))
 const dependencies = computed(() => installed.value.filter((entry) => !entry.explicit))
 const npmInstalled = computed(() => packages.state?.npm?.packages ?? [])
+const requestedPage = usePaged(requested, { by: (item) => item.name })
+const npmPage = usePaged(npmInstalled, { by: (item) => item.name })
 const versionOf = (name: string) => (source.value === 'npm' ? npmInstalled.value : installed.value).find((entry) => entry.name === name)?.version
 
 function describe(error: unknown): string {
@@ -173,7 +178,7 @@ async function confirmRemove() {
         <p v-if="searchError" class="text-sm text-rose-300">{{ searchError }}</p>
 
         <ul v-if="hits.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-          <li v-for="hit in hits" :key="hit.name" class="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
+          <li v-for="hit in hitPage.items.value" :key="hit.name" class="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
             <div class="min-w-0 flex-1">
               <div class="truncate font-mono text-[13px] text-zinc-200">{{ hit.name }}</div>
               <div class="text-xs text-zinc-500">{{ hit.version }}<template v-if="hit.license"> · {{ hit.license }}</template></div>
@@ -205,6 +210,7 @@ async function confirmRemove() {
           </li>
         </ul>
         <p v-else-if="query.trim().length >= 2 && !searching && !searchError" class="text-xs text-zinc-500">Nenhum pacote com esse nome.</p>
+        <ListPager v-model="hitPage.page.value" :pages="hitPage.pages.value" :total="hitPage.total.value" :size="hitPage.size" />
 
         <div v-if="result" class="flex flex-col gap-2">
           <p class="text-sm" :class="result.ok ? 'text-emerald-300' : 'text-rose-300'">
@@ -216,7 +222,7 @@ async function confirmRemove() {
         <div v-if="source === 'npm'" data-test="npm-installed" class="border-t border-zinc-800/80 pt-4">
           <h2 class="mb-2 text-sm font-medium text-zinc-200">Instalados (npm) <span class="text-xs font-normal text-zinc-500">{{ npmInstalled.length }}</span></h2>
           <ul v-if="npmInstalled.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-            <li v-for="entry in npmInstalled" :key="entry.name" class="flex items-center gap-3 px-3 py-2">
+            <li v-for="entry in npmPage.items.value" :key="entry.name" class="flex items-center gap-3 px-3 py-2">
               <div class="min-w-0 flex-1">
                 <div class="truncate font-mono text-[13px] text-zinc-200">{{ entry.name }}</div>
                 <div class="text-xs text-zinc-500">{{ entry.version }}</div>
@@ -227,12 +233,13 @@ async function confirmRemove() {
             </li>
           </ul>
           <p v-else class="text-xs text-zinc-500">Nenhum pacote npm ainda — busque acima.</p>
+          <ListPager v-model="npmPage.page.value" :pages="npmPage.pages.value" :total="npmPage.total.value" :size="npmPage.size" />
         </div>
 
         <div v-else class="border-t border-zinc-800/80 pt-4">
           <h2 class="mb-2 text-sm font-medium text-zinc-200">Instalados <span class="text-xs font-normal text-zinc-500">{{ requested.length }}</span></h2>
           <ul v-if="requested.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-            <li v-for="entry in requested" :key="entry.name" class="flex items-center gap-3 px-3 py-2">
+            <li v-for="entry in requestedPage.items.value" :key="entry.name" class="flex items-center gap-3 px-3 py-2">
               <div class="min-w-0 flex-1">
                 <div class="truncate font-mono text-[13px] text-zinc-200">{{ entry.name }}</div>
                 <div class="text-xs text-zinc-500">{{ entry.version }}</div>
@@ -243,6 +250,7 @@ async function confirmRemove() {
             </li>
           </ul>
           <p v-else class="text-xs text-zinc-500">Nenhum pacote ainda — busque acima.</p>
+          <ListPager v-model="requestedPage.page.value" :pages="requestedPage.pages.value" :total="requestedPage.total.value" :size="requestedPage.size" />
           <button v-if="dependencies.length" type="button" class="mt-2 text-xs text-zinc-500 hover:text-zinc-300" @click="showDeps = !showDeps">
             {{ showDeps ? 'esconder' : 'mostrar' }} {{ dependencies.length }} dependência(s)
           </button>

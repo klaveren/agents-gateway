@@ -6,6 +6,8 @@ import type { IAgentHook, IHookDelivery, THookInput } from '@/lib/types'
 import { useResource } from '@/composables/useResource'
 import { useHooksStore } from '@/stores/hooks'
 import ConfirmDialog from './ConfirmDialog.vue'
+import ListPager from './ListPager.vue'
+import { usePaged } from '@/composables/usePaged'
 import { copyText } from '@/lib/clipboard'
 
 /**
@@ -19,6 +21,7 @@ const hooks = useHooksStore()
 
 const { data, error: listError } = useResource(hooks.lists, () => props.agentId)
 const list = computed(() => data.value ?? [])
+const hookPage = usePaged(list, { by: (item) => item.name })
 const loadError = computed(() => (listError.value ? describe(listError.value) : undefined))
 /** O hook aberto: `''` = um novo; `undefined` = nenhum. */
 const open = ref<string>()
@@ -30,6 +33,7 @@ const busy = ref(false)
 const revealed = ref<{ name: string; secret: string }>()
 const copied = ref<string>()
 const deliveries = ref<IHookDelivery[]>([])
+const deliveryPage = usePaged(deliveries)
 const confirm = ref<{ kind: 'rotate' | 'remove'; name: string }>()
 
 function blank(): THookInput & { name: string } {
@@ -166,7 +170,7 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
     </div>
 
     <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-      <li v-for="hook in list" :key="hook.name">
+      <li v-for="hook in hookPage.items.value" :key="hook.name">
         <button type="button" class="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-800/40" @click="openHook(hook.name)">
           <span class="h-2 w-2 shrink-0 rounded-full" :class="hook.enabled ? 'bg-emerald-400' : 'bg-zinc-600'" />
           <span class="min-w-0 flex-1">
@@ -181,6 +185,7 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
       </li>
       <li v-if="!list.length && !loadError" class="px-3 py-3 text-xs text-zinc-500">Nenhum hook ainda.</li>
     </ul>
+    <ListPager v-model="hookPage.page.value" :pages="hookPage.pages.value" :total="hookPage.total.value" :size="hookPage.size" />
     <button v-if="!addingNew" type="button" class="btn btn-secondary self-start" @click="openHook('')">+ Novo hook</button>
 
     <div v-if="editing" class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3">
@@ -252,7 +257,7 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
           <button type="button" class="ml-auto text-xs text-zinc-400 hover:text-zinc-200" @click="loadDeliveries">atualizar</button>
         </div>
         <ul v-if="deliveries.length" class="divide-y divide-zinc-800 rounded-lg border border-zinc-800 text-xs">
-          <li v-for="delivery in deliveries" :key="delivery.id" class="flex items-center gap-3 px-3 py-1.5">
+          <li v-for="delivery in deliveryPage.items.value" :key="delivery.id" class="flex items-center gap-3 px-3 py-1.5">
             <span class="w-36 shrink-0 text-zinc-400">{{ fullTime(delivery.receivedAt) }}</span>
             <span class="w-14 shrink-0" :class="STATUS[delivery.status].tone">{{ STATUS[delivery.status].label }}</span>
             <span class="min-w-0 flex-1 truncate text-rose-300/80">{{ delivery.error }}</span>
@@ -260,6 +265,7 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
           </li>
         </ul>
         <p v-else class="text-xs text-zinc-500">Nenhuma chamada ainda.</p>
+        <ListPager v-model="deliveryPage.page.value" :pages="deliveryPage.pages.value" :total="deliveryPage.total.value" :size="deliveryPage.size" />
       </div>
     </div>
 

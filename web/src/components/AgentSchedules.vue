@@ -8,6 +8,8 @@ import type { ISchedule, IScheduleRun, TScheduleInput } from '@/lib/types'
 import { useProjectsStore } from '@/stores/projects'
 import { useSchedulesStore } from '@/stores/schedules'
 import ConfirmDialog from './ConfirmDialog.vue'
+import ListPager from './ListPager.vue'
+import { usePaged } from '@/composables/usePaged'
 
 /**
  * A guia Agendamentos de um agente: em cada horário do cron o agente recebe o texto (um `/command`, uma skill ou um
@@ -19,6 +21,7 @@ const schedules = useSchedulesStore()
 const projects = useProjectsStore()
 
 const list = computed(() => schedules.byAgent[props.agentId] ?? [])
+const schedulePage = usePaged(list, { by: (item) => item.name })
 const loadError = ref<string>()
 /** O agendamento aberto: `''` = um novo; `undefined` = nenhum. */
 const open = ref<string>()
@@ -27,6 +30,7 @@ const issues = ref<Record<string, string[]>>({})
 const error = ref<string>()
 const busy = ref(false)
 const runs = ref<IScheduleRun[]>([])
+const runPage = usePaged(runs)
 const confirm = ref<string>()
 const started = ref(false)
 
@@ -148,7 +152,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
     <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 
     <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-      <li v-for="schedule in list" :key="schedule.name">
+      <li v-for="schedule in schedulePage.items.value" :key="schedule.name">
         <button type="button" class="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-800/40" @click="openSchedule(schedule.name)">
           <span class="h-2 w-2 shrink-0 rounded-full" :class="schedule.enabled ? 'bg-emerald-400' : schedule.pausedReason ? 'bg-rose-400' : 'bg-zinc-600'" />
           <span class="min-w-0 flex-1">
@@ -165,6 +169,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
       </li>
       <li v-if="!list.length && !loadError" class="px-3 py-3 text-xs text-zinc-500">Nenhum agendamento ainda.</li>
     </ul>
+    <ListPager v-model="schedulePage.page.value" :pages="schedulePage.pages.value" :total="schedulePage.total.value" :size="schedulePage.size" />
     <button v-if="!addingNew" type="button" class="btn btn-secondary self-start" @click="openSchedule('')">+ Novo agendamento</button>
 
     <div v-if="editing" class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3">
@@ -247,7 +252,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
           <button type="button" class="ml-auto text-xs text-zinc-400 hover:text-zinc-200" @click="loadRuns">atualizar</button>
         </div>
         <ul v-if="runs.length" class="divide-y divide-zinc-800 rounded-lg border border-zinc-800 text-xs">
-          <li v-for="entry in runs" :key="entry.id" class="flex items-center gap-3 px-3 py-1.5">
+          <li v-for="entry in runPage.items.value" :key="entry.id" class="flex items-center gap-3 px-3 py-1.5">
             <span class="w-36 shrink-0 text-zinc-400">{{ fullTime(entry.scheduledFor) }}</span>
             <span class="w-14 shrink-0" :class="RUN_STATUS[entry.status].tone">{{ RUN_STATUS[entry.status].label }}</span>
             <span class="w-12 shrink-0 text-zinc-500">{{ entry.trigger === 'manual' ? 'manual' : '' }}</span>
@@ -256,6 +261,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
           </li>
         </ul>
         <p v-else class="text-xs text-zinc-500">Nenhuma execução ainda.</p>
+        <ListPager v-model="runPage.page.value" :pages="runPage.pages.value" :total="runPage.total.value" :size="runPage.size" />
       </div>
     </div>
 

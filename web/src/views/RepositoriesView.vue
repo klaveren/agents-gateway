@@ -5,6 +5,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ApiError } from '@/lib/api'
 import { useResource } from '@/composables/useResource'
+import ListPager from '@/components/ListPager.vue'
+import { usePaged } from '@/composables/usePaged'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
@@ -42,6 +44,7 @@ const ready = ref(false)
 const key = () => (ready.value && project.value ? project.value.id : undefined)
 const listed = useResource(store.lists, key)
 const repositories = computed(() => listed.data.value ?? [])
+const repositoryPage = usePaged(repositories, { by: (item) => item.name })
 /** As contas que servem ao clone: as de git por https. */
 const accountList = useResource(accountsStore.lists, key)
 const gitAccounts = computed(() => (accountList.data.value ?? []).filter((item) => item.kind === 'github-app' || item.kind === 'github-token' || item.kind === 'git-https'))
@@ -270,7 +273,7 @@ watch(
           </form>
 
           <ul v-if="repositories.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800" data-test="repository-list">
-            <li v-for="item in repositories" :key="item.name" class="flex flex-col gap-1.5 px-3 py-2.5" :data-test="`repository-${item.name}`">
+            <li v-for="item in repositoryPage.items.value" :key="item.name" class="flex flex-col gap-1.5 px-3 py-2.5" :data-test="`repository-${item.name}`">
               <div class="flex flex-wrap items-center gap-2">
                 <span class="font-mono font-medium text-zinc-100">{{ item.name }}</span>
                 <span v-if="item.cloning" class="rounded-full border border-amber-500/40 px-2 text-[11px] text-amber-200">clonando…</span>
@@ -290,6 +293,7 @@ watch(
           <p v-else-if="!adding && !error" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">
             Este projeto ainda não tem repositório. Clone um ou crie um git local em “Novo repositório”.
           </p>
+          <ListPager v-model="repositoryPage.page.value" :pages="repositoryPage.pages.value" :total="repositoryPage.total.value" :size="repositoryPage.size" />
         </template>
       </template>
 

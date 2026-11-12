@@ -55,6 +55,7 @@ const system = computed(() => stored.data.value?.system ?? [])
 const meta = computed(() => ({ updatedAt: stored.data.value?.updatedAt, updatedBy: stored.data.value?.updatedBy }))
 const decisions = ref<IPermissionDecision[]>([])
 const decisionPage = usePaged(decisions)
+const systemPage = usePaged(system)
 const decisionAgent = ref('')
 const actionError = ref<string>()
 const error = computed(() => actionError.value ?? (stored.error.value === undefined ? undefined : stored.error.value instanceof Error ? stored.error.value.message : String(stored.error.value)))
@@ -179,12 +180,13 @@ watch([decisionAgent, section], () => {
         <section v-else-if="tab === 'system'" class="flex flex-col gap-2" data-test="system-rules">
           <p class="text-xs text-zinc-500">Regras do sistema: valem sempre, sem exceção, antes das do agente e das do projeto. Não se editam.</p>
           <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800 text-xs">
-            <li v-for="(rule, index) in system" :key="index" class="flex items-baseline gap-3 px-3 py-1.5">
+            <li v-for="(rule, index) in systemPage.items.value" :key="index" class="flex items-baseline gap-3 px-3 py-1.5">
               <span class="w-28 shrink-0 text-zinc-500">{{ label(rule.category) }}</span>
               <code class="min-w-0 flex-1 truncate text-zinc-200" :title="rule.pattern">{{ rule.pattern }}</code>
               <span class="shrink-0 text-zinc-500">{{ rule.note }}</span>
             </li>
           </ul>
+          <ListPager v-model="systemPage.page.value" :pages="systemPage.pages.value" :total="systemPage.total.value" :size="systemPage.size" />
         </section>
         <template v-else>
           <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>

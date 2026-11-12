@@ -20,6 +20,8 @@ import { computed, onMounted, ref, watch } from 'vue'
   import type { IRestoreResult } from '@/lib/catalogHistory'
   import { fullTime, initials } from '@/lib/format'
   import { toolsTokens, toolTokens } from '@/lib/toolTokens'
+  import ListPager from '@/components/ListPager.vue'
+  import { usePaged } from '@/composables/usePaged'
   import type { IMcpContainer, IMcpProcess, IMcpServer, TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
   import { useAuthStore } from '@/stores/auth'
   import { useMcpStore, type INewMcpServer } from '@/stores/mcp'
@@ -245,6 +247,7 @@ import { computed, onMounted, ref, watch } from 'vue'
   const tools = computed(() => (selected.value ? (mcp.tools[selected.value.key] ?? []) : []))
   /** As mais pesadas primeiro: é por elas que vale começar a cortar. */
   const toolsByWeight = computed(() => [...tools.value].sort((a, b) => toolTokens(b) - toolTokens(a)))
+  const toolPage = usePaged(toolsByWeight)
   const pointsToSelf = (url: string) => /\/v1\/mcp\/?$/.test(url.trim())
 
   /** ⚠️ Todos os problemas de um 422, com o campo — inclusive de campos que não têm input na tela (senão sumiriam). */
@@ -879,7 +882,7 @@ import { computed, onMounted, ref, watch } from 'vue'
             </h3>
             <p v-if="tools.length" class="mb-2 text-xs text-zinc-500">Cada ferramenta ocupa espaço na conversa do agente, mesmo sem uso. Dê só as necessárias.</p>
             <ul v-if="tools.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-              <li v-for="tool in toolsByWeight" :key="tool.name" class="flex items-start gap-3 px-3 py-2">
+              <li v-for="tool in toolPage.items.value" :key="tool.name" class="flex items-start gap-3 px-3 py-2">
                 <div class="min-w-0 flex-1">
                   <div class="font-mono text-[13px] text-zinc-200">{{ tool.name }}</div>
                   <div v-if="tool.description" class="text-xs text-zinc-500">{{ tool.description }}</div>
@@ -891,6 +894,7 @@ import { computed, onMounted, ref, watch } from 'vue'
             <p v-else class="text-xs text-zinc-500">
               {{ selected.enabled ? 'Nenhuma ferramenta listada (servidor fora do ar, ou sem ferramentas).' : 'Ligue o servidor para listar as ferramentas.' }}
             </p>
+            <ListPager v-model="toolPage.page.value" :pages="toolPage.pages.value" :total="toolPage.total.value" :size="toolPage.size" />
           </div>
 
           <div v-if="!isSelf && projects.list.length" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">

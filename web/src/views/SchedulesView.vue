@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
+import ListPager from '@/components/ListPager.vue'
+import { usePaged } from '@/composables/usePaged'
 import { useResource } from '@/composables/useResource'
 import { describeCron, RUN_STATUS } from '@/lib/cron'
 import { fullTime } from '@/lib/format'
@@ -19,6 +21,7 @@ const project = computed(() => projects.list.find((item) => item.id === projects
 /** A visão geral do projeto atual, da store (por projeto): lida uma vez; "Atualizar" relê (a próxima execução anda). */
 const overview = useResource(schedules.overview, () => (projects.manages ? (projects.current ?? '') : undefined))
 const list = computed(() => overview.data.value ?? [])
+const schedulePage = usePaged(list, { by: (item) => `${item.agentId}/${item.name}` })
 const loading = computed(() => schedules.overview.loading(projects.current ?? ''))
 const error = computed(() => {
   const failure = overview.error.value
@@ -52,7 +55,7 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
       <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
 
       <ul v-if="list.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-        <li v-for="schedule in list" :key="`${schedule.agentId}/${schedule.name}`">
+        <li v-for="schedule in schedulePage.items.value" :key="`${schedule.agentId}/${schedule.name}`">
           <RouterLink :to="`/agents/${schedule.agentId}#agendamentos`" class="flex items-center gap-3 px-3 py-2.5 hover:bg-zinc-800/40">
             <span class="h-2 w-2 shrink-0 rounded-full" :class="schedule.enabled ? 'bg-emerald-400' : schedule.pausedReason ? 'bg-rose-400' : 'bg-zinc-600'" />
             <span class="min-w-0 flex-1">
@@ -75,6 +78,7 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
       <p v-else-if="!loading && !error" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">
         Nenhum agendamento{{ project ? ' neste projeto' : '' }}. Crie um na guia Agendamentos de um agente.
       </p>
+      <ListPager v-model="schedulePage.page.value" :pages="schedulePage.pages.value" :total="schedulePage.total.value" :size="schedulePage.size" />
     </section>
   </div>
 </template>

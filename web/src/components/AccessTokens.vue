@@ -7,6 +7,8 @@ import { useAuthStore } from '@/stores/auth'
 import { type IAccessToken, useTokensStore } from '@/stores/tokens'
 import { useProjectsStore } from '@/stores/projects'
 import ConfirmDialog from './ConfirmDialog.vue'
+import ListPager from './ListPager.vue'
+import { usePaged } from '@/composables/usePaged'
 import Icon from './Icon.vue'
 import { copyText } from '@/lib/clipboard'
 
@@ -21,6 +23,7 @@ const store = useTokensStore()
 const userId = computed(() => auth.user?.id)
 const { data, error: listError } = useResource(store.lists, userId)
 const tokens = computed(() => data.value ?? [])
+const tokenPage = usePaged(tokens, { by: (item) => item.id })
 const revokeError = ref<string>()
 const loadError = computed(() => revokeError.value ?? (listError.value === undefined ? undefined : listError.value instanceof Error ? listError.value.message : String(listError.value)))
 const name = ref('Claude Code')
@@ -137,7 +140,7 @@ async function revoke() {
     <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 
     <ul v-if="tokens.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-      <li v-for="token in tokens" :key="token.id" class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2" :class="{ 'opacity-50': !isActive(token) }">
+      <li v-for="token in tokenPage.items.value" :key="token.id" class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2" :class="{ 'opacity-50': !isActive(token) }">
         <div class="min-w-0 flex-1 basis-48">
           <div class="flex items-center gap-2">
             <span class="truncate text-sm font-medium">{{ token.name }}</span>
@@ -156,6 +159,7 @@ async function revoke() {
       </li>
     </ul>
     <p v-else class="text-xs text-zinc-500">Nenhum token ainda.</p>
+    <ListPager v-model="tokenPage.page.value" :pages="tokenPage.pages.value" :total="tokenPage.total.value" :size="tokenPage.size" />
     <p v-if="active.length" class="text-xs text-zinc-500">{{ active.length }} ativo(s) de no máximo 20.</p>
 
     <ConfirmDialog

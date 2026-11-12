@@ -3,6 +3,8 @@
   import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, ref, watch } from 'vue'
   import { ApiError } from '@/lib/api'
+  import ListPager from '@/components/ListPager.vue'
+  import { usePaged } from '@/composables/usePaged'
   import { fullTime } from '@/lib/format'
   import { useResource } from '@/composables/useResource'
   import { useAuthStore } from '@/stores/auth'
@@ -21,6 +23,8 @@ import { computed, ref, watch } from 'vue'
   const { data, error: loadError } = useResource(store.mask, () => (auth.isAdmin ? '' : undefined))
   const values = computed(() => data.value?.values ?? [])
   const hits = computed(() => data.value?.hits ?? [])
+  const valuePage = usePaged(values, { by: (item) => item.id })
+  const hitPage = usePaged(hits)
   /** Os nomes como a pessoa edita (um por linha); voltam ao salvo quando ele muda. */
   const secretNames = ref('')
   const safeNames = ref('')
@@ -140,7 +144,7 @@ import { computed, ref, watch } from 'vue'
       <section class="flex flex-col gap-2">
         <h2 class="text-sm font-medium text-zinc-200">Valores a mascarar</h2>
         <ul v-if="values.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800 text-sm">
-          <li v-for="value in values" :key="value.id" class="flex items-center gap-3 px-3 py-2">
+          <li v-for="value in valuePage.items.value" :key="value.id" class="flex items-center gap-3 px-3 py-2">
             <span class="font-medium text-zinc-100">{{ value.label }}</span>
             <code class="text-xs text-zinc-500">{{ value.id }}</code>
             <span v-if="value.last4" class="text-xs text-zinc-500">…{{ value.last4 }}</span>
@@ -149,6 +153,7 @@ import { computed, ref, watch } from 'vue'
           </li>
         </ul>
         <p v-else class="text-xs text-zinc-500">Nenhum cadastrado. As contas dos projetos e as chaves dos providers já entram sozinhas.</p>
+        <ListPager v-model="valuePage.page.value" :pages="valuePage.pages.value" :total="valuePage.total.value" :size="valuePage.size" />
         <form class="grid gap-2 sm:grid-cols-[8rem_10rem_1fr_auto]" @submit.prevent="addValue">
           <input v-model="draft.id" class="input font-mono" placeholder="id" required />
           <input v-model="draft.label" class="input" placeholder="Nome (aparece na máscara)" required />
@@ -188,7 +193,7 @@ import { computed, ref, watch } from 'vue'
       <section class="flex flex-col gap-2">
         <h2 class="text-sm font-medium text-zinc-200">Últimos acertos</h2>
         <ul v-if="hits.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800 text-xs">
-          <li v-for="(hit, index) in hits" :key="index" class="flex gap-3 px-3 py-1.5">
+          <li v-for="(hit, index) in hitPage.items.value" :key="index" class="flex gap-3 px-3 py-1.5">
             <span class="w-32 shrink-0 text-zinc-500">{{ fullTime(hit.at) }}</span>
             <span class="w-28 shrink-0 text-zinc-400">{{ LAYER[hit.layer] }}</span>
             <span class="min-w-0 flex-1 truncate text-zinc-200">{{ hit.label }}</span>
@@ -196,6 +201,7 @@ import { computed, ref, watch } from 'vue'
           </li>
         </ul>
         <p v-else class="text-xs text-zinc-500">Nada mascarado desde que o gateway subiu.</p>
+        <ListPager v-model="hitPage.page.value" :pages="hitPage.pages.value" :total="hitPage.total.value" :size="hitPage.size" />
       </section>
       <!-- Um salvar só por tela: os nomes. Os valores mascarados gravam na hora (Adicionar). -->
       <SaveFooter label="Salvar nomes" :disabled="!namesDirty" :pending="namesDirty" @save="saveNames" />
