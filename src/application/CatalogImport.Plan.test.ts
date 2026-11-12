@@ -349,6 +349,21 @@ describe('CatalogImportPlanner (dry-run)', () => {
     assert.match(byRef(outside, 'agent/lia').issues[0].message, /outside the plan scope \(global\)/)
   })
 
+  it('🔌 a cópia do projeto conectado traz o agente que cita um MCP que não está (ou está desligado) aqui', async () => {
+    const { planner, mcps } = build()
+    const resources = { resources: { skills: [], commands: [] }, initialContext: [] }
+    const scope = { kind: 'project', projectId: 'alfa' } as const
+    const missing = [agentDocument(agent({ id: 'novo', projectId: 'alfa', allowedTools: ['mcp:sumiu/*'] }), resources)]
+    assert.match(byRef(await planner.planDocuments(missing, scope), 'agent/novo').issues[0].message, /unknown MCP server: sumiu/)
+    assert.strictEqual(byRef(await planner.planDocuments(missing, scope, { mirror: true }), 'agent/novo').op, 'create')
+
+    // Desligado aqui: o `theo`, que o usa, continua atualizando.
+    mcps.update('alfa.busca', { enabled: false })
+    const theo = [agentDocument(agent({ id: 'theo', projectId: 'alfa', allowedTools: ['mcp:busca/*'], systemPrompt: 'Outro prompt' }), resources)]
+    assert.strictEqual(byRef(await planner.planDocuments(theo, scope), 'agent/theo').op, 'error')
+    assert.strictEqual(byRef(await planner.planDocuments(theo, scope, { mirror: true }), 'agent/theo').op, 'update')
+  })
+
   it('parsePackage: erro por arquivo, e o manifesto de formato desconhecido', () => {
     const parsed = parsePackage({ 'catalog.json': JSON.stringify({ format: 9, scope: 'all', masked: [] }), 'global/coisas/x.md': 'oi' })
     assert.deepStrictEqual(parsed.errors.map((error) => error.path).sort(), ['catalog.json', 'global/coisas/x.md'])

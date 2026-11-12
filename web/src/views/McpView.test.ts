@@ -138,11 +138,15 @@ describe('McpView', () => {
     expect(host.textContent).toContain('Só quem administra restaura versões.')
   })
 
-  it('🔌 projeto conectado: o MCP da origem é só leitura, mas o "+" fica — o novo nasce no projeto, desta máquina', async () => {
+  it('🔌 projeto conectado: o MCP que veio da origem é controlado aqui, e o novo nasce no projeto, desta máquina', async () => {
     const host = await mount('/mcp/alfa.crm', true, true)
-    expect(host.querySelector('[data-test="connected-readonly"]')).not.toBeNull()
+    expect(host.querySelector('[data-test="connected-readonly"]')).toBeNull()
+    expect(host.querySelector('[data-test="origin-mcp"]')?.textContent).toContain('a atualização não o altera nem o traz de volta')
     expect(host.querySelector('[data-test="local-mcp"]')).toBeNull()
-    expect(host.textContent).not.toContain('Salvar MCP')
+    expect(host.textContent).toContain('veio da origem')
+    expect(host.textContent).toContain('Salvar MCP')
+    expect(host.querySelector('fieldset')?.disabled).toBe(false)
+    expect((host.querySelector('button[role="switch"]') as HTMLButtonElement).disabled).toBe(false)
     expect(host.querySelector('a[href="/mcp/new"]')).not.toBeNull()
 
     const adding = await mount('/mcp/new', true, true)
@@ -154,7 +158,7 @@ describe('McpView', () => {
   it('🔌 projeto conectado: o MCP desta máquina é editável e vem marcado', async () => {
     vi.mocked(api).mockImplementation(async (path: string) => (path === '/mcp-servers' ? [{ ...server, local: true }] : path === '/projects' ? [{ id: 'alfa', name: 'Alfa' }] : []))
     const host = await mount('/mcp/alfa.crm', true, true)
-    expect(host.querySelector('[data-test="connected-readonly"]')).toBeNull()
+    expect(host.querySelector('[data-test="origin-mcp"]')).toBeNull()
     expect(host.querySelector('[data-test="local-mcp"]')).not.toBeNull()
     expect(host.textContent).toContain('desta máquina')
     expect(host.textContent).toContain('Salvar MCP')

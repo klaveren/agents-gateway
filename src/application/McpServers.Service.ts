@@ -90,6 +90,16 @@ export class McpServersService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
+  /**
+   * 🔌 O que a camada local de um agente de projeto conectado acrescenta (`undefined` = não é agente conectado). Com ela,
+   * tirar um servidor só esbarra, no projeto conectado, em quem o usa POR AQUI (ver `holders`).
+   */
+  private localExtras?: (agent: IAgent) => readonly string[] | undefined
+
+  useLocalExtras(extras: (agent: IAgent) => readonly string[] | undefined): void {
+    this.localExtras = extras
+  }
+
   list(): IMcpServerConfig[] {
     return this.servers.list()
   }
@@ -113,6 +123,19 @@ export class McpServersService {
     const server = this.servers.get(key)
     if (!server) return []
     return this.agents().filter((agent) => mcpServesProject(server, agent.projectId) && mcpSelection(agent.allowedTools).has(server.id))
+  }
+
+  /**
+   * Quem TRAVA a saída do servidor (apagar, ou trocar de escopo): os agentes que o usam.
+   * 🔌 Menos o agente que veio da origem de um projeto conectado: ele não muda aqui, e a ferramenta que aponta para o
+   * servidor fica sem efeito (volta a valer se um servidor com o mesmo id for cadastrado). Trava quem o usa pela camada local.
+   */
+  private holders(key: string): IAgent[] {
+    const server = this.servers.get(key)
+    return this.usedBy(key).filter((agent) => {
+      const extras = this.localExtras?.(agent)
+      return !extras || (!!server && mcpSelection(extras).has(server.id))
+    })
   }
 
   /**
@@ -206,7 +229,7 @@ export class McpServersService {
     }
     if (issues.length) throw new InvalidMcpServerError(issues)
     if (moving) {
-      const stranded = this.usedBy(key).filter((agent) => !mcpServesProject({ projectId: target }, agent.projectId))
+      const stranded = this.holders(key).filter((agent) => !mcpServesProject({ projectId: target }, agent.projectId))
       if (stranded.length)
         throw new McpServerInUseError(
           id,
@@ -279,10 +302,10 @@ export class McpServersService {
     this.secrets.save(mcpEnvSecretKey(key, name), value, by)
   }
 
-  /** ⛔ Com agente usando, recusa e diz quais (409) — apagar deixaria ferramentas apontando para o nada. */
+  /** ⛔ Com agente usando, recusa e diz quais (409) — apagar deixaria ferramentas apontando para o nada (ver `holders`). */
   remove(key: string, by: string): void {
     const server = this.get(key)
-    const using = this.usedBy(key)
+    const using = this.holders(key)
     if (using.length)
       throw new McpServerInUseError(
         server.id,

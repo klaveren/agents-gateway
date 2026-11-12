@@ -31,7 +31,7 @@
   import { useAuthStore } from '@/stores/auth'
   import { useProtocolsStore } from '@/stores/protocols'
   import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, TMode, TPermissionCategory, TSandboxLevel } from '@/lib/types'
-  import { AUTO_TOOL_OFF, AUTO_TOOLS, layerTools, originLocksTool, shownTools, type IAgentLocalLayerView } from '@/lib/localLayer'
+  import { AUTO_TOOL_OFF, AUTO_TOOLS, disabledTools, layerTools, originHasTool, shownTools, type IAgentLocalLayerView } from '@/lib/localLayer'
   import { useAgentsStore } from '@/stores/agents'
   import { useMcpStore } from '@/stores/mcp'
   import { useProjectsStore } from '@/stores/projects'
@@ -124,7 +124,8 @@
   /** As ferramentas de um servidor na tela: as que ele lista agora e as escolhidas que ele não listou. */
   function mcpChips(server: IMcpServer): Array<{ name: string; description?: string; inputSchema?: unknown; unlisted?: boolean }> {
     const listed = mcp.tools[server.key] ?? []
-    const chosen = form.value.allowedTools
+    // 🔌 A que veio da origem e foi desligada aqui continua na tela, para poder religar.
+    const chosen = [...new Set([...form.value.allowedTools, ...originTools.value])]
       .filter((entry) => entry.startsWith(`mcp:${server.id}/`) && !entry.endsWith('/*'))
       .map((entry) => entry.slice(`mcp:${server.id}/`.length))
       .filter((name) => !listed.some((tool) => tool.name === name))
@@ -376,7 +377,8 @@
   const locked = computed(() => globalLocked.value || !!sharedFrom.value || !!connectedOrigin.value)
   /**
    * 🔌 A CAMADA LOCAL: no agente de projeto conectado, Modelos, Ferramentas, MCPs, Delegação e Permissões aceitam o que
-   * ESTA máquina acrescenta. O que veio da origem aparece travado, e o Salvar dessas guias grava só a camada.
+   * ESTA máquina acrescenta, e a ferramenta, o MCP e a delegação que vieram da origem podem ser desligados aqui. O
+   * Salvar dessas guias grava só a camada; as regras de permissão da origem continuam travadas.
    */
   const LAYER_TABS: readonly TTab[] = ['modelos', 'ferramentas', 'delegacao', 'mcps', 'sdk']
   const layerMode = computed(() => !!connectedOrigin.value && !props.creating && !!props.agent?.projectId && !sharedFrom.value)
@@ -387,10 +389,22 @@
   const layerTab = computed(() => layerMode.value && !!local.value && LAYER_TABS.includes(tab.value))
   const originTools = computed(() => (layerMode.value ? (local.value?.origin.allowedTools ?? []) : []))
   const originRules = computed(() => (layerMode.value ? (local.value?.origin.permissions ?? []) : []))
-  /** A entrada (`agent:`, `mcp:`, `sdk:`, `cap:`) que veio da origem: marcada e travada. */
+  /** A entrada (`agent:`, `mcp:`, `sdk:`, `cap:`) que veio da origem: marcada, e esta máquina pode desligá-la. */
   const fromOrigin = (entry: string) => originTools.value.includes(entry)
-  /** A ferramenta do gateway que a origem decidiu (a automática, só a que ela deixou ligada). */
-  const toolLocked = (name: string) => layerMode.value && originLocksTool(originTools.value, name)
+  /** A ferramenta do gateway que veio ligada da origem (a automática, só a que ela não desligou). */
+  const toolFromOrigin = (name: string) => layerMode.value && originHasTool(originTools.value, name)
+  /** A etiqueta do que veio da origem: ligado como lá, ou desligado nesta máquina. */
+  const originTag = (on: boolean) => (on ? 'origem' : 'origem · desligado aqui')
+  const originTone = (on: boolean) => (on ? 'text-sky-300' : 'text-amber-300')
+  /** O que veio da origem e esta máquina desligou (as automáticas pelo nome), para a lista "Desligado aqui" de cada guia. */
+  const originOff = computed(() => (layerMode.value && local.value ? disabledTools(originTools.value, form.value.allowedTools) : []))
+  const originOffIn = (kind: 'agent' | 'mcp' | 'tool') =>
+    originOff.value.filter((entry) => (kind === 'tool' ? !entry.startsWith('agent:') && !entry.startsWith('mcp:') : entry.startsWith(`${kind}:`)))
+  /** Religa o que veio da origem: a entrada volta ao formulário; a automática perde a marca `off:`. */
+  function restoreOrigin(entry: string) {
+    if (AUTO_TOOLS.includes(entry)) form.value.allowedTools = form.value.allowedTools.filter((tool) => tool !== `${AUTO_TOOL_OFF}${entry}`)
+    else if (!form.value.allowedTools.includes(entry)) form.value.allowedTools = [...form.value.allowedTools, entry]
+  }
   /** As regras que valem para o agente aqui: as da origem e as locais (para as contagens das guias). */
   const shownRules = computed(() => [...originRules.value, ...(form.value.permissions ?? [])])
   const groupChoice = computed({
@@ -400,7 +414,8 @@
 
   /** Entradas `sdk:`/`agent:`/`mcp:` que nenhuma lista oferece: sem checkbox, mas o servidor recusa o salvamento. */
   const orphans = computed(() =>
-    findOrphans(form.value.allowedTools.filter((entry) => !entry.startsWith(AUTO_TOOL_OFF)), {
+    // 🔌 O que veio da origem não trava o Salvar da camada (o MCP de lá pode estar desligado aqui): fica de fora.
+    findOrphans(form.value.allowedTools.filter((entry) => !entry.startsWith(AUTO_TOOL_OFF) && !fromOrigin(entry)), {
       natives: agents.toolsLoaded && protocols.loaded ? new Set(natives.value.map((tool) => tool.id)) : undefined,
       agents: agents.loaded
         ? new Set([...agents.list.filter((candidate) => candidate.id !== form.value.id).map((candidate) => candidate.id), ...CORE_BUILDERS.map((builder) => builder.id)])
@@ -749,7 +764,7 @@
     local.value = view
     localModels.value = !!view?.layer.providers?.length
     if (!view || !props.agent) return
-    form.value.allowedTools = shownTools(view.origin.allowedTools, view.layer.allowedTools)
+    form.value.allowedTools = shownTools(view.origin.allowedTools, view.layer.allowedTools, view.layer.disabledTools)
     // As regras do formulário são só as locais: as da origem aparecem acima delas, travadas.
     form.value.permissions = view.layer.permissions.map((rule) => ({ ...rule }))
     form.value.providers = view.layer.providers?.length ? view.layer.providers.map((target) => ({ ...target, models: [...target.models] })) : formProviders(props.agent)
@@ -777,10 +792,13 @@
     issues.value = {}
   }
   /** O que a camada tem hoje no servidor (para o "Descartar ajustes locais"). */
-  const hasLayer = computed(() => !!local.value && (!!local.value.layer.providers?.length || !!local.value.layer.allowedTools.length || !!local.value.layer.permissions.length))
+  const hasLayer = computed(() => {
+    const layer = local.value?.layer
+    return !!layer && (!!layer.providers?.length || !!layer.allowedTools.length || !!layer.disabledTools?.length || !!layer.permissions.length)
+  })
   const confirmingDiscard = ref(false)
 
-  /** 🔌 O Salvar das guias da camada: grava só o que esta máquina acrescenta. O agente (a origem) não muda. */
+  /** 🔌 O Salvar das guias da camada: grava só o que esta máquina acrescenta ou desliga. O agente (a origem) não muda. */
   async function saveLayer() {
     const view = local.value
     if (!view || !props.agent) return
@@ -799,6 +817,7 @@
         await connections.saveLocal(view.projectId, view.agentId, {
           ...(localModels.value ? { providers: form.value.providers.filter((target) => target.models.length) } : {}),
           allowedTools: layerTools(view.origin.allowedTools, form.value.allowedTools),
+          disabledTools: disabledTools(view.origin.allowedTools, form.value.allowedTools),
           permissions: (form.value.permissions ?? []).filter((rule) => rule.pattern.trim()),
         }),
       )
@@ -1276,7 +1295,11 @@
         </button>
       </nav>
       <!-- Um bloco por assunto, no desenho das permissões: o título, quantas estão marcadas e o que o bloco quer dizer. -->
-      <p v-if="layerMode" class="hint" data-test="layer-hint">O que veio da origem aparece marcado como "origem" e não muda aqui. O resto é desta máquina.</p>
+      <p v-if="layerMode" class="hint" data-test="layer-hint">O que veio da origem aparece marcado como "origem": dá para desligar aqui, e a atualização não religa. O resto é desta máquina.</p>
+      <div v-if="originOffIn('tool').length" class="flex flex-wrap items-center gap-1.5" data-test="origin-off-tool">
+        <span class="text-xs text-amber-300">Da origem, desligado aqui:</span>
+        <button v-for="entry in originOffIn('tool')" :key="entry" type="button" class="chip font-mono text-xs" title="Clique para religar" @click="restoreOrigin(entry)">{{ entry }} ↺</button>
+      </div>
       <div v-show="toolsTab === 'gateway'" class="flex flex-col gap-3" role="tabpanel">
       <section class="tool-card">
         <header>
@@ -1292,12 +1315,11 @@
             type="button"
             class="chip disabled:cursor-not-allowed"
             :class="{ on: form.allowedTools.includes(item.id), danger: item.dangerous }"
-            :disabled="fromOrigin(item.id)"
             :title="item.description"
             @click="toggle(form.allowedTools, item.id)"
           >
             {{ item.label }}
-            <span v-if="fromOrigin(item.id)" class="ml-1 text-[10px] text-sky-300">origem</span>
+            <span v-if="fromOrigin(item.id)" class="ml-1 text-[10px]" :class="originTone(form.allowedTools.includes(item.id))">{{ originTag(form.allowedTools.includes(item.id)) }}</span>
           </button>
         </div>
         <dl v-if="capabilityRows.length && form.providers.length" class="mx-3 mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-zinc-900/60 px-3 py-2 text-xs">
@@ -1316,12 +1338,11 @@
               type="button"
               class="chip disabled:cursor-not-allowed"
               :class="{ on: form.allowedTools.includes(item.id), danger: item.dangerous }"
-              :disabled="fromOrigin(item.id)"
               :title="item.description"
               @click="toggle(form.allowedTools, item.id)"
             >
               {{ item.label }}
-              <span v-if="fromOrigin(item.id)" class="ml-1 text-[10px] text-sky-300">origem</span>
+              <span v-if="fromOrigin(item.id)" class="ml-1 text-[10px]" :class="originTone(form.allowedTools.includes(item.id))">{{ originTag(form.allowedTools.includes(item.id)) }}</span>
             </button>
             <button
               v-for="tool in gatewayTools"
@@ -1329,12 +1350,11 @@
               type="button"
               class="chip disabled:cursor-not-allowed"
               :class="{ on: toolOn(tool.name), danger: tool.dangerous }"
-              :disabled="toolLocked(tool.name)"
               :title="`${tool.name} — ${tool.description}`"
               @click="toggleTool(tool.name)"
             >
               {{ LOCAL_TOOL_LABEL[tool.name] ?? tool.name }}
-              <span v-if="toolLocked(tool.name)" class="ml-1 text-[10px] text-sky-300">origem</span>
+              <span v-if="toolFromOrigin(tool.name)" class="ml-1 text-[10px]" :class="originTone(toolOn(tool.name))">{{ originTag(toolOn(tool.name)) }}</span>
             </button>
           </div>
         </template>
@@ -1358,8 +1378,7 @@
             :key="entry"
             type="button"
             class="chip on danger font-mono text-xs disabled:cursor-not-allowed"
-            :disabled="fromOrigin(entry)"
-            :title="fromOrigin(entry) ? 'Veio da origem' : 'Clique para tirar do agente'"
+            title="Clique para tirar do agente"
             @click="toggle(form.allowedTools, entry)"
           >
             <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">indisponível</span>
@@ -1383,14 +1402,14 @@
               type="checkbox"
               class="accent-emerald-500"
               :checked="form.allowedTools.includes(tool.id)"
-              :disabled="fromOrigin(tool.id) || (!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id))"
+              :disabled="!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id) && !fromOrigin(tool.id)"
               @change="toggle(form.allowedTools, tool.id)"
             />
             <span class="min-w-0 flex-1">
               <span class="block text-sm">
                 {{ tool.label }}
                 <code class="text-[11px] text-zinc-500">{{ tool.sdkName }}</code>
-                <span v-if="fromOrigin(tool.id)" class="ml-1 text-[10px] text-sky-300">origem</span>
+                <span v-if="fromOrigin(tool.id)" class="ml-1 text-[10px]" :class="originTone(form.allowedTools.includes(tool.id))">{{ originTag(form.allowedTools.includes(tool.id)) }}</span>
               </span>
               <span class="block text-xs text-zinc-500">{{ tool.description }}</span>
               <span v-if="nativeBlock(tool, section.entry)" class="block text-xs text-zinc-500">{{ nativeBlock(tool, section.entry) }}</span>
@@ -1472,7 +1491,11 @@
       </div>
     </fieldset>
     <fieldset v-show="tab === 'delegacao'" class="flex flex-col gap-3">
-      <p v-if="layerMode" class="hint">O que veio da origem aparece marcado como "origem" e não muda aqui. O resto é desta máquina.</p>
+      <p v-if="layerMode" class="hint">O que veio da origem aparece marcado como "origem": dá para desligar aqui, e a atualização não religa. O resto é desta máquina.</p>
+      <div v-if="originOffIn('agent').length" class="flex flex-wrap items-center gap-1.5" data-test="origin-off-agent">
+        <span class="text-xs text-amber-300">Da origem, desligado aqui:</span>
+        <button v-for="entry in originOffIn('agent')" :key="entry" type="button" class="chip font-mono text-xs" title="Clique para religar" @click="restoreOrigin(entry)">{{ entry }} ↺</button>
+      </div>
       <section class="tool-card">
         <header>
           <h3>A quem pode pedir ajuda</h3>
@@ -1491,12 +1514,12 @@
                 type="button"
                 class="chip disabled:cursor-not-allowed disabled:opacity-40"
                 :class="{ on: form.allowedTools.includes(`agent:${other.id}`), danger: !!cannotRun(other) && form.allowedTools.includes(`agent:${other.id}`) }"
-                :disabled="fromOrigin(`agent:${other.id}`) || (!!cannotRun(other) && !form.allowedTools.includes(`agent:${other.id}`))"
+                :disabled="!!cannotRun(other) && !form.allowedTools.includes(`agent:${other.id}`) && !fromOrigin(`agent:${other.id}`)"
                 :title="cannotRun(other) ? `Não dá para delegar: ${cannotRun(other)}. Ative um modelo dele em Modelos.` : undefined"
                 @click="toggle(form.allowedTools, `agent:${other.id}`)"
               >
                 {{ other.name }}
-                <span v-if="fromOrigin(`agent:${other.id}`)" class="ml-1 text-[10px] text-sky-300">origem</span>
+                <span v-if="fromOrigin(`agent:${other.id}`)" class="ml-1 text-[10px]" :class="originTone(form.allowedTools.includes(`agent:${other.id}`))">{{ originTag(form.allowedTools.includes(`agent:${other.id}`)) }}</span>
                 <span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
                 <span v-if="cannotRun(other)" class="ml-1 text-[10px] text-amber-300">{{ cannotRun(other) }}</span>
               </button>
@@ -1513,12 +1536,11 @@
                 type="button"
                 class="chip disabled:cursor-not-allowed"
                 :class="{ on: form.allowedTools.includes(`agent:${builder.id}`) }"
-                :disabled="fromOrigin(`agent:${builder.id}`)"
                 title="Agente do sistema, só para administradores"
                 @click="toggle(form.allowedTools, `agent:${builder.id}`)"
               >
                 {{ builder.name }}
-                <span v-if="fromOrigin(`agent:${builder.id}`)" class="ml-1 text-[10px] text-sky-300">origem</span>
+                <span v-if="fromOrigin(`agent:${builder.id}`)" class="ml-1 text-[10px]" :class="originTone(form.allowedTools.includes(`agent:${builder.id}`))">{{ originTag(form.allowedTools.includes(`agent:${builder.id}`)) }}</span>
               </button>
             </div>
           </div>
@@ -1544,7 +1566,13 @@
           MCPs
           <em class="font-normal text-zinc-500">— o agente usa só o que estiver marcado.</em>
         </span>
-        <p v-if="layerMode" class="hint font-normal">O que veio da origem aparece marcado como "origem" e não muda aqui. Para usar um MCP desta máquina, cadastre-o em MCPs, neste projeto: ele fica só aqui.</p>
+        <p v-if="layerMode" class="hint font-normal">
+          O que veio da origem aparece marcado como "origem": dá para desligar aqui, só neste agente, e a atualização não religa. Para desligar um MCP para todos os agentes desta máquina, ou cadastrar outro, use a tela MCPs.
+        </p>
+        <div v-if="originOffIn('mcp').length" class="flex flex-wrap items-center gap-1.5 font-normal" data-test="origin-off-mcp">
+        <span class="text-xs text-amber-300">Da origem, desligado aqui:</span>
+        <button v-for="entry in originOffIn('mcp')" :key="entry" type="button" class="chip font-mono text-xs" title="Clique para religar" @click="restoreOrigin(entry)">{{ entry }} ↺</button>
+      </div>
         <div v-if="enabledMcp.length" class="flex flex-col gap-2">
           <div v-for="server in enabledMcp" :key="server.key" class="rounded-xl border border-zinc-800 px-3 py-2 font-normal">
             <div class="flex flex-wrap items-center gap-2">
@@ -1559,11 +1587,10 @@
                   type="checkbox"
                   class="accent-emerald-500"
                   :checked="form.allowedTools.includes(mcpRef(server.id, '*'))"
-                  :disabled="fromOrigin(mcpRef(server.id, '*'))"
                   @change="toggleAllMcp(server.id)"
                 />
                 Todas as ferramentas
-                <span v-if="fromOrigin(mcpRef(server.id, '*'))" class="ml-1 text-[10px] text-sky-300">origem</span>
+                <span v-if="fromOrigin(mcpRef(server.id, '*'))" class="ml-1 text-[10px]" :class="originTone(form.allowedTools.includes(mcpRef(server.id, '*')))">{{ originTag(form.allowedTools.includes(mcpRef(server.id, '*'))) }}</span>
               </label>
             </div>
             <div v-if="!form.allowedTools.includes(mcpRef(server.id, '*'))" class="mt-2 flex flex-wrap gap-1.5">
@@ -1573,12 +1600,11 @@
                 type="button"
                 class="chip font-mono text-xs disabled:cursor-not-allowed"
                 :class="{ on: form.allowedTools.includes(mcpRef(server.id, tool.name)) }"
-                :disabled="fromOrigin(mcpRef(server.id, tool.name))"
                 :title="tool.unlisted ? 'Escolhida, mas o servidor não a mostra agora' : `${tool.description ?? ''} (≈ ${toolTokens(tool)} tokens)`"
                 @click="toggle(form.allowedTools, mcpRef(server.id, tool.name))"
               >
                 {{ tool.name }}
-                <span v-if="fromOrigin(mcpRef(server.id, tool.name))" class="ml-1 text-[10px] text-sky-300">origem</span>
+                <span v-if="fromOrigin(mcpRef(server.id, tool.name))" class="ml-1 text-[10px]" :class="originTone(form.allowedTools.includes(mcpRef(server.id, tool.name)))">{{ originTag(form.allowedTools.includes(mcpRef(server.id, tool.name))) }}</span>
                 <span v-if="tool.unlisted" class="ml-1 text-[10px] text-zinc-500">não listada</span>
               </button>
               <span v-if="!mcpChips(server).length" class="text-xs text-zinc-500">Nenhuma ferramenta listada agora.</span>
@@ -1840,7 +1866,7 @@
     <ConfirmDialog
       :open="confirmingDiscard"
       :title="`Descartar os ajustes locais de ${agent?.name ?? ''}?`"
-      message="O agente volta a rodar como veio da origem: saem os modelos, as ferramentas, as delegações e as regras desta máquina."
+      message="O agente volta a rodar como veio da origem: saem os modelos, as ferramentas, as delegações e as regras desta máquina, e volta o que foi desligado aqui."
       action="Descartar"
       :busy="saving"
       @confirm="discardLayer"

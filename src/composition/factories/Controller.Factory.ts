@@ -561,7 +561,7 @@ export function makeProjectConnections(): ProjectConnectionService {
     reader: catalogHistoryParts().reader,
     usage: (query) => makeConversationRepository().usage(query),
     layers: makeAgentLocalLayers(),
-    localMcps: { ids: (projectId) => makeMcpServers().localIn(projectId), release: (projectId) => makeMcpServers().releaseLocal(projectId) },
+    localMcps: { release: (projectId) => makeMcpServers().releaseLocal(projectId) },
     remove: async (current, by) => {
       const prepared = await writer.prepare(undefined, current)
       history.within(catalogItemKey(current), { by, source: 'import', note: 'removido na origem (projeto conectado)' }, () => prepared.commit(by))

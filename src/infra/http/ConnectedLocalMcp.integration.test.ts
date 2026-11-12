@@ -19,8 +19,8 @@ const URL = 'https://mcp.exemplo.com/mcp'
 type TEnvelope = { ok: boolean; result?: any; code?: string; message?: string; details?: any }
 
 /**
- * 🔌 O MCP DESTA MÁQUINA: no projeto conectado, o servidor que veio da origem é só leitura; o cadastrado aqui é
- * configuração do ambiente — nasce marcado (`local`), segue editável, e o agente o usa pela camada local.
+ * 🔌 O MCP DESTA MÁQUINA: no projeto conectado, os servidores são configuração do ambiente — o que veio da origem e o
+ * cadastrado aqui (que nasce marcado, `local`) mudam e saem por aqui, e o agente usa o daqui pela camada local.
  */
 describe('projeto conectado: o MCP desta máquina (integração)', () => {
   let base: string
@@ -35,7 +35,6 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
     })
     return { status: res.status, body: (await res.json()) as TEnvelope }
   }
-  const readOnly = (res: { status: number; body: TEnvelope }) => assert.deepStrictEqual([res.status, res.body.code], [409, 'project_read_only'], JSON.stringify(res.body))
   const listed = async (key: string) => (await call('GET', '/mcp-servers?project=logiccus')).body.result.find((server: { key: string }) => server.key === key)
 
   before(async () => {
@@ -45,7 +44,7 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
       repository,
       box: { seal: (plain: string) => plain, open: (box: string) => box },
       layers: makeAgentLocalLayers(),
-      localMcps: { ids: (projectId: string) => makeMcpServers().localIn(projectId), release: (projectId: string) => makeMcpServers().releaseLocal(projectId) },
+      localMcps: { release: (projectId: string) => makeMcpServers().releaseLocal(projectId) },
     } as never)
     const u = undefined
     const server = new HttpServer(
@@ -78,18 +77,23 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
     for (const id of ['logiccus', 'outro']) assert.strictEqual((await call('POST', '/projects', { id, name: id })).status, 201)
     // O que "veio da origem": cadastrado ANTES de o projeto ser conectado (sem a marca).
     assert.strictEqual((await call('POST', '/mcp-servers', { id: 'agents', projectId: 'logiccus', name: 'Agents MCP', url: URL })).status, 201)
-    makeAgents().save(
-      {
-        id: 'sre',
-        name: 'sre',
-        projectId: 'logiccus',
-        providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
-        systemPrompt: 'faça',
-        modes: [EMode.AGENT],
-        allowedTools: [],
-      },
-      { rules: { knownTools: [] }, by: 'seed', creating: true },
-    )
+    // O `sre` não usa nenhum MCP; o `origem` veio usando o da origem.
+    for (const [id, allowedTools] of [
+      ['sre', []],
+      ['origem', ['mcp:agents/*']],
+    ] as const)
+      makeAgents().save(
+        {
+          id,
+          name: id,
+          projectId: 'logiccus',
+          providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
+          systemPrompt: 'faça',
+          modes: [EMode.AGENT],
+          allowedTools: [...allowedTools],
+        },
+        { rules: { knownTools: [], mcpServerExists: () => true }, by: 'seed', creating: true },
+      )
     repository.insert(
       {
         projectId: 'logiccus',
@@ -112,7 +116,7 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
 
   after(() => stop())
 
-  it('cadastra no projeto conectado: nasce "desta máquina" e segue editável; o da origem continua só leitura', async () => {
+  it('cadastra no projeto conectado: nasce "desta máquina"; o que veio da origem também muda por aqui', async () => {
     const created = await call('POST', '/mcp-servers', { id: 'meu', projectId: 'logiccus', name: 'Meu MCP', url: URL })
     assert.strictEqual(created.status, 201, JSON.stringify(created.body))
     assert.strictEqual(created.body.result.local, true)
@@ -121,10 +125,23 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
 
     assert.strictEqual((await listed('logiccus.meu')).local, true)
     assert.strictEqual((await listed('logiccus.agents')).local, undefined)
-    readOnly(await call('PUT', '/mcp-servers/logiccus.agents', { name: 'Outro nome' }))
-    readOnly(await call('PUT', '/mcp-servers/logiccus.agents', { projectId: null }))
-    readOnly(await call('DELETE', '/mcp-servers/logiccus.agents'))
-    assert.strictEqual(makeMcpServers().get('logiccus.agents').name, 'Agents MCP')
+    const renamed = await call('PUT', '/mcp-servers/logiccus.agents', { name: 'Outro nome' })
+    assert.deepStrictEqual([renamed.status, renamed.body.result.name, renamed.body.result.local], [200, 'Outro nome', undefined], JSON.stringify(renamed.body))
+    const off = await call('PUT', '/mcp-servers/logiccus.agents', { enabled: false })
+    assert.deepStrictEqual([off.status, off.body.result.enabled], [200, false], JSON.stringify(off.body))
+    assert.strictEqual(makeMcpServers().get('logiccus.agents').enabled, false)
+  })
+
+  it('remove o que veio da origem: o agente de lá que o cita não trava (a ferramenta fica sem efeito)', async () => {
+    assert.deepStrictEqual(
+      (await listed('logiccus.agents')).agents.map((agent: { id: string }) => agent.id),
+      ['origem'],
+    )
+    const removed = await call('DELETE', '/mcp-servers/logiccus.agents')
+    assert.strictEqual(removed.status, 200, JSON.stringify(removed.body))
+    assert.strictEqual(await listed('logiccus.agents'), undefined)
+    // O agente segue como veio.
+    assert.deepStrictEqual(makeAgents().get('origem')!.allowedTools, ['mcp:agents/*'])
   })
 
   it('o agente usa o MCP daqui pela camada local; em uso por ela, não se apaga', async () => {
@@ -155,6 +172,9 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
 
     assert.strictEqual((await call('DELETE', '/connections/logiccus')).status, 200)
     assert.strictEqual((await listed('logiccus.meu')).local, undefined)
-    assert.strictEqual((await call('PUT', '/mcp-servers/logiccus.agents', { name: 'Editável de novo' })).status, 200)
+    // Projeto comum de novo: o agente que usa o servidor volta a travar a remoção.
+    assert.strictEqual((await call('POST', '/mcp-servers', { id: 'agents', projectId: 'logiccus', name: 'Agents MCP', url: URL })).status, 201)
+    const inUse = await call('DELETE', '/mcp-servers/logiccus.agents')
+    assert.deepStrictEqual([inUse.status, inUse.body.code], [409, 'mcp_server_in_use'], JSON.stringify(inUse.body))
   })
 })

@@ -23,7 +23,8 @@ type TEnvelope = { ok: boolean; result?: any; code?: string; message?: string; d
 
 /**
  * 🔌 A CAMADA LOCAL: no projeto conectado, o que veio da origem não muda; modelos, ferramentas, delegação e permissões
- * desta máquina ficam numa camada por agente, que entra no agente que RODA e nunca no que está gravado.
+ * desta máquina — e o que veio de lá e não vale aqui — ficam numa camada por agente, que entra no agente que RODA e
+ * nunca no que está gravado.
  */
 describe('projeto conectado: a camada local do agente (integração)', () => {
   let base: string
@@ -46,7 +47,7 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
   const agent = (input: Partial<IAgent> & { id: string }) =>
     makeAgents().save(
       { name: input.id, providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }], systemPrompt: 'faça', modes: [EMode.AGENT], allowedTools: [], ...input },
-      { rules: { knownTools: [] }, by: 'seed', creating: true },
+      { rules: { knownTools: [], agentExists: () => true }, by: 'seed', creating: true },
     )
   const stored = () => makeAgents().entry('sre')!.agent
   const running = () => makeAgents().get('sre')!
@@ -95,6 +96,7 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
     for (const id of ['logiccus', 'outro']) assert.strictEqual((await call('POST', '/projects', { id, name: id })).status, 201)
     agent({ id: 'ajudante' })
     agent({ id: 'de-fora', projectId: 'outro' })
+    agent({ id: 'ops', projectId: 'logiccus', allowedTools: ['agent:ajudante'] })
     agent({
       id: 'sre',
       projectId: 'logiccus',
@@ -145,6 +147,28 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
 
     const read = await call('GET', LOCAL)
     assert.deepStrictEqual(read.body.result.layer.providers, [{ provider: 'claude', models: ['claude-haiku-5'] }])
+  })
+
+  it('desliga o que veio da origem: o agente roda sem aquilo, o gravado não muda, e a atualização não religa', async () => {
+    const OPS = '/connections/logiccus/agents/ops/local'
+    const ops = () => makeAgents().get('ops')!
+    const saved = await call('PUT', OPS, { allowedTools: [], disabledTools: ['agent:ajudante', AUTO_TOOLS[1], 'agent:fantasma'], permissions: [] })
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body))
+    // Só fica o que a origem tem.
+    assert.deepStrictEqual(saved.body.result.layer.disabledTools, ['agent:ajudante', AUTO_TOOLS[1]])
+    assert.deepStrictEqual(saved.body.result.origin.allowedTools, ['agent:ajudante'])
+    assert.deepStrictEqual(ops().allowedTools, [`off:${AUTO_TOOLS[1]}`])
+    assert.deepStrictEqual(makeAgents().entry('ops')!.agent.allowedTools, ['agent:ajudante'])
+
+    // A atualização regrava o agente como está na origem: a camada continua valendo.
+    makeAgents().save(makeAgents().entry('ops')!.agent, { rules: { knownTools: [], agentExists: () => true }, by: 'sync', creating: false })
+    assert.deepStrictEqual(ops().allowedTools, [`off:${AUTO_TOOLS[1]}`])
+    assert.deepStrictEqual((await call('GET', OPS)).body.result.layer.disabledTools, ['agent:ajudante', AUTO_TOOLS[1]])
+
+    // Religar a delegação: sai da lista, e ela volta a valer.
+    const back = await call('PUT', OPS, { allowedTools: [], disabledTools: [AUTO_TOOLS[1]], permissions: [] })
+    assert.deepStrictEqual(back.body.result.layer.disabledTools, [AUTO_TOOLS[1]])
+    assert.deepStrictEqual(ops().allowedTools, ['agent:ajudante', `off:${AUTO_TOOLS[1]}`])
   })
 
   it('⛔ a camada passa pelas regras do cadastro, e o catálogo segue só leitura', async () => {
@@ -210,6 +234,8 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
     assert.deepStrictEqual(stored().allowedTools, ['agent:ajudante'])
     assert.strictEqual(stored().permissions?.length, 4)
     assert.strictEqual(makeAgentLocalLayers().of(stored()), undefined)
+    // O que estava desligado aqui sai do agente de vez.
+    assert.deepStrictEqual(makeAgents().entry('ops')!.agent.allowedTools, ['agent:ajudante', `off:${AUTO_TOOLS[1]}`])
     // Projeto comum de novo: o agente é editável.
     assert.strictEqual((await call('GET', LOCAL)).status, 404)
   })

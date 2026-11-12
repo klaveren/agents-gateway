@@ -1191,6 +1191,12 @@ const localLayerSchema = {
       items: { type: 'string' },
       description: 'Tools, `mcp:<server>/<tool>` and `agent:<id>` added here. An automatic tool the origin turned off comes back by its name',
     },
+    disabledTools: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'What came from the origin and is turned OFF here: the entry as it is in the origin list (a tool, `mcp:<server>/*`, `agent:<id>`) or the name of an automatic tool. The update does not turn it back on',
+    },
     permissions: { type: 'array', items: permissionRuleSchema },
   },
 }
@@ -1888,13 +1894,14 @@ export const OPENAPI_DOCUMENT = {
     '/mcp-servers/{id}': {
       put: {
         summary:
-          'Change an MCP server (name, URL, transport, authentication, header, enabled). 409 `project_read_only` for a server that came from the origin of a connected project (the `local` ones are editable). Administrators only',
+          'Change an MCP server (name, URL, transport, authentication, header, enabled). In a connected project every server is under local control, the ones that came from the origin included: the update never changes them. Administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json(mcpServerBody) },
         responses: { '200': { description: 'OK', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
       delete: {
-        summary: 'Remove an MCP server and its secret. 409 while an agent uses it, or `project_read_only` for a server from the origin of a connected project. Administrators only',
+        summary:
+          'Remove an MCP server and its secret. 409 while an agent uses it; in a connected project only the agents that use it through their local layer hold it (the ones of the origin keep the reference, without effect), and the update does not bring it back. Administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) },
@@ -4938,7 +4945,7 @@ export const OPENAPI_DOCUMENT = {
     '/connections/{projectId}/sync': {
       post: {
         summary:
-          'Update to the LATEST version of the origin, as a mirror: creates, updates and removes what is gone there. Variable values and the model map stay local; what does not fit here is listed in `skipped`',
+          'Update to the LATEST version of the origin, as a mirror: creates, updates and removes what is gone there. The MCP servers are the exception: they arrive once, on the first update, and from then on are under local control (the update neither changes, removes nor brings them back). Variable values, the model map and the local layer of each agent stay local; what does not fit here is listed in `skipped`',
         parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': {
@@ -5069,13 +5076,13 @@ export const OPENAPI_DOCUMENT = {
     '/connections/{projectId}/agents/{agentId}/local': {
       get: {
         summary:
-          'Connected projects: the local layer of an agent, what THIS machine adds to what came from the origin. It lives outside the catalog: the update never touches it and it never travels to the origin',
+          'Connected projects: the local layer of an agent, what THIS machine adds to what came from the origin and what it turns off. It lives outside the catalog: the update never touches it and it never travels to the origin',
         parameters: localLayerParameters,
         responses: { '200': { description: 'OK', ...json(envelope(localLayerViewSchema)) }, '401': failures['401'], '404': failures['404'] },
       },
       put: {
         summary:
-          'Saves the local layer of an agent of a connected project. Models REPLACE the ones of the origin for that agent; tools, MCPs and delegation ADD to its list; permission rules add to its layer (a deny of the origin still wins). An empty layer removes it',
+          'Saves the local layer of an agent of a connected project. Models REPLACE the ones of the origin for that agent; tools, MCPs and delegation ADD to its list, and `disabledTools` turns off the ones that came from the origin; permission rules add to its layer (a deny of the origin still wins). An empty layer removes it',
         parameters: localLayerParameters,
         requestBody: { required: true, ...json(localLayerSchema) },
         responses: { '200': { description: 'OK', ...json(envelope(localLayerViewSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },

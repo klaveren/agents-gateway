@@ -191,6 +191,31 @@ describe('McpServersService', () => {
     assert.strictEqual(service.get('logiccus.solto').local, undefined)
   })
 
+  it('🔌 o agente que veio da origem do projeto conectado não trava a saída do servidor; quem o usa pela camada local, sim', () => {
+    const connected = (id: string, allowedTools: string[]): IAgent => ({ ...agent(allowedTools), id, name: id, projectId: 'logiccus' })
+    // O agente que RODA: `da-origem` cita o servidor no que veio; `por-aqui` só pela camada local.
+    const service = new McpServersService(
+      new SqliteMcpServerRepository(':memory:'),
+      new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:'),
+      () => [connected('da-origem', ['mcp:crm/*']), connected('por-aqui', ['mcp:crm/buscar'])],
+      () => true,
+    )
+    const extras: Record<string, string[]> = { 'da-origem': [], 'por-aqui': ['mcp:crm/buscar'] }
+    service.useLocalExtras((current) => extras[current.id])
+    service.create({ id: 'crm', projectId: 'logiccus', name: 'CRM', url: 'https://x.com/mcp' }, 'root')
+    assert.deepStrictEqual(
+      service.usedBy('logiccus.crm').map((current) => current.id),
+      ['da-origem', 'por-aqui'],
+    )
+    const holders = (error: McpServerInUseError) => error.agents.length === 1 && error.agents[0].startsWith('por-aqui')
+    assert.throws(() => service.remove('logiccus.crm', 'admin'), holders)
+    assert.throws(() => service.update('logiccus.crm', { projectId: 'outro' }, 'admin'), holders)
+
+    extras['por-aqui'] = []
+    service.remove('logiccus.crm', 'admin')
+    assert.deepStrictEqual(service.list(), [])
+  })
+
   it('⛔ o MCP do próprio gateway não troca a credencial: sempre a de quem conversa', () => {
     const repository = new SqliteMcpServerRepository(':memory:')
     const now = new Date()
