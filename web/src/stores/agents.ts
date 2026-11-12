@@ -20,6 +20,14 @@ interface IToolsResult {
  * (`details`, só admin) e as ferramentas do servidor (`GET /tools`). `list`/`loaded` são os do projeto atual.
  * ⚖️ `load()` relê a lista do projeto atual (ela traz `unavailable`, que muda por fora); `ensure()` só lê se não tem.
  */
+/** As ferramentas de vigia na linha do turno: o que o agente fez, não o nome da ferramenta. */
+const WATCH_LABELS: Record<string, string> = {
+  watch_start: 'Armou uma vigia',
+  wake_me: 'Armou um despertador',
+  watch_list: 'Conferiu as vigias',
+  watch_stop: 'Cancelou uma vigia',
+}
+
 export const useAgentsStore = defineStore('agents', () => {
   // Os do projeto e os globais (o Atlas).
   const lists = keyedResource((project) => api<IAgent[]>('/agents', { query: project ? { project } : {} }))
@@ -152,6 +160,8 @@ export const useAgentsStore = defineStore('agents', () => {
     // `…_call`: como as conversas gravadas antes da normalização guardaram as hospedadas da OpenAI.
     const base = name.replace(/_call$/, '')
     if (base === 'update_todos' || base.endsWith('__update_todos')) return 'Atualizou as tarefas'
+    const watch = WATCH_LABELS[base.split('__').pop() ?? '']
+    if (watch) return watch
     return nativeTools.value.find((tool) => tool.sdkName === name || tool.sdkName === base)?.label ?? name
   }
 

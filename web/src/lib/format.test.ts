@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { redactUrl, sizeHint, tokens } from './format'
+import { ago, redactUrl, sizeHint, span, tokens } from './format'
+
+describe('span e ago', () => {
+  it('a duração curta, na unidade que cabe', () => {
+    expect(span(40_000)).toBe('40 s')
+    expect(span(120_000)).toBe('2 min')
+    expect(span(60 * 60_000)).toBe('1 h')
+    expect(span(90 * 60_000)).toBe('1 h 30 min')
+    expect(span(72 * 60 * 60_000)).toBe('3 dias')
+    expect(span(-5)).toBe('0 s')
+  })
+
+  it('há quanto tempo: "agora" no primeiro minuto', () => {
+    const now = new Date('2026-01-01T10:00:00Z')
+    expect(ago('2026-01-01T09:59:30Z', now)).toBe('agora')
+    expect(ago('2026-01-01T09:58:00Z', now)).toBe('há 2 min')
+    expect(ago('2026-01-01T08:55:00Z', now)).toBe('há 1 h 5 min')
+    expect(ago(undefined, now)).toBe('')
+  })
+})
 
 describe('sizeHint', () => {
   it('mostra caracteres e tokens estimados, sem teto; diz quando pesa', () => {

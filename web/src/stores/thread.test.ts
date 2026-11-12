@@ -153,6 +153,37 @@ describe('send: geração', () => {
     expect(thread.todos).toEqual([{ title: 'Ler', status: 'done' }])
   })
 
+  it('as vigias: carregam ao abrir, se releem no resultado de uma ferramenta de vigia e somem ao cancelar', async () => {
+    const armed = { id: 'w-1', kind: 'command', label: 'servidor voltar', everySeconds: 60, status: 'active', createdAt: '2026-01-01T10:00:00Z', deadlineAt: '2026-01-01T11:00:00Z', checks: 1 }
+    let watches: unknown[] = []
+    routes({ '/sessions/A/watches': () => ({ sessionId: 'A', watches }) })
+    const thread = useThreadStore()
+    await thread.open('A')
+    await tick()
+    expect(thread.watches).toEqual([])
+
+    const stream = channel()
+    vi.mocked(openStream).mockImplementationOnce(async (_path, request) => {
+      stream.attach(request?.signal)
+      return new ReadableStream()
+    })
+    vi.mocked(readSse).mockImplementationOnce(() => stream.iterate())
+    const sent = thread.send('me avise quando voltar', [])
+    await tick()
+    watches = [armed]
+    stream.push('tool.started', { tool: 'mcp__local__watch_start' })
+    stream.push('tool.result', { tool: 'mcp__local__watch_start' })
+    await tick()
+    expect(thread.watches).toEqual([armed])
+    stream.end()
+    await sent
+
+    watches = []
+    expect(await thread.stopWatch('w-1')).toBe(true)
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/sessions/A/watches/w-1', { method: 'DELETE' })
+    expect(thread.watches).toEqual([])
+  })
+
   it('reset derruba o stream e limpa tudo', async () => {
     routes()
     const thread = useThreadStore()
@@ -445,11 +476,13 @@ describe('reconcileDraft', () => {
 describe('o turno ao vivo (pelo stream da caixa de entrada)', () => {
   it('o turno que outro começou aparece andando, o parar vale para ele, e no fim entra o gravado', async () => {
     let stored: unknown[] = []
+    let watches: unknown[] = [{ id: 'w-1', kind: 'timer', label: 'ticket fechar', status: 'active', createdAt: '2026-01-01T10:00:00Z', deadlineAt: '2026-01-01T10:30:00Z', checks: 0 }]
     const follows: unknown[] = []
     vi.mocked(api).mockImplementation(async (path: string, request?: { body?: unknown }) => {
       if (path === '/conversations/events/s1/follow') return follows.push(request?.body) as never
       if (path === '/conversations/A/turns') return { turns: stored } as never
       if (path === '/conversations/A/todos') return { items: [] } as never
+      if (path === '/sessions/A/watches') return { sessionId: 'A', watches } as never
       if (path.startsWith('/conversations')) return { sessions: [], total: 0, page: 1, pageSize: 30, facets: { agent: {} } } as never
       if (path.startsWith('/sessions/')) return { model: 'm1' } as never
       throw new Error(`rota não prevista: ${path}`)
@@ -480,11 +513,15 @@ describe('o turno ao vivo (pelo stream da caixa de entrada)', () => {
     await thread.open('A')
     await tick()
     expect(follows.at(-1)).toEqual({ sessionId: 'A' })
+    expect(thread.watches).toHaveLength(1)
 
+    // O turno que a própria vigia abriu: ela já disparou, e a faixa some no começo dele.
+    watches = []
     push({ type: 'turn.started', sessionId: 'A', turn: { request: 'faça o build', events: [{ type: 'text.delta', payload: { text: 'rodando ' } }] } })
     await tick()
     expect(thread.pending).toMatchObject({ request: 'faça o build', text: 'rodando ' })
     expect(thread.following).toBe(true)
+    expect(thread.watches).toEqual([])
 
     // O turno de OUTRA conversa no mesmo stream não entra.
     push({ type: 'turn.event', sessionId: 'B', event: { type: 'text.delta', payload: { text: 'intruso' } } })

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api, ApiError, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
-import type { IAgent, IAgentEvent, IConversation, ISessionState, ITodoItem, ITurn, ITurnInterjection, IUsage, TMode } from '@/lib/types'
+import type { IAgent, IAgentEvent, IConversation, ISessionState, ITodoItem, ITurn, ITurnInterjection, IUsage, IWatchItem, TMode } from '@/lib/types'
 import { levelsOf, resolveChoice } from '@/lib/agentChoice'
 import { useAgentsStore } from './agents'
 import { useConversationsStore, type TTurnFrame } from './conversations'
@@ -84,6 +84,9 @@ export function reconcileDraft(draft: IDraft, agent: TDraftAgent, lanesOf?: (pro
   }
 }
 
+/** As ferramentas de vigia: o resultado de qualquer uma muda a faixa "Vigiando". */
+const WATCH_TOOLS = new Set(['watch_start', 'wake_me', 'watch_list', 'watch_stop'])
+
 const isNotFound = (failure: unknown): boolean => failure instanceof ApiError && failure.status === 404
 /** O texto de uma falha. No 422 o motivo vem campo a campo nos detalhes: "Request body is invalid" sozinho não diz o que fazer. */
 const messageOf = (failure: unknown): string => {
@@ -118,6 +121,8 @@ export const useThreadStore = defineStore('thread', () => {
   const following = ref(false)
   /** A lista de tarefas que o agente mantém na conversa (`update_todos`); vazia = nenhuma. */
   const todos = ref<ITodoItem[]>([])
+  /** As vigias armadas na conversa (`watch_start`, `wake_me`): o que o gateway está esperando por ela; vazia = nenhuma. */
+  const watches = ref<IWatchItem[]>([])
   /** Sobe a cada resultado da ferramenta do painel (`conversation_panel`): o painel aberto se relê. */
   const panelVersion = ref(0)
   /** As mensagens mandadas com o turno rodando que ainda não entraram nele (`whileBusy: 'queue'`). */
@@ -161,6 +166,7 @@ export const useThreadStore = defineStore('thread', () => {
     pending.value = undefined
     turns.value = []
     todos.value = []
+    watches.value = []
     liveSession.value = undefined
     session.value = undefined
     error.value = undefined
@@ -170,6 +176,7 @@ export const useThreadStore = defineStore('thread', () => {
       let unsure = false
       let historyFailure: string | undefined
       void loadTodos(id, current)
+      void loadWatches(id, current)
       const [history, live] = await Promise.all([
         api<{ agentId?: string; conversation?: IConversation; turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch((failure) => {
           if (!isNotFound(failure)) historyFailure = messageOf(failure)
@@ -207,6 +214,7 @@ export const useThreadStore = defineStore('thread', () => {
     header.value = undefined
     turns.value = []
     todos.value = []
+    watches.value = []
     pending.value = undefined
     error.value = undefined
     liveSession.value = true
@@ -288,6 +296,8 @@ export const useThreadStore = defineStore('thread', () => {
       // O primeiro turno de uma conversa nova grava a conversa só no fim: as tarefas dele se leem depois disso.
       const usedTodos = turn.tools.some((tool) => isTodoTool(tool.tool))
       setTimeout(() => void refresh().then(() => (usedTodos ? loadTodos(id) : undefined)), 600)
+      // A vigia que disparou no meio do turno entrou na fila dele e já saiu da lista.
+      void loadWatches(id)
       ok = true
     } catch (failure) {
       // A conversa mudou no meio: o erro (inclusive o AbortError do `open`) é do stream antigo, não desta tela.
@@ -369,6 +379,8 @@ export const useThreadStore = defineStore('thread', () => {
       }
       for (const event of frame.turn.events) applyEvent(turn, event)
       pending.value = { ...turn, tools: [...turn.tools], interjections: [...turn.interjections] }
+      // O turno que a própria vigia abriu: ela já disparou, a faixa some agora e não no fim dele.
+      void loadWatches()
     } else if (frame.type === 'turn.event' && followed) {
       applyEvent(followed, frame.event)
     } else if ((frame.type === 'turn.finished' || frame.type === 'turn.idle') && followed) {
@@ -379,6 +391,7 @@ export const useThreadStore = defineStore('thread', () => {
       void refresh().finally(() => {
         if (!following.value && !sending.value) pending.value = undefined
         void loadTodos()
+        void loadWatches()
       })
       void reloadSession(frame.sessionId)
     }
@@ -441,6 +454,7 @@ export const useThreadStore = defineStore('thread', () => {
     header.value = undefined
     turns.value = []
     todos.value = []
+    watches.value = []
     loading.value = false
     error.value = undefined
     liveSession.value = undefined
@@ -462,9 +476,32 @@ export const useThreadStore = defineStore('thread', () => {
     if (result && expected === generation && sessionId.value === id) todos.value = result.items
   }
 
+  /** Relê as vigias armadas na conversa. Mesma regra de geração do `loadTodos`. */
+  async function loadWatches(id = sessionId.value, expected = generation): Promise<void> {
+    if (!id) return
+    const result = await api<{ watches: IWatchItem[] }>(`/sessions/${encodeURIComponent(id)}/watches`).catch(() => undefined)
+    if (result && expected === generation && sessionId.value === id) watches.value = result.watches ?? []
+  }
+
+  /** Cancela uma vigia pela tela. A conversa não recebe aviso de vigia cancelada. */
+  async function stopWatch(watchId: string): Promise<boolean> {
+    const id = sessionId.value
+    if (!id) return false
+    try {
+      await api(`/sessions/${encodeURIComponent(id)}/watches/${encodeURIComponent(watchId)}`, { method: 'DELETE' })
+      return true
+    } catch (failure) {
+      error.value = messageOf(failure)
+      return false
+    } finally {
+      await loadWatches(id)
+    }
+  }
+
   /** A ferramenta das tarefas, com ou sem o prefixo do servidor MCP local (`mcp__local__update_todos`). */
   const isPanelTool = (name: unknown) => typeof name === 'string' && (name === 'conversation_panel' || name.endsWith('__conversation_panel'))
   const isTodoTool = (name: unknown) => typeof name === 'string' && (name === 'update_todos' || name.endsWith('__update_todos'))
+  const isWatchTool = (name: unknown) => typeof name === 'string' && WATCH_TOOLS.has(name.split('__').pop() ?? '')
 
   function applyEvent(turn: IPendingTurn, event: IAgentEvent): void {
     const payload = (event.payload ?? {}) as Record<string, unknown>
@@ -486,6 +523,7 @@ export const useThreadStore = defineStore('thread', () => {
           running.message = event.type === 'tool.error' ? String(payload.message ?? '') : undefined
         }
         if (event.type === 'tool.result' && isTodoTool(payload.tool)) void loadTodos()
+        if (event.type === 'tool.result' && isWatchTool(payload.tool)) void loadWatches()
         if (event.type === 'tool.result' && isPanelTool(payload.tool)) panelVersion.value += 1
         break
       }
@@ -523,6 +561,8 @@ export const useThreadStore = defineStore('thread', () => {
     agentId,
     turns,
     todos,
+    watches,
+    stopWatch,
     panelVersion,
     loading,
     error,

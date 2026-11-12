@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { openRowId } from '@/composables/useOpenRow'
 import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime } from '@/lib/format'
+import { gatewayNotice } from '@/lib/notice'
 import { usePopover } from '@/lib/popover'
 import type { IConversation } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
@@ -31,7 +32,10 @@ const archiveLabel = computed(() => (props.archived ? 'Desarquivar' : 'Arquivar'
 const preview = computed(() => {
   const last = props.conversation.preview
   if (!last) return 'Sem mensagens ainda'
-  return plain(last.text) || `Você: ${plain(last.request)}`
+  if (plain(last.text)) return plain(last.text)
+  // O turno que o gateway abriu (uma vigia que disparou) e ainda não teve resposta: não foi "Você" quem falou.
+  const notice = gatewayNotice(last.request)
+  return notice ? `Gateway: ${notice.what}` : `Você: ${plain(last.request)}`
 })
 
 /** A prévia é uma linha de texto: a marcação do markdown (cercas, asteriscos) só atrapalha ali. */

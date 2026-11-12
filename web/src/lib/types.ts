@@ -898,6 +898,23 @@ export interface ISchedule extends TScheduleInput {
   updatedBy?: string
 }
 
+/**
+ * Uma vigia armada na conversa (`watch_start`, `wake_me`): o gateway confere um comando de tempos em tempos, ou espera
+ * um horário, e a conversa retoma sozinha quando acontecer.
+ */
+export interface IWatchItem {
+  id: string
+  kind: 'command' | 'timer'
+  label: string
+  command?: string
+  everySeconds?: number
+  status: 'active' | 'met' | 'expired' | 'failed' | 'cancelled'
+  createdAt: string
+  deadlineAt: string
+  checks: number
+  endReason?: string
+}
+
 /** Uma tarefa da lista que o agente mantém na conversa (`update_todos`). */
 export interface ITodoItem {
   title: string
