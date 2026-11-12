@@ -26,22 +26,18 @@ describe('SSRF por URL de MCP', () => {
     assert.match(mcpUrlIssue('http://[2002:a9fe:a9fe::1]/x') ?? '', /metadata/)
   })
 
-  it('⛔ na CONEXÃO: o MCP de projeto não alcança loopback nem LAN; o link-local nunca (nem o global)', async () => {
+  it('na CONEXÃO: o endereço cadastrado passa (loopback e LAN, global ou de projeto); ⛔ o link-local, nunca', async () => {
     const quiet = console.warn
     console.warn = () => undefined
     try {
-      const project = new McpServerClient('http://127.0.0.1:9/mcp', {}, { auth: 'none' })
-      assert.strictEqual(await project.connect(), false)
-      assert.match(project.lastError ?? '', /loopback/)
-      const mapped = new McpServerClient('http://[::ffff:7f00:1]:9/mcp', {}, { auth: 'none' })
-      assert.strictEqual(await mapped.connect(), false)
-      assert.match(mapped.lastError ?? '', /loopback/)
-      const lan = new McpServerClient('http://10.255.255.1/mcp', {}, { auth: 'none' })
-      assert.strictEqual(await lan.connect(), false)
-      assert.match(lan.lastError ?? '', /rede local/)
-      const global = new McpServerClient('http://169.254.169.254/mcp', {}, { auth: 'none', allowPrivate: true })
-      assert.strictEqual(await global.connect(), false)
-      assert.match(global.lastError ?? '', /link-local/)
+      for (const url of ['http://127.0.0.1:9/mcp', 'http://[::ffff:7f00:1]:9/mcp']) {
+        const local = new McpServerClient(url, {}, { auth: 'none' })
+        assert.strictEqual(await local.connect(), false)
+        assert.doesNotMatch(local.lastError ?? '', /loopback|rede local|link-local/, url)
+      }
+      const metadata = new McpServerClient('http://169.254.169.254/mcp', {}, { auth: 'none' })
+      assert.strictEqual(await metadata.connect(), false)
+      assert.match(metadata.lastError ?? '', /link-local/)
     } finally {
       console.warn = quiet
     }

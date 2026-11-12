@@ -336,6 +336,7 @@ describe('McpServerClient resource hygiene', () => {
     for (let attempt = 0; attempt < 3; attempt += 1) await client.connect()
     const after = process.getActiveResourcesInfo().length
 
-    assert.strictEqual(after, before, 'tentativa falha deixou handle vivo')
+    // `<=`: a tentativa agora conecta de verdade (o loopback cadastrado passa), e um handle de antes pode fechar no meio.
+    assert.ok(after <= before, `tentativa falha deixou handle vivo (${before} → ${after})`)
   })
 })

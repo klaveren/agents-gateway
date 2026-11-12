@@ -7,7 +7,7 @@ import { TMcpAuth, TMcpTransport } from '@domain/models/McpServer.Model'
 import { IToolDefinition, IToolResult, IToolSchema } from '@infra/tools/Tool.Types'
 import { CallerTokenScope } from './Caller.TokenScope'
 import { identityHeaders } from '@domain/Agent.Identity'
-import { egressPolicy, guardedFetch, hostListed, listFromEnv } from '@infra/net/Guarded.Fetch'
+import { egressPolicy, guardedFetch } from '@infra/net/Guarded.Fetch'
 
 const CLIENT_INFO = { name: 'agents-gateway', version: '1.0.0-alpha' }
 
@@ -42,12 +42,6 @@ export interface IMcpClientOptions {
   identity?: boolean
   /** O nome no log (o id do servidor). */
   label?: string
-  /**
-   * ⛔ ONDE O GATEWAY PODE CONECTAR (a URL é cadastro, não confiança): link-local e metadado nunca; loopback e rede
-   * local (LAN) só se `allowPrivate` — o MCP GLOBAL, cadastrado pelo admin do gateway — ou se `MCP_PRIVATE_HOSTS` listar
-   * o host/IP/faixa. O MCP de PROJETO (admin do projeto) só alcança o que está listado. Padrão: nada de rede interna.
-   */
-  allowPrivate?: boolean
   /** Em vez de HTTP: um processo (o `docker run` de um MCP em contêiner, ou o próprio MCP) falando MCP pelo stdio. */
   stdio?: { command: string; args: string[]; env: Record<string, string>; cwd?: string }
 }
@@ -86,13 +80,9 @@ export class McpServerClient {
     this.now = deps.now ?? Date.now
     this.baseFetch =
       deps.fetch ??
-      guardedFetch(
-        egressPolicy({
-          allowPrivate: options.allowPrivate === true,
-          // Lido a cada conexão: ajustar a variável vale sem reiniciar.
-          listed: (url, address) => hostListed(listFromEnv(process.env.MCP_PRIVATE_HOSTS), url, address),
-        }),
-      )
+      // ⚖️ O endereço é o que quem cadastrou o MCP configurou (global ou de projeto): loopback e rede local passam.
+      // ⛔ Link-local e metadado da nuvem, nunca.
+      guardedFetch(egressPolicy({ allowPrivate: true, listed: () => false }))
   }
 
   isConnected(): boolean {

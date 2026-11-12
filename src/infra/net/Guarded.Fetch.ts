@@ -16,7 +16,7 @@ const MAX_REDIRECTS = 5
 /**
  * ⛔ A política de saída das URLs que o GATEWAY conecta por conta própria (MCP remoto, aviso de turno):
  * - `linklocal` (metadado da nuvem incluso) e `unspecified`: nunca, nem na lista;
- * - `loopback` e `private` (LAN, CGNAT, ULA…): se `allowPrivate` (quem cadastrou é o admin do gateway) ou se a lista
+ * - `loopback` e `private` (LAN, CGNAT, ULA…): se `allowPrivate` (o endereço de um MCP cadastrado) ou se a lista
  *   (`listed`) citar o host ou o endereço;
  * - público: sempre.
  */
@@ -37,7 +37,7 @@ export function egressPolicy(options: { allowPrivate: boolean; allowLan?: boolea
 }
 
 /**
- * A lista de uma variável de ambiente (`MCP_PRIVATE_HOSTS`, `TURN_CALLBACK_HOSTS`): `host`, `host:porta`, IP ou faixa
+ * A lista de uma variável de ambiente (`TURN_CALLBACK_HOSTS`): `host`, `host:porta`, IP ou faixa
  * CIDR (`10.20.0.0/16`), separados por vírgula. Casa pelo NOME da URL ou pelo endereço resolvido.
  */
 export function hostListed(entries: readonly string[], url: URL, address: string): boolean {
