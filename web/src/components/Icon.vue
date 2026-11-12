@@ -36,6 +36,7 @@
       | 'clock'
       | 'git'
       | 'bell'
+      | 'info'
       | 'warn'
       | 'panel'
       | 'list'
@@ -65,6 +66,10 @@
     <template v-else-if="name === 'warn'">
       <path d="M12 4 2.8 19.5h18.4z" />
       <path d="M12 10v4.5M12 17.2h.01" />
+    </template>
+    <template v-else-if="name === 'info'">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 8h.01" />
     </template>
     <template v-else-if="name === 'bell'">
       <path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z" />

@@ -1536,6 +1536,28 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/about': {
+      get: {
+        summary: 'The running version and, when the installer reports it, the build (the commit it was built from)',
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  version: { type: 'string' },
+                  build: { type: 'string', description: 'Absent when whoever started the server did not set `GATEWAY_BUILD`.' },
+                },
+                required: ['name', 'version'],
+              }),
+            ),
+          },
+          '401': failures['401'],
+        },
+      },
+    },
     '/auth/status': {
       get: {
         summary: 'Whether local accounts exist and whether the first administrator still has to be created. Public',
