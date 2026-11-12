@@ -76,6 +76,22 @@ export function writeSshKit(dir: string, identities: readonly ISshKitIdentity[],
   return { bin }
 }
 
+/**
+ * ⛔ O CAMINHO DO SSH SEM CONTA (no Mac): wrappers de `ssh`, `scp` e `sftp` à frente do PATH que só acrescentam o
+ * `ProxyCommand` da porta do gateway. No Mac o cerco não tem o interceptador de TCP do Linux: sem isto, o `ssh` comum tentava
+ * sair direto e o seatbelt cortava com "Operation not permitted", mesmo com a regra de rede. Agora quem decide é o portão
+ * (a regra exata `host:22`), e a recusa diz o porquê. As chaves são as do próprio HOME do comando (nenhuma do servidor).
+ */
+export function writeSshRoute(dir: string, proxyCommand: string): { bin: string } {
+  const bin = join(dir, 'bin')
+  mkdirSync(bin, { recursive: true, mode: 0o700 })
+  for (const name of SSH_CLIENTS) {
+    const real = realClient(name)
+    if (real) writeFileSync(join(bin, name), `#!/bin/sh\nexec ${real} -o 'ProxyCommand=${proxyCommand}' "$@"\n`, { mode: 0o700 })
+  }
+  return { bin }
+}
+
 export function removeSshKit(dir: string): void {
   rmSync(dir, { recursive: true, force: true })
 }

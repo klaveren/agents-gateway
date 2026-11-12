@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { commandDirOf, removeSshKit, writeSshKit } from './Ssh.Kit'
+import { commandDirOf, removeSshKit, writeSshKit, writeSshRoute } from './Ssh.Kit'
 
 const home = mkdtempSync(join(tmpdir(), 'gw-kit-'))
 after(() => rmSync(home, { recursive: true, force: true }))
@@ -34,6 +34,16 @@ describe('Ssh.Kit (a pasta SSH de um comando)', () => {
     assert.match(config, /ProxyCommand \/node \/h\/\.gateway-connect\.cjs %h %p/)
     assert.strictEqual(statSync(join(dir, 'ident-0')).mode & 0o777, 0o600)
     assert.match(readFileSync(join(bin, 'ssh'), 'utf8'), /exec \S+\/ssh -F '.*config' "\$@"/)
+    removeSshKit(dir)
+    assert.ok(!existsSync(dir))
+  })
+  it('⛔ sem conta (no Mac): os wrappers só acrescentam a saída pelo gateway, com o caminho do Node entre aspas', () => {
+    const dir = commandDirOf(join(home, 'run'), 'sem-conta')
+    const { bin } = writeSshRoute(dir, '"/Applications/Agents Gateway.app/node" "/h/.gateway-connect.cjs" %h %p')
+    const wrapper = readFileSync(join(bin, 'ssh'), 'utf8')
+    assert.match(wrapper, /exec \S+\/ssh -o 'ProxyCommand="\/Applications\/Agents Gateway\.app\/node" "\/h\/\.gateway-connect\.cjs" %h %p' "\$@"/)
+    assert.ok(!existsSync(join(dir, 'config')), 'nenhuma config nem chave: as do HOME do comando')
+    assert.strictEqual(statSync(join(bin, 'ssh')).mode & 0o777, 0o700)
     removeSshKit(dir)
     assert.ok(!existsSync(dir))
   })
