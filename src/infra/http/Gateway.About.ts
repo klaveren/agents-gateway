@@ -12,7 +12,7 @@ export interface IGatewayAbout {
 let cached: string | undefined
 
 /** A versão do `package.json` que acompanha o código: a raiz do repositório; no app e na imagem, ao lado do `dist`. */
-function packageVersion(): string {
+export function packageVersion(): string {
   if (cached) return cached
   try {
     const found = (JSON.parse(readFileSync(join(__dirname, '..', '..', '..', 'package.json'), 'utf8')) as { version?: unknown }).version
@@ -24,7 +24,8 @@ function packageVersion(): string {
 }
 
 /**
- * ⚖️ A versão não muda a cada build (`1.0.0-alpha`); o BUILD muda, e é ele que diz qual instalador está rodando.
+ * ⚖️ Todo build sai com a versão incrementada (`1.0.0-alpha.N`, `npm version prerelease --no-git-tag-version`): é ela
+ * que diz qual instalador está rodando; o commit vai junto, para achar o código.
  * `GATEWAY_BUILD` vem de quem sobe o servidor (`<versão>+<commit>`, o `CFBundleVersion` do app do Mac): fica só o commit.
  */
 export function gatewayAbout(env: NodeJS.ProcessEnv = process.env): IGatewayAbout {

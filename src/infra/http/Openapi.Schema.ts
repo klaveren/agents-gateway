@@ -5,6 +5,7 @@
  * compara este arquivo com a tabela de rotas do servidor e falha nos dois sentidos: rota
  * sem descrição e descrição sem rota.
  */
+import { packageVersion } from './Gateway.About'
 
 const envelope = (resultSchema: object) => ({
   type: 'object',
@@ -1510,7 +1511,7 @@ export const OPENAPI_DOCUMENT = {
   openapi: '3.1.0',
   info: {
     title: 'agents-gateway',
-    version: '1.0.0-alpha',
+    version: packageVersion(),
     description: 'Runs Claude, GPT and Gemini in two lanes: `chat` on the plain SDK, `agent` on the official Agents SDK.',
   },
   servers: [{ url: '/v1' }],
