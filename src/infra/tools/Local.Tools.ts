@@ -297,7 +297,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     if (git.refusal) return { status: 'error', result: `Not permitted: ${git.refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
     const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
-    // Os serviços locais que as regras liberam EXATOS (`localhost:27017`): no Linux, um encaminhador por porta.
+    // As portas locais que as regras liberam EXATAS (`localhost:27017`): no Linux, um encaminhador por porta; no Mac, a porta
+    // aberta no perfil para ouvir e conectar (o servidor de desenvolvimento sobe nela).
     const localPorts = [...(layers.agent ?? []), ...(layers.project ?? [])]
       .filter((rule) => rule.category === 'network' && rule.decision === 'allow')
       .map((rule) => /^(?:localhost|127\.0\.0\.1):(\d{1,5})$/.exec(rule.pattern.trim())?.[1])

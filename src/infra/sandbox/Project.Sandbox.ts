@@ -86,7 +86,10 @@ export interface ICercoPlace {
   agentFolder?: { dir: string; read: boolean; write: boolean }
   /** ⛔ As pastas de skills e commands que outro projeto compartilhou com este: só leitura (entram em `readOnly`). */
   sharedFolders?: readonly string[]
-  /** As portas de serviço LOCAL que as regras liberam exatas (`localhost:<porta>`): no Linux ganham um encaminhador. */
+  /**
+   * As portas de serviço LOCAL que as regras liberam exatas (`localhost:<porta>`): no Linux ganham um encaminhador; no Mac,
+   * o perfil abre a porta para ouvir e conectar (ver `withMacLocalPorts`).
+   */
   localPorts?: readonly number[]
   /**
    * Há regra EXATA de TCP fora do HTTP (`10.10.0.1:32017`, `db.interno:5432`): no Linux o comando roda com o
@@ -140,6 +143,30 @@ export function localForwards(ports: readonly number[], token: string, bridgePor
   )
   // O `trap` derruba os encaminhadores quando o comando acaba; a espera curta deixa eles abrirem a porta antes do uso.
   return `${forwards.join(' ')} trap 'kill $(jobs -p) 2>/dev/null' EXIT; sleep 0.2;`
+}
+
+/**
+ * ⚖️ AS PORTAS LOCAIS NO MAC: o seatbelt divide a rede com o host, e o perfil do runtime só abre a porta do gateway. Cada
+ * porta que a regra EXATA libera (`localhost:4000`) ganha no perfil ouvir, receber e conectar NAQUELA porta do loopback —
+ * o servidor de desenvolvimento sobe, e o cliente que não fala proxy alcança o serviço local. As outras seguem fechadas.
+ * ⚠️ O seatbelt não separa `127.0.0.1` de `0.0.0.0`: o servidor que ouve em todas as interfaces numa porta liberada fica
+ * visível na rede local.
+ * ⛔ Sem o ponto de encaixe (a regra da porta do gateway), o perfil mudou de forma: lança, e o comando é recusado — nada
+ * abre sem saber onde entra.
+ */
+export function withMacLocalPorts(wrapped: string, gatePort: number, ports: readonly number[]): string {
+  const unique = [...new Set(ports)].filter((port) => Number.isInteger(port) && port > 0 && port < 65536 && port !== gatePort)
+  if (!unique.length) return wrapped
+  const anchor = `(allow network-outbound (remote ip "localhost:${gatePort}"))`
+  const at = wrapped.indexOf(anchor)
+  if (at < 0) throw new Error(`${SANDBOX_UNAVAILABLE}: o perfil do cerco não tem a regra da porta do gateway; as portas locais (${unique.join(', ')}) não foram abertas`)
+  const rules = unique.flatMap((port) => [
+    `(allow network-bind (local ip "localhost:${port}"))`,
+    `(allow network-inbound (local ip "localhost:${port}"))`,
+    `(allow network-outbound (remote ip "localhost:${port}"))`,
+  ])
+  const end = at + anchor.length
+  return `${wrapped.slice(0, end)}\n${rules.join('\n')}${wrapped.slice(end)}`
 }
 
 /** O `NO_PROXY` do comando: no Linux o loopback dele (rede própria) vai direto; no Mac, nada escapa do portão. */
@@ -293,14 +320,15 @@ export class ProjectSandbox implements IProjectSandbox {
     const prelude = Object.entries(scoped)
       .map(([name, value]) => `export ${name}=${quote(value)}`)
       .join('; ')
-    // No Mac o seatbelt divide a rede com o host: lá só o cliente que fala proxy chega ao serviço local.
+    // No Mac o seatbelt divide a rede com o host: a porta liberada entra no perfil (`withMacLocalPorts`), sem encaminhador.
     const forwards = process.platform === 'linux' ? localForwards(place.localPorts ?? [], networkToken, LINUX_BRIDGE_PORT) : ''
     // Depois dos encaminhadores (eles mesmos não passam pelo interceptador): só o comando do agente.
     const tcp = wantsTcp ? tcpInterceptor(own, networkToken, LINUX_BRIDGE_PORT) : ''
-    return manager.wrapWithSandbox(`${prelude}; ${forwards} ${tcp} ${command}`, SANDBOX_SHELL, {
+    const wrapped = await manager.wrapWithSandbox(`${prelude}; ${forwards} ${tcp} ${command}`, SANDBOX_SHELL, {
       ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
       filesystem: { denyRead: cerco.readDeny, allowRead: cerco.readAllow, allowWrite: cerco.writeAllow, denyWrite: cerco.writeDeny },
     })
+    return this.platform === 'darwin' ? withMacLocalPorts(wrapped, port, place.localPorts ?? []) : wrapped
   }
 
   runDir(): string {
