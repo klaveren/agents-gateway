@@ -1,6 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { mcpSelection, mcpServesProject } from '@domain/models/McpServer.Model'
 import { ISession } from '@domain/models/Session.Model'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
@@ -9,6 +10,7 @@ import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { Request, Response } from 'express'
 import { ownsSession, resolveCaller } from './Caller.Access'
 import { ICallerProof } from './Caller.Proof'
+import { TURN_GRANT_LOCAL } from './Security.Middleware'
 
 export const GATEWAY_SESSION_HEADER = 'x-gateway-session'
 
@@ -31,9 +33,10 @@ export interface IMcpProxyDeps {
  * O mesmo vale para o MCP REMOTO externo (`auth: caller` ou `header`): o CLI não recebe token nem segredo no argv, só a
  * concessão; o servidor conecta ao remoto com a credencial certa (`McpServerClient`, que tem o fetch guardado).
  *
- * ⛔ QUATRO CONFERÊNCIAS: a conversa é de quem chama (a mesma regra de dono das rotas — de outro, 404); o
- * servidor (`:serverId` é a CHAVE, ver `mcpServerKey`) serve ao projeto do agente da conversa — o de outro projeto é
- * 404; o agente escolheu este servidor; e, se escolheu só algumas ferramentas, só elas existem.
+ * ⛔ CINCO CONFERÊNCIAS: quem chega com a concessão de um turno (`Grant.Credential`) só fala da conversa DAQUELE turno —
+ * o cabeçalho é do agente, e outra conversa do mesmo dono dita nele é 404; a conversa é de quem chama (a mesma regra de
+ * dono das rotas — de outro, 404); o servidor (`:serverId` é a CHAVE, ver `mcpServerKey`) serve ao projeto do agente da
+ * conversa — o de outro projeto é 404; o agente escolheu este servidor; e, se escolheu só algumas ferramentas, só elas existem.
  */
 export class McpProxyController {
   constructor(private readonly deps: IMcpProxyDeps) {
@@ -47,6 +50,10 @@ export class McpProxyController {
     const serverId = req.params.serverId as string
     const sessionId = req.headers[GATEWAY_SESSION_HEADER]
     if (typeof sessionId !== 'string' || !sessionId) return void deny(400, 'Missing X-Gateway-Session')
+    // ⛔ A identidade que a concessão empresta é a do DONO do turno, e ele é dono de outras conversas: sem isto, o agente
+    // de uma alcançaria as instâncias (e os servidores escolhidos pelo agente) de outra, só trocando o cabeçalho.
+    const turn = res.locals[TURN_GRANT_LOCAL] as IExecutionContext | undefined
+    if (turn && turn.sessionId !== sessionId) return void deny(404, 'Not found')
 
     const resolved = await resolveCaller(this.deps.proof)
     const session = this.deps.session(sessionId)

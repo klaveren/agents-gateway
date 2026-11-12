@@ -203,9 +203,32 @@ describe('AgentController', () => {
       assert.strictEqual((await drainCall(local, undefined, { 'x-forwarded-for': '8.8.8.8' })).statusCode, 404)
       assert.strictEqual((await drainCall(local, undefined, { 'x-real-ip': '8.8.8.8' })).statusCode, 404)
       assert.strictEqual(drain.active(), false)
-      assert.deepStrictEqual((await drainCall(local)).body?.result, { draining: true })
+      assert.deepStrictEqual((await drainCall(local, true)).body?.result, { draining: true })
       assert.strictEqual((await drainCall({ remoteAddress: '::ffff:10.10.0.4', localAddress: '10.10.0.4' }, false)).statusCode, 200)
       assert.strictEqual(drain.active(), false)
+    })
+
+    it('⛔ nem de uma página aberta no navegador da máquina: ela chega como loopback, mas o navegador marca o pedido', async () => {
+      const marked: Array<Record<string, string>> = [{ origin: 'https://evil.test' }, { origin: 'null' }, { 'sec-fetch-site': 'cross-site' }, { 'sec-fetch-mode': 'no-cors' }]
+      for (const headers of marked) assert.strictEqual((await drainCall(local, true, headers)).statusCode, 404, JSON.stringify(headers))
+      assert.strictEqual(drain.active(), false)
+    })
+
+    it('⛔ `on` é obrigatório e booleano: POST vazio (o que um formulário consegue mandar) não liga nem desliga', async () => {
+      const bodyCall = async (body: unknown) => {
+        const { res, locals } = mockResponse()
+        await controllerWith().drain({ ...mockRequest(), body, headers: {}, socket: local } as unknown as Request, res)
+        return locals
+      }
+      for (const body of [undefined, {}, { on: 'true' }, { on: 1 }, { on: null }, 'on=true']) {
+        const out = await bodyCall(body)
+        assert.strictEqual(out.statusCode, 422, JSON.stringify(body))
+        assert.strictEqual(out.body?.code, 'validation_error')
+        assert.strictEqual(drain.active(), false)
+      }
+      drain.set(true)
+      assert.strictEqual((await bodyCall({})).statusCode, 422)
+      assert.strictEqual(drain.active(), true)
     })
 
     it('o health do host informa `draining`', async () => {

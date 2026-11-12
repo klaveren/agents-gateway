@@ -136,6 +136,10 @@ export class SqliteAgentHookRepository implements IAgentHookRepository {
     return this.db.prepare('INSERT OR IGNORE INTO agent_hook_seen (key, until) VALUES (?, ?)').run(key, until).changes > 0
   }
 
+  releaseSignature(key: string): void {
+    this.db.prepare('DELETE FROM agent_hook_seen WHERE key = ?').run(key)
+  }
+
   /** ⚖️ Guarda só as últimas `HOOK_DELIVERIES_KEPT` por hook: é para a tela, não um log de auditoria. */
   addDelivery(delivery: IHookDelivery): void {
     this.db

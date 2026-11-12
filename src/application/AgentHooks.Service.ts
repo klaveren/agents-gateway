@@ -52,9 +52,14 @@ export class AgentHooksService {
     return hook?.enabled && this.agentExists(agentId) ? hook : undefined
   }
 
-  /** ⛔ A assinatura já foi usada na janela? `true` = primeira vez (passa); `false` = reenvio. */
-  claimSignature(agentId: string, name: string, signature: string, now: number, windowMs: number): boolean {
-    return this.hooks.claimSignature(`${agentId}/${name}:${signature}`, now + windowMs, now)
+  /** ⛔ Gasta a assinatura até `until` (ms; `now` apaga as vencidas). `true` = primeira vez (passa); `false` = reenvio. */
+  claimSignature(agentId: string, name: string, signature: string, until: number, now: number): boolean {
+    return this.hooks.claimSignature(`${agentId}/${name}:${signature}`, until, now)
+  }
+
+  /** Devolve a assinatura gasta por um evento que acabou não entrando: o reenvio dele não é replay. */
+  releaseSignature(agentId: string, name: string, signature: string): void {
+    this.hooks.releaseSignature(`${agentId}/${name}:${signature}`)
   }
 
   secretOf(agentId: string, name: string): string | undefined {

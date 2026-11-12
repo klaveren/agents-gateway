@@ -32,6 +32,8 @@ export interface IAgentHookRepository {
    * não reabrir a janela; apaga as vencidas (`now`, ms) a cada gravação.
    */
   claimSignature(key: string, until: number, now: number): boolean
+  /** Desfaz o `claimSignature` (o evento não entrou). */
+  releaseSignature(key: string): void
   addDelivery(delivery: IHookDelivery): void
   updateDelivery(id: string, patch: Partial<Pick<IHookDelivery, 'status' | 'sessionId' | 'error'>>): void
   /** As últimas, da mais nova para a mais velha. */

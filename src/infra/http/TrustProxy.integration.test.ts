@@ -13,6 +13,15 @@ describe('TRUST_PROXY — a validação', () => {
     for (const ok of ['10.42.0.0/16', '10.42.0.5', 'loopback', 'loopback, 10.0.0.0/8', 'fd00::/8', undefined, '']) assert.strictEqual(trustProxyIssue(ok), undefined, String(ok))
     for (const bad of ['true', '*', '2', '0.0.0.0/0', '::/0', 'meu-ingress']) assert.ok(trustProxyIssue(bad), bad)
   })
+
+  it('⛔ recusa a faixa larga demais para ser uma rede de proxies — metade da internet também é "qualquer um"', () => {
+    for (const ok of ['10.0.0.0/8', '100.64.0.0/10', 'fc00::/7', '203.0.113.7/32', '2001:db8::1/128']) assert.strictEqual(trustProxyIssue(ok), undefined, ok)
+    for (const bad of ['128.0.0.0/1', '0.0.0.0/2', '10.0.0.0/0', '10.0.0.0/7', '8000::/1', '::/6', '::ffff:0.0.0.0/96']) assert.ok(trustProxyIssue(bad), bad)
+  })
+
+  it('recusa o endereço ou o prefixo que não existe com uma frase — não com o erro do Express ao subir', () => {
+    for (const bad of ['999.1.1.1', '1.2.3.4/33', '1.2.3.4/', 'abc', 'fd00::/129', '10.0.0.0/8/8', '1.2.3.4/255.0.0.0', 'loopback, 10.0.0']) assert.ok(trustProxyIssue(bad), bad)
+  })
 })
 
 /** Um servidor real; `trust` liga o `TRUST_PROXY` (o teste, em 127.0.0.1, faz o papel do ingress). */

@@ -720,7 +720,7 @@ describe('MCP do próprio gateway (integração)', () => {
     }
   })
 
-  it('⛔ o agente (concessão) só alcança conversas do PROJETO da conversa dele: ler, mandar mensagem e reconfigurar em outro projeto são recusados', async () => {
+  it('⛔ o agente (concessão) só alcança conversas do PROJETO da conversa dele: ler e reconfigurar em outro projeto são recusados; mandar mensagem, nem tem a ferramenta', async () => {
     for (const id of ['pa', 'pb']) await call('/projects', { method: 'POST', token: admin, body: { id, name: id } })
     const open = async (projectId?: string) => {
       const created = await call('/sessions', { method: 'POST', token: admin, body: { agentId: 'atlas', provider: 'claude', ...(projectId ? { projectId } : {}) } })
@@ -728,23 +728,37 @@ describe('MCP do próprio gateway (integração)', () => {
       return created.result.id as string
     }
     const [own, other, none] = [await open('pa'), await open('pb'), await open()]
-    const grant = turnGrants().register({ tools: [], context: { token: admin, agentId: 'atlas', sessionId: own, conversationProjectId: 'pa' } })
-    try {
-      const client = new Client({ name: 'teste', version: '1.0.0' })
-      await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Turn-Grant': grant } } }))
-      const run = async (name: string, args: Record<string, unknown>) => (await client.callTool({ name, arguments: args })) as { isError?: boolean }
+    const withGrant = async (context: { agentId?: string }, work: (client: Client) => Promise<void>) => {
+      const grant = turnGrants().register({ tools: [], context: { token: admin, ...context, sessionId: own, conversationProjectId: 'pa' } })
+      try {
+        const client = new Client({ name: 'teste', version: '1.0.0' })
+        await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Turn-Grant': grant } } }))
+        await work(client)
+      } finally {
+        turnGrants().release(grant)
+      }
+    }
+    const run = async (client: Client, name: string, args: Record<string, unknown>) => (await client.callTool({ name, arguments: args })) as { isError?: boolean }
 
+    await withGrant({ agentId: 'atlas' }, async (client) => {
+      // ⛔ O agente é o do TURNO, mesmo sem o cabeçalho de identidade (ele o tiraria): as ferramentas de conversa não existem.
+      const listed = (await client.listTools()).tools.map((tool) => tool.name)
+      for (const name of ['start_conversation', 'send_message', 'get_turn']) assert.strictEqual(listed.includes(name), false, name)
       for (const target of [other, none]) {
-        assert.strictEqual(json(await run('send_message', { sessionId: target, message: 'oi', waitSeconds: 0 })).status, 403, 'send_message')
-        assert.strictEqual(json(await run('get_turn', { sessionId: target, turn: 0, waitSeconds: 0 })).status, 403, 'get_turn')
-        assert.strictEqual(json(await run('get_conversation', { sessionId: target })).status, 403, 'get_conversation')
-        assert.strictEqual(json(await run('switch_model', { sessionId: target, reasoning: null })).status, 403, 'PATCH /sessions/:id')
+        assert.strictEqual(json(await run(client, 'get_conversation', { sessionId: target })).status, 403, 'get_conversation')
+        assert.strictEqual(json(await run(client, 'switch_model', { sessionId: target, reasoning: null })).status, 403, 'PATCH /sessions/:id')
       }
       // A do próprio projeto segue (aqui só provamos que não é a recusa de projeto).
-      const mine = await run('get_conversation', { sessionId: own })
+      const mine = await run(client, 'get_conversation', { sessionId: own })
       assert.notStrictEqual(json(mine).status, 403, JSON.stringify(mine))
-    } finally {
-      turnGrants().release(grant)
-    }
+    })
+
+    // Uma concessão sem agente (não é o que o turno registra): as ferramentas existem e a trava de projeto segura.
+    await withGrant({}, async (client) => {
+      for (const target of [other, none]) {
+        assert.strictEqual(json(await run(client, 'send_message', { sessionId: target, message: 'oi', waitSeconds: 0 })).status, 403, 'send_message')
+        assert.strictEqual(json(await run(client, 'get_turn', { sessionId: target, turn: 0, waitSeconds: 0 })).status, 403, 'get_turn')
+      }
+    })
   })
 })

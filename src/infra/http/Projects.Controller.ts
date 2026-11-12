@@ -59,8 +59,9 @@ function setupFailure(error: unknown): unknown {
 
 /**
  * Os projetos: a lista é dos projetos de que a pessoa é membro (o administrador do gateway também), com o papel dela.
- * Criar e apagar são do administrador do gateway (quem cria vira o primeiro administrador do projeto); o nome, do
- * administrador do projeto; os membros, dele ou do administrador do gateway — o resgate (404 para os demais).
+ * Criar e apagar são do administrador do gateway (quem cria vira o primeiro administrador do projeto); o nome e os
+ * repositórios, do administrador do projeto; os membros, dele ou do administrador do gateway — o resgate (404 para os
+ * demais). ⛔ O resgate é só dos membros: o administrador do gateway que não é do projeto não mexe nos repositórios dele.
  */
 export class ProjectsController {
   constructor(private readonly deps: IProjectsControllerDeps) {
@@ -91,7 +92,7 @@ export class ProjectsController {
       res,
       async () => {
         const id = req.params.id as string
-        await this.requireProjectAdmin(id, 'addRepository')
+        await this.requireProjectRole(id, 'addRepository')
         if (!this.deps.projects.exists(id)) throw new HttpError(404, 'not_found', `Project not found: ${id}`)
         const body = parseBody(repositorySchema, req.body)
         const folder = this.deps.projects.folderOf(id)
@@ -134,7 +135,7 @@ export class ProjectsController {
       async () => {
         const id = req.params.id as string
         const name = req.params.name as string
-        await this.requireProjectAdmin(id, 'removeRepository')
+        await this.requireProjectRole(id, 'removeRepository')
         if (!this.deps.projects.exists(id)) throw new HttpError(404, 'not_found', `Project not found: ${id}`)
         if (this.deps.busy?.(id, name)) throw new HttpError(409, 'repository_busy', `Há conversa em andamento em ${name}: espere o turno acabar ou pare a conversa`)
         return removeRepository(this.deps.projects.folderOf(id), name).catch((error: unknown) => Promise.reject(setupFailure(error)))
@@ -183,7 +184,7 @@ export class ProjectsController {
 
   async members(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
-      await this.requireProjectAdmin(req.params.id as string, 'listProjectMembers')
+      await this.requireMembersAdmin(req.params.id as string, 'listProjectMembers')
       return this.deps.projects.members(req.params.id as string)
     })
   }
@@ -191,7 +192,7 @@ export class ProjectsController {
   /** A lista INTEIRA de membros (quem não está nela sai). */
   async setMembers(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
-      const by = await this.requireProjectAdmin(req.params.id as string, 'setProjectMembers')
+      const by = await this.requireMembersAdmin(req.params.id as string, 'setProjectMembers')
       const body = parseBody(membersSchema, req.body)
       return this.deps.projects.setMembers(req.params.id as string, body.members ?? body.userIds ?? [], by)
     })
@@ -238,10 +239,19 @@ export class ProjectsController {
     return { userId: resolved.identity?.id, admin: (await checkAdminAccess(this.deps.proof)).allowed }
   }
 
-  /** O administrador do gateway ou o administrador DESTE projeto; os demais, 404 (como projeto inexistente). */
-  private async requireProjectAdmin(projectId: string, operation: string): Promise<string> {
+  /** Os membros: o administrador do gateway (o resgate) ou o administrador DESTE projeto; os demais, 404. */
+  private async requireMembersAdmin(projectId: string, operation: string): Promise<string> {
     const access = await checkAdminAccess(this.deps.proof)
     if (access.allowed) return access.identity?.email ?? access.identity?.id ?? 'admin'
+    return this.requireProjectRole(projectId, operation)
+  }
+
+  /**
+   * Só quem tem o papel de administrador DESTE projeto; os demais, 404 (como projeto inexistente) — o administrador do
+   * gateway também: para entrar, põe-se nos membros. ⚖️ Não passa pela trava do projeto conectado: o repositório é a
+   * cópia de trabalho desta máquina, não o catálogo que vem da origem.
+   */
+  private async requireProjectRole(projectId: string, operation: string): Promise<string> {
     const caller = await this.caller()
     if (this.deps.projects.exists(projectId) && this.deps.projects.roleOf(projectId, caller.userId) === 'admin') return caller.userId ?? 'admin'
     console.warn(`[admin] acesso negado a ${operation}: não administra o projeto ${projectId}`)
