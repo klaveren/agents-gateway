@@ -103,6 +103,19 @@ describe('SelfMcp.Guard', () => {
     assert.deepStrictEqual(written, [])
   })
 
+  it('🔌 projeto conectado: o agente só ajusta a camada local de um agente do projeto da conversa', async () => {
+    const { api, written } = fakeApi()
+    const guarded = scopedWrites(api, { projectId: 'P', unrestricted: false })
+    assert.ok((await guarded('PATCH', '/connections/P/agents/a-p/local', { body: { disabledTools: ['run_bash'] } })).ok)
+    assert.ok(refused(await guarded('PATCH', '/connections/Q/agents/a-q/local', { body: { disabledTools: ['run_bash'] } })), 'outro projeto')
+    assert.ok(refused(await guarded('PUT', '/connections/P/agents/a-p/local', { body: { allowedTools: ['run_bash'], permissions: [] } })), 'a camada inteira amplia')
+    assert.ok(refused(await guarded('DELETE', '/connections/P/agents/a-p/local')), 'apagar a camada religa tudo')
+    assert.ok(refused(await guarded('POST', '/connections/P/sync')))
+    assert.ok(refused(await guarded('DELETE', '/connections/P')))
+    assert.ok(refused(await scopedWrites(api, { unrestricted: false })('PATCH', '/connections/P/agents/a-p/local', { body: {} })), 'conversa sem projeto')
+    assert.deepStrictEqual(written, ['PATCH /connections/P/agents/a-p/local'])
+  })
+
   it('sem projeto e sem ser administrador do gateway, o agente não escreve em lugar nenhum', async () => {
     const { api, written } = fakeApi()
     const guarded = scopedWrites(api, { unrestricted: false })

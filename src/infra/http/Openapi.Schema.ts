@@ -5087,6 +5087,36 @@ export const OPENAPI_DOCUMENT = {
         requestBody: { required: true, ...json(localLayerSchema) },
         responses: { '200': { description: 'OK', ...json(envelope(localLayerViewSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
+      patch: {
+        summary:
+          'Adjusts the local layer without widening anything (what `patch_agent` with `localLayer` uses): `disabledTools` ADDS to what is already turned off here, `providers` replaces the models of this machine (`null` = the ones of the origin; no looser sandbox, no network). Tools to turn on, delegation, MCPs and permission rules stay as they are and are changed with the PUT. The origin never changes',
+        parameters: localLayerParameters,
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            additionalProperties: false,
+            properties: { disabledTools: localLayerSchema.properties.disabledTools, providers: { ...localLayerSchema.properties.providers, nullable: true } },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                ...localLayerViewSchema,
+                properties: {
+                  ...localLayerViewSchema.properties,
+                  ignored: { type: 'array', items: { type: 'string' }, description: 'Requested names the origin does not have: nothing to turn off' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
       delete: {
         summary: 'Removes the local layer: the agent goes back to exactly what came from the origin',
         parameters: localLayerParameters,

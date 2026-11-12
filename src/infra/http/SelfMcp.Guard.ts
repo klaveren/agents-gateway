@@ -195,6 +195,13 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         if (clean !== '/catalog/history/restore') return refuse('Not available to an agent conversation')
         return inScope(bodyProject(body, 'project'))
       }
+      // 🔌 Projeto conectado: o agente só AJUSTA a camada local (desligar o que veio da origem, trocar os modelos daqui) de
+      // um agente do projeto da conversa. Conectar, atualizar, token e a camada inteira (que amplia) são da pessoa.
+      case 'connections': {
+        if (scope.unrestricted) return undefined
+        if (method === 'PATCH' && /^\/connections\/[^/]+\/agents\/[^/]+\/local\/?$/.test(clean)) return inScope(id)
+        return refuse('Not available to an agent conversation in a project')
+      }
       // ⛔ Configuração do sistema (sequências de modelos): nem o agente do Atlas (admin sem projeto) grava — é da pessoa.
       case 'settings':
         return refuse('An agent conversation cannot change the gateway settings')

@@ -1,8 +1,9 @@
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
+import { agentWidenings } from '@domain/AgentPatch.Policy'
 import { AUTO_TOOLS, isAutoToolOff } from '@domain/Auto.Tools'
 import { AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
 import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
-import { IAgentLocalLayer, isEmptyLayer, TAgentLocalLayerInput, trimLocalLayer } from '@domain/models/AgentLocalLayer.Model'
+import { IAgentLocalLayer, isEmptyLayer, mergeLocalLayer, TAgentLocalLayerInput, trimLocalLayer } from '@domain/models/AgentLocalLayer.Model'
 import { IAgentLocalLayerRepository } from '@domain/ports/AgentLocalLayerRepository.Port'
 import { cleanRules, IPermissionRule, permissionIssues } from '@domain/Permission.Policy'
 import type { AgentCatalog } from './Agent.Catalog'
@@ -21,6 +22,12 @@ export interface IAgentLocalLayerDeps {
 export interface IAgentLayerValidation {
   rules: Omit<IAgentRules, 'takenIds'>
   issues(agent: IAgent): TIssue[]
+}
+
+/** O ajuste que não amplia: o que desligar (soma ao já desligado; o que foi ligado AQUI sai da camada) e os modelos daqui (`null` = os da origem). */
+export interface IAgentLocalLayerAdjust {
+  disabledTools?: string[]
+  providers?: IAgentTarget[] | null
 }
 
 /** O que a tela mostra: a origem e o que esta máquina acrescentou ou desligou. */
@@ -74,6 +81,43 @@ export class AgentLocalLayerService {
     if (isEmptyLayer(layer)) this.deps.repository.remove(agentId)
     else this.deps.repository.save({ agentId, ...layer, updatedAt: this.now(), updatedBy: by })
     return this.view(agent, this.deps.repository.get(agentId))
+  }
+
+  /**
+   * 🔌 O AJUSTE QUE UM AGENTE FAZ (`patch_agent` com `localLayer`): desligar o que veio da origem e trocar os modelos
+   * desta máquina. Vale na hora, e só aqui: a origem não muda.
+   * ⛔ Nunca amplia: o que está desligado continua desligado (religar é na tela), ferramenta e regra a mais não entram
+   * por aqui, e os modelos novos não ganham sandbox mais solto nem rede. O que a camada tinha LIGADO a mais sai dela
+   * quando é pedido. `ignored` = o que o agente não tem para desligar.
+   */
+  async adjust(projectId: string, agentId: string, change: IAgentLocalLayerAdjust, by: string): Promise<IAgentLocalLayerView & { ignored: string[] }> {
+    const agent = this.agent(projectId, agentId)
+    const stored = this.deps.repository.get(agentId)
+    const current: TAgentLocalLayerInput = {
+      ...(stored?.providers ? { providers: stored.providers } : {}),
+      allowedTools: stored?.allowedTools ?? [],
+      disabledTools: stored?.disabledTools ?? [],
+      permissions: stored?.permissions ?? [],
+    }
+    const asked = new Set(change.disabledTools ?? [])
+    const providers = change.providers === undefined ? current.providers : (change.providers ?? undefined)
+    // As ferramentas só encolhem por construção; o que pode ampliar é o sandbox e a rede dos modelos novos.
+    const before = mergeLocalLayer(agent, current)
+    const widenings = agentWidenings(before, { ...before, providers: providers?.length ? providers : agent.providers })
+    if (widenings.length)
+      throw new InvalidAgentError(
+        widenings.map((widening) => ({ field: 'providers', message: `${widening.description}: o que amplia acesso é feito na tela do agente (guia Modelos)` })),
+      )
+    const layer = await this.checked(agent, {
+      ...(providers?.length ? { providers } : {}),
+      allowedTools: current.allowedTools.filter((tool) => !asked.has(tool)),
+      disabledTools: [...new Set([...(current.disabledTools ?? []), ...asked])],
+      permissions: current.permissions,
+    })
+    if (isEmptyLayer(layer)) this.deps.repository.remove(agentId)
+    else this.deps.repository.save({ agentId, ...layer, updatedAt: this.now(), updatedBy: by })
+    const ignored = [...asked].filter((tool) => !layer.disabledTools?.includes(tool) && !current.allowedTools.includes(tool))
+    return { ...this.view(agent, this.deps.repository.get(agentId)), ignored }
   }
 
   remove(projectId: string, agentId: string): IAgentLocalLayerView {

@@ -72,3 +72,57 @@ describe('camada local: o que veio da origem e não vale aqui', () => {
     assert.equal(build([EMode.AGENT], ORIGIN, false).extras({ id: 'sre', projectId: 'logiccus' }), undefined)
   })
 })
+
+describe('camada local: o ajuste que um agente faz (patch_agent com localLayer)', () => {
+  const ORIGIN = ['mcp:tickets/*', 'agent:atlas', 'run_bash', 'save_agent']
+
+  it('desliga somando ao já desligado; o que o agente não tem volta em `ignored`; o resto da camada fica', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    const rule = { category: 'terminal' as const, pattern: 'npm test', decision: 'allow' as const }
+    await service.save('logiccus', 'sre', { allowedTools: ['mcp:local/*'], disabledTools: ['run_bash'], permissions: [rule] }, 'dev')
+    const view = await service.adjust('logiccus', 'sre', { disabledTools: ['save_agent', 'fantasma'] }, 'dev')
+    assert.deepEqual(view.layer.disabledTools, ['run_bash', 'save_agent'])
+    assert.deepEqual(view.ignored, ['fantasma'])
+    assert.deepEqual(view.layer.allowedTools, ['mcp:local/*'])
+    assert.equal(view.layer.permissions.length, 1)
+  })
+
+  it('⛔ não religa: mandar uma lista menor não tira nada do que já está desligado', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    await service.adjust('logiccus', 'sre', { disabledTools: ['run_bash', 'save_agent'] }, 'dev')
+    assert.deepEqual((await service.adjust('logiccus', 'sre', { disabledTools: [] }, 'dev')).layer.disabledTools, ['run_bash', 'save_agent'])
+  })
+
+  it('o que foi ligado AQUI sai da camada quando o agente pede para desligar', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    await service.save('logiccus', 'sre', { allowedTools: ['mcp:local/*', 'mcp:extra/*'], permissions: [] }, 'dev')
+    const view = await service.adjust('logiccus', 'sre', { disabledTools: ['mcp:extra/*'] }, 'dev')
+    assert.deepEqual(view.layer.allowedTools, ['mcp:local/*'])
+    assert.deepEqual(view.ignored, [])
+  })
+
+  it('troca os modelos daqui sem mexer no que está desligado; `null` volta aos da origem', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    await service.adjust('logiccus', 'sre', { disabledTools: ['run_bash'] }, 'dev')
+    const view = await service.adjust('logiccus', 'sre', { providers: SUB }, 'dev')
+    assert.deepEqual(view.layer.providers, SUB)
+    assert.deepEqual(view.layer.disabledTools, ['run_bash'])
+    const back = await service.adjust('logiccus', 'sre', { providers: null }, 'dev')
+    assert.equal(back.layer.providers, undefined)
+    assert.deepEqual(back.layer.disabledTools, ['run_bash'])
+  })
+
+  it('⛔ modelos com sandbox mais solto ou rede: recusa (é da tela), e nada é gravado', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    for (const loose of [{ sandbox: 'danger-full-access' }, { network: true }])
+      await assert.rejects(service.adjust('logiccus', 'sre', { providers: [{ ...SUB[0], ...loose }] as never }, 'dev'), (error: InvalidAgentError) =>
+        error.issues.every((issue) => issue.field === 'providers' && /tela do agente/.test(issue.message)),
+      )
+    assert.equal(service.of({ id: 'sre', projectId: 'logiccus' } as IAgent), undefined)
+  })
+
+  it('⛔ agente de outro projeto, ou projeto que não é conectado: não existe', async () => {
+    await assert.rejects(build([EMode.AGENT], ORIGIN).adjust('outro', 'sre', { disabledTools: ['run_bash'] }, 'dev'), /sre/)
+    await assert.rejects(build([EMode.AGENT], ORIGIN, false).adjust('logiccus', 'sre', { disabledTools: ['run_bash'] }, 'dev'), /sre/)
+  })
+})

@@ -217,6 +217,53 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
     assert.deepStrictEqual([catalog.status, catalog.body.code], [409, 'project_read_only'])
   })
 
+  it('patch_agent com localLayer (MCP do gateway): o agente desliga o que veio da origem e troca os modelos daqui; nada amplia', async () => {
+    const OPS = '/connections/logiccus/agents/ops/local'
+    const client = new Client({ name: 'teste', version: '1.0.0' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: bearer() } }))
+    const patch = async (agentId: string, change: Record<string, unknown>) => {
+      const answer = (await client.callTool({ name: 'patch_agent', arguments: { agentId, patch: change, reason: 'não uso' } })) as {
+        content: Array<{ text: string }>
+        isError?: boolean
+      }
+      return { error: answer.isError === true, body: JSON.parse(answer.content[0].text) }
+    }
+    try {
+      const off = await patch('ops', { localLayer: { disabledTools: ['agent:ajudante', 'fantasma'] } })
+      assert.strictEqual(off.error, false, JSON.stringify(off.body))
+      assert.deepStrictEqual(off.body.localLayer.disabledTools, [AUTO_TOOLS[1], 'agent:ajudante'])
+      assert.deepStrictEqual(off.body.ignored, ['fantasma'])
+      assert.deepStrictEqual(off.body.effectiveAllowedTools, [`off:${AUTO_TOOLS[1]}`])
+      assert.deepStrictEqual(makeAgents().get('ops')!.allowedTools, [`off:${AUTO_TOOLS[1]}`])
+      assert.deepStrictEqual(makeAgents().entry('ops')!.agent.allowedTools, ['agent:ajudante'])
+
+      // Os modelos daqui: troca e volta, sem mexer no resto da camada.
+      const models = await patch('sre', { localLayer: { providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }] } })
+      assert.strictEqual(models.error, false, JSON.stringify(models.body))
+      assert.deepStrictEqual(running().providers, [{ provider: 'claude', models: ['claude-sonnet-5'] }])
+      assert.deepStrictEqual(models.body.localLayer.allowedTools, ['agent:ajudante', AUTO])
+      assert.strictEqual((await patch('sre', { localLayer: { providers: [{ provider: 'claude', models: ['claude-haiku-5'] }] } })).error, false)
+      assert.deepStrictEqual(running().providers, [{ provider: 'claude', models: ['claude-haiku-5'] }])
+
+      // ⛔ O que liga é da tela; a camada vai sozinha no patch; fora de projeto conectado não há camada.
+      const widen = await patch('sre', { localLayer: { allowedTools: ['agent:ops'] } })
+      assert.deepStrictEqual([widen.error, widen.body.code], [true, 'validation_error'])
+      assert.match(JSON.stringify(widen.body.details), /agent screen/)
+      assert.strictEqual((await patch('sre', { localLayer: { disabledTools: [] }, name: 'Outro' })).error, true)
+      assert.strictEqual((await patch('ajudante', { localLayer: { disabledTools: ['x'] } })).error, true)
+      assert.strictEqual((await patch('de-fora', { localLayer: { disabledTools: ['x'] } })).error, true)
+      assert.deepStrictEqual(running().allowedTools, ['agent:ajudante'])
+      // O patch comum segue recusado, e agora diz onde mexer.
+      const plain = await patch('sre', { name: 'Outro' })
+      assert.deepStrictEqual([plain.error, plain.body.code], [true, 'project_read_only'])
+      assert.match(plain.body.message, /localLayer/)
+    } finally {
+      await client.close()
+      // Religar é na tela: a delegação do `ops` volta.
+      await call('PUT', OPS, { allowedTools: [], disabledTools: [AUTO_TOOLS[1]], permissions: [] })
+    }
+  })
+
   it('pedido de permissão: o que restringe e o que a tela aprova vão para a camada, não para o agente', async () => {
     const asked = await call('POST', '/agents/sre/permission-rules', {
       add: [

@@ -327,6 +327,31 @@ function pendingReply(answer: ISelfReply) {
   }
 }
 
+/**
+ * 🔌 `patch_agent` com `localLayer`: o ajuste da camada local de um agente de projeto conectado (desligar o que veio da
+ * origem, trocar os modelos daqui). Vai sozinho no patch: o resto do agente é da origem e não muda aqui.
+ */
+async function adjustLocalLayer(api: TSelfApi, agentId: string, patch: Record<string, unknown>) {
+  const refused = (message: string) => ({ ...text({ status: 422, code: 'validation_error', message }), isError: true })
+  if (Object.keys(patch).length > 1) return refused('`localLayer` goes alone in the patch: the other fields of a connected-project agent are changed at the origin')
+  const change = patch.localLayer
+  if (!change || typeof change !== 'object' || Array.isArray(change)) return refused('`localLayer` must be an object: { "disabledTools"?: [...], "providers"?: [...] | null }')
+  const found = await api('GET', `/agents/${encodeURIComponent(agentId)}`)
+  if (!found.ok) return reply(found)
+  const agent = found.result as Record<string, unknown>
+  if (typeof agent.projectId !== 'string') return refused('This agent is not in a connected project: change its fields directly (allowedTools, providers…)')
+  const saved = await api('PATCH', `/connections/${encodeURIComponent(agent.projectId)}/agents/${encodeURIComponent(agentId)}/local`, { body: change })
+  if (!saved.ok) return reply(saved)
+  const { layer, ignored } = saved.result as { layer: TAgentLocalLayerInput; ignored: string[] }
+  return text({
+    agentId,
+    localLayer: layer,
+    effectiveAllowedTools: mergeLocalLayer(agent as unknown as IAgent, layer).allowedTools,
+    ...(ignored.length ? { ignored, ignoredNote: 'The agent does not have these: nothing to turn off (names must be as in allowedTools)' } : {}),
+    notice: 'Applied now, on this machine only; the origin did not change. A conversation already open may keep the tools and model it started with.',
+  })
+}
+
 const permissionRuleShape = z.object({
   category: z.enum(PERMISSION_CATEGORIES as [TPermissionCategory, ...TPermissionCategory[]]),
   pattern: z
@@ -1172,14 +1197,17 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     'patch_agent',
     {
       description:
-        'Change only some fields of an agent (same fields and rules as save_agent; null removes). What widens access (tools, delegation, permissions, exposure, sandbox…) stays PENDING until an administrator confirms on the screen; the rest applies now. Tell the person what is pending and where (the result says); never say it was granted before that.',
+        'Change only some fields of an agent (same fields and rules as save_agent; null removes). What widens access (tools, delegation, permissions, exposure, sandbox…) stays PENDING until an administrator confirms on the screen; the rest applies now. Tell the person what is pending and where (the result says); never say it was granted before that. An agent of a CONNECTED project (get_agent shows `localLayer`; a plain patch answers 409 project_read_only) is read-only here: send only `{ "localLayer": { "disabledTools": [...], "providers": [...] } }` to turn off, on THIS machine, tools that came from the origin (names as in allowedTools; it adds to what is already off) and to change the models used here (`providers: null` = back to the ones of the origin). It applies now and never changes the origin. Turning a tool back on, adding tools, delegation or permission rules, and a looser sandbox are done by a person on the agent screen.',
       inputSchema: {
         agentId: z.string(),
-        patch: z.record(z.string(), z.unknown()).describe('Field → new value, e.g. { "allowedTools": [...] }.'),
+        patch: z
+          .record(z.string(), z.unknown())
+          .describe('Field → new value, e.g. { "allowedTools": [...] }. Connected project: only { "localLayer": { "disabledTools"?, "providers"? } }.'),
         reason: z.string().describe('Why; shown to whoever confirms.'),
       },
     },
-    async ({ agentId, patch, reason }) => pendingReply(await api('PATCH', `/agents/${encodeURIComponent(agentId)}`, { body: { patch, reason } })),
+    async ({ agentId, patch, reason }) =>
+      'localLayer' in patch ? adjustLocalLayer(api, agentId, patch) : pendingReply(await api('PATCH', `/agents/${encodeURIComponent(agentId)}`, { body: { patch, reason } })),
   )
 
   server.registerTool(

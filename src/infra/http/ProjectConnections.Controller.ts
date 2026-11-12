@@ -1,6 +1,6 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
-import type { AgentLocalLayerService } from '@application/AgentLocalLayer.Service'
+import type { AgentLocalLayerService, IAgentLocalLayerAdjust } from '@application/AgentLocalLayer.Service'
 import type { ProjectConnectionService } from '@application/ProjectConnection.Service'
 import type { TAgentLocalLayerInput } from '@domain/models/AgentLocalLayer.Model'
 import { PERMISSION_LIMITS } from '@domain/Permission.Policy'
@@ -51,6 +51,18 @@ const localSchema = z.object({
     .max(PERMISSION_LIMITS.rules)
     .default([]),
 })
+// ⛔ Só o que não amplia: o que LIGA (ferramenta, MCP, delegação, regra) é da tela, com o `PUT`.
+const localAdjustSchema = z
+  .strictObject(
+    { disabledTools: localSchema.shape.disabledTools, providers: localSchema.shape.providers.nullable() },
+    {
+      error: (issue) =>
+        issue.code === 'unrecognized_keys'
+          ? 'only disabledTools and providers can be adjusted here: tools to turn on, delegation, MCPs and permission rules are changed on the agent screen'
+          : undefined,
+    },
+  )
+  .refine((body) => body.disabledTools !== undefined || body.providers !== undefined, 'nothing to adjust: send disabledTools and/or providers')
 
 /**
  * 🔌 OS PROJETOS CONECTADOS, do lado do dev (`/connections`): conectar um projeto de outro gateway, o aviso de
@@ -61,7 +73,7 @@ const localSchema = z.object({
  */
 export class ProjectConnectionsController {
   constructor(private readonly deps: IProjectConnectionsControllerDeps) {
-    for (const name of ['list', 'connect', 'get', 'check', 'sync', 'replaceToken', 'setModels', 'disconnect', 'getLocal', 'saveLocal', 'removeLocal'] as const)
+    for (const name of ['list', 'connect', 'get', 'check', 'sync', 'replaceToken', 'setModels', 'disconnect', 'getLocal', 'saveLocal', 'adjustLocal', 'removeLocal'] as const)
       this[name] = this[name].bind(this)
   }
 
@@ -154,6 +166,18 @@ export class ProjectConnectionsController {
       const { projectId, by } = await this.owned(req, 'saveAgentLocalLayer')
       const body = parseBody(localSchema, req.body) as TAgentLocalLayerInput
       return this.layers().save(projectId, String(req.params.agentId ?? ''), body, by)
+    })
+  }
+
+  /**
+   * `PATCH /connections/:projectId/agents/:agentId/local` — o ajuste que não amplia (é o que o `patch_agent` de um
+   * agente usa): desliga ferramentas que vieram da origem e troca os modelos daqui. O resto da camada fica como está.
+   */
+  async adjustLocal(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { projectId, by } = await this.owned(req, 'adjustAgentLocalLayer')
+      const body = parseBody(localAdjustSchema, req.body)
+      return this.layers().adjust(projectId, String(req.params.agentId ?? ''), body as IAgentLocalLayerAdjust, by)
     })
   }
 
