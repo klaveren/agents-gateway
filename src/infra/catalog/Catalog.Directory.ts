@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { ICatalogManifest, MANIFEST_PATH, TCatalogFiles } from '@domain/Catalog.Files'
 
@@ -7,14 +7,22 @@ import { ICatalogManifest, MANIFEST_PATH, TCatalogFiles } from '@domain/Catalog.
  * ANTERIOR tinha escrito ali e que não veio agora (pelo `catalog.json` antigo) — o diff no git mostra a remoção.
  *
  * ⛔ Só toca no que é do pacote: nunca apaga arquivo que o manifesto anterior não listava (`.git`, um README), e
- * caminho que sairia de `dir` é recusado antes de escrever qualquer coisa.
+ * caminho que sairia de `dir` é recusado antes de escrever qualquer coisa. O pacote vem de OUTRO servidor: caminho
+ * dentro de `.git` (um hook, o `config`) e caminho que passa por link simbólico também são recusados — a pasta é um
+ * repositório, e o que se escreve ali o git do operador executa.
  */
 export function writeCatalogDirectory(dir: string, files: TCatalogFiles): { written: number; removed: string[] } {
   const root = resolve(dir)
   const target = (path: string) => {
     const full = resolve(root, path)
     const rel = relative(root, full)
-    if (!path || isAbsolute(path) || !rel || rel.startsWith('..') || rel.split(sep).includes('..')) throw new Error(`catalog: caminho fora da pasta: ${path}`)
+    const segments = rel.split(sep)
+    if (!path || isAbsolute(path) || !rel || rel.startsWith('..') || segments.includes('..')) throw new Error(`catalog: caminho fora da pasta: ${path}`)
+    if (segments.some((segment) => segment.toLowerCase() === '.git')) throw new Error(`catalog: caminho dentro de .git: ${path}`)
+    for (let depth = 1; depth <= segments.length; depth++) {
+      const stat = lstatSync(join(root, ...segments.slice(0, depth)), { throwIfNoEntry: false })
+      if (stat?.isSymbolicLink()) throw new Error(`catalog: caminho passa por link simbólico: ${path}`)
+    }
     return full
   }
   const paths = Object.keys(files)

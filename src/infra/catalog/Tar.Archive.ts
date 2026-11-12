@@ -88,7 +88,11 @@ function field(block: Buffer, start: number, length: number): string {
   return raw.subarray(0, end < 0 ? length : end).toString('utf8')
 }
 
-/** O inverso, para os testes e a CLI: só arquivos regulares e o `path` do PAX. */
+/**
+ * O inverso, para os testes, a CLI e o import: só arquivos regulares e o `path` do PAX. ⛔ O tamanho de cada entrada
+ * é conferido (inteiro, não negativo, dentro do arquivo): um cabeçalho com tamanho negativo voltava o cursor e o laço
+ * não acabava nunca, com o servidor inteiro parado.
+ */
 export function untarEntries(tar: Buffer): ITarEntry[] {
   const entries: ITarEntry[] = []
   let offset = 0
@@ -97,6 +101,7 @@ export function untarEntries(tar: Buffer): ITarEntry[] {
     const block = tar.subarray(offset, offset + BLOCK)
     if (block.every((byte) => byte === 0)) break
     const size = Number.parseInt(field(block, 124, 12).trim() || '0', 8)
+    if (!Number.isSafeInteger(size) || size < 0 || offset + BLOCK + size > tar.length) throw new Error('Invalid tar: entry size out of bounds')
     const type = field(block, 156, 1) || '0'
     const data = tar.subarray(offset + BLOCK, offset + BLOCK + size)
     offset += BLOCK + Math.ceil(size / BLOCK) * BLOCK

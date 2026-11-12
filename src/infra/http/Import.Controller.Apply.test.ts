@@ -35,11 +35,11 @@ describe('gravação do importador (/projects/:id/import/jobs/:job/apply e apply
   const bare = new ImportController({ scan, projectExists: () => true, proof })
 
   type TReply = { status: number; body?: any } // eslint-disable-line @typescript-eslint/no-explicit-any
-  const call = (target: ImportController, handler: 'planApply' | 'applyItems', as: string, job: string, body: unknown, viaToken = false) =>
+  const call = (target: ImportController, handler: 'planApply' | 'applyItems', as: string, job: string, body: unknown, viaToken = false, header = false) =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
       const reply: TReply = { status: 0 }
       const res = {
-        locals: viaToken ? { viaAccessToken: true } : {},
+        locals: viaToken ? { viaAccessToken: true } : header ? {} : { viaSessionCookie: true },
         status(code: number) {
           reply.status = code
           return this
@@ -70,7 +70,15 @@ describe('gravação do importador (/projects/:id/import/jobs/:job/apply e apply
     const reply = await call(controller, 'applyItems', ADMIN, 'j1', { keys: ['spec:a'], planHash: HASH, confirm: ['k'] })
     assert.strictEqual(reply.status, 200)
     assert.deepStrictEqual(reply.body.result.items.applied, ['spec:a'])
-    assert.deepStrictEqual(calls.at(-1)!.args, ['alfa', 'j1', { keys: ['spec:a'], planHash: HASH, confirm: ['k'] }, { by: 'u_root@x.test', viaAccessToken: false }])
+    assert.deepStrictEqual(calls.at(-1)!.args, [
+      'alfa',
+      'j1',
+      { keys: ['spec:a'], planHash: HASH, confirm: ['k'] },
+      { by: 'u_root@x.test', viaAccessToken: false, onScreen: true, gatewayAdmin: true },
+    ])
+    // ⛔ Credencial no cabeçalho (o agente, o cliente MCP) não é a tela: o caso de uso recusa a ampliação.
+    await call(controller, 'applyItems', ADMIN, 'j1', { keys: ['spec:a'], planHash: HASH, confirm: ['k'] }, false, true)
+    assert.strictEqual((calls.at(-1)!.args[3] as { onScreen: boolean }).onScreen, false)
     const viaToken = await call(controller, 'applyItems', ADMIN, 'j1', { planHash: HASH, confirm: ['k'] }, true)
     assert.strictEqual(viaToken.status, 403)
   })

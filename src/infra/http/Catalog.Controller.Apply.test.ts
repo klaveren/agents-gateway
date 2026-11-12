@@ -40,11 +40,12 @@ describe('POST /catalog/import/apply e GET /catalog/batches (só admin)', () => 
     as: string | undefined,
     request: { body?: unknown; query?: Record<string, string>; params?: Record<string, string> },
     viaToken = false,
+    header = false,
   ) =>
     withCaller(as ? { token: as, ...identityFromToken(as) } : {}, async () => {
       const reply: TReply = { status: 0 }
       const res = {
-        locals: viaToken ? { viaAccessToken: true } : {},
+        locals: viaToken ? { viaAccessToken: true } : header ? {} : { viaSessionCookie: true },
         status(code: number) {
           reply.status = code
           return this
@@ -152,6 +153,10 @@ describe('POST /catalog/import/apply e GET /catalog/batches (só admin)', () => 
     )
     const ci = await call(controller, 'importApply', ADMIN, { body: { documents, planHash, confirm: keys } }, true)
     assert.strictEqual(ci.status, 403)
+    assert.strictEqual(stack.agents.entry('theo'), undefined)
+    // ⛔ A credencial no cabeçalho (o agente, o cliente MCP) não é a tela: 403 mesmo com o confirm certo.
+    const header = await call(controller, 'importApply', ADMIN, { body: { documents, planHash, confirm: keys } }, false, true)
+    assert.strictEqual(header.status, 403)
     assert.strictEqual(stack.agents.entry('theo'), undefined)
 
     const ok = await call(controller, 'importApply', ADMIN, { body: { documents, planHash, confirm: keys } })

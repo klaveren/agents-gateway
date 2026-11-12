@@ -353,10 +353,58 @@ function isOutsidePath(path: string): boolean {
 export function pathMatches(pattern: string, path: string): boolean {
   const clean = path.replace(/\\/g, '/').replace(/^\.\//, '')
   const target = pattern.trim().replace(/^\.\//, '')
-  if (!target.includes('/')) return globToRegex(target).test(clean.split('/').pop() ?? clean) || globToRegex(target).test(clean)
+  if (!target.includes('/')) return pathGlobMatches(target, clean.split('/').pop() ?? clean) || pathGlobMatches(target, clean)
   // `apps/**` vale também para a própria pasta `apps` (a busca e a listagem pedem a pasta).
   if (target.endsWith('/**') && clean === target.slice(0, -3)) return true
-  return globToRegex(target).test(clean)
+  return pathGlobMatches(target, clean)
+}
+
+/**
+ * O glob casa o texto INTEIRO? A mesma regra do `globToRegex`, sem regex: `**` + `/` casa zero ou mais pastas, `**`
+ * casa tudo, `*` e `?` não atravessam a barra.
+ *
+ * ⛔ Tempo sempre proporcional a padrão × texto. O regex equivalente volta atrás a cada coringa: um padrão com vários
+ * (`**` + `/` repetido, `*a*a*a*b`) contra um caminho fundo ou comprido custa tempo exponencial e prende o servidor. É por
+ * aqui que passa o padrão que não é nosso (o `instructions` de um repositório, a regra pedida por um agente).
+ */
+export function pathGlobMatches(pattern: string, text: string): boolean {
+  if (!/[*?]/.test(pattern)) return pattern === text
+  // As peças, lidas como no `globToRegex`: '**/' (pastas), '**' (tudo), '*', '?' ou o caractere.
+  const pieces: string[] = []
+  for (let i = 0; i < pattern.length; i += 1) {
+    if (pattern[i] === '*' && pattern[i + 1] === '*') {
+      const folders = pattern[i + 2] === '/'
+      pieces.push(folders ? '**/' : '**')
+      i += folders ? 2 : 1
+    } else pieces.push(pattern[i]!)
+  }
+  const size = text.length
+  // `next[j]`: o resto do padrão casa o texto a partir de `j`. Começa pelo fim do padrão: só casa o fim do texto.
+  let next = new Uint8Array(size + 2)
+  let row = new Uint8Array(size + 2)
+  next[size] = 1
+  for (let p = pieces.length - 1; p >= 0; p -= 1) {
+    const piece = pieces[p]!
+    row.fill(0)
+    if (piece === '**/') {
+      // Nada, ou qualquer coisa até uma barra.
+      let slash = 0
+      for (let j = size; j >= 0; j -= 1) {
+        slash = j < size && ((text[j] === '/' && next[j + 1]) || slash) ? 1 : 0
+        row[j] = next[j] || slash ? 1 : 0
+      }
+    } else if (piece === '**') {
+      for (let j = size; j >= 0; j -= 1) row[j] = next[j] || (j < size && row[j + 1]) ? 1 : 0
+    } else if (piece === '*') {
+      for (let j = size; j >= 0; j -= 1) row[j] = next[j] || (j < size && text[j] !== '/' && row[j + 1]) ? 1 : 0
+    } else if (piece === '?') {
+      for (let j = size - 1; j >= 0; j -= 1) row[j] = text[j] !== '/' && next[j + 1] ? 1 : 0
+    } else {
+      for (let j = size - 1; j >= 0; j -= 1) row[j] = text[j] === piece && next[j + 1] ? 1 : 0
+    }
+    ;[next, row] = [row, next]
+  }
+  return next[0] === 1
 }
 
 export function globToRegex(pattern: string): RegExp {
@@ -376,7 +424,8 @@ export function globToRegex(pattern: string): RegExp {
     else if (char === '?') source += '[^/]'
     else source += escape(char)
   }
-  return new RegExp(`^${source}$`)
+  // `s`: o `**` casa também a quebra de linha (nome de pasta pode ter), como o `*` e o `pathGlobMatches`.
+  return new RegExp(`^${source}$`, 's')
 }
 
 /** Destino de rede: `api.github.com`, `*.logiccus.com` (subdomínios), com porta opcional (`prod.x.com:22`). */

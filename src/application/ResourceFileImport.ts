@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { basename, join, sep } from 'node:path'
 import { filePathIssue, IResourceFile, RESOURCE_FILE_MAX_BYTES, RESOURCE_FILES_MAX_BYTES, RESOURCE_FILES_MAX_COUNT } from '@domain/models/ResourceFile.Model'
 import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
@@ -63,7 +63,9 @@ export function importRepositoryFiles(
     const issue = filePathIssue(path)
     if (issue) return void skipped.push({ path, reason: issue })
     if (stat.size > RESOURCE_FILE_MAX_BYTES) return void skipped.push({ path, reason: `larger than ${RESOURCE_FILE_MAX_BYTES} bytes` })
-    const content = readFileSync(absolute)
+    // ⛔ O agente escreve nesta pasta: entre o `lstat` e a leitura o arquivo pode virar link para fora (ou crescer).
+    const content = readUnlinked(absolute, RESOURCE_FILE_MAX_BYTES)
+    if (!content) return void skipped.push({ path, reason: 'changed while it was being read' })
     if (content.subarray(0, 8192).includes(0)) return void skipped.push({ path, reason: 'binary: only text files' })
     const secrets = deps.secretsIn?.(content.toString('utf8')) ?? []
     if (secrets.length) return void skipped.push({ path, reason: `has a secret (${[...new Set(secrets)].join(', ')}): read it from a secret variable` })
@@ -84,4 +86,18 @@ export function mergeFiles(current: readonly IResourceFile[], added: readonly IR
   for (const path of remove) for (const key of [...byPath.keys()]) if (key === path || key.startsWith(`${path.replace(/\/+$/, '')}/`)) byPath.delete(key)
   for (const file of added) byPath.set(file.path, file)
   return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path))
+}
+
+/** Lê o arquivo comum sem seguir link no último nome, com o tamanho conferido no descritor já aberto. */
+function readUnlinked(path: string, maxBytes: number): Buffer | undefined {
+  let fd: number | undefined
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    const stat = fstatSync(fd)
+    return stat.isFile() && stat.size <= maxBytes ? readFileSync(fd) : undefined
+  } catch {
+    return undefined
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
 }

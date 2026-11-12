@@ -494,7 +494,8 @@ export class ProjectConnectionService {
           provenance: { connection: connection.url, version: pack.version },
           mirror: true,
         },
-        { by: who, viaAccessToken: false, administers: () => true },
+        // 🔌 A cópia é da ORIGEM (o servidor do dono): traz o que ela tem, inclusive o MCP que roda no host.
+        { by: who, viaAccessToken: false, administers: () => true, gatewayAdmin: true },
       )
       applied += result.applied.length
       if (!result.failed) break

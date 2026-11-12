@@ -328,6 +328,8 @@ export class AgentController {
   private readonly agents: AgentCatalog
   /** Streams de eventos abertos por conta (ver `conversationEvents`). */
   private readonly openStreams = new Map<string, number>()
+  /** Conversas que estão NASCENDO agora, por conta: contam no teto antes de entrar na lista (ver `createSession`). */
+  private readonly openingSessions = new Map<string, number>()
   /** Os streams da caixa de entrada abertos agora, pelo id que cada um recebeu ao conectar (ver `followTurn`). */
   private readonly inboxStreams = new Map<string, IInboxStream>()
 
@@ -705,8 +707,11 @@ export class AgentController {
       if (received) {
         const disabled = this.agents.unusableModels(entry.agent)
         const { sharedWith: _all, ...rest } = entry.agent
+        // ⛔ Sem o hash dos arquivos: com ele, quem recebe punha o arquivo privado da origem na lista de um agente seu
+        // (o depósito é um só) e o lia por lá. O nome e o tamanho ficam; o conteúdo já era 404 (`GET /files/:sha256`).
+        const files = rest.files?.map((file) => ({ ...file, sha256: '' }))
         return {
-          ...toAgentDetailDto({ ...entry, agent: rest }, (providerId) => this.providerFacts(providerId, disabled)),
+          ...toAgentDetailDto({ ...entry, agent: { ...rest, ...(files ? { files } : {}) } }, (providerId) => this.providerFacts(providerId, disabled)),
           sharedFrom: entry.agent.projectId,
           sharedWith: received,
         }
@@ -1134,31 +1139,40 @@ export class AgentController {
 
         // ⛔ Teto por dono: sem ele, 500 sessões de uma pessoa despejavam as de todo mundo.
         const mine = (await this.usecases.listSessions.execute()).filter((session) => (session.metadata?.owner as { id?: string } | undefined)?.id === owner?.id).length
-        if (mine >= sessionsPerOwner()) throw new HttpError(429, 'rate_limited', `At most ${sessionsPerOwner()} live conversations per account: close one first`)
-
-        const { projectId: requested, repository, worktree, callbackUrl, ...session } = body
-        const project = await this.sessionProject(this.callerOf(resolved), body.agentId, requested)
-        const place = await this.workPlace(body.agentId, project, repository, worktree)
-        const startCommit = place ? await headOf(place).catch(() => undefined) : undefined
-        if (callbackUrl && !this.usecases.callbackSecret?.(callbackUrl, project))
-          throw new HttpError(422, 'validation_error', 'Request body is invalid', [
-            { field: 'callbackUrl', message: "address not registered: add it in the project's turn callbacks (or TURN_CALLBACK_HOSTS)" },
-          ])
-        // ⛔ A marca de construção também é só do servidor: vem do agente, nunca do corpo (esconderia a conversa da caixa).
-        // A marca da importação idem: só a rota do Importador a escreve.
-        const { [BUILDER_METADATA_KEY]: _builder, [IMPORT_METADATA_KEY]: _import, ...declared } = metadata ?? {}
-        const building = builderKindOf(body.agentId)
-        const stamped = {
-          ...declared,
-          ...(owner ? { owner } : {}),
-          ...(project ? { [PROJECT_METADATA_KEY]: project } : {}),
-          ...(building ? { [BUILDER_METADATA_KEY]: building } : {}),
-          ...(place?.repository ? { [REPOSITORY_METADATA_KEY]: place.repository } : {}),
-          ...(place?.worktree ? { [WORKTREE_METADATA_KEY]: place.worktree } : {}),
-          ...(startCommit ? { [START_COMMIT_METADATA_KEY]: startCommit } : {}),
-          ...(callbackUrl ? { [CALLBACK_METADATA_KEY]: callbackUrl } : {}),
+        // ⛔ As que estão nascendo contam: sem isso, pedidos em paralelo passavam todos pela conta acima antes de a primeira entrar na lista.
+        const account = owner?.id ?? ''
+        const opening = this.openingSessions.get(account) ?? 0
+        if (mine + opening >= sessionsPerOwner()) throw new HttpError(429, 'rate_limited', `At most ${sessionsPerOwner()} live conversations per account: close one first`)
+        this.openingSessions.set(account, opening + 1)
+        try {
+          const { projectId: requested, repository, worktree, callbackUrl, ...session } = body
+          const project = await this.sessionProject(this.callerOf(resolved), body.agentId, requested)
+          const place = await this.workPlace(body.agentId, project, repository, worktree)
+          const startCommit = place ? await headOf(place).catch(() => undefined) : undefined
+          if (callbackUrl && !this.usecases.callbackSecret?.(callbackUrl, project))
+            throw new HttpError(422, 'validation_error', 'Request body is invalid', [
+              { field: 'callbackUrl', message: "address not registered: add it in the project's turn callbacks (or TURN_CALLBACK_HOSTS)" },
+            ])
+          // ⛔ A marca de construção também é só do servidor: vem do agente, nunca do corpo (esconderia a conversa da caixa).
+          // A marca da importação idem: só a rota do Importador a escreve.
+          const { [BUILDER_METADATA_KEY]: _builder, [IMPORT_METADATA_KEY]: _import, ...declared } = metadata ?? {}
+          const building = builderKindOf(body.agentId)
+          const stamped = {
+            ...declared,
+            ...(owner ? { owner } : {}),
+            ...(project ? { [PROJECT_METADATA_KEY]: project } : {}),
+            ...(building ? { [BUILDER_METADATA_KEY]: building } : {}),
+            ...(place?.repository ? { [REPOSITORY_METADATA_KEY]: place.repository } : {}),
+            ...(place?.worktree ? { [WORKTREE_METADATA_KEY]: place.worktree } : {}),
+            ...(startCommit ? { [START_COMMIT_METADATA_KEY]: startCommit } : {}),
+            ...(callbackUrl ? { [CALLBACK_METADATA_KEY]: callbackUrl } : {}),
+          }
+          return await this.usecases.createSession.execute({ ...session, metadata: stamped, adminAccess })
+        } finally {
+          const left = (this.openingSessions.get(account) ?? 1) - 1
+          if (left > 0) this.openingSessions.set(account, left)
+          else this.openingSessions.delete(account)
         }
-        return this.usecases.createSession.execute({ ...session, metadata: stamped, adminAccess })
       },
       { status: 201, message: 'Session created successfully', refusal: { req } },
     )

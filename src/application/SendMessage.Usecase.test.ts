@@ -129,6 +129,31 @@ describe('SendMessageUseCase', () => {
     assert.ok(!JSON.stringify(repository.turns[0].toolCalls).includes('segredo-xyz-123'))
   })
 
+  it('⛔ o aviso e o erro do turno também saem mascarados: o provedor devolve a chave recusada no texto do erro', async () => {
+    const repository = new RecordingRepository()
+    const mask = { text: (text: string) => text.split('segredo-xyz-123').join('[segredo:x]'), deep: <T>(value: T) => value }
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => session(),
+        sendMessage: async function* (sessionId) {
+          yield { type: 'warning', sessionId, payload: { message: 'tentando de novo com segredo-xyz-123' }, timestamp: new Date() }
+          yield { type: 'error', sessionId, payload: { message: 'Incorrect API key provided: segredo-xyz-123', kind: 'auth' }, timestamp: new Date() }
+        },
+      }),
+      repository,
+      undefined,
+      mask,
+    )
+    const recorded = repository.recorded()
+    const events = []
+    for await (const event of usecase.execute('s', { text: 'oi' })) events.push(event)
+    await recorded
+    assert.ok(!JSON.stringify(events).includes('segredo-xyz-123'))
+    assert.deepStrictEqual(events[1].payload, { message: 'Incorrect API key provided: [segredo:x]', kind: 'auth' })
+    assert.ok(!JSON.stringify(repository.turns[0]).includes('segredo-xyz-123'))
+    assert.strictEqual(repository.turns[0].error, 'Incorrect API key provided: [segredo:x]')
+  })
+
   it('o turno ao vivo: quem assina vê o começo, os eventos já mascarados e o fim só depois de gravado', async () => {
     const repository = new RecordingRepository()
     const inbox: TConversationEvent[] = []

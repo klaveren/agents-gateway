@@ -51,6 +51,7 @@ import {
   CatalogImportBlockedError,
   CatalogPlanChangedError,
   CatalogRestoreInvalidError,
+  CatalogPrivilegedMcpError,
   CatalogShareForbiddenError,
   CatalogRevisionConflictError,
   CatalogRevisionNotFoundError,
@@ -186,6 +187,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof CatalogShareForbiddenError) {
     return { status: 403, code: 'forbidden', message: error.message, details: { projects: error.projects } }
+  }
+
+  if (error instanceof CatalogPrivilegedMcpError) {
+    return { status: 403, code: 'forbidden', message: error.message, details: { servers: error.servers } }
   }
 
   if (error instanceof PermissionRequestNotFoundError) {

@@ -340,6 +340,40 @@ describe('AgentController', () => {
     }
   })
 
+  it('⛔ teto de conversas vivas: pedidos em paralelo não passam juntos (a que está nascendo conta), e a vaga volta se a criação falha', async () => {
+    const previous = process.env.SESSIONS_PER_OWNER
+    process.env.SESSIONS_PER_OWNER = '2'
+    try {
+      const live: ReturnType<typeof record>[] = []
+      let fail = false
+      const controller = controllerWith({
+        list: () => live,
+        createSession: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          if (fail) throw new Error('provider fora do ar')
+          live.push(record())
+          return { id: String(live.length), provider: EProvider.OPENAI, mode: EMode.CHAT, createdAt: new Date() }
+        },
+      })
+      const open = async () => {
+        const { res, locals } = mockResponse()
+        await controller.createSession(mockRequest({ body: { agentId: 'pesquisa-teste' } }), res)
+        return locals.statusCode
+      }
+      assert.deepStrictEqual((await Promise.all([open(), open(), open(), open(), open()])).sort(), [201, 201, 429, 429, 429])
+      // A criação que falha devolve a vaga: com uma conversa a menos, cabe outra.
+      live.pop()
+      fail = true
+      assert.notStrictEqual(await open(), 201)
+      fail = false
+      assert.strictEqual(await open(), 201)
+      assert.strictEqual(await open(), 429)
+    } finally {
+      if (previous === undefined) delete process.env.SESSIONS_PER_OWNER
+      else process.env.SESSIONS_PER_OWNER = previous
+    }
+  })
+
   it('rejects an invalid body with 422 and points at the field', async () => {
     const { res, locals } = mockResponse()
     await controllerWith().createSession(mockRequest({ body: { mode: 'nope' } }), res)

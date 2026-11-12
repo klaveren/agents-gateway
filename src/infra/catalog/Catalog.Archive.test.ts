@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { runCatalogCli } from './Catalog.Cli'
 import { writeCatalogDirectory } from './Catalog.Directory'
-import { tarGz, untarGz } from './Tar.Archive'
+import { tarGz, untarEntries, untarGz } from './Tar.Archive'
 
 const work = mkdtempSync(join(tmpdir(), 'catalog-export-'))
 after(() => rmSync(work, { recursive: true, force: true }))
@@ -43,6 +43,18 @@ describe('Tar.Archive — tar.gz sem dependência', () => {
     const result = spawnSync('tar', ['-xzf', file, '-C', out], { encoding: 'utf8' })
     assert.strictEqual(result.status, 0, result.stderr)
     for (const entry of entries) assert.strictEqual(readFileSync(join(out, entry.path), 'utf8'), entry.content, entry.path)
+  })
+
+  it('⛔ tamanho negativo, ilegível ou maior que o arquivo: recusa, sem laço', () => {
+    const forged = (size: string): Buffer => {
+      const block = Buffer.alloc(512 * 3)
+      block.write('a.txt', 0, 'utf8')
+      block.write(size, 124, 'utf8')
+      block.write('0', 156, 'utf8')
+      return block
+    }
+    for (const size of ['-1000', '-7777777', '77777777777', 'zzz']) assert.throws(() => untarEntries(forged(size)), /Invalid tar/, size)
+    assert.deepStrictEqual(untarEntries(forged('0')), [{ path: 'a.txt', content: Buffer.alloc(0) }])
   })
 })
 

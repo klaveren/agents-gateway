@@ -3,7 +3,7 @@ import type { ICatalogDocument, TCatalogKind } from './Catalog.Document'
 import { EMode } from './enums/EMode.Enum'
 import type { IAgentTarget } from './models/Agent.Model'
 import { AGENT_TOOL_PREFIX } from './models/Delegation.Model'
-import type { IMcpContainer, IMcpProcess, TMcpAuth } from './models/McpServer.Model'
+import type { IMcpContainer, IMcpOAuth, IMcpProcess, TMcpAuth } from './models/McpServer.Model'
 import { MCP_ALL_TOOLS, MCP_TOOL_PREFIX } from './models/McpServer.Model'
 import type { IAgentResources } from './models/Resource.Model'
 import type { IPermissionRule, TPermissionCategory } from './Permission.Policy'
@@ -155,6 +155,7 @@ interface IMcpBody {
   projectId?: string
   container?: Partial<IMcpContainer>
   process?: Partial<IMcpProcess>
+  oauth?: Partial<IMcpOAuth>
 }
 
 interface IRulesBody {
@@ -261,8 +262,12 @@ function mcpWidenings(out: Collector, before: IMcpBody | undefined, after: IMcpB
   const kind = after.kind ?? 'remote'
   const isNew = !before
 
-  if (isNew) out.add('mcp-reach', `new~${kind}:${mcpTarget(after)}`, `MCP novo (${kind}: ${mcpTarget(after)})${after.enabled ? '' : ', desligado'}`)
-  else {
+  if (isNew) {
+    // ⛔ Os argumentos entram na chave e no texto: `node -e <código>` não se confirma como "process: node".
+    const args = (kind === 'process' ? after.process?.args : kind === 'container' ? after.container?.args : undefined) ?? []
+    const run = args.length ? `${mcpTarget(after)} ${args.join(' ')}` : mcpTarget(after)
+    out.add('mcp-reach', `new~${kind}:${mcpTarget(after)}${args.length ? `#${digest(args.join(' '))}` : ''}`, `MCP novo (${kind}: ${run})${after.enabled ? '' : ', desligado'}`)
+  } else {
     if (kind !== (was.kind ?? 'remote')) out.add('mcp-reach', `kind~${kind}`, `tipo muda de "${was.kind ?? 'remote'}" para "${kind}"`)
     for (const [field, now, old] of [
       ['url', after.url, was.url],
@@ -277,6 +282,10 @@ function mcpWidenings(out: Collector, before: IMcpBody | undefined, after: IMcpB
     ] as const)
       if (now?.length && JSON.stringify(now) !== JSON.stringify(old ?? [])) out.add('mcp-reach', `${field}~${digest(now.join(' '))}`, `argumentos mudam para "${now.join(' ')}"`)
     if (after.enabled && !was.enabled) out.add('mcp-reach', 'enabled+', 'ligado')
+    // ⛔ O servidor de login recebe o token de renovação de cada pessoa e o client secret do cofre: trocar é mandar isso a outro lugar.
+    const login = after.oauth?.authorizationServer
+    if (login && login !== was.oauth?.authorizationServer)
+      out.add('mcp-reach', `oauth.authorizationServer~${login}`, `servidor de login (OAuth) muda para "${login}": recebe os tokens e o client secret guardados`)
   }
 
   // Credencial: `none` é a única provadamente mais fechada.

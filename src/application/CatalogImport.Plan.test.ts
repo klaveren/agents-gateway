@@ -347,6 +347,24 @@ describe('CatalogImportPlanner (dry-run)', () => {
     })
     assert.strictEqual(byRef(outside, 'agent/lia').op, 'conflict')
     assert.match(byRef(outside, 'agent/lia').issues[0].message, /outside the plan scope \(global\)/)
+    // ⛔ O plano não leva nada do item de fora: nem o hash, nem o texto (no diff).
+    assert.strictEqual(byRef(outside, 'agent/lia').currentHash, undefined)
+    assert.match(byRef(outside, 'agent/lia').diff!.unified, /^--- absent/)
+  })
+
+  it('⛔ plano em `all` por quem não administra tudo: o item que já existe fora do alcance é conflito, sem o texto dele', async () => {
+    const { planner } = build()
+    const mine = [agentDocument(agent({ id: 'lia', projectId: 'alfa' }), { resources: { skills: [], commands: [] }, initialContext: [] })]
+    const reach = (projectId: string | undefined) => projectId === 'alfa'
+    const plan = await planner.planDocuments(mine, { kind: 'all' }, { reach })
+    assert.strictEqual(byRef(plan, 'agent/lia').op, 'conflict')
+    assert.strictEqual(byRef(plan, 'agent/lia').currentHash, undefined)
+    assert.match(byRef(plan, 'agent/lia').diff!.unified, /^--- absent/)
+    // O documento de um escopo fora do alcance também não entra.
+    const theirs = [agentDocument(agent({ id: 'novo', projectId: 'beta' }), { resources: { skills: [], commands: [] }, initialContext: [] })]
+    assert.match(byRef(await planner.planDocuments(theirs, { kind: 'all' }, { reach }), 'agent/novo').issues[0].message, /outside the plan scope/)
+    // Quem administra tudo (sem `reach`) segue como antes.
+    assert.notStrictEqual(byRef(await planner.planDocuments(mine, { kind: 'all' }), 'agent/lia').op, 'conflict')
   })
 
   it('🔌 a cópia do projeto conectado traz o agente que cita um MCP que não está (ou está desligado) aqui', async () => {

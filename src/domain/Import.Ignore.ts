@@ -1,4 +1,4 @@
-import { globToRegex } from './Permission.Policy'
+import { pathGlobMatches } from './Permission.Policy'
 
 /**
  * O IGNORAR da varredura do importador: globs que o admin define por projeto (e que a chamada pode somar), para tirar do
@@ -57,8 +57,7 @@ export interface IIgnoreMatcher {
 
 export function ignoreMatcher(pattern: string): IIgnoreMatcher {
   const anchored = pattern.includes('/')
-  const regex = globToRegex(pattern)
-  const test = (path: string) => (anchored ? regex.test(path) : regex.test(path.slice(path.lastIndexOf('/') + 1)))
+  const test = (path: string) => pathGlobMatches(pattern, anchored ? path : path.slice(path.lastIndexOf('/') + 1))
   return {
     pattern,
     matches(path: string) {

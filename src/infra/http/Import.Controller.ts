@@ -13,8 +13,9 @@ import { IMPORT_MANUAL_STATES, TImportManualState } from '@domain/models/ImportJ
 import { TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { WorkFolderError } from '@infra/workspace/Work.Folder'
 import { viaAccessToken } from './Auth.Controller'
+import { viaSessionCookie } from './Session.Cookie'
 import { provenCaller } from './Caller.Access'
-import { requireProjectAdmin } from './Project.Access'
+import { adminView, requireProjectAdmin } from './Project.Access'
 import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
@@ -187,12 +188,14 @@ export class ImportController {
   async applyItems(req: Request, res: Response): Promise<void> {
     await this.respond(res, 'importApply', req, async (projectId, by) => {
       const body = parseBody(applySchema, req.body ?? {})
+      // ⛔ O MCP que roda no host (ou recebe a credencial de quem conversa) só o admin do gateway grava (`gatePrivileged`).
+      const gatewayAdmin = !!(await adminView(this.deps.proof))?.gateway
       return this.buildError(() =>
         this.applier().apply(
           projectId,
           req.params.job as string,
           { ...selection(body), planHash: body.planHash, ...(body.confirm ? { confirm: body.confirm } : {}) },
-          { by, viaAccessToken: viaAccessToken(res) },
+          { by, viaAccessToken: viaAccessToken(res), onScreen: viaSessionCookie(res), gatewayAdmin },
         ),
       )
     })

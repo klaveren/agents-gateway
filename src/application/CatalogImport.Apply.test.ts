@@ -7,6 +7,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import {
   CatalogImportBlockedError,
   CatalogPlanChangedError,
+  CatalogPrivilegedMcpError,
   CatalogShareForbiddenError,
   CatalogWideningConfirmationError,
   CatalogWideningForbiddenError,
@@ -291,6 +292,42 @@ describe('CatalogImportApplier — aplicar o import', () => {
     assert.deepStrictEqual(result.entersDisabled, ['mcp/crm'])
     assert.deepStrictEqual(result.missingSecrets, [{ ref: 'mcp/crm', secrets: ['header'] }])
     assert.deepStrictEqual((result.batch!.summary as { entersDisabled: string[] }).entersDisabled, ['mcp/crm'])
+  })
+
+  it('⛔ MCP que roda no host (ou recebe a credencial de quem chama): só o admin do gateway importa; o igual ao que já existe não trava', async () => {
+    const stack = buildCatalogStack()
+    const ROOT: IRestoreCaller = { ...ADMIN, gatewayAdmin: true }
+    const shell = mcpDocument({
+      id: 'shell',
+      name: 'Shell',
+      kind: 'process',
+      url: '',
+      transport: 'auto',
+      auth: 'none',
+      process: { command: 'bash', args: ['-c', 'id'], env: [], scope: 'conversation' },
+      enabled: true,
+      createdAt: at,
+      updatedAt: at,
+    })
+    const pass = mcpDocument({ id: 'pass', name: 'Pass', url: 'https://pass.example.com/mcp', transport: 'auto', auth: 'caller', enabled: true, createdAt: at, updatedAt: at })
+    const documents = [shell, pass, spec('guia')]
+    const { plan } = await stack.applier.plan({ documents })
+    const request = { documents, planHash: plan.planHash, confirm: plan.widenings.map((widening) => widening.key) }
+
+    const denied = await refused(stack.applier.apply(request, ADMIN), CatalogPrivilegedMcpError)
+    assert.deepStrictEqual([...denied.servers].sort(), ['pass', 'shell'])
+    assert.strictEqual(stack.mcps.list().length, 0)
+    assert.strictEqual(stack.repository.batches({}, { offset: 0, limit: 10 }).total, 0)
+
+    await stack.applier.apply(request, ROOT)
+    assert.strictEqual(stack.mcps.list().find((server) => server.id === 'shell')?.kind, 'process')
+
+    // O que já está igual não é escrita: quem não é admin do gateway reaplica o pacote com outra coisa mudada.
+    const current = stack.reader.list({ kind: 'all' }).filter((document) => document.kind === 'mcp')
+    const again = [...current, spec('guia', 'Corpo novo')]
+    const second = await stack.applier.plan({ documents: again })
+    await stack.applier.apply({ documents: again, planHash: second.plan.planHash, confirm: second.plan.widenings.map((widening) => widening.key) }, ADMIN)
+    assert.strictEqual(stack.guidance.doc('guia').body, 'Corpo novo')
   })
 
   it('projeto em duas partes: o registro sem o contexto inicial, os docs, e depois o contexto (links)', async () => {

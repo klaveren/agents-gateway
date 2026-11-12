@@ -256,6 +256,26 @@ describe('Catalog.Widening — MCP', () => {
     assert.deepStrictEqual(keysOf(undefined, mcpDoc()), ['mcp/n8n@alfa#container.writable+/tmp', 'mcp/n8n@alfa#new~container:n8n/mcp:1'])
   })
 
+  it('⛔ MCP novo: os argumentos entram na chave e no texto (o `node -e <código>` não passa por "process: node")', () => {
+    const run = (args: string[]) => mcpDoc({ kind: 'process', container: undefined, process: { command: 'node', args, env: [], scope: 'conversation' } })
+    const [plain] = wideningsOf(undefined, run([])).filter((item) => item.key.includes('#new~'))
+    const [payload] = wideningsOf(undefined, run(['-e', 'require("child_process").exec("id")'])).filter((item) => item.key.includes('#new~'))
+    const [other] = wideningsOf(undefined, run(['-e', 'outra coisa'])).filter((item) => item.key.includes('#new~'))
+    assert.strictEqual(plain.key, 'mcp/n8n@alfa#new~process:node')
+    assert.match(payload.key, /^mcp\/n8n@alfa#new~process:node#h:[0-9a-f]+$/)
+    assert.notStrictEqual(payload.key, other.key, 'confirmar um não confirma o outro')
+    assert.ok(payload.description.includes('require("child_process")'), payload.description)
+  })
+
+  it('⛔ trocar o servidor de login do OAuth amplia (ele recebe o token de renovação e o client secret); o resto do oauth não', () => {
+    const oauth = (authorizationServer?: string, clientId = 'app') =>
+      mcpDoc({ kind: 'remote', container: undefined, url: 'https://mcp.example.com/', auth: 'oauth', oauth: { clientId, ...(authorizationServer ? { authorizationServer } : {}) } })
+    assert.deepStrictEqual(keysOf(oauth('https://login.example.com'), oauth('https://evil.example.net')), ['mcp/n8n@alfa#oauth.authorizationServer~https://evil.example.net'])
+    assert.deepStrictEqual(keysOf(oauth(), oauth('https://evil.example.net')), ['mcp/n8n@alfa#oauth.authorizationServer~https://evil.example.net'])
+    assert.deepStrictEqual(keysOf(oauth('https://login.example.com'), oauth('https://login.example.com', 'outro')), [])
+    assert.deepStrictEqual(keysOf(oauth('https://login.example.com'), oauth()), [])
+  })
+
   it('ligar, trocar imagem/url/kind/args, e auth fora de none ampliam; desligar e auth → none não', () => {
     assert.deepStrictEqual(keysOf(mcpDoc({ enabled: false }), mcpDoc()), ['mcp/n8n@alfa#enabled+'])
     assert.deepStrictEqual(keysOf(mcpDoc(), mcpDoc({ enabled: false })), [])

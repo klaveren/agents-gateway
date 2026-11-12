@@ -9,7 +9,7 @@ import type { CatalogReader } from './Catalog.Reader'
 import type { ICatalogWriter, IPreparedWrite } from './Catalog.Writer'
 import { catalogItemKey, CatalogHistoryService, ICatalogChange } from './CatalogHistory.Service'
 import type { CatalogImportPlanner, IPlanOptions, IPlanWithTargets } from './CatalogImport.Plan'
-import { gateShares, gateWidenings, IRestoreCaller } from './CatalogRestore.Usecase'
+import { gatePrivileged, gateShares, gateWidenings, IRestoreCaller } from './CatalogRestore.Usecase'
 
 /** O que se aplica: o pacote do export OU os documentos canônicos (o importador entra direto aqui, sem arquivos). */
 export type TImportSource = { package: IPackageInput; documents?: undefined } | { documents: readonly ICatalogDocument[]; package?: undefined }
@@ -118,13 +118,22 @@ export class CatalogImportApplier {
   }
 
   async apply(request: IImportApplyRequest, caller: IRestoreCaller): Promise<IImportApplyResult> {
-    const { plan, targets } = await this.plan(request, { viaAccessToken: caller.viaAccessToken, ...(request.mirror ? { mirror: true } : {}) })
+    const { plan, targets } = await this.plan(request, {
+      viaAccessToken: caller.viaAccessToken,
+      ...(request.mirror ? { mirror: true } : {}),
+      ...(caller.reach ? { reach: caller.reach } : {}),
+    })
     if (plan.planHash !== request.planHash) throw new CatalogPlanChangedError(plan)
     const blockers = blockersOf(plan)
     if (blockers.length) throw new CatalogImportBlockedError(blockers)
     gateWidenings(plan.widenings, request.confirm, caller)
     // ⛔ Acrescentar projeto ao `sharedWith` pelo import exige o admin dele (como a rota de compartilhar).
     for (const target of targets.values()) gateShares(this.deps.reader.read(target.kind, target.id, target.projectId), target, caller)
+    // ⛔ O MCP que roda no host (ou recebe a credencial de quem chama) só entra ou muda pelo admin do gateway, como na tela.
+    gatePrivileged(
+      [...targets.values()].map((target) => ({ current: this.deps.reader.read(target.kind, target.id, target.projectId), target })),
+      caller,
+    )
 
     const result: IImportApplyResult = {
       planHash: plan.planHash,

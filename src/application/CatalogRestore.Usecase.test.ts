@@ -5,8 +5,10 @@ import { TCatalogKind } from '@domain/Catalog.Document'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import {
+  CatalogPrivilegedMcpError,
   CatalogRestoreInvalidError,
   CatalogRevisionConflictError,
+  CatalogRevisionNotFoundError,
   CatalogShareForbiddenError,
   CatalogWideningConfirmationError,
   CatalogWideningForbiddenError,
@@ -282,6 +284,14 @@ describe('CatalogRestoreUseCase — ampliação de permissão', () => {
     assert.deepStrictEqual([saved.op, saved.by, saved.widenings], ['restore', 'root@x.test', [KEY]])
   })
 
+  it('⛔ credencial fora da tela (cabeçalho: o agente, o cliente MCP): recusa mesmo com o confirm certo; na tela, passa', async () => {
+    const { restore, revisions } = widened()
+    await refused(restore.restore(request([KEY]), { ...ADMIN, onScreen: false }), CatalogWideningForbiddenError)
+    assert.strictEqual(revisions('agent', 'pesquisa').length, 2)
+    await restore.restore(request([KEY]), { ...ADMIN, onScreen: true })
+    assert.strictEqual(revisions('agent', 'pesquisa').length, 3)
+  })
+
   it('token de acesso (CI): recusa mesmo com o confirm certo', async () => {
     const { agents, restore } = widened()
     const error = await refused(restore.restore(request([KEY]), CI), CatalogWideningForbiddenError)
@@ -338,6 +348,48 @@ describe('CatalogRestoreUseCase — MCP', () => {
     await restore.restore({ item: { kind: 'mcp', itemId: 'n8n' }, revision: 2, expectedRevision: 3 }, ADMIN)
     assert.deepStrictEqual([mcps.get('n8n').name, mcps.get('n8n').enabled], ['N8N', false])
     assert.deepStrictEqual(changed, ['changed:n8n'])
+  })
+
+  it('⛔ MCP que roda no host: restaurar e reverter só com o admin do gateway; o remoto comum segue livre', async () => {
+    const { mcps, restore, last } = build()
+    const ROOT: IRestoreCaller = { ...ADMIN, gatewayAdmin: true }
+    /** Aplica aceitando as ampliações que o plano pedir: aqui o que se mede é a trava do MCP privilegiado. */
+    const confirmed = async (caller: IRestoreCaller) => {
+      const request = { item: { kind: 'mcp' as const, itemId: 'shell' }, revision: 1, expectedRevision: last('mcp', 'shell') }
+      try {
+        return await restore.restore(request, caller)
+      } catch (error: unknown) {
+        if (!(error instanceof CatalogWideningConfirmationError)) throw error
+        return restore.restore({ ...request, confirm: error.widenings.map((item) => item.key) }, caller)
+      }
+    }
+    mcps.create({ id: 'shell', name: 'Shell', kind: 'process', process: { command: 'bash', args: ['-c', 'id'] } }, 'root')
+    mcps.update('shell', { name: 'Outro' }, 'root')
+
+    // Mudar o que já roda no host.
+    const denied = await refused(confirmed(ADMIN), CatalogPrivilegedMcpError)
+    assert.deepStrictEqual(denied.servers, ['shell'])
+    assert.strictEqual(mcps.get('shell').name, 'Outro')
+    await confirmed(ROOT)
+    assert.strictEqual(mcps.get('shell').name, 'Shell')
+
+    // Trazer de volta o que foi apagado.
+    mcps.remove('shell', 'root')
+    await refused(confirmed(ADMIN), CatalogPrivilegedMcpError)
+    assert.strictEqual(
+      mcps.list().some((server) => server.id === 'shell'),
+      false,
+    )
+    await confirmed(ROOT)
+    assert.strictEqual(mcps.get('shell').kind, 'process')
+
+    // Apagar (a revisão de um delete) não exige: é a regra da tela.
+    const removal = last('mcp', 'shell') - 1
+    await restore.restore({ item: { kind: 'mcp', itemId: 'shell' }, revision: removal, expectedRevision: last('mcp', 'shell') }, ADMIN)
+    assert.strictEqual(
+      mcps.list().some((server) => server.id === 'shell'),
+      false,
+    )
   })
 })
 
@@ -533,6 +585,24 @@ describe('CatalogRestoreUseCase — compartilhamento (sharedWith)', () => {
     assert.throws(() => built.agents.share('globalzinho', ['beta'], 'root'))
     assert.throws(() => built.agents.share('dev', ['nao-existe'], 'ana'))
     assert.throws(() => built.agents.share('dev', ['alfa'], 'ana'))
+  })
+
+  it('⛔ reverter um lote que MOVEU o item de escopo: só quem administra também o escopo de antes', async () => {
+    const built = shared()
+    built.agents.save(agent('movel', { projectId: 'beta' }), saving('bia', true))
+    built.repository.createBatch({ id: 'lote-m', at: new Date(), by: 'ci', kind: 'import', scope: 'all', summary: {}, widenings: [], status: 'applied' })
+    built.history.within({ kind: 'agent', id: 'movel', projectId: 'alfa' }, { by: 'ci', source: 'import', op: 'import', batchId: 'lote-m' }, () =>
+      built.agents.save(agent('movel', { projectId: 'alfa' }), saving('ci', false)),
+    )
+    assert.strictEqual(built.agents.get('movel')?.projectId, 'alfa')
+    const reaching = (...projects: string[]): IRestoreCaller => ({ ...owner(...projects), reach: (projectId) => !!projectId && projects.includes(projectId) })
+
+    await refused(built.restore.revert({ batchId: 'lote-m' }, reaching('alfa')), CatalogRevisionNotFoundError)
+    assert.strictEqual(built.agents.get('movel')?.projectId, 'alfa')
+    assert.strictEqual(built.repository.batch('lote-m')!.status, 'applied')
+
+    await built.restore.revert({ batchId: 'lote-m', confirm: ['agent/movel@beta#projectId~beta'] }, reaching('alfa', 'beta'))
+    assert.strictEqual(built.agents.get('movel')?.projectId, 'beta')
   })
 
   it('⛔ reverter um lote que volta a compartilhar também exige o admin do projeto acrescentado (antes de gravar qualquer coisa)', async () => {
