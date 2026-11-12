@@ -1,6 +1,6 @@
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { AGENT_SEED, ATLAS_AGENTS, atlasLitePrompt } from '@domain/Agent.Seed'
-import { gatewayEdition, withoutLiteTools } from '@domain/Edition.Policy'
+import { gatewayEdition, withoutLiteTools, withoutLiteTriggers } from '@domain/Edition.Policy'
 import { AGENT_MIGRATIONS } from '@domain/Agent.Migrations'
 import { builderAgent, importBuilderAgent, PROTOCOLS } from '@domain/Builder.Agents'
 import { IAgentSettings } from '@domain/models/Settings.Model'
@@ -40,7 +40,7 @@ export function makeAgents(): AgentCatalog {
 
   const repository = build()
   stored = repository
-  // As duas personas (ver `AGENT_SEED`): o Assistente e o Atlas Admin, em toda edição.
+  // A semente (ver `AGENT_SEED`): o Atlas Admin, em toda edição.
   repository.seedOnce(AGENT_SEED, 'seed')
   for (const migration of AGENT_MIGRATIONS)
     for (const id of migration.agentIds === '*' ? repository.list().map((agent) => agent.id) : migration.agentIds)
@@ -66,6 +66,16 @@ export function makeAgents(): AgentCatalog {
         (agent) => {
           const systemPrompt = atlasLitePrompt(agent)
           return systemPrompt ? { ...agent, systemPrompt } : undefined
+        },
+        'seed',
+      )
+      // E os triggers: saem os que mandam usar ferramenta que a lite não tem (ver `LITE_HIDDEN_TRIGGERS`).
+      repository.migrateOnce(
+        'lite-triggers',
+        id,
+        (agent) => {
+          const triggers = withoutLiteTriggers(agent.triggers ?? [])
+          return triggers.length === (agent.triggers ?? []).length ? undefined : { ...agent, triggers }
         },
         'seed',
       )
