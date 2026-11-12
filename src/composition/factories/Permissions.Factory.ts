@@ -1,3 +1,4 @@
+import { makeAgentProjectLayers } from './AgentProjectLayers.Factory'
 import { PermissionsService } from '@application/Permissions.Service'
 import { IPermissionRule } from '@domain/Permission.Policy'
 import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
@@ -30,7 +31,11 @@ export function makePermissions(): PermissionsService {
   repository = new SqlitePermissionRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH)
   service = new PermissionsService(
     repository,
-    (agentId) => makeAgents().get(agentId)?.permissions,
+    // As regras do agente NO PROJETO do pedido: o global soma as da camada daquele projeto.
+    (agentId, projectId) => {
+      const agent = makeAgents().get(agentId)
+      return agent && makeAgentProjectLayers().rules(agent, projectId)
+    },
     () => system,
     undefined,
     (text, sessionId) => makeSecretMasker().text(text, sessionId),

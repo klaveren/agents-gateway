@@ -15,6 +15,7 @@ import { targetUnavailable } from '@domain/Agent.Availability'
 import { makeModelCatalog } from './Catalog.Factory'
 import { makeCatalogHistory } from './CatalogHistory.Factory'
 import { makeAgentLocalLayers } from './AgentLocalLayers.Factory'
+import { makeAgentProjectLayers } from './AgentProjectLayers.Factory'
 import { makeProjects } from './Projects.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeResourceSecrets } from './ResourceSecrets.Factory'
@@ -96,6 +97,7 @@ export function makeAgents(): AgentCatalog {
   catalog.useShares({ exists: (projectId) => makeProjects().exists(projectId), changed: (agentId, projects) => makeResourceSecrets().keepAgentProjects(agentId, projects) })
   // 🔌 A camada local do agente de projeto conectado entra no agente que roda (pedida na hora: a fábrica dela usa esta).
   catalog.useLocalLayers((agent) => makeAgentLocalLayers().of(agent))
+  catalog.useProjectLayers((agent, projectId) => makeAgentProjectLayers().apply(agent, projectId))
   instance = catalog
   return catalog
 }

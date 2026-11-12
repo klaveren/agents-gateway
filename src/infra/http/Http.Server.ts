@@ -3,6 +3,7 @@ import { ConnectController } from './Connect.Controller'
 import { requestScope } from './Request.Scope'
 import { ProjectConnectionsController } from './ProjectConnections.Controller'
 import { ProjectVariablesController } from './ProjectVariables.Controller'
+import { AgentProjectLayerController } from './AgentProjectLayer.Controller'
 import { AuditController } from './Audit.Controller'
 import { SqliteAuditRepository } from '@infra/persistence/Sqlite.AuditRepository'
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
@@ -161,6 +162,8 @@ export class HttpServer {
     connections: ProjectConnectionsController = new ProjectConnectionsController({}),
     /** As variáveis do projeto (ver `ProjectVariables.Controller`): as secretas e os valores que os MCPs pedem. */
     variables: ProjectVariablesController = new ProjectVariablesController({}),
+    /** A camada do projeto dos agentes globais (ver `AgentProjectLayer.Controller`). */
+    agentLayers: AgentProjectLayerController = new AgentProjectLayerController({}),
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -247,6 +250,9 @@ export class HttpServer {
       { method: 'put', path: '/projects/:projectId/mcp-variables/:server/:name', handler: variables.saveMcpVariable },
       { method: 'delete', path: '/projects/:projectId/mcp-variables/:server/:name', handler: variables.removeMcpVariable },
       { method: 'post', path: '/projects/:projectId/accounts/:accountId/move-to-variables', handler: variables.moveAccount },
+      { method: 'get', path: '/projects/:projectId/agents/:agentId/layer', handler: agentLayers.get },
+      { method: 'put', path: '/projects/:projectId/agents/:agentId/layer', handler: agentLayers.save },
+      { method: 'delete', path: '/projects/:projectId/agents/:agentId/layer', handler: agentLayers.remove },
     )
     this.setupRoutes()
     this.setupFrontend()

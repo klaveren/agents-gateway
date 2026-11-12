@@ -109,7 +109,7 @@ export class ToolCatalog {
   async toolbox(allowed: readonly string[], context?: IExecutionContext): Promise<IToolbox> {
     const local = this.localFor(allowed)
     const remote: Array<{ server: string; key: string; tool: IToolDefinition }> = []
-    const scope = context?.projectId
+    const scope = mcpScopeOf(context)
 
     for (const [server, choice] of mcpSelection(allowed)) {
       const config = this.mcp.resolve(server, scope)
@@ -210,7 +210,7 @@ export class ToolCatalog {
     const servers: IAgentMcpServer[] = []
     for (const [id, choice] of mcpSelection(allowed)) {
       // ⛔ Só o do escopo do agente: config, URL e credencial de servidor de outro projeto nunca chegam ao SDK.
-      const stored = this.mcp.resolve(id, context?.projectId)
+      const stored = this.mcp.resolve(id, mcpScopeOf(context))
       if (!stored) continue
       const key = mcpServerKey(stored)
       if (isLaunchedMcp(stored)) {
@@ -267,9 +267,9 @@ export class ToolCatalog {
 
     const ref = parseMcpToolRef(name.startsWith('mcp:') ? name : `mcp:${name.includes('/') ? name : `${DEFAULT_MCP_SERVER}/${name}`}`)
     if (!ref || ref.tool === MCP_ALL_TOOLS) return { status: 'error', result: `Unknown tool: ${name}` }
-    const config = this.mcp.resolve(ref.server, context?.projectId)
+    const config = this.mcp.resolve(ref.server, mcpScopeOf(context))
     if (!config) return { status: 'error', result: `MCP server unavailable: ${ref.server}` }
-    return this.callMcp(mcpServerKey(config), ref.tool, args, context, context?.projectId)
+    return this.callMcp(mcpServerKey(config), ref.tool, args, context, mcpScopeOf(context))
   }
 
   private mask?: (text: string, sessionId?: string) => string
@@ -299,6 +299,9 @@ export class ToolCatalog {
     return client.callTool(tool, args, context)
   }
 }
+
+/** O escopo dos MCPs: o projeto do agente; o global, o da conversa (ver `IExecutionContext.mcpProjectId`). */
+const mcpScopeOf = (context: IExecutionContext | undefined): string | undefined => context?.projectId ?? context?.mcpProjectId
 
 /** ⛔ O que um agente vê de um servidor: do MCP do gateway, nunca as ferramentas de conversa (ver `PEOPLE_ONLY_GATEWAY_TOOLS`). */
 function agentFacing<T extends { name: string }>(server: string, tools: readonly T[]): T[] {

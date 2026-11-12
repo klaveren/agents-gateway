@@ -1,3 +1,4 @@
+import { makeAgentProjectLayers } from './AgentProjectLayers.Factory'
 import { makePermissions } from './Permissions.Factory'
 import { migrateLegacyToProjects, migrateProjectRoles, ProjectsService } from '@application/Projects.Service'
 import { AGENT_SEED, ATLAS_AGENTS } from '@domain/Agent.Seed'
@@ -49,6 +50,7 @@ function build() {
         // ⛔ O projeto apagado sai da lista de compartilhamento dos agentes (os valores secretos dele saem em `removeProject` abaixo).
         makeAgents().removeProject(id, 'sistema')
         makeResourceSecrets().removeProject(id)
+        makeAgentProjectLayers().removeProject(id)
         makePermissions().removeProject(id)
         makeProjectAccounts().removeProject(id)
         removeProjectMcpServers(id)

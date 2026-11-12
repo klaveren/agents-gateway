@@ -22,7 +22,8 @@ const connectSchema = z.object({ url: z.string().min(1).max(500), projectId: z.s
 const tokenSchema = z.object({ token: z.string().min(1).max(200) })
 const modelsSchema = z.object({ map: z.record(z.string().max(300), z.string().max(300)) })
 // A forma, só: o que cada item pode ser quem diz é a regra do agente (`AgentLocalLayer.Service`).
-const localSchema = z.object({
+/** A camada inteira (a local de um projeto conectado e a do projeto de um agente global têm a mesma forma). */
+export const localSchema = z.object({
   providers: z
     .array(
       z.object({

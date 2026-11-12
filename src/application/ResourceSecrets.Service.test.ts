@@ -205,4 +205,18 @@ describe('ResourceSecretsService', () => {
     service.removeProject('alfa')
     assert.deepStrictEqual([service.envFor('theo', 'c3', 'alfa').env, service.mcpEnv('alfa.n8n', 'alfa')], [{ API_TOKEN: 'do-agente-456' }, {}])
   })
+  it('⚖️ o agente GLOBAL num projeto: os valores do projeto por cima, os da base onde o projeto não definiu; outro projeto, só a base', () => {
+    const service = new ResourceSecretsService({
+      store: new SqliteResourceSecretRepository(new SecretBox(randomBytes(32))),
+      exists: () => true,
+      agentProject: (id) => (id === 'atlas' ? null : 'bh'),
+    })
+    service.save('agent', 'atlas', { name: 'GL_TOKEN', value: 'da-base' }, 'root')
+    service.save('agent', 'atlas', { name: 'LOG', value: 'da-base-log' }, 'root')
+    service.save('agent', 'atlas', { name: 'GL_TOKEN', value: 'do-bh' }, 'ana', 'bh')
+    assert.deepStrictEqual(service.envFor('atlas', 'c1', 'bh').env, { GL_TOKEN: 'do-bh', LOG: 'da-base-log' })
+    assert.deepStrictEqual(service.envFor('atlas', 'c2', 'xpto').env, { GL_TOKEN: 'da-base', LOG: 'da-base-log' })
+    assert.deepStrictEqual(service.envFor('atlas', 'c3').env, { GL_TOKEN: 'da-base', LOG: 'da-base-log' })
+    assert.deepStrictEqual(service.ambientFor('atlas', [], 'bh')?.agent, ['GL_TOKEN', 'LOG'])
+  })
 })

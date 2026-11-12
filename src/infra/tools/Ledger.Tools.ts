@@ -13,6 +13,8 @@ type TMaybe<T> = T | Promise<T>
  */
 export interface TLedgerDesk {
   requireAgent(agentId: string): unknown
+  /** O dono do ledger do agente na conversa (o global num projeto: `<agente>@<projeto>`). Ausente: o próprio agente. */
+  owner?(agentId: string, projectId: string | undefined): string
   canRead(reader: ILedgerReader, targetId: string): boolean
   index(agentId: string): TMaybe<ILedgerIndex>
   context(agentId: string, topic: string): TMaybe<ILedgerContextDetail>
@@ -98,6 +100,9 @@ function readerOf(context: IExecutionContext | undefined): ILedgerReader | undef
   return { agentId: context.agentId, ...(projectId ? { conversationProjectId: projectId } : {}) }
 }
 
+/** O dono do ledger de quem conversa: o global num projeto tem o dele no projeto. */
+const ownerIn = (desk: TLedgerDesk, reader: ILedgerReader): string => desk.owner?.(reader.agentId, reader.conversationProjectId) ?? reader.agentId
+
 const NO_AGENT: IToolResult = { status: 'error', result: 'O ledger só funciona na conversa de um agente.' }
 
 /**
@@ -126,8 +131,10 @@ export function makeLedgerTools(desk: TLedgerDesk): ILocalTool[] {
     async execute(args, context) {
       const reader = readerOf(context)
       if (!reader) return NO_AGENT
-      const target = str(args.agente)?.trim() || reader.agentId
-      const readOnly = target !== reader.agentId
+      const asked = str(args.agente)?.trim()
+      const readOnly = !!asked && asked !== reader.agentId
+      // O próprio ledger: o do agente NESTA conversa (o global num projeto lê o dele no projeto, com a base por baixo).
+      const target = readOnly ? asked! : ownerIn(desk, reader)
       // ⛔ Outro agente: só o que quem chama enxerga; fora disso, como se não existisse.
       if (readOnly && !desk.canRead(reader, target)) return { status: 'error', result: `Agent not found: ${target}` }
       try {
@@ -231,7 +238,7 @@ export function makeLedgerTools(desk: TLedgerDesk): ILocalTool[] {
         for (const [index, one] of lines.entries()) {
           try {
             last = await desk.write(
-              reader.agentId,
+              ownerIn(desk, reader),
               {
                 action,
                 topic,

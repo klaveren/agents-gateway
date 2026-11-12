@@ -32,6 +32,7 @@ import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
 import { persistInstalls } from '@infra/packages/Persistent.Installs'
 import { migrateToProjects } from '@composition/factories/Projects.Factory'
 import { makeProjectVariablesController, migrateMcpEnvToProjects } from '@composition/factories/ProjectVariables.Factory'
+import { makeAgentProjectLayerController } from '@composition/factories/AgentProjectLayers.Factory'
 import { reconcileCatalogHistory } from '@composition/factories/CatalogHistory.Factory'
 import { syncResourceFiles } from '@composition/factories/ResourceFiles.Factory'
 import { projectSandbox, sweepCommandLogs, sweepProjectMountPoints } from '@infra/sandbox/Project.Sandbox'
@@ -138,6 +139,7 @@ async function bootstrap() {
     makeConnectController(),
     makeProjectConnectionsController(),
     makeProjectVariablesController(),
+    makeAgentProjectLayerController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
   listening = true

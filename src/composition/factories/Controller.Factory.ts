@@ -38,6 +38,7 @@ import { PackagesController } from '@infra/http/Packages.Controller'
 import { HooksController } from '@infra/http/Hooks.Controller'
 import { makeHooks } from './Hooks.Factory'
 import { makeAgentLocalLayers } from './AgentLocalLayers.Factory'
+import { makeAgentProjectLayers } from './AgentProjectLayers.Factory'
 import { makeProjects, useConnectedProjects } from './Projects.Factory'
 import { useConnectionsForLedger } from './Connected.Ledger'
 import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
@@ -110,6 +111,7 @@ function agentRemoved(agentId: string): void {
   makeGuidance().removeAgent(agentId)
   makeSchedules().removeAgent(agentId)
   makeResourceSecrets().removeScope('agent', agentId)
+  makeAgentProjectLayers().forget(agentId)
 }
 
 export function makeController(): AgentController {
@@ -189,6 +191,8 @@ export function makeController(): AgentController {
   )
   // O `patch_agent` e a aprovação de um patch gravam o agente inteiro: com as MESMAS regras do `PUT /agents`.
   makePermissionRequests().useAgentValidation(async () => ({ rules: await controller.agentRules(), issues: (agent) => controller.projectIssues(agent) }))
+  // A camada do projeto dos agentes globais (conferida como o agente que roda no projeto).
+  makeAgentProjectLayers().useAgentValidation(async () => ({ rules: await controller.agentRules(), issues: (agent) => controller.projectIssues(agent) }))
   // E a camada local do agente de projeto conectado.
   makeAgentLocalLayers().useAgentValidation(async () => ({ rules: await controller.agentRules(), issues: (agent) => controller.projectIssues(agent) }))
   // ⛔ A decisão de um pedido volta à conversa que pediu, amarrada a quem decidiu (a identidade da requisição): o aviso sai
@@ -320,7 +324,7 @@ export function makeMcpProxyController(): McpProxyController {
     registry: mcp,
     proof: makeAuth().proof,
     session: (id) => mcp.session(id),
-    agent: (id) => makeAgents().get(id),
+    agent: (id, projectId) => makeAgents().getIn(id, projectId),
     mask: (text, sessionId) => makeSecretMasker().text(text, sessionId),
   })
 }

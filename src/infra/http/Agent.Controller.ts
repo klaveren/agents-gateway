@@ -806,7 +806,8 @@ export class AgentController {
       const id = req.params.agentId as string
       const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
       await this.requireAgentAdmin(id, 'getAgentSystemPrompt', requested)
-      const agent = this.agents.get(id)
+      // O global num projeto: com a camada daquele projeto (é como ele roda lá).
+      const agent = this.agents.getIn(id, requested && this.usecases.projects?.exists(requested) ? requested : undefined)
       if (!agent) throw new AgentNotFoundError(id)
       const projectId = agent.projectId ?? (requested && this.usecases.projects?.exists(requested) ? requested : undefined)
       const name = projectId && this.usecases.projects?.exists(projectId) ? this.usecases.projects.get(projectId).name : undefined
@@ -1056,13 +1057,18 @@ export class AgentController {
     await this.respond(res, async () => {
       const resolved = await this.requireCaller()
       const agentId = req.params.agentId as string
-      const agent = this.agents.get(agentId)
+      // `?project=`: o global como roda naquele projeto (com a camada dele e os MCPs do projeto).
+      const project = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+      const inProject = project && this.usecases.projects?.exists(project) && this.usecases.projects.canUse(this.callerOf(resolved), project) ? project : undefined
+      const agent = this.agents.getIn(agentId, inProject)
       // ⛔ O agente de um projeto (e os MCPs dele) não existe para quem não é do projeto.
       if (!agent || !this.agentVisible(agent, this.callerOf(resolved)) || !(await this.opensAdminOnly(agent))) throw new AgentNotFoundError(agentId)
 
       // As capacidades entram pelas ferramentas do gateway que as implementam (a lista é a mesma em todo provedor).
       // ⛔ Os MCPs: só os do escopo do agente (os globais e os do projeto dele).
-      return this.catalogFor([...agent.allowedTools, ...agent.allowedTools.flatMap((tool) => capability(tool)?.local ?? [])], (server) => mcpServesProject(server, agent.projectId))
+      return this.catalogFor([...agent.allowedTools, ...agent.allowedTools.flatMap((tool) => capability(tool)?.local ?? [])], (server) =>
+        mcpServesProject(server, agent.projectId ?? inProject),
+      )
     })
   }
 

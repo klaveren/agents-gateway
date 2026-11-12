@@ -171,7 +171,7 @@ export class AgentProvider implements IAgentProvider {
     if (settings.audience === 'off') throw new AgentUnavailableError()
 
     // Corpo → configuração → padrão do registry. O corpo só vence quando alguém escolheu de propósito.
-    const agent = this.getAgent(input.agentId || settings.agentId)
+    const agent = this.getAgent(input.agentId || settings.agentId, projectOf(input.metadata))
     // ⛔ O agente de um projeto só conversa num OUTRO projeto se foi compartilhado com ele (parou de compartilhar = sem acesso).
     if (!reaches(agent, projectOf(input.metadata))) throw new AgentNotFoundError(agent.id)
     const choice = this.chooseTarget(agent, input, settings)
@@ -217,8 +217,8 @@ export class AgentProvider implements IAgentProvider {
     const record = this.requireSession(sessionId)
     const conversationProject = projectOf(record.metadata)
     // ⛔ A conversa antiga de um projeto com um agente que ele já não recebe fica no histórico, mas não continua.
-    if (!reaches(this.getAgent(record.agentId), conversationProject)) throw new AgentNotFoundError(record.agentId)
-    let { agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode)
+    if (!reaches(this.getAgent(record.agentId, projectOf(record.metadata)), conversationProject)) throw new AgentNotFoundError(record.agentId)
+    let { agent, unavailable } = this.prepare(this.getAgent(record.agentId, projectOf(record.metadata)), conversationProject, record.provider, record.protocol, record.mode)
     // ⚖️ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: a conversa SEGUE no modelo que
     // o agente escolheria hoje (o grupo de modelos, as configurações, o padrão), com aviso no turno. Antes era erro, e a
     // conversa retomada por quem orquestra (a esteira) travava sem ninguém para trocar o modelo à mão.
@@ -228,11 +228,11 @@ export class AgentProvider implements IAgentProvider {
       const before = `${record.provider} · ${record.model}`
       const settings = this.current ?? (await this.settings?.read()) ?? DEFAULT_SETTINGS
       try {
-        this.reconfigure(sessionId, this.chooseTarget(this.getAgent(record.agentId), {}, settings))
+        this.reconfigure(sessionId, this.chooseTarget(this.getAgent(record.agentId, projectOf(record.metadata)), {}, settings))
       } catch {
         throw new ModelDisabledError(record.provider, record.model)
       }
-      ;({ agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode))
+      ;({ agent, unavailable } = this.prepare(this.getAgent(record.agentId, projectOf(record.metadata)), conversationProject, record.provider, record.protocol, record.mode))
       swapped = `O modelo ${before} foi desligado; a conversa segue em ${record.provider} · ${record.model}.`
     }
     let adapter = this.getAdapter(record.protocol, record.mode)
@@ -298,7 +298,7 @@ export class AgentProvider implements IAgentProvider {
       sent = opening(handoff)
       turn.by = `${record.provider} · ${record.model}`
       tried.add(stepKey(record))
-      ;({ agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode))
+      ;({ agent, unavailable } = this.prepare(this.getAgent(record.agentId, projectOf(record.metadata)), conversationProject, record.provider, record.protocol, record.mode))
       adapter = this.getAdapter(record.protocol, record.mode)
       return from
     }
@@ -318,6 +318,8 @@ export class AgentProvider implements IAgentProvider {
         agentId: record.agentId,
         ...(agent.projectId ? { projectId: agent.projectId } : {}),
         ...(conversationProject ? { conversationProjectId: conversationProject } : {}),
+        // O global (não o compartilhado, que roda "como global") vê os MCPs do projeto da conversa: a camada pode dar um.
+        ...(conversationProject && !this.agents.get(record.agentId)?.projectId ? { mcpProjectId: conversationProject } : {}),
         ...(workFolder ? { workFolder } : {}),
       }
       // ⛔ As variáveis secretas do turno (ver `ResourceSecret.Model`), para os terminais nativos: já entram na máscara.
@@ -568,7 +570,7 @@ export class AgentProvider implements IAgentProvider {
   /** O próximo passo do grupo que pode rodar agora, ou nada (aí o erro sai como sempre). */
   private nextFallback(record: ISessionRecord, tried: ReadonlySet<string>): IFallbackStep | undefined {
     if (!this.bench) return undefined
-    const agent = this.getAgent(record.agentId)
+    const agent = this.getAgent(record.agentId, projectOf(record.metadata))
     return nextStep(fallbackChain(this.groupFor(record)), tried, (step) => this.canRun(agent, record.mode, step))
   }
 
@@ -827,7 +829,7 @@ export class AgentProvider implements IAgentProvider {
     const record = this.requireSession(sessionId)
     if (record.status === 'running') throw new SessionBusyError(sessionId)
 
-    const agent = this.getAgent(record.agentId)
+    const agent = this.getAgent(record.agentId, projectOf(record.metadata))
     const provider = change.provider ?? record.provider
     const switching = provider !== record.provider
     const target = agent.providers.find((candidate) => candidate.provider === provider)
@@ -909,13 +911,14 @@ export class AgentProvider implements IAgentProvider {
    * Sem `agentId` em lugar nenhum, vale o padrão do diretório: o primeiro que PODE abrir conversa.
    * ⚠️ Antes era o primeiro da lista, que podia estar desligado ou ser subagente.
    */
-  private getAgent(agentId?: string): IAgent {
+  private getAgent(agentId?: string, projectId?: string): IAgent {
     if (!agentId) {
       const fallback = this.agents.fallback ? this.agents.fallback() : this.agents.list()[0]
       if (!fallback) throw new NoAgentAvailableError()
       return fallback
     }
-    const agent = this.agents.get(agentId)
+    // ⚖️ O agente como roda NO PROJETO da conversa: o global ganha a camada daquele projeto (modelos, ferramentas, regras).
+    const agent = this.agents.getIn ? this.agents.getIn(agentId, projectId) : this.agents.get(agentId)
     if (!agent) throw new AgentNotFoundError(agentId)
 
     // ⚖️ Os passos do grupo de modelos entram como alvos do agente (só os modelos ativos): é o que a troca e a conversa

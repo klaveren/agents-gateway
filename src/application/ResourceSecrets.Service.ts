@@ -185,7 +185,7 @@ export class ResourceSecretsService {
   sources(agentId: string | undefined, sessionId: string | undefined, conversationProject?: string): ISecretSource[] {
     const named = (scope: TSecretScope, scopeId: string, project: string): ISecretSource[] =>
       this.deps.store.list(scope, scopeId, project).map((item) => ({ name: item.name, scope, scopeId, project }))
-    const agent = agentId ? named('agent', agentId, this.agentProjectFor(agentId, conversationProject)) : []
+    const agent = agentId ? this.agentSources(agentId, conversationProject, named) : []
     const loaded = (sessionId ? (this.loaded.get(sessionId) ?? []) : []).map((item) => named(item.kind, item.id, this.projectFor(item.id, agentId, conversationProject)))
     const home = this.conversationProjectOf(agentId, conversationProject)
     return effectiveSources(agent, loaded, home ? named(PROJECT_SECRET_SCOPE, home, ORIGIN_PROJECT) : [])
@@ -221,11 +221,33 @@ export class ResourceSecretsService {
   }
 
   /**
+   * As variáveis do agente na conversa. ⚖️ O GLOBAL numa conversa de projeto: as da base por baixo, as daquele projeto por
+   * cima (o projeto define as suas; a base vale onde ele não definiu).
+   */
+  private agentSources(
+    agentId: string,
+    conversationProject: string | undefined,
+    named: (scope: TSecretScope, scopeId: string, project: string) => ISecretSource[],
+  ): ISecretSource[] {
+    const project = this.agentProjectFor(agentId, conversationProject)
+    const own = named('agent', agentId, project)
+    if (!this.isGlobalIn(agentId, conversationProject)) return own
+    const mine = new Set(own.map((source) => source.name))
+    return [...named('agent', agentId, ORIGIN_PROJECT).filter((source) => !mine.has(source.name)), ...own]
+  }
+
+  /** O agente é global e a conversa é de um projeto? */
+  private isGlobalIn(agentId: string, conversationProject: string | undefined): conversationProject is string {
+    return !!conversationProject && this.deps.agentProject?.(agentId) === null
+  }
+
+  /**
    * ⛔ De quem são os valores do AGENTE: agente de projeto numa conversa de OUTRO projeto (o que recebeu o agente por
    * compartilhamento) usa os valores do projeto da conversa — nunca os da origem. Agente global e conversa na origem: a origem.
    */
   private agentProjectFor(agentId: string, conversationProject?: string): string {
     const mine = this.deps.agentProject?.(agentId)
+    if (this.isGlobalIn(agentId, conversationProject)) return conversationProject
     return mine && conversationProject && conversationProject !== mine ? conversationProject : ORIGIN_PROJECT
   }
 
@@ -236,7 +258,12 @@ export class ResourceSecretsService {
 
   /** O que o prompt diz ao agente: os nomes dele, os do projeto e os das skills e commands que ele pode carregar. Nunca o valor. */
   ambientFor(agentId: string, usable: ReadonlyArray<{ kind: 'skill' | 'command'; id: string }>, conversationProject?: string): IAmbientSecrets | undefined {
-    const agent = this.deps.store.list('agent', agentId, this.agentProjectFor(agentId, conversationProject)).map((item) => item.name)
+    const agent = [
+      ...new Set([
+        ...(this.isGlobalIn(agentId, conversationProject) ? this.deps.store.list('agent', agentId, ORIGIN_PROJECT).map((item) => item.name) : []),
+        ...this.deps.store.list('agent', agentId, this.agentProjectFor(agentId, conversationProject)).map((item) => item.name),
+      ]),
+    ].sort()
     const home = this.conversationProjectOf(agentId, conversationProject)
     const project = home ? this.deps.store.list(PROJECT_SECRET_SCOPE, home, ORIGIN_PROJECT).map((item) => item.name) : []
     const resources = usable

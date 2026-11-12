@@ -12,7 +12,18 @@ import {
   topicSlug,
   triggerIssues,
 } from '@domain/Ledger.Policy'
-import { ILedgerContext, ILedgerLine, ILedgerRevision, ILedgerWarning, ILedgerWrite, LEDGER_LIMITS, TLedgerAuthor, TLedgerLineSnapshot } from '@domain/models/Ledger.Model'
+import {
+  ILedgerContext,
+  ILedgerLine,
+  ILedgerRevision,
+  ILedgerWarning,
+  ILedgerWrite,
+  LEDGER_LIMITS,
+  ledgerOwnerKey,
+  parseLedgerOwner,
+  TLedgerAuthor,
+  TLedgerLineSnapshot,
+} from '@domain/models/Ledger.Model'
 import { ILedgerRepository } from '@domain/ports/LedgerRepository.Port'
 
 /** O que o ledger precisa saber de um agente: se existe, de que projeto é e se é só de admin. */
@@ -46,6 +57,8 @@ export interface ILedgerContextSummary {
   updatedAt: Date
   updatedBy: TLedgerAuthor
   warnings: ILedgerWarning[]
+  /** O tema é da BASE do agente global (só leitura no projeto; escrever nele copia para o projeto). */
+  base?: boolean
 }
 
 export interface ILedgerContextDetail extends ILedgerContextSummary {
@@ -117,11 +130,85 @@ export class LedgerService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  /** ⛔ O agente tem de existir: ledger de agente inexistente não se lê nem se escreve (o apagado fica guardado, não exposto). */
-  requireAgent(agentId: string): ILedgerAgentInfo {
+  /**
+   * ⛔ O agente tem de existir: ledger de agente inexistente não se lê nem se escreve (o apagado fica guardado, não exposto).
+   * O dono por projeto (`<agente>@<projeto>`) só existe para agente GLOBAL.
+   */
+  requireAgent(owner: string): ILedgerAgentInfo {
+    const { agentId, projectId } = parseLedgerOwner(owner)
     const agent = this.agents.get(agentId)
-    if (!agent) throw new LedgerNotFoundError('agent', agentId)
+    if (!agent || (projectId && agent.projectId)) throw new LedgerNotFoundError('agent', owner)
     return agent
+  }
+
+  /** O dono do ledger do agente NA CONVERSA: o global num projeto escreve no dele daquele projeto; o resto, no próprio. */
+  owner(agentId: string, projectId: string | undefined): string {
+    const agent = projectId ? this.agents.get(agentId) : undefined
+    return agent && !agent.projectId ? ledgerOwnerKey(agentId, projectId!) : agentId
+  }
+
+  /** Os contextos do dono: os dele e, num projeto, os da base que ele ainda não tem (marcados). */
+  private contextsOf(owner: string): Array<ILedgerContext & { base?: true }> {
+    const own = this.repository.contexts(owner)
+    const { agentId, projectId } = parseLedgerOwner(owner)
+    if (!projectId) return own
+    const mine = new Set(own.map((context) => context.topic))
+    const base = this.repository.contexts(agentId).filter((context) => !mine.has(context.topic))
+    return [...own, ...base.map((context) => ({ ...context, base: true as const }))].sort((a, b) => a.topic.localeCompare(b.topic))
+  }
+
+  /** As linhas do dono, com as dos temas da base que ele ainda não tem. */
+  private linesOf(owner: string): Array<ILedgerLine & { topic: string }> {
+    const own = this.repository.agentLines(owner)
+    const { agentId, projectId } = parseLedgerOwner(owner)
+    if (!projectId) return own
+    const mine = new Set(this.repository.contexts(owner).map((context) => context.topic))
+    return [...own, ...this.repository.agentLines(agentId).filter((line) => !mine.has(line.topic))]
+  }
+
+  /** O contexto para LER: o do dono; num projeto, o da base quando ele não tem. */
+  private readable(owner: string, topic: string): ILedgerContext | undefined {
+    const { agentId, projectId } = parseLedgerOwner(owner)
+    return this.repository.context(owner, topic) ?? (projectId ? this.repository.context(agentId, topic) : undefined)
+  }
+
+  /**
+   * ⚖️ COPIAR AO ESCREVER: o tema que só a base tem vira do projeto (gatilho, playbook e linhas), e é lá que muda — a base
+   * fica como estava. Devolve os ids novos das linhas (o agente cita o id que leu, o da base).
+   */
+  private copyFromBase(owner: string, topic: string, at: Date, by: TLedgerAuthor): Map<number, number> {
+    const ids = new Map<number, number>()
+    const { agentId, projectId } = parseLedgerOwner(owner)
+    if (!projectId || this.repository.context(owner, topic)) return ids
+    const base = this.repository.context(agentId, topic)
+    if (!base) return ids
+    const copy = this.repository.createContext({
+      agentId: owner,
+      topic,
+      trigger: base.trigger,
+      playbook: base.playbook,
+      createdAt: at,
+      createdBy: by,
+      updatedAt: at,
+      updatedBy: by,
+    })
+    for (const line of this.repository.lines(base.id)) {
+      const created = this.repository.addLine({
+        contextId: copy.id,
+        date: line.date,
+        type: line.type,
+        trigger: line.trigger,
+        learning: line.learning,
+        ref: line.ref,
+        createdAt: line.createdAt,
+        createdBy: line.createdBy,
+        updatedAt: line.updatedAt,
+        updatedBy: line.updatedBy,
+      })
+      ids.set(line.id, created.id)
+    }
+    this.repository.addRevision({ agentId: owner, topic, at, by, action: 'criar', after: { trigger: base.trigger, playbook: base.playbook } })
+    return ids
   }
 
   /**
@@ -143,22 +230,24 @@ export class LedgerService {
   }
 
   index(agentId: string): ILedgerIndex {
-    const contexts = this.repository.contexts(agentId)
-    const lines = this.repository.agentLines(agentId)
+    const contexts = this.contextsOf(agentId)
+    const lines = this.linesOf(agentId)
     const warnings = ledgerWarnings({ contexts, lines })
     const counts = new Map<string, number>()
     for (const line of lines) counts.set(line.topic, (counts.get(line.topic) ?? 0) + 1)
     return {
       agentId,
-      contexts: contexts.map((context) => this.summary(context, counts.get(context.topic) ?? 0, warnings)),
+      contexts: contexts.map((context) => ({ ...this.summary(context, counts.get(context.topic) ?? 0, warnings), ...(context.base ? { base: true } : {}) })),
       lineCount: lines.length,
       warnings,
     }
   }
 
   context(agentId: string, rawTopic: string): ILedgerContextDetail {
-    const context = this.requireContext(agentId, topicSlug(rawTopic))
-    return this.detail(context, this.index(agentId).warnings)
+    const topic = topicSlug(rawTopic)
+    const context = this.readable(agentId, topic) ?? this.requireContext(agentId, topic)
+    const detail = this.detail(context, this.index(agentId).warnings)
+    return context.agentId !== agentId ? { ...detail, base: true } : detail
   }
 
   /** As linhas e os contextos que casam com TODAS as palavras da busca (sem acento, sem caixa). */
@@ -166,13 +255,11 @@ export class LedgerService {
     const words = foldText(query).split(/\s+/).filter(Boolean)
     const matches = (text: string) => words.length > 0 && words.every((word) => foldText(text).includes(word))
     const index = this.index(agentId)
-    const lines = this.repository
-      .agentLines(agentId)
+    const lines = this.linesOf(agentId)
       .filter((line) => matches([line.topic, line.type, line.trigger, line.learning, line.ref].join(' ')))
       .map((line) => ({ ...lineView(line), topic: line.topic }))
     const playbooks = new Set(
-      this.repository
-        .contexts(agentId)
+      this.contextsOf(agentId)
         .filter((context) => matches(context.playbook))
         .map((context) => context.topic),
     )
@@ -190,14 +277,14 @@ export class LedgerService {
 
   /** A seção do system prompt do agente (só o índice e a regra; com teto). `undefined` sem nenhum contexto. */
   promptSection(agentId: string): string | undefined {
-    return ledgerPromptSection(this.repository.contexts(agentId))
+    return ledgerPromptSection(this.contextsOf(agentId))
   }
 
   /** O ledger no formato das pastas antigas (`<agente>-ledger/index.md` + `contextos/<tema>.md`): caminho → conteúdo. */
   exportFiles(agentId: string): Record<string, string> {
     return ledgerExportFiles(
       agentId,
-      this.repository.contexts(agentId).map((context) => ({ context, lines: this.repository.lines(context.id) })),
+      this.contextsOf(agentId).map((context) => ({ context, lines: this.repository.lines(context.id) })),
     )
   }
 
@@ -211,7 +298,16 @@ export class LedgerService {
     const issues = topicIssues(topic)
     if (issues.length) throw new InvalidLedgerError(issues)
     const at = this.now()
-    const changed = this.repository.transaction(() => this.apply(agentId, topic, change, by, at))
+    const base = parseLedgerOwner(agentId).projectId && !this.repository.context(agentId, topic) ? this.repository.context(parseLedgerOwner(agentId).agentId, topic) : undefined
+    // ⛔ O tema da base não some de um projeto: ele continua aparecendo. Apagar a base é na Memória do agente, na base.
+    if (base && change.action === 'excluir') throw new InvalidLedgerError([{ field: 'topic', message: `${topic} is from the base ledger: it cannot be deleted here` }])
+    if (base && change.action === 'criar')
+      throw new InvalidLedgerError([{ field: 'topic', message: `already exists: ${topic} — change it (gatilho, playbook, linha_nova) instead of creating another` }])
+    const changed = this.repository.transaction(() => {
+      const ids = base ? this.copyFromBase(agentId, topic, at, by) : new Map<number, number>()
+      const lineId = change.lineId !== undefined ? (ids.get(change.lineId) ?? change.lineId) : undefined
+      return this.apply(agentId, topic, { ...change, ...(lineId !== undefined ? { lineId } : {}) }, by, at)
+    })
     const index = this.index(agentId)
     const context = change.action === 'excluir' ? undefined : this.repository.context(agentId, topic)
     return {
