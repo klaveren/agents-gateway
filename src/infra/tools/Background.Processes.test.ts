@@ -103,6 +103,19 @@ describe('Background.Processes — os limites e a limpeza (M12)', () => {
       assert.strictEqual((await start.execute({ command: 'sleep 30' }, { sessionId: 'a', agentId: 'dev' })).status, 'success')
       assert.strictEqual((await start.execute({ command: 'sleep 30' }, { sessionId: 'b', agentId: 'dev' })).status, 'success')
       assert.match((await start.execute({ command: 'sleep 30' }, { sessionId: 'c', agentId: 'dev' })).result, /já tem 2 processos em segundo plano/)
+      // ⛔ Chamadas JUNTAS: a vaga é guardada antes da preparação, então o teto vale também para elas.
+      for (const sessionId of ['a', 'b']) processes.stopSession(sessionId)
+      const together = await Promise.all(['d', 'e', 'f', 'g'].map((sessionId) => start.execute({ command: 'sleep 30' }, { sessionId, agentId: 'dev' })))
+      assert.strictEqual(together.filter((result) => result.status === 'success').length, 2)
+      assert.strictEqual(processes.runningTotal(), 2)
+      // A vaga de quem foi recusado na preparação volta.
+      for (const sessionId of ['d', 'e', 'f', 'g']) processes.stopSession(sessionId)
+      const slot = processes.reserve('h')
+      assert.strictEqual(typeof slot, 'function')
+      assert.strictEqual(typeof processes.reserve('i'), 'function')
+      assert.strictEqual(processes.reserve('j'), 'total')
+      ;(slot as () => void)()
+      assert.strictEqual(typeof processes.reserve('j'), 'function')
     } finally {
       processes.stopAll()
       if (before === undefined) delete process.env.BACKGROUND_MAX_PROCESSES

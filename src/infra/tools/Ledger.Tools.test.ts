@@ -115,6 +115,10 @@ describe('ledger_read / ledger_write', () => {
     })
     assert.strictEqual(broken.status, 'error')
     assert.match(broken.result, /1 linha\(s\) gravada\(s\) em build-oom; parou na 2ª/)
+    // Um item que não é objeto é recusado como linha inválida, sem exceção solta.
+    const empty = await as({ tema: 'build-oom', acao: 'linha_nova', linhas: [null, 'texto'] })
+    assert.strictEqual(empty.status, 'error')
+    assert.match(empty.result, /^Não gravado: /)
   })
 
   it('a validação volta com os nomes dos argumentos', async () => {

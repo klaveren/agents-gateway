@@ -1,5 +1,22 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { FILE_DIRS, filePathIssue, IResourceFile, RESOURCE_FILE_MAX_BYTES, RESOURCE_FILES_MAX_COUNT, TFileOwnerKind } from '@domain/models/ResourceFile.Model'
 import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
@@ -172,7 +189,7 @@ export class ResourceFilesStore implements IResourceFilesPort {
 
   writeAgent(id: string, projectId: string | undefined, files: readonly IResourceFile[], removed: readonly string[]): void {
     const dir = this.dirOf('agent', id, projectId)
-    mkdirSync(dir, { recursive: true, mode: 0o755 })
+    if (!realAgentFolder(dir)) throw new Error('agent folder is a link: refused')
     for (const file of files) {
       if (filePathIssue(file.path)) throw new Error(`invalid resource file path: ${file.path}`)
       const target = join(dir, ...file.path.split('/'))
@@ -198,7 +215,7 @@ export class ResourceFilesStore implements IResourceFilesPort {
 
   restoreAgent(id: string, projectId: string | undefined, files: readonly IResourceFile[]): void {
     const dir = this.dirOf('agent', id, projectId)
-    mkdirSync(dir, { recursive: true, mode: 0o755 })
+    if (!realAgentFolder(dir)) return
     for (const file of files) {
       if (filePathIssue(file.path)) continue
       const target = join(dir, ...file.path.split('/'))
@@ -215,13 +232,15 @@ export class ResourceFilesStore implements IResourceFilesPort {
     // Lá já havia uma pasta: a do agente não passa por cima dela (fica onde está, e a gravação seguinte escreve a lista).
     if (existsSync(target)) return
     mkdirSync(dirname(target), { recursive: true, mode: 0o755 })
+    // ⛔ A `agents` de lá trocada por link: a pasta não é levada para fora do projeto (ver `realAgentFolder`).
+    if (!lstatSync(dirname(target)).isDirectory()) return
     renameSync(source, target)
   }
 
   snapshotAgent(id: string, projectId: string | undefined): IResourceFile[] {
     const dir = this.dirOf('agent', id, projectId)
-    mkdirSync(dir, { recursive: true, mode: 0o755 })
     const found: IResourceFile[] = []
+    if (!realAgentFolder(dir)) return found
     const visit = (rel: string) => {
       let entries
       try {
@@ -236,14 +255,49 @@ export class ResourceFilesStore implements IResourceFilesPort {
         if (filePathIssue(path)) continue
         if (entry.isDirectory()) visit(path)
         else if (entry.isFile()) {
-          const content = readFileSync(join(dir, path))
-          if (content.length > RESOURCE_FILE_MAX_BYTES || content.subarray(0, 8000).includes(0)) continue
+          const content = readRegular(join(dir, path), RESOURCE_FILE_MAX_BYTES)
+          if (!content || content.subarray(0, 8000).includes(0)) continue
           found.push({ path, ...this.put(content) })
         }
       }
     }
     visit('')
     return found
+  }
+}
+
+/**
+ * ⛔ A pasta privada do agente é uma pasta DE VERDADE, e a `agents` acima dela também. As duas ficam na pasta do projeto,
+ * onde um agente com escrita pode plantar um link (`agents/<id de outro agente>` apontando para outra pasta): seguir o
+ * link entregaria o alvo como pasta privada (o cerco o montaria, e o gateway gravaria e leria nele). Cria a pasta se
+ * faltar (a `agents` primeiro, conferida antes de criar algo abaixo dela); `false` se há link no caminho.
+ */
+export function realAgentFolder(dir: string): boolean {
+  try {
+    mkdirSync(dirname(dir), { recursive: true, mode: 0o755 })
+    if (!lstatSync(dirname(dir)).isDirectory()) return false
+    mkdirSync(dir, { recursive: true, mode: 0o755 })
+    return lstatSync(dir).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * ⛔ Lê um arquivo comum da pasta do agente sem seguir link nem esperar um FIFO: entre a listagem e a leitura o agente
+ * pode trocar o arquivo. O tamanho é conferido ANTES de ler (um arquivo enorme não vai para a memória). Nada se não
+ * for arquivo comum ou passar do teto.
+ */
+function readRegular(path: string, maxBytes: number): Buffer | undefined {
+  let fd: number | undefined
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    const stat = fstatSync(fd)
+    return stat.isFile() && stat.size <= maxBytes ? readFileSync(fd) : undefined
+  } catch {
+    return undefined
+  } finally {
+    if (fd !== undefined) closeSync(fd)
   }
 }
 

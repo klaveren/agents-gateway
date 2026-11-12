@@ -69,7 +69,9 @@ function contextText(context: ILedgerContextDetail, owner: string, readOnly: boo
 }
 
 /** Uma linha do lote (`linhas`), com os nomes dos argumentos. */
-function lineOf(raw: Record<string, unknown>) {
+function lineOf(item: unknown) {
+  // Um item que não é objeto (`null`, texto) vira linha vazia: a regra do ledger recusa pelo nome do campo, sem exceção solta.
+  const raw = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
   return {
     ...(raw.tipo !== undefined ? { type: String(raw.tipo) as never } : {}),
     ...(raw.situacao !== undefined ? { trigger: String(raw.situacao) } : {}),
@@ -221,7 +223,7 @@ export function makeLedgerTools(desk: TLedgerDesk): ILocalTool[] {
       const author = { kind: 'agent' as const, agentId: reader.agentId, ...(context?.sessionId ? { conversationId: context.sessionId } : {}) }
       const topic = str(args.tema) ?? ''
       // Várias linhas numa chamada (a migração, um lote de aprendizados): uma gravação por linha, cada uma com a sua versão.
-      const batch = action === 'linha_nova' && Array.isArray(args.linhas) ? (args.linhas as Array<Record<string, unknown>>) : undefined
+      const batch = action === 'linha_nova' && Array.isArray(args.linhas) ? (args.linhas as unknown[]) : undefined
       const lines = batch ? batch.map(lineOf) : [line]
       const written: string[] = []
       let last: ILedgerWriteResult | undefined

@@ -56,6 +56,13 @@ describe('Permission.Policy', () => {
       const verdict = decide({ category: 'read', value: path }, { agent })
       assert.deepStrictEqual([verdict.allowed, verdict.layer], [false, 'system'], path)
     }
+    // ⛔ No disco do Mac `.ENV` é o `.env`: a negação não distingue caixa (a liberação segue exata).
+    for (const path of ['.ENV', 'apps/api/.Env.local', 'deploy/SERVER.PEM', '.Credentials/x']) {
+      assert.strictEqual(decide({ category: 'read', value: path }, { agent }).layer, 'system', path)
+    }
+    assert.ok(decide({ category: 'read', value: 'apps/.env.example' }, { agent }).allowed)
+    assert.ok(!decide({ category: 'write', value: 'DOCS/a.md' }, { agent: [rule('write', '**'), rule('write', 'docs/**', 'deny')] }).allowed)
+    assert.ok(!decide({ category: 'write', value: 'DOCS/a.md' }, { agent: [rule('write', 'docs/**')] }).allowed)
     assert.strictEqual(decide(cmd('sudo ls'), { agent }).layer, 'system')
     assert.strictEqual(decide({ category: 'terminal', value: 'sh', argv: ['sh'] }, { agent }).layer, 'system')
     // Regra de sistema da instalação (a pasta de dados, absoluta).
