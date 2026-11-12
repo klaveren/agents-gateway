@@ -4,8 +4,8 @@ import { CATALOG_KINDS, ICatalogDocument, TCatalogKind } from '@domain/Catalog.D
 import { itemRef, parsePackage } from '@domain/Catalog.Import'
 import { forLocal, ILocalModels } from '@domain/Connect.Policy'
 import { InvalidLedgerError, InvalidProjectError, LedgerQueuedError, ProjectConnectionError } from '@domain/errors/Domain.Error'
-import { projectEnvIssues } from './Projects.Service'
-import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
+import { projectEnvIssues, projectMcpEnvIssues } from './Projects.Service'
+import { IProjectMcpVar, PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
 import { IConnectionChange, IConnectionSkipped, IProjectConnection } from '@domain/models/ProjectConnection.Model'
 import type { IProjectConnectionRepository, TConnectionPatch } from '@domain/ports/ProjectConnectionRepository.Port'
 import { IRemoteCatalog, IRemoteChanges, RemoteRequestError, RemoteUnauthorizedError, RemoteUnavailableError } from '@domain/ports/RemoteCatalog.Port'
@@ -33,6 +33,8 @@ export interface IProjectConnectionDeps {
     create(input: { id: string; name: string; description?: string }, by: string, source: 'api', creatorId?: string): unknown
     /** Soma estas fixas às do projeto (as de mesmo nome trocam): o que desconectar leva da máquina para o projeto. */
     keepEnv?(id: string, env: Readonly<Record<string, string>>, by: string): void
+    /** Idem os valores "Do projeto" dos MCPs (o de mesmo MCP e nome troca). */
+    keepMcpEnv?(id: string, list: readonly IProjectMcpVar[], by: string): void
   }
   files: { has(sha256: string): boolean; put(content: Buffer): { sha256: string } }
   applier: Pick<CatalogImportApplier, 'plan' | 'apply'>
@@ -158,6 +160,15 @@ export class ProjectConnectionService {
     return this.require(projectId)
   }
 
+  /** Os valores "Do projeto" dos MCPs DESTA MÁQUINA (ver `IProjectConnection.localMcpEnv`): a lista inteira. */
+  setLocalMcpEnv(projectId: string, list: IProjectMcpVar[]): IProjectConnection {
+    this.require(projectId)
+    const issues = projectMcpEnvIssues(list)
+    if (issues.length) throw new InvalidProjectError(issues)
+    this.deps.repository.update(projectId, { localMcpEnv: list })
+    return this.require(projectId)
+  }
+
   /** As fixas DESTA MÁQUINA (ver `IProjectConnection.localEnv`): a lista inteira, com as regras das fixas do projeto. */
   setLocalEnv(projectId: string, env: Record<string, string>): IProjectConnection {
     this.require(projectId)
@@ -173,8 +184,9 @@ export class ProjectConnectionService {
     // ⚠️ Antes de esquecer a conexão: a camada local só vale em projeto conectado, e o agente não pode perder o que tinha.
     this.deps.layers?.applyAll(projectId, by)
     // Idem as fixas desta máquina: passam para o projeto, que agora é daqui (a de mesmo nome que veio da origem cede).
-    const localEnv = this.require(projectId).localEnv
+    const { localEnv, localMcpEnv } = this.require(projectId)
     if (localEnv && Object.keys(localEnv).length) this.deps.projects.keepEnv?.(projectId, localEnv, by)
+    if (localMcpEnv?.length) this.deps.projects.keepMcpEnv?.(projectId, localMcpEnv, by)
     this.deps.localMcps?.release(projectId)
     this.deps.repository.remove(projectId)
   }

@@ -33,6 +33,17 @@ async function mount() {
   setActivePinia(pinia)
   vi.mocked(api).mockImplementation((async (path: string, init?: { method?: string; body?: { env: Record<string, string> } }) => {
     if (path === '/connections/logiccus/env' && init?.method === 'PUT') return connection(init.body!.env)
+    if (path === '/projects/logiccus/mcp-variables')
+      return [{ key: 'n8n', id: 'n8n', name: 'n8n', enabled: true, fixed: [], variables: [{ name: 'N8N_API_URL', secret: false, configured: false }] }]
+    if (path === '/projects/logiccus/mcp-variables/n8n/N8N_API_URL' && init?.method === 'PUT')
+      return {
+        key: 'n8n',
+        id: 'n8n',
+        name: 'n8n',
+        enabled: true,
+        fixed: [],
+        variables: [{ name: 'N8N_API_URL', secret: false, configured: true, value: 'http://localhost:5678', local: true }],
+      }
     return []
   }) as never)
   useProjectsStore().list = [{ id: 'logiccus', name: 'Logiccus', role: 'admin', env: { ORIGEM: 'da-origem' }, createdAt: '', updatedAt: '' }] as never
@@ -74,5 +85,19 @@ describe('ProjectVariables — projeto conectado', () => {
     await flush()
     expect(api).toHaveBeenCalledWith('/connections/logiccus/env', { method: 'PUT', body: { env: { API_BASE_URL: 'http://localhost:4000', GRAFANA_URL: 'http://localhost:3001' } } })
     expect(host.textContent).toContain('Variáveis desta máquina salvas')
+  })
+
+  it('o valor "Do projeto" de um MCP se grava nesta máquina, e aparece marcado como daqui', async () => {
+    const host = await mount()
+    const input = host.querySelector<HTMLInputElement>('[data-test="project-mcp-visible"]')!
+    expect(input.disabled).toBe(false)
+    input.value = 'http://localhost:5678'
+    input.dispatchEvent(new Event('input'))
+    await flush()
+    const gravar = [...input.parentElement!.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.trim() === 'Gravar')!
+    gravar.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/logiccus/mcp-variables/n8n/N8N_API_URL', { method: 'PUT', body: { value: 'http://localhost:5678' } })
+    expect(host.querySelector('[data-test="project-mcp-origin"]')?.textContent).toContain('desta máquina')
   })
 })

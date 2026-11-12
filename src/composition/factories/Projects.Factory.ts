@@ -3,7 +3,7 @@ import { makePermissions } from './Permissions.Factory'
 import { migrateLegacyToProjects, migrateProjectRoles, ProjectsService } from '@application/Projects.Service'
 import { AGENT_SEED, ATLAS_AGENTS } from '@domain/Agent.Seed'
 import { gatewayEdition } from '@domain/Edition.Policy'
-import { DEFAULT_PROJECT_ID } from '@domain/models/Project.Model'
+import { DEFAULT_PROJECT_ID, IProjectMcpVar } from '@domain/models/Project.Model'
 import { IUser } from '@domain/models/User.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { projectWorkspace, removeProjectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
@@ -125,10 +125,33 @@ function gatewayAdminIds(): string[] {
 }
 
 /** O projeto conectado (ver `ProjectConnection.Service`); a fábrica dele é registrada na composição, sem volta entre as duas. */
-let connectedProject: (projectId: string) => { url: string; localEnv?: Record<string, string> } | undefined = () => undefined
+type TConnectedLookup = (projectId: string) => { url: string; localEnv?: Record<string, string>; localMcpEnv?: IProjectMcpVar[] } | undefined
+let connectedProject: TConnectedLookup = () => undefined
 
-export function useConnectedProjects(lookup: (projectId: string) => { url: string; localEnv?: Record<string, string> } | undefined): void {
+export function useConnectedProjects(lookup: TConnectedLookup): void {
   connectedProject = lookup
+}
+
+let connectedMcpWriter: ((projectId: string, list: IProjectMcpVar[]) => void) | undefined
+
+/** Quem grava os valores "Do projeto" dos MCPs desta máquina (a conexão); registrado na composição. */
+export function useConnectedMcpValues(write: (projectId: string, list: IProjectMcpVar[]) => void): void {
+  connectedMcpWriter = write
+}
+
+/**
+ * 🔌 Os valores "Do projeto" dos MCPs DESTA MÁQUINA num projeto conectado (ver `IProjectConnection.localMcpEnv`): `read`
+ * devolve a lista, ou nada se o projeto não é conectado; `write` troca a lista inteira.
+ */
+export const connectedMcpValues = {
+  read: (projectId: string): IProjectMcpVar[] | undefined => {
+    const connection = connectedProject(projectId)
+    return connection ? [...(connection.localMcpEnv ?? [])] : undefined
+  },
+  write: (projectId: string, list: IProjectMcpVar[]): void => {
+    if (!connectedMcpWriter) throw new Error('connected projects are not wired (useConnectedMcpValues)')
+    connectedMcpWriter(projectId, list)
+  },
 }
 
 /** As fixas desta máquina de um projeto conectado (ver `IProjectConnection.localEnv`); outro projeto, nenhuma. */

@@ -39,7 +39,7 @@ import { HooksController } from '@infra/http/Hooks.Controller'
 import { makeHooks } from './Hooks.Factory'
 import { makeAgentLocalLayers } from './AgentLocalLayers.Factory'
 import { makeAgentProjectLayers } from './AgentProjectLayers.Factory'
-import { makeProjects, useConnectedProjects } from './Projects.Factory'
+import { makeProjects, useConnectedMcpValues, useConnectedProjects } from './Projects.Factory'
 import { useConnectionsForLedger } from './Connected.Ledger'
 import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { ProjectsController } from '@infra/http/Projects.Controller'
@@ -603,6 +603,10 @@ export function makeProjectConnections(): ProjectConnectionService {
       exists: (id) => makeProjects().exists(id),
       create: (input, by, source, creatorId) => makeProjects().create(input, by, source, creatorId),
       keepEnv: (id, env, by) => makeProjects().update(id, { env: { ...makeProjects().get(id).env, ...env } }, by),
+      keepMcpEnv: (id, list, by) => {
+        const kept = (makeProjects().get(id).mcpEnv ?? []).filter((item) => !list.some((local) => local.server === item.server && local.name === item.name))
+        makeProjects().update(id, { mcpEnv: [...kept, ...list] }, by)
+      },
     },
     files: makeResourceFiles(),
     applier: makeCatalogImportApplier(),
@@ -640,6 +644,7 @@ export function makeProjectConnections(): ProjectConnectionService {
   })
   const service = connections
   useConnectedProjects((projectId) => service.get(projectId))
+  useConnectedMcpValues((projectId, list) => service.setLocalMcpEnv(projectId, list))
   useConnectionsForLedger(service)
   return connections
 }

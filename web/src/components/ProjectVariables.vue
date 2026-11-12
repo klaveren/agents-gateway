@@ -14,8 +14,8 @@
    * As VARIÁVEIS do projeto: as **Fixas** (valor visível) e as **Secretas** (o valor só entra) chegam ao terminal de todo
    * agente nas conversas do projeto, por baixo das do agente (a dele vence a de mesmo nome). Os **MCPs** que pedem valor ao
    * projeto aparecem embaixo: esse valor vai só para o processo do MCP, nunca para o terminal do agente.
-   * 🔌 Projeto conectado: as fixas e os valores visíveis vêm da origem (só leitura); as secretas e as **fixas desta
-   * máquina** (por cima das da origem, nunca vão para lá) são daqui.
+   * 🔌 Projeto conectado: as fixas vêm da origem (só leitura); as secretas, as **fixas desta máquina** e os valores visíveis
+   * dos MCPs gravados aqui (os dois por cima dos da origem, nunca vão para lá) são daqui.
    * ⚖️ As fixas vão com o Salvar do rodapé; cada secreta e cada valor de MCP é gravado na hora, como no agente.
    */
   const props = defineProps<{ projectId: string; active?: boolean }>()
@@ -244,9 +244,12 @@
               </button>
             </template>
             <template v-else>
+              <!-- 🔌 Projeto conectado: o valor gravado aqui é desta máquina e vence o que veio da origem. -->
+              <span v-if="connectedOrigin && variable.configured" class="shrink-0 text-[11px] text-zinc-500" data-test="project-mcp-origin">
+                {{ variable.local ? 'desta máquina' : 'da origem' }}
+              </span>
               <input
                 v-model="drafts[keyOf(server.id, variable.name)]"
-                :disabled="!!connectedOrigin"
                 class="input min-w-0 flex-1 font-mono text-xs"
                 placeholder="sem valor"
                 :aria-label="`Valor de ${variable.name}`"
@@ -254,7 +257,6 @@
                 @keydown.enter.prevent
               />
               <button
-                v-if="!connectedOrigin"
                 type="button"
                 class="btn btn-sm btn-primary"
                 :disabled="mcpBusy || !drafts[keyOf(server.id, variable.name)] || drafts[keyOf(server.id, variable.name)] === variable.value"
@@ -264,7 +266,7 @@
               </button>
             </template>
             <button
-              v-if="variable.configured && (variable.secret || !connectedOrigin)"
+              v-if="variable.configured && (variable.secret || !connectedOrigin || variable.local)"
               type="button"
               class="btn btn-sm btn-danger"
               :disabled="mcpBusy"

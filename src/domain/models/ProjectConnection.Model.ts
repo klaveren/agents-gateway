@@ -1,3 +1,4 @@
+import type { IProjectMcpVar } from './Project.Model'
 import type { TCatalogKind } from '../Catalog.Document'
 import type { TRevisionOp } from '../ports/CatalogHistoryRepository.Port'
 
@@ -57,6 +58,12 @@ export interface IProjectConnection {
    * (`IProject.env`, só leitura aqui). Nunca vão para a origem; ao desconectar, passam para o projeto. Ausente = nenhuma.
    */
   localEnv?: Record<string, string>
+  /**
+   * Os valores visíveis DESTA MÁQUINA para as variáveis "Do projeto" dos MCPs (`IProject.mcpEnv`), por cima dos que vêm da
+   * origem: o MCP desta máquina (que a origem não conhece) e a URL local de um serviço. Ao desconectar, passam para o
+   * projeto. Ausente = nenhum.
+   */
+  localMcpEnv?: IProjectMcpVar[]
   createdAt: Date
   createdBy: string
   lastCheckedAt?: Date

@@ -38,6 +38,8 @@ export interface IMcpVariableView {
   configured: boolean
   /** Só a visível. */
   value?: string
+  /** 🔌 Projeto conectado: o valor visível é DESTA MÁQUINA (por cima do que veio da origem). */
+  local?: boolean
 }
 
 /** Um MCP que este projeto enxerga e que pede valor a ele. */
@@ -61,6 +63,11 @@ export interface IProjectVariablesDeps {
     secretEnv(projectId: string, id: string): { name: string; value: string } | undefined
     remove(projectId: string, id: string): boolean
   }
+  /**
+   * 🔌 Os valores visíveis desta máquina num projeto CONECTADO (os do projeto vêm da origem e a atualização os troca):
+   * `read` devolve a lista, ou nada se o projeto não é conectado. Ausente: nenhum projeto é conectado.
+   */
+  connected?: { read(projectId: string): IProjectMcpVar[] | undefined; write(projectId: string, list: IProjectMcpVar[]): void }
 }
 
 /**
@@ -91,13 +98,15 @@ export class ProjectVariablesService {
   /** Os MCPs que pedem valor a este projeto, cada um com o que pede e o que o projeto já deu. */
   mcpVariables(projectId: string): IMcpVariablesView[] {
     const project = this.deps.projects.get(projectId)
+    const local = this.deps.connected?.read(projectId) ?? []
     return this.deps
       .mcps(projectId)
       .filter(mcpAsksProject)
       .map((server) => {
         const key = mcpServerKey(server)
         const secret = new Set(this.deps.secrets.list(MCP_SECRET_SCOPE, key, projectId).map((item) => item.name))
-        const visible = (name: string) => project.mcpEnv?.find((item) => item.server === server.id && item.name === name)
+        const mine = (name: string) => local.find((item) => item.server === server.id && item.name === name)
+        const visible = (name: string) => mine(name) ?? project.mcpEnv?.find((item) => item.server === server.id && item.name === name)
         return {
           key,
           id: server.id,
@@ -107,7 +116,7 @@ export class ProjectVariablesService {
           variables: [
             ...mcpProjectVarNames(server).map((name) => {
               const found = visible(name)
-              return { name, secret: false, configured: !!found, ...(found ? { value: found.value } : {}) }
+              return { name, secret: false, configured: !!found, ...(found ? { value: found.value } : {}), ...(mine(name) ? { local: true } : {}) }
             }),
             ...mcpEnvNames(server).map((name) => ({ name, secret: true, configured: secret.has(name) })),
           ],
@@ -130,8 +139,11 @@ export class ProjectVariablesService {
     if (secret) this.deps.secrets.save(MCP_SECRET_SCOPE, mcpServerKey(server), { name, value }, by, projectId)
     else {
       if (!value.trim()) throw new ProjectVariableError(422, 'value: required (empty does not clear: delete the value)')
-      const current = this.deps.projects.get(projectId).mcpEnv ?? []
-      this.deps.projects.update(projectId, { mcpEnv: [...current.filter((item) => !(item.server === serverId && item.name === name)), { server: serverId, name, value }] }, by)
+      const local = this.deps.connected?.read(projectId)
+      const others = (list: readonly IProjectMcpVar[]) => list.filter((item) => !(item.server === serverId && item.name === name))
+      // 🔌 Conectado: o valor é desta máquina (o do projeto é da origem, e a atualização o trocaria).
+      if (local) this.deps.connected!.write(projectId, [...others(local), { server: serverId, name, value }])
+      else this.deps.projects.update(projectId, { mcpEnv: [...others(this.deps.projects.get(projectId).mcpEnv ?? []), { server: serverId, name, value }] }, by)
     }
     return this.mcpVariables(projectId).find((item) => item.id === serverId)!
   }
@@ -139,6 +151,14 @@ export class ProjectVariablesService {
   removeMcpVariable(projectId: string, serverId: string, name: string, by: string): boolean {
     const { server, secret } = this.kindOf(projectId, serverId, name)
     if (secret) return this.deps.secrets.remove(MCP_SECRET_SCOPE, mcpServerKey(server), name, projectId)
+    // 🔌 Conectado: sai só o valor desta máquina (o da origem, se houver, volta a valer).
+    const local = this.deps.connected?.read(projectId)
+    if (local) {
+      const kept = local.filter((item) => !(item.server === serverId && item.name === name))
+      if (kept.length === local.length) return false
+      this.deps.connected!.write(projectId, kept)
+      return true
+    }
     const current = this.deps.projects.get(projectId).mcpEnv ?? []
     const next = current.filter((item) => !(item.server === serverId && item.name === name))
     if (next.length === current.length) return false
