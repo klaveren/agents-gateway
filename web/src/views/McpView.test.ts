@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { api } from '@/lib/api'
 import type { IMcpServer } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
+import { useConnectionsStore } from '@/stores/connections'
 import { useProjectsStore } from '@/stores/projects'
 import McpView from './McpView.vue'
 
@@ -50,15 +51,17 @@ const history = {
   ],
 }
 
-async function mount(path: string, admin: boolean): Promise<HTMLElement> {
+async function mount(path: string, admin: boolean, connected = false): Promise<HTMLElement> {
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
   auth.user = { id: 'u1', email: 'm@x.com', name: 'Membro', role: admin ? 'admin' : 'member', disabled: false, createdAt: '', updatedAt: '' }
   auth.isAdmin = admin
   const projects = useProjectsStore()
-  projects.list = [{ id: 'alfa', name: 'Alfa' } as never]
+  projects.list = [{ id: 'alfa', name: 'Alfa', ...(connected ? { role: 'admin' } : {}) } as never]
   projects.current = 'alfa'
+  // 🔌 O projeto do topo é a cópia do de outro gateway.
+  if (connected) useConnectionsStore().list = [{ projectId: 'alfa', url: 'https://origem.exemplo.com' } as never]
   projects.loaded = true
   const router = createRouter({
     history: createMemoryHistory(),
@@ -133,6 +136,29 @@ describe('McpView', () => {
     await nextTick()
     expect(host.querySelector('[data-test="restore"]')).toBeNull()
     expect(host.textContent).toContain('Só quem administra restaura versões.')
+  })
+
+  it('🔌 projeto conectado: o MCP da origem é só leitura, mas o "+" fica — o novo nasce no projeto, desta máquina', async () => {
+    const host = await mount('/mcp/alfa.crm', true, true)
+    expect(host.querySelector('[data-test="connected-readonly"]')).not.toBeNull()
+    expect(host.querySelector('[data-test="local-mcp"]')).toBeNull()
+    expect(host.textContent).not.toContain('Salvar MCP')
+    expect(host.querySelector('a[href="/mcp/new"]')).not.toBeNull()
+
+    const adding = await mount('/mcp/new', true, true)
+    expect(adding.querySelector('[data-test="local-scope-hint"]')).not.toBeNull()
+    const scope = [...adding.querySelectorAll('select')].find((select) => select.textContent?.includes('Global'))!
+    expect(scope.selectedOptions[0].textContent).toContain('Projeto Alfa — desta máquina')
+  })
+
+  it('🔌 projeto conectado: o MCP desta máquina é editável e vem marcado', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => (path === '/mcp-servers' ? [{ ...server, local: true }] : path === '/projects' ? [{ id: 'alfa', name: 'Alfa' }] : []))
+    const host = await mount('/mcp/alfa.crm', true, true)
+    expect(host.querySelector('[data-test="connected-readonly"]')).toBeNull()
+    expect(host.querySelector('[data-test="local-mcp"]')).not.toBeNull()
+    expect(host.textContent).toContain('desta máquina')
+    expect(host.textContent).toContain('Salvar MCP')
+    expect(host.querySelector('fieldset')?.disabled).toBe(false)
   })
 
   it('admin: inalterado — a lista inteira, sem `?project=`, com criar, editar e remover', async () => {

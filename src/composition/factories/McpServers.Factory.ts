@@ -15,9 +15,10 @@ export function makeMcpServers(): McpServersService {
   instance = new McpServersService(
     makeTools().servers,
     makeCredentials(),
+    // Com a camada local por cima (`entries`): o MCP que um agente conectado usa só por ela também está em uso.
     () =>
       makeAgents()
-        .rawEntries()
+        .entries()
         .map((entry) => entry.agent),
     (projectId) => makeProjects().exists(projectId),
   )

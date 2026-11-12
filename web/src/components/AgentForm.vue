@@ -1544,7 +1544,7 @@
           MCPs
           <em class="font-normal text-zinc-500">— o agente usa só o que estiver marcado.</em>
         </span>
-        <p v-if="layerMode" class="hint font-normal">O que veio da origem aparece marcado como "origem" e não muda aqui. Para usar um MCP desta máquina, cadastre-o como global em MCPs.</p>
+        <p v-if="layerMode" class="hint font-normal">O que veio da origem aparece marcado como "origem" e não muda aqui. Para usar um MCP desta máquina, cadastre-o em MCPs, neste projeto: ele fica só aqui.</p>
         <div v-if="enabledMcp.length" class="flex flex-col gap-2">
           <div v-for="server in enabledMcp" :key="server.key" class="rounded-xl border border-zinc-800 px-3 py-2 font-normal">
             <div class="flex flex-wrap items-center gap-2">

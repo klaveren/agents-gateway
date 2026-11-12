@@ -11,7 +11,7 @@ import { resolveCaller } from './Caller.Access'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
-import { administers, adminView, IAdminView, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
+import { administers, adminView, IAdminView, isConnectedProject, refuseConnected, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
 
 export interface IMcpServersControllerDeps {
@@ -90,6 +90,9 @@ const envSchema = z.object({ value: z.string().max(8000) })
  * o do gateway. 404 para os demais (como `/providers`): a lista diz que serviços internos existem. A exceção é ver a lista de UM projeto (`?project=`): o
  * membro dele vê os MCPs daquele projeto (como vê os agentes dele) — nunca os globais, nunca os de outro projeto.
  * ⛔ O segredo nunca sai — só se está configurado e os quatro últimos caracteres.
+ *
+ * 🔌 NO PROJETO CONECTADO, o servidor que veio da origem é só leitura (409); o cadastrado AQUI nasce "desta máquina"
+ * (`local`) e segue livre: é configuração do ambiente, que a atualização não toca e o catálogo não exporta.
  */
 export class McpServersController {
   constructor(private readonly deps: IMcpServersControllerDeps) {
@@ -210,7 +213,7 @@ export class McpServersController {
       async () => {
         const body = parseBody(createSchema, req.body)
         const by = await this.requireScopes('createMcpServer', body.projectId ?? null, privileged({ kind: body.kind ?? 'remote', auth: body.auth }))
-        const created = this.deps.service.create(body as IMcpServerInput, by)
+        const created = this.deps.service.create({ ...(body as IMcpServerInput), local: isConnectedProject(body.projectId) }, by)
         return this.dto(created)
       },
       { status: 201, message: 'MCP server created' },
@@ -235,7 +238,11 @@ export class McpServersController {
           ],
           'updateMcpServer',
         )
-        const updated = this.deps.service.update(id, body, by)
+        // ⛔ O que veio da origem não muda aqui, nem sai do projeto conectado.
+        if (!before.local) refuseConnected(current)
+        // Trocou de escopo: é "desta máquina" quem entra num projeto conectado, e deixa de ser quem sai dele.
+        const moving = body.projectId !== undefined && (body.projectId ?? null) !== current
+        const updated = this.deps.service.update(id, { ...body, ...(moving ? { local: isConnectedProject(body.projectId) } : {}) }, by)
         const key = mcpServerKey(updated)
         // Instância de pé roda o cadastro de antes: a próxima ferramenta sobe com o novo.
         if (isLaunchedMcp(updated) || key !== id) await this.deps.registry.closeInstances({ serverId: id })
@@ -256,7 +263,8 @@ export class McpServersController {
       async () => {
         const id = this.idOf(req)
         const by = await this.requireAdmin('deleteMcpServer', id)
-        const kind = this.deps.service.get(id).kind
+        const { kind, local } = this.deps.service.get(id)
+        if (!local) refuseConnected(scopeOf(id))
         this.deps.service.remove(id, by)
         this.deps.registry.forget(id)
         await this.deps.registry.closeInstances({ serverId: id })
@@ -377,6 +385,7 @@ export class McpServersController {
       name: server.name,
       ...(server.tags?.length ? { tags: server.tags } : {}),
       kind: server.kind ?? 'remote',
+      ...(server.local ? { local: true } : {}),
       // ⛔ Como o servidor autentica não é do membro; só que ele pede a conta de cada um (o botão Conectar).
       ...(server.auth === 'oauth' ? { auth: server.auth } : {}),
       ...this.oauthStatus(server, req),
@@ -408,6 +417,7 @@ export class McpServersController {
       headerName: server.headerName,
       identity: server.identity === true,
       ...(server.oauth ? { oauth: server.oauth } : {}),
+      ...(server.local ? { local: true } : {}),
       ...this.oauthStatus(server, req),
       enabled: server.enabled,
       secret: {

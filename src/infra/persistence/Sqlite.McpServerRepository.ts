@@ -37,6 +37,8 @@ const ADDED_COLUMNS: Array<{ column: string; definition: string }> = [
   { column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
   // O login OAuth (`auth: oauth`), em JSON: client id, escopos, servidor de autorização.
   { column: 'oauth', definition: 'TEXT' },
+  // 🔌 Cadastrado aqui, num projeto conectado (ver `IMcpServerConfig.local`).
+  { column: 'local', definition: 'INTEGER NOT NULL DEFAULT 0' },
 ]
 
 const COLUMNS: Record<keyof TMcpServerPatch, string> = {
@@ -50,6 +52,7 @@ const COLUMNS: Record<keyof TMcpServerPatch, string> = {
   headerName: 'header_name',
   identity: 'identity',
   oauth: 'oauth',
+  local: 'local',
   enabled: 'enabled',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
@@ -88,7 +91,7 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
   insert(server: IMcpServerConfig): void {
     this.db
       .prepare(
-        'INSERT INTO mcp_servers (id, project_id, name, tags, kind, container, process, url, transport, auth, header_name, identity, oauth, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO mcp_servers (id, project_id, name, tags, kind, container, process, url, transport, auth, header_name, identity, oauth, local, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         mcpServerKey(server),
@@ -104,6 +107,7 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
         server.headerName ?? null,
         server.identity ? 1 : 0,
         server.oauth ? JSON.stringify(server.oauth) : null,
+        server.local ? 1 : 0,
         server.enabled ? 1 : 0,
         server.createdAt.toISOString(),
         server.updatedAt.toISOString(),
@@ -173,6 +177,7 @@ function toServer(row: TRow): IMcpServerConfig {
     headerName: typeof row.header_name === 'string' ? row.header_name : undefined,
     ...(Number(row.identity) === 1 ? { identity: true } : {}),
     ...(typeof row.oauth === 'string' && row.oauth ? { oauth: JSON.parse(row.oauth) as IMcpOAuth } : {}),
+    ...(Number(row.local) === 1 ? { local: true } : {}),
     enabled: Number(row.enabled) === 1,
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),

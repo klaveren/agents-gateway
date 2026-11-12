@@ -20,7 +20,7 @@ const ORIGIN = [
 ]
 
 /** O aplicador falso: grava na ordem e PARA no item de `failOn` (como o de verdade); o plano não bloqueia nada. */
-function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[] = []) {
+function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[] = [], localMcps: string[] = []) {
   const exporter = new CatalogExportUseCase({
     reader: { list: () => ORIGIN, read: () => ORIGIN[0] } as never,
     mask: { scan: (value: string) => ({ text: value, hits: [] }) } as never,
@@ -58,6 +58,7 @@ function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[
     reader: { list: (scope) => (scope.kind === 'global' ? localGlobals : localProject) },
     remove: async (current) => void steps.push(`remove ${current.kind}/${current.id}`),
     layers: { applyAll: (projectId) => void steps.push(`apply ${projectId}`), forget: (agentId) => void steps.push(`forget ${agentId}`) },
+    localMcps: { ids: () => localMcps, release: (projectId) => void steps.push(`release ${projectId}`) },
     models: async () => ({ enabled: () => true }),
   })
   repository.insert(
@@ -108,10 +109,31 @@ describe('projeto conectado: a cópia', () => {
     assert.deepEqual(result.removed, ['agent/antigo'])
   })
 
-  it('🔌 desconectar aplica as camadas locais nos agentes antes de esquecer a conexão', () => {
+  it('🔌 o MCP desta máquina: a origem não o remove; o que ela tirou e não é daqui, sai', async () => {
+    const here = [
+      ...ORIGIN,
+      doc('mcp', 'meu', 'logiccus', { url: 'http://localhost:9000/mcp', enabled: true }),
+      doc('mcp', 'velho', 'logiccus', { url: 'https://velho/mcp', enabled: true }),
+    ]
+    const { service, steps } = build([], here, ['meu'])
+    const result = await service.sync('logiccus', 'dev')
+    assert.deepEqual(steps, ['remove mcp/velho'])
+    assert.deepEqual(result.removed, ['mcp/velho'])
+  })
+
+  it('🔌 o MCP desta máquina com o id de um da origem: vale o daqui, e não aparece como "não aplicado"', async () => {
+    const { service, planned, steps } = build([], [...ORIGIN, doc('mcp', 'agents-mcp', 'logiccus', { url: 'http://localhost:9000/mcp', enabled: true })], ['agents-mcp'])
+    const result = await service.sync('logiccus', 'dev')
+    assert.ok(!planned[0].includes('mcp/logiccus.agents-mcp'))
+    assert.ok(planned[0].includes('mcp/logiccus.gateway'))
+    assert.ok(!result.skipped.some((item) => item.ref.startsWith('mcp/')))
+    assert.deepEqual(steps, [])
+  })
+
+  it('🔌 desconectar aplica as camadas locais nos agentes e solta os MCPs desta máquina, antes de esquecer a conexão', () => {
     const { service, steps, repository } = build([])
     service.disconnect('logiccus', 'dev')
-    assert.deepEqual(steps, ['apply logiccus'])
+    assert.deepEqual(steps, ['apply logiccus', 'release logiccus'])
     assert.equal(repository.get('logiccus'), undefined)
   })
 })

@@ -554,6 +554,11 @@ const mcpServerSchema = {
     oauthRedirectUri: { type: 'string', description: 'auth oauth: the redirect URI to register at the provider' },
     headerName: { type: 'string' },
     identity: { type: 'boolean' },
+    local: {
+      type: 'boolean',
+      description:
+        'Registered HERE, in a connected project (this machine own configuration): editable, untouched by the origin update, never exported. Set by the gateway, not by the body.',
+    },
     enabled: { type: 'boolean' },
     secret: { type: 'object', properties: { configured: { type: 'boolean' }, last4: { type: 'string' }, unreadable: { type: 'boolean' } } },
     status: { type: 'object', properties: { connected: { type: 'boolean' }, lastError: { type: 'string' } } },
@@ -1874,20 +1879,22 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: mcpServerSchema })) }, '401': failures['401'], '404': failures['404'] },
       },
       post: {
-        summary: 'Register an MCP server. Agents then pick its tools as `mcp:<id>/<tool>` or `mcp:<id>/*`. Administrators only',
+        summary:
+          'Register an MCP server. Agents then pick its tools as `mcp:<id>/<tool>` or `mcp:<id>/*`. In a connected project it is registered as `local` (this machine own). Administrators only',
         requestBody: { required: true, ...json(mcpServerBody) },
         responses: { '201': { description: 'Created', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
     '/mcp-servers/{id}': {
       put: {
-        summary: 'Change an MCP server (name, URL, transport, authentication, header, enabled). Administrators only',
+        summary:
+          'Change an MCP server (name, URL, transport, authentication, header, enabled). 409 `project_read_only` for a server that came from the origin of a connected project (the `local` ones are editable). Administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json(mcpServerBody) },
         responses: { '200': { description: 'OK', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
       delete: {
-        summary: 'Remove an MCP server and its secret. 409 while an agent uses it. Administrators only',
+        summary: 'Remove an MCP server and its secret. 409 while an agent uses it, or `project_read_only` for a server from the origin of a connected project. Administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) },

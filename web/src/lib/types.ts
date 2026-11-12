@@ -586,6 +586,8 @@ export interface IMcpServer {
   id: string
   /** O projeto dono. Ausente = global (serve a todo agente); de projeto, só aos agentes dele. */
   projectId?: string
+  /** 🔌 Desta máquina: cadastrado aqui, num projeto conectado. A origem não o conhece, e ele segue editável. */
+  local?: boolean
   name: string
   kind: TMcpKind
   container?: IMcpContainer
