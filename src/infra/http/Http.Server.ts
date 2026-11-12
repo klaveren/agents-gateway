@@ -559,6 +559,7 @@ function buildRoutes(
     { method: 'delete', path: '/providers/:id/login', handler: providers.loginCancel },
     { method: 'get', path: '/health', handler: controller.health },
     { method: 'post', path: '/health/drain', handler: controller.drain },
+    { method: 'get', path: '/about', handler: controller.about },
     { method: 'get', path: '/auth/status', handler: auth.status },
     { method: 'post', path: '/auth/setup', handler: auth.setup },
     { method: 'post', path: '/auth/login', handler: auth.login },

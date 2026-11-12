@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { computed } from 'vue'
+  import { computed, ref } from 'vue'
   import { useRouter } from 'vue-router'
   import { useResource } from '@/composables/useResource'
   import { initials } from '@/lib/format'
@@ -7,10 +7,11 @@
   import { useAuthStore } from '@/stores/auth'
   import { usePermissionRequestsStore } from '@/stores/permissionRequests'
   import { useProjectsStore } from '@/stores/projects'
+  import AboutDialog from './AboutDialog.vue'
   import Icon from './Icon.vue'
 
   /**
-   * O menu da conta: o avatar abre um submenu com quem está logado, o perfil e o sair.
+   * O menu da conta: o avatar abre um submenu com quem está logado, o perfil, o sobre (a versão) e o sair.
    * `placement`: no trilho (desktop) abre para o lado; na barra inferior (celular), para cima.
    */
   defineProps<{ placement: 'side' | 'up' }>()
@@ -26,6 +27,12 @@
   const requests = usePermissionRequestsStore()
   const { data: allRequests } = useResource(requests.lists, () => (projects.managesAny ? '' : undefined))
   const pending = computed(() => (projects.managesAny ? (allRequests.value ?? []).filter((request) => request.status === 'pending').length : 0))
+
+  const about = ref(false)
+  function showAbout() {
+    open.value = false
+    about.value = true
+  }
 
   async function logout() {
     open.value = false
@@ -97,6 +104,10 @@
         Notificações
         <span v-if="pending" class="ml-auto rounded-full bg-amber-500 px-1.5 text-[10px] leading-4 font-semibold text-zinc-950" data-test="notifications-pill">{{ pending }}</span>
       </RouterLink>
+      <button type="button" role="menuitem" class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800" data-test="about-item" @click="showAbout">
+        <Icon name="info" class="h-4 w-4 text-zinc-400" />
+        Sobre
+      </button>
       <button
         type="button"
         role="menuitem"
@@ -107,5 +118,6 @@
         Sair
       </button>
     </div>
+    <AboutDialog :open="about" @close="about = false" />
   </div>
 </template>

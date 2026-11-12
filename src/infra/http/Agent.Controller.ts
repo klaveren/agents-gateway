@@ -76,6 +76,7 @@ import { IResolvedCaller, ownerOf, ownsSession, resolveCaller } from './Caller.A
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { audienceRules } from './Caller.Roles'
+import { gatewayAbout } from './Gateway.About'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { administers, adminView, IAdminView, requireAnyAdmin, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
@@ -254,6 +255,7 @@ export class AgentController {
 
   constructor(private readonly usecases: IAgentControllerDeps) {
     this.health = this.health.bind(this)
+    this.about = this.about.bind(this)
     this.drain = this.drain.bind(this)
     this.getAgents = this.getAgents.bind(this)
     this.getAgentTools = this.getAgentTools.bind(this)
@@ -338,6 +340,14 @@ export class AgentController {
         mcp: { connected: servers.some((server) => server.connected), servers: servers.length },
         sessions: (await this.usecases.listSessions.execute()).length,
       }
+    })
+  }
+
+  /** A versão e o build que estão rodando (o "Sobre" da tela). Para quem está logado: o `/health` público não conta nada disso. */
+  async about(_req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireCaller()
+      return gatewayAbout()
     })
   }
 

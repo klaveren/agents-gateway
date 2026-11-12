@@ -15,6 +15,8 @@ export CONVERSATIONS_DB="$GATEWAY_DATA/gateway.db"
 export PORT="${PORT:-3210}"
 export HOST=127.0.0.1
 export NODE_ENV=production
+# O build deste app (`<versão>+<commit>`), para o "Sobre" da tela dizer qual instalador está rodando.
+export GATEWAY_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${RES:h}/Info.plist" 2>/dev/null)"
 # O código do primeiro admin, o mesmo que o app põe no endereço do setup (sem ele, o servidor sortearia um a cada início).
 [ -n "${SETUP_CODE:-}" ] && export SETUP_CODE
 # 🧰 O kit do app primeiro (node, npm, npx, corepack, micromamba, agy): o terminal dos agentes e a guia Pacotes não dependem do
