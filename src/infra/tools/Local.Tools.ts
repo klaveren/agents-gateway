@@ -27,6 +27,7 @@ import {
   type IRemote,
 } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
+import { cliToolResultDirs } from '@infra/adapters/support/Cli.ToolResults'
 import { projectAliases } from '@infra/workspace/Work.Folder'
 import { commandDirOf, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/accounts/Ssh.Kit'
 import { CLUSTER_SECRET_REFUSAL, dumpsClusterSecret } from '@domain/Secret.Mask'
@@ -267,7 +268,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const root = realOf(folder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash')))
     // O rascunho (HOME, caches, as contas) fica na pasta do projeto, fora da worktree; o `.git` comum entra no cerco.
     const own = context?.agentId ? deps.agentFolder?.(context.agentId, context.conversationProjectId) : undefined
-    const shared = deps.sharedFolders?.(asker.projectId, context?.agentId) ?? []
+    const shared = [...(deps.sharedFolders?.(asker.projectId, context?.agentId) ?? []), ...cliToolResultDirs(context?.sessionId)]
     const place: { scratchBase?: string; gitCommonDir?: string; worktreeGitDir?: string; agentFolder?: IOwnFolder; sharedFolders?: string[] } = {
       ...(folder
         ? {
@@ -459,7 +460,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
   const fileDeps: IFileToolDeps = {
     rootFor: fileRoot,
     ownFolder: (context) => (context?.agentId ? deps.agentFolder?.(context.agentId, context.conversationProjectId) : undefined),
-    ...(deps.sharedFolders ? { sharedFolders: (context) => deps.sharedFolders!(askerOf(context).projectId, context?.agentId) } : {}),
+    // Junto das pastas compartilhadas, a saída grande que o CLI do Claude guardou DESTA conversa (ver `Cli.ToolResults`).
+    sharedFolders: (context) => [...(deps.sharedFolders?.(askerOf(context).projectId, context?.agentId) ?? []), ...cliToolResultDirs(context?.sessionId)],
     ...(deps.permissions
       ? {
           access: (context, kind, path, log) => {

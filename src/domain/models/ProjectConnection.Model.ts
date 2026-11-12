@@ -3,7 +3,7 @@ import type { TRevisionOp } from '../ports/CatalogHistoryRepository.Port'
 
 /**
  * 🔌 UM PROJETO CONECTADO: o projeto local `projectId` é a cópia SÓ DE LEITURA do projeto `remoteProjectId` do gateway
- * `url` (a .4). O catálogo vem de lá, versionado; mudar o catálogo é na origem (um ticket), nunca aqui.
+ * `url` (a .4). O catálogo vem de lá, versionado; mudar o catálogo é na origem, nunca aqui.
  *
  * - `ok`: a última conversa com a origem deu certo;
  * - `offline`: a origem não respondeu (rede, fora do ar) — o vigia tenta de novo;

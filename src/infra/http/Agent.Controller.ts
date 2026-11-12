@@ -724,19 +724,20 @@ export class AgentController {
     await this.respond(res, async () => {
       const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
       await this.requireAgentAdmin(req.params.agentId as string, 'getAgentFootprint', requested)
-      const entry = this.agents.entry(req.params.agentId as string)
-      if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
-      const projectId = entry.agent.projectId ?? (requested && this.usecases.projects?.exists(requested) ? requested : undefined)
+      // O agente que RODA aqui (com a camada local do projeto conectado), como no `getAgentSystemPrompt`.
+      const agent = this.agents.get(req.params.agentId as string)
+      if (!agent) throw new AgentNotFoundError(req.params.agentId as string)
+      const projectId = agent.projectId ?? (requested && this.usecases.projects?.exists(requested) ? requested : undefined)
       const token = currentCaller()?.token
       const catalog = this.usecases.catalog
       // Os provedores que rodam num CLI (o prompt vai por argumento): com eles, a conta do limite do Linux.
-      const cli = entry.agent.providers
+      const cli = agent.providers
         .map((target) => ({
           provider: target.provider,
           protocol: this.usecases.providers?.get(target.provider)?.protocol ?? Object.values(EProvider).find((value) => value === target.provider),
         }))
         .filter((target): target is { provider: string; protocol: EProvider } => !!target.protocol && CLI_ARG_PROTOCOLS.includes(target.protocol))
-      return agentFootprint(entry.agent, projectId, {
+      return agentFootprint(agent, projectId, {
         cli: { providers: cli.map((target) => target.provider), protocols: [...new Set(cli.map((target) => target.protocol))] },
         guidance: this.usecases.guidance,
         localFor: (allowed) => catalog.localFor(allowed),
@@ -744,7 +745,7 @@ export class AgentController {
         projectDir: (id) => projectWorkspacePath(id),
         // ⛔ O servidor do escopo do AGENTE (não o do projeto pedido na tela): global só vê global.
         mcpTools: async (server) => {
-          const config = catalog.mcp.resolve(server, entry.agent.projectId)
+          const config = catalog.mcp.resolve(server, agent.projectId)
           const tools = config ? await catalog.mcp.probeTools(mcpServerKey(config), token).catch(() => []) : []
           return tools.length ? tools : undefined
         },

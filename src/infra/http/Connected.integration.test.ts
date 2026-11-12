@@ -52,7 +52,7 @@ describe('projeto conectado: só leitura (integração)', () => {
   it('⛔ escrever no catálogo é recusado (409, project_read_only) com o porquê; ler segue', async () => {
     const refused = await call('PUT', '/resources/banco', { body: 'mudei aqui' })
     assert.deepStrictEqual([refused.status, refused.body.code], [409, 'project_read_only'])
-    assert.match(refused.body.message!, /origem.test.*abra um ticket/)
+    assert.match(refused.body.message!, /origem.test.*feita na origem/)
     assert.strictEqual((await call('POST', '/resources', { id: 'nova', kind: 'skill', projectId: 'logiccus', description: 'n', body: 'n' })).status, 409)
     assert.strictEqual((await call('DELETE', '/resources/banco')).status, 409)
     assert.strictEqual((await call('PUT', '/projects/logiccus', { name: 'Outro nome' })).status, 409)

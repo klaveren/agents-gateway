@@ -230,6 +230,36 @@ describe('ClaudeAgentAdapter', () => {
     assert.strictEqual((await gate('Read', { file_path: join(shared, 'scripts', 'run.sh') }, {})).behavior, 'deny')
   })
 
+  it('⛔ a saída grande que o CLI guardou (tool-results): a conversa lê a DELA, não grava, e a transcrição e as outras conversas seguem fechadas', async () => {
+    const seen: TQueryParams[] = []
+    const init = { type: 'system', subtype: 'init', session_id: CLI_SESSION_ID, tools: ['Read', 'Write'] }
+    const permissions = { check: () => ({ allowed: false, layer: 'default' as const, reason: 'sem regra' }) }
+    const adapter = new ClaudeAgentAdapter({
+      query: queryWith(() => [init, ...turn()], seen),
+      permissions,
+      connections: { connection: (id) => ({ providerId: id, name: 'Claude', protocol: EProvider.CLAUDE, key: 'sk-ant-x' }) },
+    })
+    const agent = { ...getAgent(), allowedTools: ['sdk:Read', 'sdk:Write'] }
+    const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
+    await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
+    const options = seen.at(-1)!.options!
+    const gate = options.canUseTool as (name: string, input: Record<string, unknown>, options: unknown) => Promise<{ behavior: string; message?: string }>
+    const home = join(dataDir(), 'claude-cli', 'projects', realpathSync(options.cwd!).replace(/[^a-zA-Z0-9]/g, '-'))
+    const mine = join(home, CLI_SESSION_ID, 'tool-results')
+    const other = join(home, 'outra-conversa', 'tool-results')
+    // Antes de o CLI criar a pasta, nada abre.
+    assert.strictEqual((await gate('Read', { file_path: join(mine, 'toolu_1.json') }, {})).behavior, 'deny')
+    for (const dir of [mine, other]) {
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'toolu_1.json'), '{}')
+    }
+    writeFileSync(join(home, `${CLI_SESSION_ID}.jsonl`), '{}')
+    assert.strictEqual((await gate('Read', { file_path: join(mine, 'toolu_1.json') }, {})).behavior, 'allow')
+    assert.strictEqual((await gate('Write', { file_path: join(mine, 'toolu_1.json'), content: 'x' }, {})).behavior, 'deny')
+    assert.strictEqual((await gate('Read', { file_path: join(other, 'toolu_1.json') }, {})).behavior, 'deny')
+    assert.strictEqual((await gate('Read', { file_path: join(home, `${CLI_SESSION_ID}.jsonl`) }, {})).behavior, 'deny')
+  })
+
   it('⛔ agente compartilhado: as pastas só leitura saem do projeto DA CONVERSA e do agente (a skill da origem liberada a ele), e a pasta própria vem com o projeto da conversa', async () => {
     const seen: TQueryParams[] = []
     const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['Read'] }

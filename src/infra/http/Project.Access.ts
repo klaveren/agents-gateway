@@ -151,8 +151,8 @@ const CONNECTED_WRITABLE: readonly RegExp[] = [
 ]
 
 /**
- * ⛔ O PROJETO CONECTADO É SÓ LEITURA: o catálogo vem da origem (a .4), e mudar é lá — um ticket, que a esteira
- * implementa e chega a todos pela atualização. Vale para a tela, a API e as ferramentas dos agentes (que chamam a API).
+ * ⛔ O PROJETO CONECTADO É SÓ LEITURA: o catálogo vem da origem, e mudar é lá — a mudança chega a todos pela
+ * atualização. Vale para a tela, a API e as ferramentas dos agentes (que chamam a API).
  * Quem não administra o projeto já ouviu 404 antes; quem administra ouve o porquê. A sincronização não passa por aqui.
  */
 function guardConnected(projectIds: ReadonlyArray<string | null | undefined>): void {
@@ -173,7 +173,7 @@ export function refuseConnected(projectId: string | null | undefined): void {
     throw new HttpError(
       409,
       'project_read_only',
-      `O projeto ${projectId} é conectado a ${connection.url}: o catálogo é só leitura aqui. Mudança é feita na origem (abra um ticket); para mexer localmente, desconecte o projeto.`,
+      `O projeto ${projectId} é conectado a ${connection.url}: o catálogo é só leitura aqui. A mudança é feita na origem; para mexer localmente, desconecte o projeto.`,
     )
 }
 

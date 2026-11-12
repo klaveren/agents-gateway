@@ -27,9 +27,17 @@ afterEach(() => {
   vi.mocked(api).mockReset()
 })
 
-const AGENT: IAgentDetail = { id: 'a1', name: 'Agente', providers: [{ id: 'claude', name: 'Anthropic', models: ['m'], pricing: {} }], modes: ['chat'], allowedTools: [], systemPrompt: 'Oi', ...({} as object) }
+const AGENT: IAgentDetail = {
+  id: 'a1',
+  name: 'Agente',
+  providers: [{ id: 'claude', name: 'Anthropic', models: ['m'], pricing: {} }],
+  modes: ['chat'],
+  allowedTools: [],
+  systemPrompt: 'Oi',
+  ...({} as object),
+}
 
-async function mount(agent: IAgentDetail) {
+async function mount(agent: IAgentDetail, extra: (path: string) => unknown = () => undefined) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().isAdmin = true
@@ -46,7 +54,7 @@ async function mount(agent: IAgentDetail) {
         ],
       }
     if (init?.method === 'PUT') return { ...agent }
-    return []
+    return extra(path) ?? []
   })
   const router = createRouter({
     history: createMemoryHistory(),
@@ -108,5 +116,44 @@ describe('AgentForm — grupo de modelos', () => {
     const second = await mount(AGENT)
     await saveWith(second.host, 'rapido')
     expect(put(second.calls).modelGroup).toBe('rapido')
+  })
+})
+
+describe('AgentForm — MCPs', () => {
+  const server = { key: 'crm', id: 'crm', name: 'CRM', enabled: true, status: { connected: true } }
+  const tools = [
+    { name: 'send_message', description: 'Envia uma mensagem' },
+    { name: 'archive_deal', description: 'Arquiva um negócio' },
+    { name: 'List_agents', description: 'Lista os agentes' },
+  ]
+  const mountMcp = (agent: IAgentDetail) => mount(agent, (path) => (path === '/mcp-servers' ? [server] : path === '/mcp-servers/crm/tools' ? tools : undefined))
+  const chips = (host: HTMLElement) => [...host.querySelectorAll('[data-test="mcp-chips"] button')].map((button) => button.textContent?.trim().split(/\s+/)[0])
+
+  it('as ferramentas de cada MCP em ordem alfabética, as escolhidas e não listadas no meio delas', async () => {
+    const { host } = await mountMcp({ ...AGENT, allowedTools: ['mcp:crm/get_turn'] })
+    expect(chips(host)).toEqual(['archive_deal', 'get_turn', 'List_agents', 'send_message'])
+  })
+
+  it('o filtro do MCP esconde o que não tem o texto (nome ou descrição) e não desmarca nada', async () => {
+    const { host } = await mountMcp({ ...AGENT, allowedTools: ['mcp:crm/send_message'] })
+    const filter = host.querySelector<HTMLInputElement>('[data-test="mcp-filter"]')!
+    expect(filter.getAttribute('aria-label')).toBe('Filtrar ferramentas de CRM')
+    filter.value = 'AGENT'
+    filter.dispatchEvent(new Event('input'))
+    await flush()
+    expect(chips(host)).toEqual(['List_agents'])
+    expect(host.querySelector('[data-test="mcp-filter-count"]')?.textContent).toBe('1 de 3')
+    filter.value = 'negócio'
+    filter.dispatchEvent(new Event('input'))
+    await flush()
+    expect(chips(host)).toEqual(['archive_deal'])
+    filter.value = 'nada disso'
+    filter.dispatchEvent(new Event('input'))
+    await flush()
+    expect(host.querySelector('[data-test="mcp-chips"]')?.textContent).toContain('Nenhuma ferramenta com esse texto.')
+    filter.value = ''
+    filter.dispatchEvent(new Event('input'))
+    await flush()
+    expect(host.querySelector('[data-test="mcp-chips"] button.on')?.textContent).toContain('send_message')
   })
 })
