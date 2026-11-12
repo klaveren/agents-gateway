@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import type { IConversation, IConversationPage } from '@/lib/types'
-import { applyEvent, useConversationsStore, type IConversationFilters } from './conversations'
+import { applyEvent, raise, useConversationsStore, type IConversationFilters } from './conversations'
 
 vi.mock('@/lib/api', () => ({ api: vi.fn(), openStream: vi.fn() }))
 
@@ -21,6 +21,24 @@ const conversation = (id: string, updatedAt: string, over: Partial<IConversation
 })
 
 const none: IConversationFilters = { q: '', agentId: '', classification: '' }
+
+describe('raise', () => {
+  const list = [conversation('c', '2026-10-22T10:03:00Z'), conversation('b', '2026-10-22T10:02:00Z'), conversation('a', '2026-10-22T10:01:00Z')]
+
+  it('o turno que começa sobe a conversa para a posição da última interação', () => {
+    expect(raise(list, 'a', '2026-10-22T10:05:00Z').map((item) => [item.id, item.updatedAt])).toEqual([
+      ['a', '2026-10-22T10:05:00Z'],
+      ['c', '2026-10-22T10:03:00Z'],
+      ['b', '2026-10-22T10:02:00Z'],
+    ])
+    expect(raise(list, 'a', '2026-10-22T10:02:30Z').map((item) => item.id)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('quem já está mais recente, ou não está na lista, fica como está', () => {
+    expect(raise(list, 'c', '2026-10-22T10:00:00Z')).toBe(list)
+    expect(raise(list, 'x', '2026-10-22T10:09:00Z')).toBe(list)
+  })
+})
 
 describe('applyEvent', () => {
   const list = [conversation('b', '2026-10-22T10:02:00Z'), conversation('a', '2026-10-22T10:01:00Z')]

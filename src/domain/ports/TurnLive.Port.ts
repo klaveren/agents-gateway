@@ -24,5 +24,5 @@ export interface ITurnLive {
   /** Devolve quem cancela a assinatura. */
   subscribe(sessionId: string, listener: (signal: TLiveTurnSignal) => void): () => void
   /** As conversas com turno em curso, com o `metadata` (para a caixa de entrada filtrar por dono). */
-  running(): Array<{ sessionId: string; metadata?: Record<string, unknown> }>
+  running(): Array<{ sessionId: string; startedAt: Date; metadata?: Record<string, unknown> }>
 }

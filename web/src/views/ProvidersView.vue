@@ -8,7 +8,7 @@ import ProviderModels from '@/components/ProviderModels.vue'
 import SubscriptionLogin from '@/components/SubscriptionLogin.vue'
 import Icon from '@/components/Icon.vue'
 import ListFilter from '@/components/ListFilter.vue'
-import { filterList } from '@/lib/listFilter'
+import { countLabel, filterList, sortByName } from '@/lib/listFilter'
 import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
 import type { IProbeResult, IProviderStatus, TProvider } from '@/lib/types'
@@ -24,7 +24,12 @@ const auth = useAuthStore()
 const providers = useProvidersStore()
 /** A busca do topo da lista. */
 const query = ref('')
-const shownProviders = computed(() => filterList(providers.list, { query: query.value }, (provider) => [provider.id, provider.name]))
+const shownProviders = computed(() =>
+  sortByName(
+    filterList(providers.list, { query: query.value }, (provider) => [provider.id, provider.name]),
+    (provider) => provider.name,
+  ),
+)
 const protocols = useProtocolsStore()
 
 /** `/models/new` abre o formulário no lugar do detalhe. */
@@ -175,6 +180,7 @@ function sourceLabel(provider: IProviderStatus): string {
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">Modelos</h1>
+        <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(shownProviders.length, providers.list.length) }}</span>
         <RouterLink to="/models/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar provedor"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Provedores oficiais e APIs compatíveis com OpenAI ou Anthropic.</p>

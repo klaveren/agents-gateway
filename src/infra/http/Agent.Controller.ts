@@ -1406,7 +1406,7 @@ export class AgentController {
       this.usecases.events?.subscribe((event: TConversationEvent) => {
         if (!visible(event.type === 'conversation.updated' ? event.session.metadata : event.metadata)) return
         if (event.type === 'conversation.updated') stream.emit(event.type, { session: toConversationDto(event.session, viewOf(event.session.metadata)) })
-        else stream.emit(event.type, { sessionId: event.sessionId })
+        else stream.emit(event.type, { sessionId: event.sessionId, ...(event.type === 'conversation.running' && event.at ? { at: event.at } : {}) })
       }) ?? (() => undefined)
     // ⛔ O catálogo: só o que a pessoa pode ver — o global, e o projeto de que ela é membro (nem o admin do gateway entra).
     const member = new Map<string, boolean>()
@@ -1433,7 +1433,8 @@ export class AgentController {
         if (visible.length) stream.emit('catalog.changed', { changes: visible })
       }) ?? (() => undefined)
     // Quem conecta (ou reconecta) fica sabendo das que JÁ estão rodando.
-    for (const running of this.usecases.live?.running() ?? []) if (visible(running.metadata)) stream.emit('conversation.running', { sessionId: running.sessionId })
+    for (const running of this.usecases.live?.running() ?? [])
+      if (visible(running.metadata)) stream.emit('conversation.running', { sessionId: running.sessionId, at: running.startedAt })
 
     // Em `res`, não em `req` — ver `sendMessageAsStream`: o `close` do request dispara cedo demais.
     res.on('close', () => {

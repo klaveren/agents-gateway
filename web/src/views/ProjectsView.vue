@@ -7,7 +7,7 @@ import ProjectConnectionCard from '@/components/ProjectConnectionCard.vue'
 import { useConnectionsStore } from '@/stores/connections'
 import Icon from '@/components/Icon.vue'
 import ListFilter from '@/components/ListFilter.vue'
-import { filterList } from '@/lib/listFilter'
+import { countLabel, filterList, sortByName } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
 import { useResource } from '@/composables/useResource'
 import { ApiError } from '@/lib/api'
@@ -29,7 +29,12 @@ const auth = useAuthStore()
 const projects = useProjectsStore()
 /** A busca do topo da lista. */
 const query = ref('')
-const shownProjects = computed(() => filterList(projects.list, { query: query.value }, (project) => [project.id, project.name, project.description]))
+const shownProjects = computed(() =>
+  sortByName(
+    filterList(projects.list, { query: query.value }, (project) => [project.id, project.name, project.description]),
+    (project) => project.name,
+  ),
+)
 const users = useUsersStore()
 /** As guias do projeto aberto, como no agente: os dados dele e quem o vê. */
 type TProjectTab = 'projeto' | 'membros'
@@ -198,6 +203,7 @@ async function confirmRemove() {
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">Projetos</h1>
+        <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(shownProjects.length, projects.list.length) }}</span>
         <RouterLink v-if="auth.isAdmin" to="/projects/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo projeto"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Cada projeto tem seus agentes, conversas e pasta.</p>

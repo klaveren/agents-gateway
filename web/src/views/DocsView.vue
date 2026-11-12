@@ -9,7 +9,7 @@ import Icon from '@/components/Icon.vue'
 import ListFilter from '@/components/ListFilter.vue'
 import TagChips from '@/components/TagChips.vue'
 import TagsInput from '@/components/TagsInput.vue'
-import { filterList, sameTags, tagNames } from '@/lib/listFilter'
+import { countLabel, filterList, sameTags, sortByName, tagNames } from '@/lib/listFilter'
 import BuildTabs from '@/components/BuildTabs.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
@@ -139,7 +139,7 @@ const statusFilter = ref<TDocStatusFilter>('all')
 const searched = computed(() => filterList(ofKind.value, { query: query.value, tag: tag.value }, (doc) => [doc.id, doc.title, doc.summary]))
 /** Quantos há de cada status, já com a busca e a tag aplicadas. */
 const statusTotals = computed(() => statusCounts(searched.value))
-const shown = computed(() => filterByStatus(searched.value, statusFilter.value))
+const shown = computed(() => sortByName(filterByStatus(searched.value, statusFilter.value), (doc) => doc.title))
 /** O filtro de status só aparece quando algum documento não é aceito (senão não há o que separar). */
 const showStatusFilter = computed(() => ofKind.value.some((doc) => docStatusOf(doc) !== 'accepted') || statusFilter.value !== 'all')
 /** As tags que a lista já usa (as sugestões do campo). */
@@ -404,6 +404,7 @@ function onInvalid(event: Event) {
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">{{ info.title }}</h1>
+        <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(shown.length, ofKind.length) }}</span>
         <RouterLink v-if="!connections.originOf(projects.current)" :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`${g.nova} ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs :kind="kind" active="list" class="px-3 pb-2" />

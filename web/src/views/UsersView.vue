@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import ListFilter from '@/components/ListFilter.vue'
-import { filterList } from '@/lib/listFilter'
+import { countLabel, filterList, sortByName } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
 import { ApiError } from '@/lib/api'
 import { fullTime, initials } from '@/lib/format'
@@ -20,7 +20,12 @@ const auth = useAuthStore()
 const users = useUsersStore()
 /** A busca do topo da lista. */
 const query = ref('')
-const shownUsers = computed(() => filterList(users.list, { query: query.value }, (user) => [user.name, user.email]))
+const shownUsers = computed(() =>
+  sortByName(
+    filterList(users.list, { query: query.value }, (user) => [user.name, user.email]),
+    (user) => user.name,
+  ),
+)
 
 /** `/users/new` abre o formulário no lugar do detalhe. */
 const creating = computed(() => route.name === 'user-new')
@@ -179,7 +184,7 @@ async function doReset() {
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">Usuários</h1>
-        <span class="text-sm text-zinc-500">{{ users.list.length }}</span>
+        <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(shownUsers.length, users.list.length) }}</span>
         <RouterLink to="/users/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo usuário"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <ListFilter v-model:query="query" placeholder="Buscar por nome ou e-mail…" />
