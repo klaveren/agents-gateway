@@ -115,10 +115,10 @@ export function mcpServersFor<T extends { projectId?: string }>(servers: readonl
 
 /**
  * ⛔ As ferramentas de conversa do MCP do próprio gateway são de pessoa, nunca de agente: o servidor não as entrega a agente
- * nenhum (`PEOPLE_ONLY_GATEWAY_TOOLS`), e oferecê-las aqui fazia o admin achar que ligava. Agente fala com agente pela
- * guia Delegação.
+ * nenhum (`PEOPLE_ONLY_GATEWAY_TOOLS`), e oferecê-las aqui fazia o admin achar que ligava. Agente fala com agente pelo
+ * `talk` local, que a guia Delegação libera.
  */
-export const PEOPLE_ONLY_GATEWAY_TOOLS: readonly string[] = ['start_conversation', 'send_message', 'get_turn']
+export const PEOPLE_ONLY_GATEWAY_TOOLS: readonly string[] = ['talk', 'start_conversation', 'send_message', 'get_turn']
 export const SELF_MCP_SERVER_ID = 'gateway'
 
 /** O que a tela do agente oferece de um servidor MCP: do gateway, sem as de conversa. */

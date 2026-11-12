@@ -148,8 +148,8 @@ describe('homeProjectOf', () => {
 
 describe('agentFacingTools', () => {
   it('⛔ do MCP do gateway, a tela do agente não oferece as ferramentas de conversa; dos outros, tudo', () => {
-    const tools = [{ name: 'list_agents' }, { name: 'send_message' }, { name: 'start_conversation' }, { name: 'get_turn' }]
+    const tools = [{ name: 'list_agents' }, { name: 'talk' }, { name: 'send_message' }, { name: 'start_conversation' }, { name: 'get_turn' }]
     expect(agentFacingTools('gateway', tools).map((tool) => tool.name)).toEqual(['list_agents'])
-    expect(agentFacingTools('outro', tools)).toHaveLength(4)
+    expect(agentFacingTools('outro', tools)).toHaveLength(5)
   })
 })
