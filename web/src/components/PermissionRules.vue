@@ -1,13 +1,8 @@
 <script setup lang="ts">
-  import { computed, onMounted, watch } from 'vue'
-  import { useScopedResources } from '@/composables/useCatalogLists'
-  import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
+  import { computed } from 'vue'
+  import { usePermissionChoices } from '@/composables/usePermissionChoices'
   import { fixPattern, PERMISSION_SECTIONS, patternWarning } from '@/lib/permissions'
   import type { IPermissionRule, TPermissionCategory } from '@/lib/types'
-  import { useAccountsStore } from '@/stores/accounts'
-  import { useAgentsStore } from '@/stores/agents'
-  import { useMcpStore } from '@/stores/mcp'
-  import { useProjectsStore } from '@/stores/projects'
 
   /**
    * O editor de regras de permissão, por categoria. ⚖️ A ordem não importa: dentro da mesma lista, Negar vence Permitir.
@@ -21,92 +16,8 @@
     PERMISSION_SECTIONS.filter((section) => !props.only || section.category === props.only).map((section) => ({ ...section, rules: rules.value.map((rule, index) => ({ rule, index })).filter(({ rule }) => rule.category === section.category) })),
   )
 
-  /**
-   * ⚖️ Na DELEGAÇÃO o padrão é um agente: escolhido numa lista (os agentes, os construtores do sistema e os curingas de
-   * sempre), não digitado. O padrão gravado que não está na lista aparece como está, para não sumir.
-   */
-  const agents = useAgentsStore()
-  onMounted(() => void agents.ensure().catch(() => undefined))
-  const delegateGroups = computed(() => [
-    {
-      label: 'Curingas',
-      options: [
-        { value: '*', label: 'Todos os agentes (*)' },
-        { value: 'builder-*', label: 'Todos os construtores do sistema (builder-*)' },
-      ],
-    },
-    { label: 'Agentes', options: agents.list.map((agent) => ({ value: agent.id, label: `${agent.name} (${agent.id})` })) },
-    {
-      label: 'Do sistema',
-      options: (Object.keys(BUILD_KINDS) as TBuildKind[]).map((kind) => ({ value: builderAgentId(kind), label: `${BUILD_KINDS[kind].builder} (${builderAgentId(kind)})` })),
-    },
-  ])
-
-  /** ⚖️ Skills e MCP também se escolhem numa lista: as skills (globais e do projeto em uso) e os servidores com as ferramentas. */
-  const projects = useProjectsStore()
-  const resources = useScopedResources(() => projects.current ?? null)
-  const skillGroups = computed(() => [
-    { label: 'Curingas', options: [{ value: '*', label: 'Todas as skills (*)' }] },
-    {
-      label: 'Skills',
-      options: resources.list.value.filter((item) => item.kind === 'skill').map((item) => ({ value: item.id, label: item.description ? `${item.id} — ${item.description}` : item.id })),
-    },
-  ])
-  const mcp = useMcpStore()
-  onMounted(() => void mcp.ensure().catch(() => undefined))
-  const servers = computed(() => mcp.list.filter((server) => server.enabled))
-  // As ferramentas de cada servidor ligado, para a lista (o servidor fora do ar fica só com o "todas").
-  watch(
-    () => servers.value.map((server) => server.key),
-    (keys) => keys.forEach((key) => void mcp.loadTools(key).catch(() => undefined)),
-    { immediate: true },
-  )
-  const mcpGroups = computed(() => [
-    { label: 'Curingas', options: [{ value: '*', label: 'Todas as ferramentas de todos os MCPs (*)' }] },
-    ...servers.value.map((server) => ({
-      label: server.name,
-      options: [
-        { value: `${server.id}/*`, label: `Todas as ferramentas de ${server.name} (${server.id}/*)` },
-        ...(mcp.tools[server.key] ?? []).map((tool) => ({ value: `${server.id}/${tool.name}`, label: `${server.id}/${tool.name}` })),
-      ],
-    })),
-  ])
-  /**
-   * ⚖️ As CONTAS também se escolhem numa lista: as do projeto em uso (Projeto → Contas). O aviso de fim de turno não entra
-   * (nunca vai ao terminal). Sem acesso às contas (quem não administra), a lista fica só com o curinga.
-   */
-  const accounts = useAccountsStore()
-  watch(
-    () => projects.current,
-    (projectId) => void (projectId && accounts.lists.ensure(projectId).catch(() => undefined)),
-    { immediate: true },
-  )
-  const accountGroups = computed(() => [
-    { label: 'Curingas', options: [{ value: '*', label: 'Todas as contas do projeto (*)' }] },
-    {
-      label: 'Contas do projeto',
-      options: (projects.current ? (accounts.lists.get(projects.current) ?? []) : [])
-        .filter((account) => account.kind !== 'turn-callback')
-        .map((account) => ({ value: account.id, label: account.label && account.label !== account.id ? `${account.label} (${account.id})` : account.id })),
-    },
-  ])
-  /** A lista de cada categoria que se escolhe (as outras são padrões digitados). */
-  const groupsOf = (category: TPermissionCategory) =>
-    category === 'delegate'
-      ? delegateGroups.value
-      : category === 'skill'
-        ? skillGroups.value
-        : category === 'mcp'
-          ? mcpGroups.value
-          : category === 'account'
-            ? accountGroups.value
-            : undefined
-  const choiceLabel: Partial<Record<TPermissionCategory, [string, string]>> = {
-    delegate: ['Agente', 'Escolha o agente…'],
-    skill: ['Skill', 'Escolha a skill…'],
-    mcp: ['Ferramenta MCP', 'Escolha a ferramenta…'],
-    account: ['Conta', 'Escolha a conta…'],
-  }
+  /** As categorias que se escolhem numa lista (ver `usePermissionChoices`); as outras são padrões digitados. */
+  const { groupsOf, choiceLabel } = usePermissionChoices()
   const known = (category: TPermissionCategory, pattern: string) => !pattern || !!groupsOf(category)?.some((group) => group.options.some((option) => option.value === pattern))
 
   function add(category: TPermissionCategory) {

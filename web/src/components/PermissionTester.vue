@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { usePermissionChoices } from '@/composables/usePermissionChoices'
 import { api } from '@/lib/api'
 import { LAYER_LABEL, PERMISSION_SECTIONS } from '@/lib/permissions'
 import type { IPermissionPart, TPermissionCategory } from '@/lib/types'
@@ -14,11 +15,25 @@ const placeholder = computed(() =>
   category.value === 'terminal' ? 'git push origin main && cat .env' : (PERMISSION_SECTIONS.find((section) => section.category === category.value)?.example ?? ''),
 )
 const value = ref('')
+/**
+ * ⚖️ Nas categorias de lista (agente, skill, MCP, conta, repositório), o teste também se escolhe: só os valores de
+ * verdade — o curinga é de regra, não de teste.
+ */
+const { groupsOf, choiceLabel } = usePermissionChoices()
+const choices = computed(() => {
+  const list = groupsOf(category.value)
+    ?.filter((group) => !group.wildcard)
+    .map((group) => ({ ...group, options: group.options.filter((option) => !option.value.endsWith('*')) }))
+    .filter((group) => group.options.length)
+  // Lista vazia (ainda lendo, ou sem acesso às contas): o campo volta a ser digitado.
+  return list?.length ? list : undefined
+})
 const result = ref<{ allowed: boolean; parts: IPermissionPart[] }>()
 const error = ref<string>()
 const busy = ref(false)
 // Outra guia: o resultado era da categoria anterior.
 watch(category, () => {
+  value.value = ''
   result.value = undefined
   error.value = undefined
 })
@@ -47,7 +62,13 @@ async function run() {
       <select :value="category" class="input w-44 cursor-not-allowed text-sm text-zinc-400" aria-label="Categoria" title="A categoria é a da guia aberta" disabled data-test="tester-category">
         <option v-for="section in PERMISSION_SECTIONS" :key="section.category" :value="section.category">{{ section.label }}</option>
       </select>
-      <input v-model="value" class="input min-w-0 flex-1 font-mono text-[13px]" :placeholder="placeholder" @keydown.enter.prevent="run" />
+      <select v-if="choices" v-model="value" class="input min-w-0 flex-1 text-[13px]" :aria-label="choiceLabel[category]?.[0]" data-test="tester-choice">
+        <option value="" disabled>{{ choiceLabel[category]?.[1] }}</option>
+        <optgroup v-for="group in choices" :key="group.label" :label="group.label">
+          <option v-for="option in group.options" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </optgroup>
+      </select>
+      <input v-else v-model="value" class="input min-w-0 flex-1 font-mono text-[13px]" :placeholder="placeholder" @keydown.enter.prevent="run" />
       <button type="button" class="btn btn-secondary" :disabled="busy || !value.trim()" @click="run">Testar</button>
     </div>
     <p v-if="error" class="text-xs text-rose-300">{{ error }}</p>

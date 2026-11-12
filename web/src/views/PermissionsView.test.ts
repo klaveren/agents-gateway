@@ -126,3 +126,32 @@ describe('PermissionsView — a guia manda no teste e nas últimas decisões', (
     expect(test(host, 'no-decisions')!.textContent).toContain('Ler arquivos')
   })
 })
+
+describe('PermissionsView — o que se escolhe numa lista', () => {
+  const reply = (path: string) =>
+    path === '/projects/p1/repositories'
+      ? [{ name: 'logiccus', worktrees: [] }]
+      : path === '/projects/p1/accounts'
+        ? { accounts: [{ id: 'isrv-ssh', kind: 'ssh-key', label: 'infoccus-ssh-servers', public: {} }, { id: 'aviso', kind: 'turn-callback', label: 'aviso', public: {} }] }
+        : path === '/agents'
+          ? [{ id: 'argos', name: 'Argos', providers: [], modes: [], allowedTools: [] }]
+          : undefined
+
+  it('Repositórios, Triggers e Contas: a regra escolhe na lista; o teste escolhe só valores de verdade (sem curinga nem o aviso)', async () => {
+    const { host } = await mount(reply)
+    const options = (select: Element | null) => [...(select as HTMLSelectElement).options].map((option) => option.value)
+
+    for (const [tab, label, expected] of [
+      ['tab-repository', 'Repositório', ['', '*', 'logiccus']],
+      ['tab-trigger', 'Agente', ['', '*', 'argos']],
+      ['tab-account', 'Conta', ['', '*', 'isrv-ssh']],
+    ] as const) {
+      test(host, tab)!.click()
+      await flush()
+      ;[...host.querySelectorAll('button')].find((button) => button.textContent?.trim() === '+ Regra')!.click()
+      await flush()
+      expect(options(host.querySelector(`ul select[aria-label="${label}"]`)), tab).toEqual(expected)
+      expect(options(test(host, 'tester-choice')), tab).toEqual(expected.filter((value) => value !== '*'))
+    }
+  })
+})
