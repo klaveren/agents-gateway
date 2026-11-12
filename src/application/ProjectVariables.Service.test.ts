@@ -24,7 +24,7 @@ describe('ProjectVariablesService', () => {
   }
   const plain: IMcpServerConfig = { ...n8n, id: 'sem-pedido', name: 'Sem pedido', process: { args: [], command: 'x', env: [], scope: 'conversation' } }
 
-  function setup(accounts: Record<string, { name: string; value: string }> = {}) {
+  function setup(accounts: Record<string, { name: string; value: string }> = {}, connected?: { list: IProjectMcpVar[] }) {
     const project: IProject = { id: 'alfa', name: 'Alfa', createdAt: at, updatedAt: at }
     const secrets = new ResourceSecretsService({
       store: new SqliteResourceSecretRepository(new SecretBox(randomBytes(32))),
@@ -45,9 +45,31 @@ describe('ProjectVariablesService', () => {
         secretEnv: (_projectId, id) => accounts[id],
         remove: (_projectId, id) => (removed.push(id), true),
       },
+      ...(connected ? { connected: { read: () => [...connected.list], write: (_id: string, list: IProjectMcpVar[]) => void (connected.list = list) } } : {}),
     })
     return { service, secrets, project, removed }
   }
+
+  it('🔌 projeto conectado: o valor visível é desta máquina, por cima do da origem; apagar tira só o daqui', () => {
+    const connected = { list: [] as IProjectMcpVar[] }
+    const { service, project } = setup({}, connected)
+    project.mcpEnv = [{ server: 'n8n', name: 'N8N_URL', value: 'https://da-origem' }]
+    const before = service.mcpVariables('alfa')[0]!.variables.find((item) => item.name === 'N8N_URL')
+    assert.deepStrictEqual(before, { name: 'N8N_URL', secret: false, configured: true, value: 'https://da-origem' })
+
+    service.saveMcpVariable('alfa', 'n8n', 'N8N_URL', 'http://localhost:5678', 'dev')
+    assert.deepStrictEqual(connected.list, [{ server: 'n8n', name: 'N8N_URL', value: 'http://localhost:5678' }])
+    assert.deepStrictEqual(project.mcpEnv, [{ server: 'n8n', name: 'N8N_URL', value: 'https://da-origem' }], 'o da origem não muda')
+    assert.deepStrictEqual(
+      service.mcpVariables('alfa')[0]!.variables.find((item) => item.name === 'N8N_URL'),
+      { name: 'N8N_URL', secret: false, configured: true, value: 'http://localhost:5678', local: true },
+    )
+
+    assert.strictEqual(service.removeMcpVariable('alfa', 'n8n', 'N8N_URL', 'dev'), true)
+    assert.deepStrictEqual(connected.list, [])
+    assert.strictEqual(service.mcpVariables('alfa')[0]!.variables.find((item) => item.name === 'N8N_URL')?.value, 'https://da-origem')
+    assert.strictEqual(service.removeMcpVariable('alfa', 'n8n', 'N8N_URL', 'dev'), false, 'o da origem não sai daqui')
+  })
 
   it('lista só o MCP que pede valor ao projeto: as fixas pelo nome, a visível com o valor, a secreta sem', () => {
     const { service } = setup()

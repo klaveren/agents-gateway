@@ -797,7 +797,8 @@ export interface IMcpProjectVariables {
   name: string
   enabled: boolean
   fixed: string[]
-  variables: Array<{ name: string; secret: boolean; configured: boolean; value?: string }>
+  /** `local`: num projeto conectado, o valor visível é desta máquina (por cima do da origem). */
+  variables: Array<{ name: string; secret: boolean; configured: boolean; value?: string; local?: boolean }>
 }
 
 /** O papel no projeto: o administrador cuida de tudo dele; o membro conversa com os agentes. */

@@ -40,7 +40,12 @@ function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[
     repository,
     box: { seal: (plain) => plain, open: (box) => box },
     client: () => client,
-    projects: { exists: () => true, create: () => undefined, keepEnv: (id, env) => void steps.push(`keep-env ${id} ${JSON.stringify(env)}`) },
+    projects: {
+      exists: () => true,
+      create: () => undefined,
+      keepEnv: (id, env) => void steps.push(`keep-env ${id} ${JSON.stringify(env)}`),
+      keepMcpEnv: (id, list) => void steps.push(`keep-mcp ${id} ${list.map((item) => `${item.server}/${item.name}`).join(',')}`),
+    },
     files: { has: () => true, put: () => ({ sha256: '' }) },
     applier: {
       plan: async ({ documents }: { documents: ICatalogDocument[] }) => {
@@ -152,8 +157,10 @@ describe('projeto conectado: a cópia', () => {
     for (const env of [{ minusculo: 'x' }, { API_TOKEN: 'x' }, { PATH: '/tmp' }] as Array<Record<string, string>>)
       assert.throws(() => service.setLocalEnv('logiccus', env), /Project is invalid|invalid/i, JSON.stringify(env))
     assert.deepEqual(repository.get('logiccus')?.localEnv, { API_BASE_URL: 'http://localhost:4000' })
+    service.setLocalMcpEnv('logiccus', [{ server: 'n8n', name: 'N8N_API_URL', value: 'http://localhost:5678' }])
+    assert.throws(() => service.setLocalMcpEnv('logiccus', [{ server: 'n8n', name: 'minusculo', value: 'x' }]), /invalid/i)
     service.disconnect('logiccus', 'dev')
-    assert.deepEqual(steps, ['apply logiccus', 'keep-env logiccus {"API_BASE_URL":"http://localhost:4000"}', 'release logiccus'])
+    assert.deepEqual(steps, ['apply logiccus', 'keep-env logiccus {"API_BASE_URL":"http://localhost:4000"}', 'keep-mcp logiccus n8n/N8N_API_URL', 'release logiccus'])
     // Vazia, a conexão não leva nada ao projeto.
     const other = build([])
     other.service.setLocalEnv('logiccus', {})

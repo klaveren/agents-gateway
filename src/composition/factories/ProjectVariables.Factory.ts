@@ -6,7 +6,7 @@ import { makeAgents } from './Agents.Factory'
 import { makeAuth } from './Auth.Factory'
 import { makeCredentials } from './Credentials.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
-import { connectedLocalEnv, makeProjects } from './Projects.Factory'
+import { connectedLocalEnv, connectedMcpValues, makeProjects } from './Projects.Factory'
 import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { makeTools } from './Tools.Factory'
 
@@ -20,6 +20,7 @@ export function makeProjectVariables(): ProjectVariablesService {
     secrets: makeResourceSecrets(),
     mcps: (projectId) => makeTools().mcp.visibleTo(projectId),
     accounts: makeProjectAccounts(),
+    connected: connectedMcpValues,
   })
   return instance
 }
@@ -44,7 +45,9 @@ export function projectFixedEnv(projectId: string | undefined): Readonly<Record<
 export function projectMcpEnv(config: IMcpServerConfig, projectId: string | undefined, sessionId?: string): Record<string, string> {
   if (!projectId || !mcpAsksProject(config) || !makeProjects().exists(projectId)) return {}
   const asked = mcpProjectVarNames(config)
-  const visible = (makeProjects().get(projectId).mcpEnv ?? []).filter((item) => item.server === config.id && asked.includes(item.name))
+  // 🔌 Projeto conectado: o valor desta máquina vence o que veio da origem.
+  const local = connectedMcpValues.read(projectId) ?? []
+  const visible = [...(makeProjects().get(projectId).mcpEnv ?? []), ...local].filter((item) => item.server === config.id && asked.includes(item.name))
   const secretNames = mcpEnvNames(config)
   const secret = Object.entries(makeResourceSecrets().mcpEnv(mcpServerKey(config), projectId, sessionId)).filter(([name]) => secretNames.includes(name))
   return { ...Object.fromEntries(visible.map((item) => [item.name, item.value])), ...Object.fromEntries(secret) }

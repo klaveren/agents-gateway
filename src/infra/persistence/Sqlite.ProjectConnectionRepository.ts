@@ -1,3 +1,4 @@
+import type { IProjectMcpVar } from '@domain/models/Project.Model'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -59,6 +60,8 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
     if (!columns.some((column) => column.name === 'usage_sent_at')) this.db.exec('ALTER TABLE project_connections ADD COLUMN usage_sent_at TEXT')
     // As fixas desta máquina (ver `IProjectConnection.localEnv`).
     if (!columns.some((column) => column.name === 'local_env')) this.db.exec("ALTER TABLE project_connections ADD COLUMN local_env TEXT NOT NULL DEFAULT '{}'")
+    // Os valores "Do projeto" dos MCPs desta máquina (ver `IProjectConnection.localMcpEnv`).
+    if (!columns.some((column) => column.name === 'local_mcp_env')) this.db.exec("ALTER TABLE project_connections ADD COLUMN local_mcp_env TEXT NOT NULL DEFAULT '[]'")
   }
 
   insert(connection: IProjectConnection, tokenSealed: string): void {
@@ -106,6 +109,7 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
     set('secrets', patch.secrets && JSON.stringify(patch.secrets))
     set('model_map', patch.modelMap && JSON.stringify(patch.modelMap))
     set('local_env', patch.localEnv && JSON.stringify(patch.localEnv))
+    set('local_mcp_env', patch.localMcpEnv && JSON.stringify(patch.localMcpEnv))
     set('last_checked_at', patch.lastCheckedAt?.toISOString())
     set('last_synced_at', patch.lastSyncedAt?.toISOString())
     set('usage_sent_at', patch.usageSentAt?.toISOString())
@@ -177,6 +181,7 @@ function toConnection(row: TRow): IProjectConnection {
   const lastSyncedAt = date(row.last_synced_at)
   const usageSentAt = date(row.usage_sent_at)
   const localEnv = json<Record<string, string>>(row.local_env, {})
+  const localMcpEnv = json<IProjectMcpVar[]>(row.local_mcp_env, [])
   return {
     projectId: String(row.project_id),
     url: String(row.url),
@@ -191,6 +196,7 @@ function toConnection(row: TRow): IProjectConnection {
     secrets: json(row.secrets, []),
     modelMap: json(row.model_map, {}),
     ...(localEnv && typeof localEnv === 'object' && Object.keys(localEnv).length ? { localEnv } : {}),
+    ...(Array.isArray(localMcpEnv) && localMcpEnv.length ? { localMcpEnv } : {}),
     createdAt: new Date(String(row.created_at)),
     createdBy: String(row.created_by),
     ...(lastCheckedAt ? { lastCheckedAt } : {}),
