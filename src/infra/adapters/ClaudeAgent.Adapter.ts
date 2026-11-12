@@ -228,7 +228,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       disallowedTools: claudeHiddenTools(remotes),
       // Nomes soltos em `allowedTools` aprovam antes de o callback rodar e o SDK
       // avisa que o `canUseTool` foi sombreado; por isso o gate fica só aqui.
-      // As locais montadas entram pelo NOME — a `delegate_to_agent` vem de `agent:<id>`, não de um nome em `allowedTools`.
+      // As locais montadas entram pelo NOME — o `talk` vem de `agent:<id>`, não de um nome em `allowedTools`.
       canUseTool: gate,
       // ⛔ A MESMA decisão também no PreToolUse, que roda em toda ferramenta e em TODO agente — o SDK libera leitura
       // (Read, Glob, Grep) sem passar pelo `canUseTool`, e o filtro de caminho (projeto) e a lista protegida (.env,
@@ -271,7 +271,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     /**
      * ⛔ A ENTRADA FICA ABERTA ATÉ O `result` DO TURNO. Com o pedido em texto (`prompt: string`), o SDK fecha a entrada do CLI
      * assim que ACHA que o turno acabou — e uma tarefa lateral do CLI (o título da conversa) bastava: a ferramenta local que
-     * estava rodando (`delegate_to_agent` esperando o Zeus) perdia a resposta, "The tool call was interrupted", e o turno
+     * estava rodando (a delegação esperando o Zeus) perdia a resposta, "The tool call was interrupted", e o turno
      * da Maya acabava sem ler o que o outro agente disse. Pelo iterável, quem fecha somos nós, no fim de verdade.
      */
     let releaseInput!: () => void

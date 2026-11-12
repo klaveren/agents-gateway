@@ -57,10 +57,12 @@ describe('a espera do turno no MCP do gateway', () => {
   it('só a chamada que espera turno, de cliente que aceita SSE, vai em fluxo', () => {
     const sse = { accept: 'application/json, text/event-stream' }
     const call = (name: string) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } })
-    for (const name of ['send_message', 'get_turn', 'start_conversation']) assert.strictEqual(streamsTurn({ headers: sse, body: call(name) }), true, name)
+    assert.strictEqual(streamsTurn({ headers: sse, body: call('talk') }), true)
+    // As antigas saíram: nem vão em fluxo.
+    for (const name of ['send_message', 'get_turn', 'start_conversation']) assert.strictEqual(streamsTurn({ headers: sse, body: call(name) }), false, name)
     assert.strictEqual(streamsTurn({ headers: sse, body: call('list_agents') }), false)
-    assert.strictEqual(streamsTurn({ headers: { accept: 'application/json' }, body: call('send_message') }), false)
+    assert.strictEqual(streamsTurn({ headers: { accept: 'application/json' }, body: call('talk') }), false)
     assert.strictEqual(streamsTurn({ headers: sse, body: { jsonrpc: '2.0', id: 1, method: 'tools/list' } }), false)
-    assert.strictEqual(streamsTurn({ headers: sse, body: [call('send_message')] }), false)
+    assert.strictEqual(streamsTurn({ headers: sse, body: [call('talk')] }), false)
   })
 })

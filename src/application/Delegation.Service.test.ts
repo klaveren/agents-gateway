@@ -100,7 +100,7 @@ describe('DelegationService', () => {
     await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', message: 'dois' }, { sessionId: 'pai' })
     assert.strictEqual(late.length, 1)
     assert.strictEqual(late[0].parent, 'pai')
-    assert.match(late[0].text, /Resposta de tradutor à sua delegação \(sessionId filha-2\)[\s\S]*\[tradutor\] dois/)
+    assert.match(late[0].text, /Resposta de tradutor \(conversation filha-2\), que chegou depois do fim do seu turno[\s\S]*\[tradutor\] dois/)
   })
 
   it('⚖️ a filha sai da memória ao fim do turno dela (não ocupa a vaga de conversa viva); a mãe, não', async () => {
@@ -255,5 +255,82 @@ describe('DelegationService', () => {
     const other = await service.delegate({ allowed: ['integra'], agentId: 'integra', sessionId: 'de-outro', message: 'x' }, { sessionId: 'pai' })
     assert.match(other.ok ? '' : other.error, /another person/)
     assert.strictEqual(resumed.length, 1)
+  })
+
+  it('⚖️ `wait: false` não espera: volta pendente, e a resposta entra depois — num turno novo, ou na fila do turno que roda', async () => {
+    const { service, sessions } = build()
+    const late: string[] = []
+    service.useLateDelivery((_parent, text) => void late.push(text))
+    const until = async (done: () => boolean) => {
+      for (let i = 0; i < 50 && !done(); i++) await new Promise((resolve) => setImmediate(resolve))
+    }
+    const result = await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', message: 'um', wait: false }, { sessionId: 'pai' })
+    assert.deepStrictEqual(result, { ok: true, agentId: 'tradutor', sessionId: 'filha-1', reply: '', pending: true })
+    await until(() => late.length > 0)
+    assert.match(late[0], /^\[Resposta de tradutor \(conversation filha-1\), que você pediu sem esperar[\s\S]*\[tradutor\] um$/)
+
+    const queued: string[] = []
+    const internals = service as unknown as { provider: IAgentProvider }
+    internals.provider.enqueue = (_id, text) => queued.push(text)
+    sessions.get('pai')!.status = 'running'
+    await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', message: 'dois', wait: false }, { sessionId: 'pai' })
+    await until(() => queued.length > 0)
+    assert.match(queued[0], /que você pediu sem esperar[\s\S]*\[tradutor\] dois$/)
+    assert.strictEqual(late.length, 1)
+  })
+
+  describe('o `talk` sem mensagem: com quem falar e o estado de uma conversa', () => {
+    const lookupFor = (stored: Array<IStoredConversation & { id: string; title?: string }>, replies: Record<string, string> = {}) => ({
+      name: (id: string) => ({ integra: 'Integra' })[id],
+      find: async (id: string) => stored.find((item) => item.id === id),
+      conversations: async () => stored,
+      lastReply: async (id: string) => replies[id],
+    })
+
+    it('lista os agentes que ele chama e as conversas abertas: as filhas dele e as da pessoa no mesmo projeto', async () => {
+      const { service } = build({ owner: { id: 'ana' }, project: 'bh' })
+      service.useLookup(
+        lookupFor([
+          { id: 'pai', agentId: 'redator', metadata: { owner: { id: 'ana' }, project: 'bh' } },
+          { id: 'filha', agentId: 'tradutor', metadata: { owner: { id: 'ana' }, project: 'bh', delegatedBy: 'pai' } },
+          { id: 'da-ana', agentId: 'integra', title: 'Notas', metadata: { owner: { id: 'ana' }, project: 'bh' } },
+          { id: 'outro-projeto', agentId: 'integra', metadata: { owner: { id: 'ana' }, project: 'xpto' } },
+          { id: 'filha-de-outra', agentId: 'integra', metadata: { owner: { id: 'ana' }, project: 'bh', delegatedBy: 'outra' } },
+          { id: 'fora-da-lista', agentId: 'secreto', metadata: { owner: { id: 'ana' }, project: 'bh' } },
+        ]),
+      )
+      assert.deepStrictEqual(await service.directory(['tradutor', 'integra'], { sessionId: 'pai' }), {
+        agents: [{ id: 'tradutor' }, { id: 'integra', name: 'Integra' }],
+        conversations: [
+          { conversation: 'filha', to: 'tradutor', kind: 'child' },
+          { conversation: 'da-ana', to: 'integra', kind: 'person', title: 'Notas' },
+        ],
+      })
+      // Sem a conversa que chama, só os agentes.
+      assert.deepStrictEqual((await service.directory(['integra'], {})).conversations, [])
+    })
+
+    it('⛔ o estado só da conversa que ele alcançaria: a filha ou a da mesma pessoa; a de outra pessoa e fora da lista, não', async () => {
+      const { service, sessions } = build({ owner: { id: 'ana' }, project: 'bh' })
+      service.useLookup(
+        lookupFor(
+          [
+            { id: 'gravada', agentId: 'integra', metadata: { owner: { id: 'ana' }, project: 'bh' } },
+            { id: 'da-bia', agentId: 'integra', metadata: { owner: { id: 'bia' }, project: 'bh' } },
+          ],
+          { gravada: 'pronto' },
+        ),
+      )
+      sessions.set('viva', { ...session('viva', 'integra', { owner: { id: 'ana' }, project: 'bh' }), status: 'running' })
+      assert.deepStrictEqual(await service.status(['integra'], 'gravada', { sessionId: 'pai' }), {
+        ok: true,
+        status: { conversation: 'gravada', to: 'integra', running: false, reply: 'pronto' },
+      })
+      assert.deepStrictEqual(await service.status(['integra'], 'viva', { sessionId: 'pai' }), { ok: true, status: { conversation: 'viva', to: 'integra', running: true } })
+      assert.match(JSON.stringify(await service.status(['integra'], 'da-bia', { sessionId: 'pai' })), /another person/)
+      assert.match(JSON.stringify(await service.status(['tradutor'], 'gravada', { sessionId: 'pai' })), /not allowed to talk to integra/)
+      assert.match(JSON.stringify(await service.status(['integra'], 'sumiu', { sessionId: 'pai' })), /was deleted or does not exist/)
+      assert.match(JSON.stringify(await service.status(['integra'], 'gravada', {})), /needs the calling conversation/)
+    })
   })
 })

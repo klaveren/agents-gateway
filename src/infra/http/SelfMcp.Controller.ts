@@ -126,7 +126,7 @@ function resourceIndex(result: unknown): unknown {
  *   resposta, por mais que ela demore. O aviso de progresso a cada 15 s mantém viva a chamada (o Claude Code aborta
  *   depois de 5 min sem resposta nem progresso); o cliente que desliga encerra a espera (`signal`);
  * - em fluxo sem `progressToken`: 4 min, abaixo desses 5 min.
- * Turno mais longo segue no servidor; quem chamou acompanha com `get_turn`.
+ * Turno mais longo segue no servidor; quem chamou acompanha com o `talk` (`conversation` + `turn`).
  */
 const TURN_WAIT = {
   json: { default: 45, max: 50 },
@@ -136,7 +136,7 @@ const TURN_WAIT = {
 const TURN_POLL_MS = 1000
 const TURN_PROGRESS_MS = 15_000
 /** As ferramentas que seguram a chamada até o fim do turno: só elas respondem em fluxo (ver `serve`). */
-const TURN_TOOLS = new Set(['start_conversation', 'send_message', 'get_turn'])
+const TURN_TOOLS = new Set(['talk'])
 
 /** O que a chamada da ferramenta traz do cliente para a espera: o progresso, o cancelamento e o modo da resposta. */
 export interface ITurnWait {
@@ -174,7 +174,7 @@ const waitSecondsShape = z
   .min(0)
   .optional()
   .describe(
-    `How long to wait for the turn to finish. Default: until it ends, with no limit, when the client streams (SSE) and sends a progressToken (a progress notification every ${TURN_PROGRESS_MS / 1000} s keeps the call alive); ${TURN_WAIT.stream.max} s when it streams without one; ${TURN_WAIT.json.max} s on a plain JSON response. Still running after that: \`status: running\`; call get_turn.`,
+    `How long to wait for the turn to finish. Default: until it ends, with no limit, when the client streams (SSE) and sends a progressToken (a progress notification every ${TURN_PROGRESS_MS / 1000} s keeps the call alive); ${TURN_WAIT.stream.max} s when it streams without one; ${TURN_WAIT.json.max} s on a plain JSON response. Still running after that: \`status: running\`; follow it with talk (\`conversation\` + \`turn\`).`,
   )
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -215,7 +215,7 @@ async function startTurn(api: TSelfApi, sessionId: string, message: string, wait
 function turnStatusView(result: unknown) {
   const turn = (result ?? {}) as Record<string, unknown>
   return {
-    sessionId: turn.conversationId,
+    conversation: turn.conversationId,
     turn: turn.turn,
     status: turn.status,
     text: turn.text,
@@ -227,54 +227,52 @@ function turnStatusView(result: unknown) {
 }
 
 /**
- * ⛔ AS FERRAMENTAS DE CONVERSA, só para quem está de fora (pessoa, integração) — ver `PEOPLE_ONLY_GATEWAY_TOOLS`.
+ * ⚖️ O `talk`: UMA ferramenta para conversar, só para quem está de fora (pessoa, integração) — ver
+ * `PEOPLE_ONLY_GATEWAY_TOOLS`. Tomou o lugar de `start_conversation`, `send_message` e `get_turn`; o caso sai dos campos.
  * ⚖️ A ESPERA SEGUE O CLIENTE (ver `TURN_WAIT`): em fluxo com progresso, a chamada fica aberta até o turno acabar, e
  * quem conversa não precisa perguntar de novo; em JSON, 50 s e `running`, como antes.
  */
-function registerConversationTools(server: McpServer, api: TSelfApi, streaming: boolean) {
+export function registerConversationTools(server: Pick<McpServer, 'registerTool'>, api: TSelfApi, streaming: boolean) {
   server.registerTool(
-    'start_conversation',
+    'talk',
     {
       description:
-        'Open a conversation with an agent. With `message`, also starts the first turn and waits for it (see `waitSeconds`: on a streaming client, until it ends); a longer turn comes back as `status: running` — follow it with get_turn. `metadata` is stored with the conversation (e.g. { accountId, userId }) for billing and filtering.',
+        'Talk to an agent — one tool for every case. No arguments: the agents you can talk to and your recent conversations. `to` + `message`: open a conversation with that agent and send the first message. `to` alone: just open it (returns the conversation id). `conversation` + `message`: send in one of your conversations. A turn longer than `wait` comes back `status: running` with its `turn`: follow it with `conversation` + `turn`. When opening: `projectId` (for a global agent), `provider`, `model`, `reasoning`, `mode`, and `metadata` (stored with the conversation, e.g. { accountId, userId }, for billing and filtering).',
       inputSchema: {
-        agentId: z.string(),
-        mode: z.enum(['chat', 'agent']).optional().describe('chat = plain SDK; agent = the provider Agents SDK.'),
-        provider: z.string().optional().describe('One of the agent providers; default: the first that offers `model`.'),
+        to: z.string().optional().describe('The agent id to talk to (to open a conversation).'),
+        message: z.string().optional(),
+        conversation: z.string().optional().describe('One of your conversations: to continue it, or with `turn` to follow a running turn.'),
+        turn: z.number().int().min(0).optional().describe('The turn that came back `running`: waits for it (see `wait`).'),
+        wait: waitSecondsShape,
+        mode: z.enum(['chat', 'agent']).optional().describe('When opening. chat = plain SDK; agent = the provider Agents SDK.'),
+        provider: z.string().optional().describe('When opening: one of the agent providers; default: the first that offers `model`.'),
         model: z.string().optional(),
         reasoning: z.string().optional(),
         metadata: z.record(z.string(), z.unknown()).optional(),
-        projectId: z.string().optional().describe('For a global agent: the project the conversation belongs to. A project agent always opens in its own project.'),
-        message: z.string().optional(),
-        waitSeconds: waitSecondsShape,
+        projectId: z.string().optional().describe('When opening a global agent: the project the conversation belongs to. A project agent always opens in its own project.'),
       },
     },
-    async ({ message, waitSeconds, ...body }, extra) => {
-      const created = await api('POST', '/sessions', { body })
-      if (!created.ok || !message) return reply(created)
-      return reply(await startTurn(api, (created.result as { id: string }).id, message, waitSeconds, turnWait(streaming, extra)), turnStatusView)
+    async ({ to, message, conversation, turn, wait, ...open }, extra) => {
+      const waiting = turnWait(streaming, extra)
+      if (conversation && turn !== undefined) return reply(await awaitTurn(api, conversation, turn, wait, waiting), turnStatusView)
+      if (conversation && message) return reply(await startTurn(api, conversation, message, wait, waiting), turnStatusView)
+      if (conversation) return { ...text({ status: 422, code: 'validation_error', message: 'with `conversation`, send `message` (or `turn` to follow one)' }), isError: true }
+      if (to) {
+        const created = await api('POST', '/sessions', { body: { agentId: to, ...open } })
+        if (!created.ok || !message) return reply(created, (result) => ({ conversation: (result as { id: string }).id, to }))
+        return reply(await startTurn(api, (created.result as { id: string }).id, message, wait, waiting), turnStatusView)
+      }
+      if (message)
+        return { ...text({ status: 422, code: 'validation_error', message: 'say who to talk to (`to`), or the conversation to continue (`conversation`)' }), isError: true }
+      // Nada: com quem falar e as conversas recentes — nenhum id precisa ser adivinhado.
+      const [agents, recent] = await Promise.all([api('GET', '/agents'), api('GET', '/conversations', { query: { limit: 15 } })])
+      const listed = agents.ok ? ((agents.result as Array<{ id: string; name?: string; unavailable?: unknown }>) ?? []) : []
+      const sessions = recent.ok ? ((recent.result as { sessions?: Array<Record<string, unknown>> }).sessions ?? []) : []
+      return text({
+        agents: listed.filter((agent) => !agent.unavailable).map((agent) => ({ id: agent.id, ...(agent.name ? { name: agent.name } : {}) })),
+        conversations: sessions.map((session) => ({ conversation: session.id, to: session.agentId, ...(session.title ? { title: session.title } : {}) })),
+      })
     },
-  )
-
-  server.registerTool(
-    'send_message',
-    {
-      description:
-        'Send a message in a live conversation: starts the turn and waits for it (see `waitSeconds`: on a streaming client, until it ends, with progress while it runs). Still running after that: `status: running` — follow it with get_turn.',
-      inputSchema: { sessionId: z.string(), message: z.string(), waitSeconds: waitSecondsShape },
-    },
-    async ({ sessionId, message, waitSeconds }, extra) => reply(await startTurn(api, sessionId, message, waitSeconds, turnWait(streaming, extra)), turnStatusView),
-  )
-
-  server.registerTool(
-    'get_turn',
-    {
-      description:
-        'Follow a turn started by start_conversation or send_message: waits for it to finish (see `waitSeconds`), then returns its status (`running`, `ok`, `error`, `aborted`) and text.',
-      inputSchema: { sessionId: z.string(), turn: z.number().int().min(0), waitSeconds: waitSecondsShape },
-      annotations: { readOnlyHint: true },
-    },
-    async ({ sessionId, turn, waitSeconds }, extra) => reply(await awaitTurn(api, sessionId, turn, waitSeconds, turnWait(streaming, extra)), turnStatusView),
   )
 }
 
@@ -431,7 +429,7 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     async ({ projectId }) => reply(await api('GET', '/agents', { query: { project: projectId } })),
   )
 
-  // ⛔ Agente não conversa por aqui: fala com outro só por `delegate_to_agent`, com as travas da delegação.
+  // ⛔ Agente não conversa por aqui: fala com outro só pelo `talk` LOCAL (`Talk.Tool`), com as travas da delegação.
   if (!access.agentId) registerConversationTools(server, api, access.streaming === true)
 
   server.registerTool(

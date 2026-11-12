@@ -99,17 +99,17 @@ describe('ToolCatalog', () => {
     assert.deepStrictEqual((await withSelf.toolbox(['mcp:gateway/*'])).tools, [])
   })
 
-  it('⛔ do MCP do gateway, agente nunca recebe as ferramentas de conversa: fala com outro só por delegate_to_agent', async () => {
-    const tools = [mcpTool('save_agent'), mcpTool('start_conversation'), mcpTool('send_message'), mcpTool('get_turn')]
+  it('⛔ do MCP do gateway, agente nunca recebe as ferramentas de conversa: fala com outro só pelo `talk` local', async () => {
+    const tools = [mcpTool('save_agent'), mcpTool('talk'), mcpTool('start_conversation'), mcpTool('send_message'), mcpTool('get_turn')]
     const withSelf = new ToolCatalog(fakeMcpRegistry([{ id: 'gateway', tools }]), [])
     assert.deepStrictEqual(
       (await withSelf.toolbox(['mcp:gateway/*'])).tools.map((tool) => tool.name),
       ['save_agent'],
     )
-    assert.deepStrictEqual((await withSelf.toolbox(['mcp:gateway/send_message'])).tools, [])
-    const [sdk] = await withSelf.mcpServersFor(['mcp:gateway/*', 'mcp:gateway/start_conversation'])
-    assert.strictEqual(sdk.tools?.includes('start_conversation') ?? false, false)
-    assert.deepStrictEqual([...(sdk.hidden ?? [])].sort(), ['get_turn', 'send_message', 'start_conversation'])
+    assert.deepStrictEqual((await withSelf.toolbox(['mcp:gateway/talk'])).tools, [])
+    const [sdk] = await withSelf.mcpServersFor(['mcp:gateway/*', 'mcp:gateway/talk'])
+    assert.strictEqual(sdk.tools?.includes('talk') ?? false, false)
+    assert.deepStrictEqual([...(sdk.hidden ?? [])].sort(), ['get_turn', 'send_message', 'start_conversation', 'talk'])
   })
 
   it('leva a credencial da chamada até o cliente MCP', async () => {
@@ -130,11 +130,11 @@ describe('ToolCatalog', () => {
     assert.strictEqual((await withDefault.invoke('nao-existe/x', {})).status, 'error')
   })
 
-  it('quem pode delegar (`agent:<id>`) ganha a delegate_to_agent, só com os escolhidos; e ela recebe o contexto', async () => {
+  it('quem pode delegar (`agent:<id>`) ganha o `talk`, só com os escolhidos; e ela recebe o contexto', async () => {
     const seen: unknown[] = []
     const withDelegation = new ToolCatalog(fakeMcpRegistry(), [localTool('run_bash', 'bash')], (allowed) => ({
-      ...localTool('delegate_to_agent', 'ok'),
-      inputSchema: { type: 'object', properties: { agentId: { type: 'string', enum: [...allowed] } }, required: [], additionalProperties: false },
+      ...localTool('talk', 'ok'),
+      inputSchema: { type: 'object', properties: { to: { type: 'string', enum: [...allowed] } }, required: [], additionalProperties: false },
       execute: async (_args, context) => (seen.push(context), { status: 'success', result: 'ok' }),
     }))
 
@@ -144,10 +144,10 @@ describe('ToolCatalog', () => {
     )
     const box = await withDelegation.toolbox(['agent:tradutor', 'agent:pesquisa'])
     assert.deepStrictEqual(
-      box.tools.map((tool) => [tool.name, tool.inputSchema.properties.agentId?.enum]),
-      [['delegate_to_agent', ['tradutor', 'pesquisa']]],
+      box.tools.map((tool) => [tool.name, tool.inputSchema.properties.to?.enum]),
+      [['talk', ['tradutor', 'pesquisa']]],
     )
-    await box.invoke('delegate_to_agent', {}, { sessionId: 'pai', token: 't' })
+    await box.invoke('talk', {}, { sessionId: 'pai', token: 't' })
     assert.deepStrictEqual(seen, [{ sessionId: 'pai', token: 't' }])
   })
 })

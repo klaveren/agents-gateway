@@ -80,6 +80,28 @@ export function makeUsecases() {
       },
     ),
   )
+  // O `talk` sem mensagem: com quem o agente fala, as conversas abertas com cada um e o estado de uma delas.
+  makeTools()
+    .delegation.get()
+    ?.useLookup({
+      name: (agentId) => makeAgents().get(agentId)?.name,
+      find: async (sessionId) => {
+        const stored = await conversations.findSession(sessionId)
+        return stored ? { agentId: stored.agentId, ...(stored.metadata ? { metadata: stored.metadata } : {}) } : undefined
+      },
+      conversations: async (owner) =>
+        (await conversations.listSessions({ owner, limit: 60, archived: false })).map((session) => ({
+          id: session.id,
+          agentId: session.agentId,
+          ...(session.metadata ? { metadata: session.metadata } : {}),
+          ...(session.title ? { title: session.title } : {}),
+          updatedAt: session.updatedAt,
+        })),
+      lastReply: async (sessionId) => {
+        const turns = await conversations.listTurns(sessionId)
+        return turns[turns.length - 1]?.text || undefined
+      },
+    })
   // Os MCPs em contêiner leem a conversa (agente e `metadata`) para os domínios `{meta:…}` e para o proxy.
   // ⛔ O que o projeto da conversa deu às variáveis do MCP: só para o processo dele (ver `projectMcpEnv`).
   makeTools().mcp.useProjectEnv((config, project, sessionId) => projectMcpEnv(config, project, sessionId))

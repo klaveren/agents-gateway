@@ -26,7 +26,7 @@ export interface IAgent {
   modes: EMode[]
   allowedTools: string[]
   /**
-   * `subagent`: só é chamado por OUTRO agente (`delegate_to_agent`, via `agent:<id>`) e nunca abre
+   * `subagent`: só é chamado por OUTRO agente (`talk`, via `agent:<id>`) e nunca abre
    * conversa direta — nem pela tela, nem pela API, nem pelo MCP. Ausente = agente normal.
    */
   role?: TAgentRole

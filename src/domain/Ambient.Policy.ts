@@ -22,6 +22,11 @@ export interface IAmbient {
   panel?: boolean
   /** O agente tem o terminal: a linha da pasta temporária (o `/tmp` dele some a cada comando). */
   terminal?: boolean
+  /**
+   * O agente fala com outros (`agent:<id>`): a linha do `talk`. `legacy`: o prompt dele ainda cita o `delegate_to_agent`,
+   * o nome de antes — a linha diz que agora é `talk`.
+   */
+  talk?: { legacy: boolean }
   /** O agente arma vigia nesta conversa (ver `Watch.Model`): a regra de espera cita as ferramentas. Ausente: só a proibição. */
   watch?: boolean
 }
@@ -32,6 +37,14 @@ export interface IAmbientSecrets {
   /** As secretas do projeto da conversa (valem para todo agente dele, por baixo das suas). */
   project?: string[]
   resources: Array<{ kind: 'skill' | 'command'; id: string; names: string[] }>
+}
+
+/**
+ * ⚖️ COMO FALAR COM OUTRO AGENTE: uma ferramenta só, o `talk`. Os agentes procuravam `send_message` (que é de pessoa) e não
+ * sabiam que dava para continuar a conversa que a pessoa já tem com o outro agente.
+ */
+export function talkLine(legacy: boolean): string {
+  return `- Outro agente: fale com \`talk\` — sem nada, mostra com quem você fala e as conversas abertas; \`conversation\` continua uma conversa (inclusive a que a pessoa já tem com ele, pelo id que ela passar); \`wait: 0\` não espera, e a resposta chega depois aqui. Não existe \`send_message\` nem \`start_conversation\` para você.${legacy ? ' Onde o seu prompt diz `delegate_to_agent`, use `talk`.' : ''}`
 }
 
 /** A seção "## Ambiente" do system prompt. */
@@ -49,6 +62,7 @@ export function ambientSection(ambient: IAmbient): string {
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
   if (ambient.files) lines.push(agentFolderLine(ambient.files))
   if (ambient.terminal) lines.push(TEMP_LINE)
+  if (ambient.talk) lines.push(talkLine(ambient.talk.legacy))
   lines.push(waitLine(ambient))
   if (ambient.panel)
     lines.push(

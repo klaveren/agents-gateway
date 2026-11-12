@@ -13,6 +13,34 @@ export interface IDelegationRequest {
   message: string
   /** Continua uma conversa que já existe: uma filha DESTA conversa pai, ou uma da mesma pessoa com o agente (ver `ownIssue`). */
   sessionId?: string
+  /**
+   * `false` = não espera: a resposta entra depois na conversa que pediu, como mensagem do gateway (o agente segue
+   * trabalhando). Ausente = espera a resposta, como sempre.
+   */
+  wait?: boolean
+}
+
+/** Com quem o agente fala: os que ele pode chamar e as conversas abertas com eles (as filhas e as da pessoa). */
+export interface ITalkDirectory {
+  agents: Array<{ id: string; name?: string }>
+  conversations: Array<{ conversation: string; to: string; kind: 'child' | 'person'; title?: string; updatedAt?: string }>
+}
+
+/** O estado de uma conversa que o agente alcança: rodando agora, e a última resposta. */
+export interface ITalkStatus {
+  conversation: string
+  to: string
+  running: boolean
+  reply?: string
+}
+
+/** Onde a delegação lê as conversas gravadas (a lista, o estado e de quem é cada uma). Ligado na composição. */
+export interface ITalkLookup {
+  name(agentId: string): string | undefined
+  find(sessionId: string): Promise<IStoredConversation | undefined>
+  /** As conversas da pessoa (dono), as mais recentes primeiro. */
+  conversations(owner: { id: string; account?: string }): Promise<Array<IStoredConversation & { id: string; title?: string; updatedAt?: Date }>>
+  lastReply(sessionId: string): Promise<string | undefined>
 }
 
 /** O que a delegação confere de uma conversa (viva ou gravada) antes de continuá-la. */
@@ -44,7 +72,7 @@ export function ownIssue(parent: IStoredConversation & { id: string }, target: I
   return undefined
 }
 
-export type TDelegationResult = { ok: true; agentId: string; sessionId: string; reply: string } | { ok: false; error: string }
+export type TDelegationResult = { ok: true; agentId: string; sessionId: string; reply: string; pending?: boolean } | { ok: false; error: string }
 
 /**
  * Um agente pedindo a outro: abre (ou continua) uma conversa FILHA, manda a mensagem e devolve a resposta.
@@ -91,6 +119,87 @@ export class DelegationService {
 
   useLateDelivery(deliver: (parentSessionId: string, text: string) => void): void {
     this.late = deliver
+  }
+
+  private lookup?: ITalkLookup
+
+  useLookup(lookup: ITalkLookup): void {
+    this.lookup = lookup
+  }
+
+  /** A conversa que chama, viva. */
+  private parentOf(context: IExecutionContext | undefined) {
+    if (!context?.sessionId) return undefined
+    try {
+      return this.provider.describe(context.sessionId)
+    } catch {
+      return undefined
+    }
+  }
+
+  /** A conversa (viva ou gravada) com o agente dela e a metadata. */
+  private async conversationOf(sessionId: string): Promise<IStoredConversation | undefined> {
+    try {
+      return this.provider.describe(sessionId)
+    } catch {
+      return this.lookup?.find(sessionId)
+    }
+  }
+
+  /** O agente de uma conversa que o agente que chama alcança (filha dele, ou da mesma pessoa e projeto). */
+  async agentOf(sessionId: string): Promise<string | undefined> {
+    return (await this.conversationOf(sessionId))?.agentId
+  }
+
+  /**
+   * ⚖️ COM QUEM O AGENTE FALA: os agentes que ele pode chamar e as conversas abertas com eles — as filhas desta conversa e
+   * as da mesma pessoa, no mesmo projeto, que não são de delegação. É o `talk` sem nada: nenhum id precisa ser adivinhado.
+   */
+  async directory(allowed: readonly string[], context: IExecutionContext | undefined): Promise<ITalkDirectory> {
+    const parent = this.parentOf(context)
+    const agents = allowed.map((id) => ({ id, ...(this.lookup?.name(id) ? { name: this.lookup.name(id)! } : {}) }))
+    const owner = ownerOf(parent?.metadata)
+    if (!parent || typeof owner?.id !== 'string' || !this.lookup) return { agents, conversations: [] }
+    const project = parent.metadata?.[PROJECT_METADATA_KEY]
+    const found = (await this.lookup.conversations({ id: owner.id, ...(typeof owner.account === 'string' ? { account: owner.account } : {}) }))
+      .filter((item) => item.id !== parent.id && allowed.includes(item.agentId))
+      .flatMap((item): Array<{ item: typeof item; kind: 'child' | 'person' }> => {
+        const by = item.metadata?.[DELEGATED_BY]
+        if (by === parent.id) return [{ item, kind: 'child' }]
+        if (by === undefined && item.metadata?.[PROJECT_METADATA_KEY] === project) return [{ item, kind: 'person' }]
+        return []
+      })
+      .slice(0, 15)
+    return {
+      agents,
+      conversations: found.map(({ item, kind }) => ({
+        conversation: item.id,
+        to: item.agentId,
+        kind,
+        ...(item.title ? { title: item.title } : {}),
+        ...(item.updatedAt ? { updatedAt: item.updatedAt.toISOString() } : {}),
+      })),
+    }
+  }
+
+  /** ⛔ O estado de uma conversa: só a que o agente alcançaria para falar (a filha dele, ou da mesma pessoa e projeto). */
+  async status(allowed: readonly string[], sessionId: string, context: IExecutionContext | undefined): Promise<{ ok: true; status: ITalkStatus } | { ok: false; error: string }> {
+    const parent = this.parentOf(context)
+    if (!parent) return { ok: false, error: 'talk needs the calling conversation; none in this call' }
+    const target = await this.conversationOf(sessionId)
+    if (!target) return { ok: false, error: `conversation ${sessionId} was deleted or does not exist` }
+    if (!allowed.includes(target.agentId)) return { ok: false, error: `not allowed to talk to ${target.agentId}; allowed: ${allowed.join(', ') || 'none'}` }
+    const child = target.metadata?.[DELEGATED_BY] === parent.id
+    const issue = child ? undefined : ownIssue(parent, target, sessionId, target.agentId)
+    if (issue) return { ok: false, error: issue }
+    let running: boolean
+    try {
+      running = this.provider.describe(sessionId).status === 'running'
+    } catch {
+      running = false
+    }
+    const reply = await this.lookup?.lastReply(sessionId)
+    return { ok: true, status: { conversation: sessionId, to: target.agentId, running, ...(reply ? { reply } : {}) } }
   }
 
   async delegate(request: IDelegationRequest, context: IExecutionContext | undefined): Promise<TDelegationResult> {
@@ -169,10 +278,33 @@ export class DelegationService {
       }
     }
 
-    let reply = ''
-    let failure: string | undefined
     // O turno da mãe que fez a chamada: parada, ou noutro turno, na volta = a chamada caiu e a mãe já seguiu.
     const turnAtCall = parent.turns
+    const target = sessionId
+    const exchange = this.exchange(parent, request, target, own)
+    if (request.wait === false) {
+      // ⚖️ SEM ESPERAR: a resposta entra depois na conversa que pediu (no turno que ainda roda, ou num novo), como mensagem.
+      void exchange
+        .then((outcome) => this.deliver(parent.id, request.agentId, target, outcome, true))
+        .catch((error: unknown) =>
+          console.warn(`[delegação] a resposta de ${request.agentId} (${target}) não foi entregue: ${error instanceof Error ? error.message : String(error)}`),
+        )
+      return { ok: true, agentId: request.agentId, sessionId: target, reply: '', pending: true }
+    }
+    const outcome = await exchange
+    this.deliverIfLost(parent.id, turnAtCall, request.agentId, target, outcome)
+    return outcome.ok ? { ok: true, agentId: request.agentId, sessionId: target, reply: outcome.reply } : { ok: false, error: `${request.agentId} failed: ${outcome.error}` }
+  }
+
+  /** O turno na conversa de destino, até o fim: a resposta (ou a falha). A conversa que voltou aqui sai da memória depois. */
+  private async exchange(
+    parent: { id: string; agentId: string },
+    request: IDelegationRequest,
+    sessionId: string,
+    own: { resumed: boolean } | undefined,
+  ): Promise<{ ok: true; reply: string } | { ok: false; error: string }> {
+    let reply = ''
+    let failure: string | undefined
     const startedAt = Date.now()
     console.log(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}${own ? ', conversa da pessoa' : ''}): turno começou`)
     const text = own ? relayedMessage(parent.agentId, parent.id, request.message) : request.message
@@ -191,12 +323,10 @@ export class DelegationService {
     if (!own || own.resumed) this.release?.(sessionId)
     if (failure && !reply) {
       console.warn(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): falhou em ${took}: ${failure}`)
-      this.deliverIfLost(parent.id, turnAtCall, request.agentId, sessionId, { ok: false, error: failure })
-      return { ok: false, error: `${request.agentId} failed: ${failure}` }
+      return { ok: false, error: failure }
     }
     console.log(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): respondeu em ${took}`)
-    this.deliverIfLost(parent.id, turnAtCall, request.agentId, sessionId, { ok: true, reply })
-    return { ok: true, agentId: request.agentId, sessionId, reply }
+    return { ok: true, reply }
   }
 
   /**
@@ -214,10 +344,22 @@ export class DelegationService {
     }
     // A mãe ainda está no turno que delegou: a resposta chega pela ferramenta, como sempre.
     if (status === 'running' && turns === turnAtCall) return
+    this.deliver(parentId, agentId, childId, outcome, false)
+  }
+
+  /** A resposta que chega como MENSAGEM na conversa que pediu: no turno que ela roda agora (a fila), ou num turno novo. */
+  private deliver(parentId: string, agentId: string, childId: string, outcome: { ok: true; reply: string } | { ok: false; error: string }, asked: boolean): void {
+    let status: string
+    try {
+      ;({ status } = this.provider.describe(parentId))
+    } catch {
+      status = 'idle'
+    }
+    const when = asked ? 'que você pediu sem esperar' : 'que chegou depois do fim do seu turno'
     const text = outcome.ok
-      ? `[Resposta de ${agentId} à sua delegação (sessionId ${childId}), que chegou depois do fim do seu turno: leia e continue de onde parou.]\n\n${outcome.reply || '(sem texto)'}`
-      : `[A delegação a ${agentId} (sessionId ${childId}) falhou depois do fim do seu turno: ${outcome.error}. Decida: tentar de novo (com o sessionId, para continuar a mesma conversa), outro caminho, ou avisar a pessoa.]`
-    console.log(`[delegação] a resposta de ${agentId} (${childId}) chegou depois do turno da mãe ${parentId}: entra como mensagem`)
+      ? `[Resposta de ${agentId} (conversation ${childId}), ${when}: leia e continue de onde parou.]\n\n${outcome.reply || '(sem texto)'}`
+      : `[A conversa com ${agentId} (conversation ${childId}) falhou, ${when}: ${outcome.error}. Decida: tentar de novo (talk com a conversation, para continuar a mesma), outro caminho, ou avisar a pessoa.]`
+    console.log(`[delegação] a resposta de ${agentId} (${childId}) entra como mensagem em ${parentId}`)
     if (status === 'running' && this.provider.enqueue?.(parentId, text) !== undefined) return
     this.late?.(parentId, text)
   }

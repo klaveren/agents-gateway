@@ -28,7 +28,7 @@ import { CLI_ARG_PROTOCOLS } from '@domain/CliArgument.Policy'
 import { NATIVE_TOOLS } from '@domain/Native.Tools'
 import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { isSubscription } from '@domain/Subscription.Policy'
-import { delegationMaxDepth } from '@domain/models/Delegation.Model'
+import { delegatesOf, delegationMaxDepth, LEGACY_DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
 import type { IWatch } from '@domain/models/Watch.Model'
 import { mcpServerKey, mcpServesProject } from '@domain/models/McpServer.Model'
 import { compactAtPercent } from '@domain/Compaction.Policy'
@@ -821,6 +821,7 @@ export class AgentController {
         ...(files ? { files } : {}),
         ...(hasTerminal(agent.allowedTools) ? { terminal: true } : {}),
         ...(hasWatch(agent.allowedTools) ? { watch: true } : {}),
+        ...(delegatesOf(agent.allowedTools).length ? { talk: { legacy: agent.systemPrompt.includes(LEGACY_DELEGATE_TOOL_NAME) } } : {}),
       }
       // As variáveis secretas (só os nomes), como o `AgentProvider` põe na conversa.
       const secrets = this.usecases.secrets?.ambientFor(agent.id, [
