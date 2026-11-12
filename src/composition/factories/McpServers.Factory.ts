@@ -6,6 +6,8 @@ import { makeAgents } from './Agents.Factory'
 import { makeCatalogHistory } from './CatalogHistory.Factory'
 import { makeCredentials } from './Credentials.Factory'
 import { makeProjects } from './Projects.Factory'
+import { makeResourceSecrets } from './ResourceSecrets.Factory'
+import { MCP_SECRET_SCOPE } from '@domain/models/ResourceSecret.Model'
 import { makeTools } from './Tools.Factory'
 
 let instance: McpServersService | undefined
@@ -25,6 +27,11 @@ export function makeMcpServers(): McpServersService {
   )
   instance.history.use(() => makeCatalogHistory())
   instance.useLocalExtras((agent) => makeAgentLocalLayers().extras(agent))
+  // Os valores que os projetos deram ao servidor (o cofre `mcp`) seguem a chave dele e somem com ele.
+  instance.useProjectValues({
+    move: (from, to, by) => makeResourceSecrets().moveScope(MCP_SECRET_SCOPE, from, to, by),
+    forget: (key) => makeResourceSecrets().removeScope(MCP_SECRET_SCOPE, key),
+  })
   return instance
 }
 

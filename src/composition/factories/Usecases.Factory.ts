@@ -1,3 +1,4 @@
+import { projectMcpEnv } from './ProjectVariables.Factory'
 import { makeSecretMasker } from './SecretMask.Factory'
 import { ResumeSessionUseCase } from '@application/ResumeSession.Usecase'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
@@ -80,6 +81,8 @@ export function makeUsecases() {
     ),
   )
   // Os MCPs em contêiner leem a conversa (agente e `metadata`) para os domínios `{meta:…}` e para o proxy.
+  // ⛔ O que o projeto da conversa deu às variáveis do MCP: só para o processo dele (ver `projectMcpEnv`).
+  makeTools().mcp.useProjectEnv((config, project, sessionId) => projectMcpEnv(config, project, sessionId))
   makeTools().mcp.setSessionLookup((id) => {
     try {
       return agentProvider.describe(id)

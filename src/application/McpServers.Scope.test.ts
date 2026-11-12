@@ -147,11 +147,12 @@ describe('McpServersService — MCP global ou de projeto', () => {
     assert.strictEqual(service.get('cliente-a.n8n').projectId, 'cliente-a')
   })
 
-  it('mudar de projeto sem quebrar ninguém: a chave muda e o segredo e as variáveis vão junto', () => {
+  it('mudar de projeto sem quebrar ninguém: a chave muda e o segredo e os valores dos projetos vão junto', () => {
     const { service, secrets } = build([agent('de-a', ['mcp:n8n/*'], 'cliente-a')])
+    const moves: Array<[string, string]> = []
+    service.useProjectValues({ move: (from, to) => moves.push([from, to]), forget: () => undefined })
     service.create({ ...n8n('cliente-a', 'chave-de-a') }, 'root')
     service.create({ id: 'pw', name: 'Playwright', kind: 'container', container: { image: 'mcr.microsoft.com/playwright/mcp:latest', env: ['TOKEN'] } }, 'root')
-    service.saveEnv('pw', 'TOKEN', 'tk', 'root')
 
     // Projeto → global: quem usava (do projeto) continua enxergando.
     const promoted = service.update('cliente-a.n8n', { projectId: null }, 'root')
@@ -160,7 +161,10 @@ describe('McpServersService — MCP global ou de projeto', () => {
 
     const moved = service.update('pw', { projectId: 'cliente-b' }, 'root')
     assert.strictEqual(mcpServerKey(moved), 'cliente-b.pw')
-    assert.deepStrictEqual([secrets.get('mcp:cliente-b.pw:env:TOKEN'), secrets.get('mcp:pw:env:TOKEN')], ['tk', undefined])
+    assert.deepStrictEqual(moves, [
+      ['cliente-a.n8n', 'n8n'],
+      ['pw', 'cliente-b.pw'],
+    ])
     assert.throws(() => service.get('pw'))
 
     // ⛔ E a troca de escopo também respeita a colisão.

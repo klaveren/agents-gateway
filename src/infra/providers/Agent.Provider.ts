@@ -640,6 +640,13 @@ export class AgentProvider implements IAgentProvider {
 
   private agentFiles?: (agent: IAgent) => string | undefined
 
+  /** As variáveis FIXAS do projeto da conversa (ver `IProject.env`): por baixo das do agente. Ligadas na composição. */
+  private projectEnv?: (projectId: string) => Readonly<Record<string, string>> | undefined
+
+  useProjectEnv(projectEnv: (projectId: string) => Readonly<Record<string, string>> | undefined): void {
+    this.projectEnv = projectEnv
+  }
+
   /** A pasta privada no "## Ambiente", só para o agente que a alcança (Ler, Escrever arquivos ou Terminal). */
   private agentFolderOf(agent: IAgent, conversationProject?: string): { files?: { dir: string; write: boolean } } {
     const dir = this.agentFiles?.(agent)
@@ -686,7 +693,11 @@ export class AgentProvider implements IAgentProvider {
     // o cerco, as regras, as contas e os MCPs são os da conversa); as skills, os commands e as specs dele seguem os da origem
     // (o guidance lê o agente do cadastro, não este).
     const { sharedWith: _shared, ...plain } = agent
-    return { agent: runsUnder(agent, projectId) === agent.projectId ? { ...agent, allowedTools } : { ...plain, projectId: undefined, allowedTools }, unavailable }
+    // ⚖️ As fixas do projeto da conversa por baixo das do agente: o terminal nativo (o CLI) recebe as duas, o agente vence.
+    const fixed = projectId ? this.projectEnv?.(projectId) : undefined
+    const env = fixed && Object.keys(fixed).length ? { ...fixed, ...agent.env } : agent.env
+    const base = runsUnder(agent, projectId) === agent.projectId ? agent : { ...plain, projectId: undefined }
+    return { agent: { ...base, allowedTools, ...(env ? { env } : {}) }, unavailable }
   }
 
   /**

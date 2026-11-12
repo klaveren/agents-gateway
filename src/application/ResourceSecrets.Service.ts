@@ -6,7 +6,9 @@ import {
   IResourceSecretMeta,
   IResourceSecretView,
   ISecretSource,
+  MCP_SECRET_SCOPE,
   ORIGIN_PROJECT,
+  PROJECT_SECRET_SCOPE,
   SECRET_LIMITS,
   secretNameIssue,
   TSecretScope,
@@ -22,6 +24,8 @@ export interface IResourceSecretStore {
   removeScope(scope: TSecretScope, scopeId: string): void
   keepProjects(scope: TSecretScope, scopeId: string, keep: readonly string[]): void
   removeProject(project: string): void
+  /** Os projetos com valores do recurso (`''` = a origem). */
+  projects(scope: TSecretScope, scopeId: string): string[]
 }
 
 export interface IResourceSecretsDeps {
@@ -128,9 +132,43 @@ export class ResourceSecretsService {
     this.deps.store.keepProjects('agent', agentId, projects)
   }
 
-  /** O projeto foi apagado: os valores dele somem. */
+  /** O projeto foi apagado: os valores dele somem (os que deu a recursos de outros e as secretas dele). */
   removeProject(project: string): void {
     this.deps.store.removeProject(project)
+    this.deps.store.removeScope(PROJECT_SECRET_SCOPE, project)
+  }
+
+  /**
+   * O recurso mudou de chave (o MCP que trocou de escopo): os valores vão junto, cifrados de novo — o cifrado é amarrado
+   * ao recurso (`secretOwner`) e não abre sob a chave nova. A chave velha não fica valendo para ninguém.
+   */
+  moveScope(scope: TSecretScope, from: string, to: string, by: string): void {
+    if (from === to) return
+    for (const project of this.deps.store.projects(scope, from))
+      for (const item of this.deps.store.list(scope, from, project)) {
+        const value = this.deps.store.value(scope, from, item.name, project)
+        if (value !== undefined)
+          this.deps.store.save({ scope, scopeId: to, project, name: item.name, ...(item.description ? { description: item.description } : {}), value, by, at: this.now() })
+      }
+    this.deps.store.removeScope(scope, from)
+  }
+
+  /**
+   * ⛔ OS VALORES SECRETOS QUE O PROJETO DEU AO MCP (`serverKey`), para o ambiente do PROCESSO do MCP — nunca o terminal do
+   * agente. Com a conversa, entram na máscara dela: o que o MCP devolver com o valor sai mascarado.
+   */
+  mcpEnv(serverKey: string, projectId: string | undefined, sessionId?: string): Record<string, string> {
+    if (!projectId) return {}
+    const env: Record<string, string> = {}
+    const known: IKnownSecret[] = []
+    for (const item of this.deps.store.list(MCP_SECRET_SCOPE, serverKey, projectId)) {
+      const value = this.deps.store.value(MCP_SECRET_SCOPE, serverKey, item.name, projectId)
+      if (value === undefined) continue
+      env[item.name] = value
+      known.push({ value, label: item.name })
+    }
+    if (sessionId && known.length) this.deps.mask?.register(sessionId, known)
+    return env
   }
 
   /** A skill ou o command entrou na conversa (`use_resource`, `/skill`, `/command`): as variáveis dele passam a valer nela. */
@@ -149,7 +187,8 @@ export class ResourceSecretsService {
       this.deps.store.list(scope, scopeId, project).map((item) => ({ name: item.name, scope, scopeId, project }))
     const agent = agentId ? named('agent', agentId, this.agentProjectFor(agentId, conversationProject)) : []
     const loaded = (sessionId ? (this.loaded.get(sessionId) ?? []) : []).map((item) => named(item.kind, item.id, this.projectFor(item.id, agentId, conversationProject)))
-    return effectiveSources(agent, loaded)
+    const home = this.conversationProjectOf(agentId, conversationProject)
+    return effectiveSources(agent, loaded, home ? named(PROJECT_SECRET_SCOPE, home, ORIGIN_PROJECT) : [])
   }
 
   /**
@@ -190,15 +229,22 @@ export class ResourceSecretsService {
     return mine && conversationProject && conversationProject !== mine ? conversationProject : ORIGIN_PROJECT
   }
 
-  /** O que o prompt diz ao agente: os nomes dele e os das skills e commands que ele pode carregar. Nunca o valor. */
+  /** O projeto em que a conversa roda: o dela; sem ele, o do agente (o global, nenhum). */
+  private conversationProjectOf(agentId: string | undefined, conversationProject?: string): string | undefined {
+    return conversationProject || (agentId ? (this.deps.agentProject?.(agentId) ?? undefined) : undefined)
+  }
+
+  /** O que o prompt diz ao agente: os nomes dele, os do projeto e os das skills e commands que ele pode carregar. Nunca o valor. */
   ambientFor(agentId: string, usable: ReadonlyArray<{ kind: 'skill' | 'command'; id: string }>, conversationProject?: string): IAmbientSecrets | undefined {
     const agent = this.deps.store.list('agent', agentId, this.agentProjectFor(agentId, conversationProject)).map((item) => item.name)
+    const home = this.conversationProjectOf(agentId, conversationProject)
+    const project = home ? this.deps.store.list(PROJECT_SECRET_SCOPE, home, ORIGIN_PROJECT).map((item) => item.name) : []
     const resources = usable
       .map((resource) => ({
         ...resource,
         names: this.deps.store.list(resource.kind, resource.id, this.projectFor(resource.id, agentId, conversationProject)).map((item) => item.name),
       }))
       .filter((resource) => resource.names.length)
-    return agent.length || resources.length ? { agent, resources } : undefined
+    return agent.length || resources.length || project.length ? { agent, resources, ...(project.length ? { project } : {}) } : undefined
   }
 }

@@ -112,6 +112,7 @@ export type TErrorCode =
   | 'connection_unavailable'
   | 'connection_busy'
   | 'project_read_only'
+  | 'variable_exists'
   | 'internal_error'
 
 export interface IHttpFailure {

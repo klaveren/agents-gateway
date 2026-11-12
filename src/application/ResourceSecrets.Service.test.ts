@@ -173,4 +173,36 @@ describe('ResourceSecretsService', () => {
       assert.strictEqual(service.envFor('theo', 'c1').env.TOKEN, 'valor-do-alfa')
     })
   })
+  it('⚖️ a secreta do PROJETO vale para todo agente nas conversas dele, por baixo da do agente; o prompt lista os nomes', () => {
+    const masked: Array<{ sessionId: string; secrets: readonly IKnownSecret[] }> = []
+    const service = new ResourceSecretsService({
+      store: new SqliteResourceSecretRepository(new SecretBox(randomBytes(32))),
+      exists: (scope, id) => ['agent:theo', 'project:alfa', 'project:beta', 'mcp:n8n'].includes(`${scope}:${id}`),
+      agentProject: () => null,
+      mask: { register: (sessionId, secrets) => masked.push({ sessionId, secrets }) },
+    })
+    service.save('project', 'alfa', { name: 'DB_URL', value: 'postgres://do-projeto' }, 'root')
+    service.save('project', 'alfa', { name: 'API_TOKEN', value: 'do-projeto-123' }, 'root')
+    service.save('agent', 'theo', { name: 'API_TOKEN', value: 'do-agente-456' }, 'root')
+    assert.deepStrictEqual(service.envFor('theo', 'c1', 'alfa').env, { API_TOKEN: 'do-agente-456', DB_URL: 'postgres://do-projeto' })
+    // Em outro projeto, não.
+    assert.deepStrictEqual(service.envFor('theo', 'c2', 'beta').env, { API_TOKEN: 'do-agente-456' })
+    assert.deepStrictEqual(service.ambientFor('theo', [], 'alfa'), { agent: ['API_TOKEN'], resources: [], project: ['API_TOKEN', 'DB_URL'] })
+    assert.ok(masked.some((entry) => entry.sessionId === 'c1' && entry.secrets.some((secret) => secret.value === 'postgres://do-projeto')))
+
+    // ⛔ O valor do MCP nunca entra no terminal do agente; sai só por `mcpEnv`, e a conversa o mascara.
+    service.save('mcp', 'n8n', { name: 'N8N_API_KEY', value: 'chave-de-alfa' }, 'root', 'alfa')
+    assert.strictEqual(service.envFor('theo', 'c1', 'alfa').env.N8N_API_KEY, undefined)
+    assert.deepStrictEqual(service.mcpEnv('n8n', 'alfa', 'c9'), { N8N_API_KEY: 'chave-de-alfa' })
+    assert.deepStrictEqual(service.mcpEnv('n8n', 'beta'), {})
+    assert.ok(masked.some((entry) => entry.sessionId === 'c9' && entry.secrets[0].value === 'chave-de-alfa'))
+
+    // O MCP trocou de chave: o valor vai junto (cifrado de novo), a chave velha some.
+    service.moveScope('mcp', 'n8n', 'alfa.n8n', 'root')
+    assert.deepStrictEqual([service.mcpEnv('n8n', 'alfa'), service.mcpEnv('alfa.n8n', 'alfa')], [{}, { N8N_API_KEY: 'chave-de-alfa' }])
+
+    // O projeto saiu: as secretas dele e os valores que deu aos MCPs vão junto.
+    service.removeProject('alfa')
+    assert.deepStrictEqual([service.envFor('theo', 'c3', 'alfa').env, service.mcpEnv('alfa.n8n', 'alfa')], [{ API_TOKEN: 'do-agente-456' }, {}])
+  })
 })

@@ -31,6 +31,7 @@ import {
 import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
 import { persistInstalls } from '@infra/packages/Persistent.Installs'
 import { migrateToProjects } from '@composition/factories/Projects.Factory'
+import { makeProjectVariablesController, migrateMcpEnvToProjects } from '@composition/factories/ProjectVariables.Factory'
 import { reconcileCatalogHistory } from '@composition/factories/CatalogHistory.Factory'
 import { syncResourceFiles } from '@composition/factories/ResourceFiles.Factory'
 import { projectSandbox, sweepCommandLogs, sweepProjectMountPoints } from '@infra/sandbox/Project.Sandbox'
@@ -100,6 +101,12 @@ async function bootstrap() {
   sweepCommandLogs()
   // Uma vez: o que existia antes dos projetos vai para o projeto `geral` (ver `migrateToProjects`).
   await migrateToProjects(controller.conversations)
+  // O segredo que um MCP guardava vai para os projetos (o MCP não guarda mais segredo; ver `migrateMcpEnvToProjects`).
+  try {
+    migrateMcpEnvToProjects()
+  } catch (error: unknown) {
+    console.error('[variáveis] a migração dos segredos dos MCPs falhou:', error)
+  }
   // O histórico do catálogo: baseline do que não tem revisão e deriva do que mudou fora dele (semente, migrações, banco).
   reconcileCatalogHistory()
   // Só modelo habilitado fica nas sequências de modelos: limpa o que já estava gravado (idempotente).
@@ -130,6 +137,7 @@ async function bootstrap() {
     makeAuditController(),
     makeConnectController(),
     makeProjectConnectionsController(),
+    makeProjectVariablesController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
   listening = true

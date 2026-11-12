@@ -35,7 +35,7 @@ describe('POST /catalog/import/plan (só admin, dry-run)', () => {
     read: (kind: string, id: string) => documents.find((document) => document.kind === kind && document.id === id),
   }
   const exporter = new CatalogExportUseCase({ reader, mask: { scan: (value) => ({ text: value, hits: [] }) }, now: () => at })
-  const importPlanner = new CatalogImportPlanner({ reader, mcpSecrets: { secretStatus: () => ({ configured: false }) as never, envStatus: () => [] } })
+  const importPlanner = new CatalogImportPlanner({ reader, mcpSecrets: { secretStatus: () => ({ configured: false }) as never } })
   const history = () => new CatalogHistoryQuery(new SqliteCatalogHistoryRepository(':memory:'), { read: () => undefined })
   const controller = new CatalogController({ history: history(), proof, importPlanner })
 

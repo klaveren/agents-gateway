@@ -66,7 +66,6 @@ function build() {
     agentRules: async () => ({ knownTools: ['run_bash'], agentExists: (id) => !!agents.list().find((item) => item.id === id) }),
     mcpSecrets: {
       secretStatus: (key) => ({ configured: configured.has(`${key}:header`) }) as never,
-      envStatus: (key) => (mcps.get(key)?.container?.env ?? mcps.get(key)?.process?.env ?? []).map((name) => ({ name, configured: configured.has(`${key}:${name}`) })),
     },
   })
   const exporter = new CatalogExportUseCase({ reader, mask: { scan: (value) => ({ text: value, hits: [] }) }, now: () => at })
@@ -224,11 +223,11 @@ describe('CatalogImportPlanner (dry-run)', () => {
     const novo = mcpDocument({
       id: 'banco',
       name: 'Banco',
-      kind: 'container',
-      container: { image: 'acme/banco:1', args: [], writable: [], memoryMb: 256, cpus: 1, network: 'none', allowedHosts: [], env: ['DB_PASSWORD'] },
-      url: '',
+      kind: 'remote',
+      url: 'https://banco.exemplo.com/mcp',
       transport: 'auto',
-      auth: 'none',
+      auth: 'header',
+      headerName: 'Authorization',
       enabled: true,
       projectId: 'alfa',
       createdAt: at,
@@ -237,13 +236,13 @@ describe('CatalogImportPlanner (dry-run)', () => {
     const plan = await planner.planDocuments([header, novo], { kind: 'all' })
     assert.deepStrictEqual(byRef(plan, 'mcp/alfa.busca').missingSecrets, undefined)
     const banco = byRef(plan, 'mcp/alfa.banco')
-    assert.deepStrictEqual(banco.missingSecrets, ['env:DB_PASSWORD'])
+    assert.deepStrictEqual(banco.missingSecrets, ['header'])
     assert.strictEqual(banco.entersDisabled, true)
     assert.match(banco.diff!.unified, /"enabled": false/)
-    assert.deepStrictEqual(plan.missingSecrets, [{ ref: 'mcp/alfa.banco', id: 'banco', projectId: 'alfa', secrets: ['env:DB_PASSWORD'] }])
+    assert.deepStrictEqual(plan.missingSecrets, [{ ref: 'mcp/alfa.banco', id: 'banco', projectId: 'alfa', secrets: ['header'] }])
     // 🔌 Na cópia do projeto conectado o segredo nunca viaja: o MCP entra como na origem (desligar derrubaria os agentes).
     const mirrored = byRef(await planner.planDocuments([novo], { kind: 'all' }, { mirror: true }), 'mcp/alfa.banco')
-    assert.deepStrictEqual(mirrored.missingSecrets, ['env:DB_PASSWORD'])
+    assert.deepStrictEqual(mirrored.missingSecrets, ['header'])
     assert.ok(!mirrored.entersDisabled)
 
     const withSecret = await planner.planDocuments([header], { kind: 'all' })

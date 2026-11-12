@@ -199,8 +199,8 @@ describe('CatalogExportUseCase — ⛔ segredo nunca sai', () => {
       '5432',
       'postgres://app:[segredo:senha do banco]@db:5432/app',
     ])
-    // Os nomes do que o servidor pede ao cofre seguem (são nomes, não valores).
-    assert.deepStrictEqual(mcp.secrets, ['env:PGPASSWORD', 'header'])
+    // O que o servidor pede ao cofre segue (é nome, não valor); as variáveis secretas são de cada projeto, não dele.
+    assert.deepStrictEqual(mcp.secrets, ['header'])
   })
 
   it('o relatório: arquivo, campo, camada e rótulo — nunca o valor', () => {

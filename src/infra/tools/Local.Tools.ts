@@ -140,7 +140,7 @@ export interface ILocalToolDeps {
   /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
   permissions?: IPermissionChecker
   /** As variáveis de ambiente fixas de cada agente (o campo `env` dele). Ausente = nenhuma. */
-  agentEnv?: (agentId: string) => Readonly<Record<string, string>> | undefined
+  agentEnv?: (agentId: string, conversationProjectId?: string) => Readonly<Record<string, string>> | undefined
   /** O tempo e a saída do terminal de cada agente (o campo `terminal` dele). Ausente = o global. */
   agentTerminal?: (agentId: string) => { timeoutSeconds?: number; maxOutputChars?: number } | undefined
   /** ⛔ A pasta privada do agente e o que ele faz nela (ver `agentFolderAccess`): a ferramenta de arquivo e o cerco a abrem. */
@@ -238,7 +238,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
 
   /** As variáveis fixas do agente que chama (ver `IAgent.env`). */
   function envOf(context: IExecutionContext | undefined): Readonly<Record<string, string>> | undefined {
-    return context?.agentId ? deps.agentEnv?.(context.agentId) : undefined
+    return context?.agentId ? deps.agentEnv?.(context.agentId, context.conversationProjectId ?? context.projectId) : undefined
   }
 
   /** A pasta do servidor que nenhum comando lê (a de dados do cerco); sem o cerco que a diga (testes), uma temporária. */

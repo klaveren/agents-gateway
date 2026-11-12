@@ -3,7 +3,8 @@ import { caller } from './Caller.Identity'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { IMcpServerConfig, isLaunchedMcp, mcpEnvSecretKey, mcpSecretKey, mcpServerKey, mcpServesProject } from '@domain/models/McpServer.Model'
+import { IMcpServerConfig, isLaunchedMcp, mcpAsksProject, mcpFixedVars, mcpSecretKey, mcpServerKey, mcpServesProject, mcpVarNames } from '@domain/models/McpServer.Model'
+import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { containerArgs, instanceName, openEgress } from '@infra/sandbox/Docker.Sandbox'
 import { resolveAllowedHosts } from '@infra/sandbox/Egress.Proxy'
 import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
@@ -72,6 +73,11 @@ export class McpRegistry {
   private readonly instances = new Map<string, IInstance>()
   private readonly starting = new Map<string, Promise<IInstance | undefined>>()
   private sessionLookup: (sessionId: string) => { agentId: string; metadata?: Record<string, unknown> } | undefined = () => undefined
+  /**
+   * ⛔ Os valores que o PROJETO deu às variáveis do servidor (visíveis e secretos), para o ambiente do processo — nunca o
+   * terminal do agente. `sessionId`: a conversa cuja máscara aprende os secretos. Ligado na composição; ausente, nenhum.
+   */
+  private projectEnv: (config: IMcpServerConfig, projectId: string | undefined, sessionId?: string) => Record<string, string> = () => ({})
   /** O token OAuth de cada pessoa (ver `McpOAuth`). Ligado na composição; ausente, `auth: oauth` não tem cliente. */
   private oauth?: { accessToken(serverKey: string, userId: string): Promise<string | undefined> }
   private reaper?: NodeJS.Timeout
@@ -87,6 +93,16 @@ export class McpRegistry {
   /** De onde vem uma conversa viva (agente e `metadata`, para `{meta:chave}` e o proxy). Ligado na composição. */
   setSessionLookup(lookup: (sessionId: string) => { agentId: string; metadata?: Record<string, unknown> } | undefined): void {
     this.sessionLookup = lookup
+  }
+
+  useProjectEnv(values: (config: IMcpServerConfig, projectId: string | undefined, sessionId?: string) => Record<string, string>): void {
+    this.projectEnv = values
+  }
+
+  /** O projeto da conversa viva (o que ela carimbou), ou nenhum. */
+  private projectOf(sessionId: string | undefined): string | undefined {
+    const project = sessionId ? this.sessionLookup(sessionId)?.metadata?.[PROJECT_METADATA_KEY] : undefined
+    return typeof project === 'string' && project ? project : undefined
   }
 
   useOAuth(oauth: { accessToken(serverKey: string, userId: string): Promise<string | undefined> }): void {
@@ -118,12 +134,14 @@ export class McpRegistry {
   async clientFor(key: string, sessionId?: string): Promise<McpServerClient | undefined> {
     const config = this.servers.get(key)
     if (!config || !isLaunchedMcp(config)) return this.client(key)
-    const instance = config.kind === 'process' && config.process?.scope === 'shared' ? SHARED : sessionId
+    const project = this.projectOf(sessionId)
+    // ⚖️ O `shared` que pede valor ao projeto vira UM POR PROJETO: o processo de um projeto nunca roda com a chave de outro.
+    const instance = config.kind === 'process' && config.process?.scope === 'shared' ? (mcpAsksProject(config) ? `${SHARED}@${project ?? ''}` : SHARED) : sessionId
     if (!config.enabled || !instance) return undefined
-    return (await this.instance(config, instance))?.client
+    return (await this.instance(config, instance, project))?.client
   }
 
-  private async instance(config: IMcpServerConfig, sessionId: string): Promise<IInstance | undefined> {
+  private async instance(config: IMcpServerConfig, sessionId: string, project?: string): Promise<IInstance | undefined> {
     const key = `${mcpServerKey(config)}\u0000${sessionId}`
     const current = this.instances.get(key)
     if (current) {
@@ -133,14 +151,17 @@ export class McpRegistry {
     const pending = this.starting.get(key)
     if (pending) return pending
 
-    const start = this.startInstance(config, sessionId, key).finally(() => this.starting.delete(key))
+    const start = this.startInstance(config, sessionId, key, project).finally(() => this.starting.delete(key))
     this.starting.set(key, start)
     return start
   }
 
-  private async startInstance(config: IMcpServerConfig, sessionId: string, key: string): Promise<IInstance | undefined> {
+  private async startInstance(config: IMcpServerConfig, sessionId: string, key: string, project?: string): Promise<IInstance | undefined> {
     if (this.instances.size + this.starting.size > maxInstances()) throw new Error(`too many MCP instances running (MCP_CONTAINER_MAX=${maxInstances()}); try again later`)
-    const { client, cleanup } = config.kind === 'process' ? this.launchProcess(config, sessionId) : await this.launchContainer(config, sessionId)
+    // As fixas por baixo, as do projeto por cima. A conversa (não a instância compartilhada nem o teste) aprende os secretos.
+    const conversation = sessionId.startsWith(SHARED) || sessionId.startsWith('probe:') ? undefined : sessionId
+    const vars = { ...mcpFixedVars(config), ...this.projectEnv(config, project, conversation) }
+    const { client, cleanup } = config.kind === 'process' ? this.launchProcess(config, sessionId, vars, project) : await this.launchContainer(config, sessionId, vars)
     if (!(await client.connect())) {
       await client.close()
       await cleanup()
@@ -162,7 +183,7 @@ export class McpRegistry {
     return entry
   }
 
-  private async launchContainer(config: IMcpServerConfig, sessionId: string): Promise<{ client: McpServerClient; cleanup: () => Promise<void> }> {
+  private async launchContainer(config: IMcpServerConfig, sessionId: string, vars: Record<string, string>): Promise<{ client: McpServerClient; cleanup: () => Promise<void> }> {
     const container = config.container!
     const serverKey = mcpServerKey(config)
     const instance = instanceName()
@@ -170,17 +191,15 @@ export class McpRegistry {
       container.network === 'allowlist' ? await openEgress(serverKey, instance, resolveAllowedHosts(container.allowedHosts, this.sessionLookup(sessionId)?.metadata)) : undefined
 
     const env = dockerEnv()
-    for (const name of container.env) {
-      const value = this.secrets.get(mcpEnvSecretKey(serverKey, name))
-      if (value) env[name] = value
-    }
+    const names = mcpVarNames(config).filter((name) => vars[name] !== undefined)
+    for (const name of names) env[name] = vars[name]
     const args = containerArgs({
       image: container.image,
       args: container.args,
       writable: container.writable,
       memoryMb: container.memoryMb,
       cpus: container.cpus,
-      envNames: container.env,
+      envNames: names,
       network: egress ? { mode: 'allowlist', name: egress.name, proxyUrl: egress.proxyUrl } : { mode: 'none' },
       serverId: serverKey,
       instance,
@@ -194,19 +213,17 @@ export class McpRegistry {
    * (`PATH`, `HOME`…) e as variáveis declaradas — o `.env` do gateway (chaves de API, segredo do JWT) não vai.
    * Por conversa, uma pasta de trabalho vazia, apagada junto com a instância; em `shared`, a do servidor.
    */
-  private launchProcess(config: IMcpServerConfig, sessionId: string): { client: McpServerClient; cleanup: () => Promise<void> } {
+  private launchProcess(config: IMcpServerConfig, sessionId: string, vars: Record<string, string>, project?: string): { client: McpServerClient; cleanup: () => Promise<void> } {
     const proc = config.process!
     const serverKey = mcpServerKey(config)
     const command = resolveCommand(serverKey, proc)
     const env: Record<string, string> = { ...getDefaultEnvironment() }
     // Onde os gerenciadores instalam (o PVC): um `npx` dentro do MCP acha o que o `npm i -g` deixou.
     for (const name of INSTALL_PASSTHROUGH) if (process.env[name]) env[name] = process.env[name] as string
-    for (const name of proc.env) {
-      const value = this.secrets.get(mcpEnvSecretKey(serverKey, name))
-      if (value) env[name] = value
-    }
-    const shared = sessionId === SHARED
-    const cwd = shared ? join(installDir(serverKey), 'work') : mkdtempSync(join(tmpdir(), `gw-mcp-${serverKey}-`))
+    for (const name of mcpVarNames(config)) if (vars[name] !== undefined) env[name] = vars[name]
+    const shared = sessionId.startsWith(SHARED)
+    // O compartilhado por projeto trabalha na pasta do projeto: os arquivos de um não aparecem para o outro.
+    const cwd = shared ? join(installDir(serverKey), 'work', ...(sessionId === SHARED ? [] : [project || '_'])) : mkdtempSync(join(tmpdir(), `gw-mcp-${serverKey}-`))
     mkdirSync(cwd, { recursive: true, mode: 0o700 })
     // ⚠️ No pod o HOME é só leitura (`readOnlyRootFilesystem`), e MCP grava nele (o Playwright, em `~/.cache`).
     // Sem HOME gravável, o processo ganha um próprio: a pasta de trabalho dele.
@@ -303,11 +320,14 @@ export class McpRegistry {
     return (await this.connected(key, sessionId, caller))?.listToolsAs(caller) ?? []
   }
 
-  /** Para a tela: as ferramentas de um contêiner ou processo numa instância DESCARTÁVEL (aberta e fechada aqui). */
-  async probeTools(key: string, token?: string): Promise<IToolDefinition[]> {
+  /**
+   * Para a tela: as ferramentas de um contêiner ou processo numa instância DESCARTÁVEL (aberta e fechada aqui). `project`:
+   * de onde vêm os valores que o servidor pede ao projeto (o seletor da tela).
+   */
+  async probeTools(key: string, token?: string, project?: string): Promise<IToolDefinition[]> {
     const config = this.servers.get(key)
     if (!isLaunchedMcp(config)) return this.tools(key, undefined, token)
-    const result = await this.test(key, token)
+    const result = await this.test(key, token, project)
     return result.tools
   }
 
@@ -316,13 +336,13 @@ export class McpRegistry {
    * ⚖️ `token`: a credencial de quem está na tela. Um servidor `caller` (o MCP do próprio gateway) recusa a conexão
    * anônima — sem ela, o teste dava sempre "Error POSTing to endpoint", embora nas conversas funcionasse.
    */
-  async test(key: string, token?: string): Promise<{ ok: boolean; tools: IToolDefinition[]; message?: string }> {
+  async test(key: string, token?: string, project?: string): Promise<{ ok: boolean; tools: IToolDefinition[]; message?: string }> {
     const config = this.servers.get(key)
     if (config && isLaunchedMcp(config)) {
       if (!config.enabled) return { ok: false, tools: [], message: 'server is disabled' }
       const probe = `probe:${instanceName()}`
       try {
-        const entry = await this.instance(config, probe)
+        const entry = await this.instance(config, probe, project)
         const tools = (await entry?.client.listTools()) ?? []
         await entry?.close()
         return { ok: true, tools }

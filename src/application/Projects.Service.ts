@@ -2,7 +2,9 @@ import { ignoreIssues, normalizeIgnore } from '@domain/Import.Ignore'
 import { IAgenticScope, normalizeScope, scopeIssues } from '@domain/Import.Scope'
 import { InvalidProjectError, ProjectInUseError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
-import { DEFAULT_PROJECT_ID, IProject, IProjectMember, PROJECT_ID_PATTERN, PROJECT_ROLES, TProjectRole } from '@domain/models/Project.Model'
+import { DEFAULT_PROJECT_ID, IProject, IProjectMcpVar, IProjectMember, PROJECT_ENV_LIMITS, PROJECT_ID_PATTERN, PROJECT_ROLES, TProjectRole } from '@domain/models/Project.Model'
+import { AGENT_ENV_NAME, envIssues } from '@domain/Agent.Policy'
+import { MCP_SERVER_ID_PATTERN } from '@domain/models/McpServer.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
 import { TRevisionSource } from '@domain/ports/CatalogHistoryRepository.Port'
@@ -113,18 +115,24 @@ export class ProjectsService {
     return project
   }
 
-  update(id: string, change: { name?: string; description?: string }, by: string): IProject {
+  /** `env`/`mcpEnv` presentes TROCAM a lista inteira (a tela manda o que ficou); ausentes, ficam como estão. */
+  update(id: string, change: { name?: string; description?: string; env?: Record<string, string>; mcpEnv?: readonly IProjectMcpVar[] }, by: string): IProject {
     const current = this.get(id)
+    const mcpEnv = change.mcpEnv?.map((item) => ({ server: item.server.trim(), name: item.name.trim(), value: item.value }))
     const next: IProject = {
       ...current,
       ...(change.name !== undefined ? { name: change.name.trim() } : {}),
       ...(change.description !== undefined ? { description: change.description.trim() } : {}),
+      ...(change.env !== undefined ? { env: change.env } : {}),
+      ...(mcpEnv !== undefined ? { mcpEnv } : {}),
     }
-    const issues = projectIssues(next)
+    const issues = [...projectIssues(next), ...(change.env !== undefined ? projectEnvIssues(change.env) : []), ...(mcpEnv ? projectMcpEnvIssues(mcpEnv) : [])]
     if (issues.length) throw new InvalidProjectError(issues)
     const saved = this.projects.update(id, {
       name: next.name,
       ...(change.description !== undefined ? { description: next.description || undefined } : {}),
+      ...(change.env !== undefined ? { env: change.env } : {}),
+      ...(mcpEnv !== undefined ? { mcpEnv: [...mcpEnv].sort((a, b) => a.server.localeCompare(b.server) || a.name.localeCompare(b.name)) } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     })!
@@ -210,6 +218,36 @@ export class ProjectsService {
 }
 
 /** Os problemas dos campos do projeto (nome e descrição), SEM gravar: as regras de `create`/`update`. */
+/**
+ * As variáveis FIXAS do projeto: as mesmas regras das do agente (`envIssues` — nome, reservados, cara de segredo, valor),
+ * com o teto do projeto.
+ */
+export function projectEnvIssues(env: Readonly<Record<string, string>>): Array<{ field: string; message: string }> {
+  const issues = envIssues(env)
+  if (Object.keys(env).length > PROJECT_ENV_LIMITS.fixed) issues.push({ field: 'env', message: `at most ${PROJECT_ENV_LIMITS.fixed} variables` })
+  for (const [name, value] of Object.entries(env))
+    if (typeof value === 'string' && value.length > PROJECT_ENV_LIMITS.value) issues.push({ field: 'env', message: `${name}: at most ${PROJECT_ENV_LIMITS.value} characters` })
+  return issues
+}
+
+/** Os valores visíveis dos MCPs: o id do MCP, o nome da variável, o valor (texto, sem NUL) e um por par. */
+export function projectMcpEnvIssues(list: readonly IProjectMcpVar[]): Array<{ field: string; message: string }> {
+  const issues: Array<{ field: string; message: string }> = []
+  const issue = (message: string) => issues.push({ field: 'mcpEnv', message })
+  if (list.length > PROJECT_ENV_LIMITS.mcp) issue(`at most ${PROJECT_ENV_LIMITS.mcp} values`)
+  const seen = new Set<string>()
+  for (const item of list) {
+    if (!MCP_SERVER_ID_PATTERN.test(item.server)) issue(`${item.server}: not an MCP server id`)
+    if (!AGENT_ENV_NAME.test(item.name)) issue(`${item.server}/${item.name}: uppercase letters, digits and _`)
+    if (typeof item.value !== 'string' || item.value.includes('\0')) issue(`${item.server}/${item.name}: the value must be text without NUL`)
+    else if (item.value.length > PROJECT_ENV_LIMITS.value) issue(`${item.server}/${item.name}: at most ${PROJECT_ENV_LIMITS.value} characters`)
+    const key = `${item.server}/${item.name}`
+    if (seen.has(key)) issue(`${key}: repeated`)
+    seen.add(key)
+  }
+  return issues
+}
+
 export function projectIssues(project: Pick<IProject, 'name' | 'description'>): Array<{ field: string; message: string }> {
   const issues: Array<{ field: string; message: string }> = []
   if (!project.name) issues.push({ field: 'name', message: 'required' })

@@ -45,7 +45,14 @@ export interface IMcpContainer {
   network: 'none' | 'allowlist'
   /** Domínios (com subdomínios) ou `{meta:chave}` — o valor daquela chave no `metadata` da conversa. */
   allowedHosts: string[]
-  /** Nomes das variáveis secretas (os valores ficam cifrados no cofre, `mcp:<id>:env:<NOME>`). */
+  /** As variáveis FIXAS do MCP: o valor é visível e igual em todo projeto (uma URL, um modo). Ausente = nenhuma. */
+  vars?: Record<string, string>
+  /** As variáveis que CADA projeto preenche com valor visível (Projeto → Ambiente → Variáveis). Ausente = nenhuma. */
+  projectVars?: string[]
+  /**
+   * As variáveis SECRETAS que CADA projeto preenche (o valor no cofre, por projeto: `ResourceSecret.Model`, escopo `mcp`).
+   * ⛔ O MCP não guarda segredo: o mesmo MCP serve projetos com chaves e destinos diferentes.
+   */
   env: string[]
 }
 
@@ -72,7 +79,14 @@ export interface IMcpProcess {
   /** Com pacote: o nome do bin, quando ele tem vários. Sem pacote: o comando, no PATH (`npx`, `uvx`, caminho absoluto). */
   command?: string
   args: string[]
-  /** Nomes das variáveis secretas (os valores ficam cifrados no cofre, `mcp:<id>:env:<NOME>`). */
+  /** As variáveis FIXAS do MCP: o valor é visível e igual em todo projeto (uma URL, um modo). Ausente = nenhuma. */
+  vars?: Record<string, string>
+  /** As variáveis que CADA projeto preenche com valor visível (Projeto → Ambiente → Variáveis). Ausente = nenhuma. */
+  projectVars?: string[]
+  /**
+   * As variáveis SECRETAS que CADA projeto preenche (o valor no cofre, por projeto: `ResourceSecret.Model`, escopo `mcp`).
+   * ⛔ O MCP não guarda segredo: o mesmo MCP serve projetos com chaves e destinos diferentes.
+   */
   env: string[]
   /** `conversation`: um processo por conversa (navegador, cookies e arquivos separados). `shared`: um só para todas. */
   scope: 'conversation' | 'shared'
@@ -80,13 +94,33 @@ export interface IMcpProcess {
 
 export const MCP_PROCESS_DEFAULTS: Pick<IMcpProcess, 'args' | 'env' | 'scope'> = { args: [], env: [], scope: 'conversation' }
 
-/** As variáveis secretas declaradas, do contêiner ou do processo. */
+/** As variáveis SECRETAS por projeto, do contêiner ou do processo. */
 export const mcpEnvNames = (server: Pick<IMcpServerConfig, 'container' | 'process'>): string[] => server.container?.env ?? server.process?.env ?? []
+
+/** As variáveis com valor visível por projeto. */
+export const mcpProjectVarNames = (server: Pick<IMcpServerConfig, 'container' | 'process'>): string[] => server.container?.projectVars ?? server.process?.projectVars ?? []
+
+/** As variáveis fixas, com o valor. */
+export const mcpFixedVars = (server: Pick<IMcpServerConfig, 'container' | 'process'>): Record<string, string> => server.container?.vars ?? server.process?.vars ?? {}
+
+/** Todos os nomes que o processo do MCP recebe: fixas, do projeto e secretas do projeto. */
+export const mcpVarNames = (server: Pick<IMcpServerConfig, 'container' | 'process'>): string[] => [
+  ...Object.keys(mcpFixedVars(server)),
+  ...mcpProjectVarNames(server),
+  ...mcpEnvNames(server),
+]
+
+/** ⚖️ O MCP pede valor ao projeto? Então cada projeto tem a SUA instância (o `shared` vira um por projeto). */
+export const mcpAsksProject = (server: Pick<IMcpServerConfig, 'container' | 'process'>): boolean => mcpProjectVarNames(server).length + mcpEnvNames(server).length > 0
 
 /** Contêiner e processo não têm cliente compartilhado: sobem instâncias (por conversa, ou uma só em `shared`). */
 export const isLaunchedMcp = (server: Pick<IMcpServerConfig, 'kind'> | undefined): boolean => server?.kind === 'container' || server?.kind === 'process'
 
-/** ⛔ `serverKey` é a CHAVE do servidor (`mcpServerKey`), nunca o id solto: dois projetos com o mesmo id não dividem segredo. */
+/**
+ * ⚠️ ANTIGO: o valor da variável secreta guardado no PRÓPRIO MCP, no cofre de credenciais. Hoje o valor é do projeto; a
+ * migração da partida (`migrateMcpEnvToProjects`) leva o que havia aqui para os projetos e apaga.
+ * ⛔ `serverKey` é a CHAVE do servidor (`mcpServerKey`), nunca o id solto: dois projetos com o mesmo id não dividem segredo.
+ */
 export const mcpEnvSecretKey = (serverKey: string, name: string) => `mcp:${serverKey}:env:${name}`
 
 export interface IMcpServerConfig {

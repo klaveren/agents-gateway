@@ -13,10 +13,30 @@ export interface IProject {
   importIgnore?: string[]
   /** O ambiente agêntico que o importador olha (`Import.Scope`). Ausente: os lugares padrão, todos ligados. O admin define. */
   importScope?: IAgenticScope
+  /**
+   * As variáveis FIXAS do projeto (o valor é visível): valem no terminal de todo agente nas conversas dele, por BAIXO das
+   * do agente. Segredo não mora aqui: vai nas secretas do projeto (`ResourceSecret.Model`). Ausente = nenhuma.
+   */
+  env?: Record<string, string>
+  /**
+   * Os valores VISÍVEIS que o projeto dá às variáveis "do projeto" de cada MCP. ⛔ Só para o processo do MCP, nunca para o
+   * terminal do agente. Os secretos ficam no cofre (`mcp`). Ausente = nenhum.
+   */
+  mcpEnv?: IProjectMcpVar[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string
 }
+
+/** Um valor visível que o projeto dá a uma variável de um MCP (`server` = o id do MCP, como o agente o cita). */
+export interface IProjectMcpVar {
+  server: string
+  name: string
+  value: string
+}
+
+/** Os tetos das variáveis do projeto. */
+export const PROJECT_ENV_LIMITS = { fixed: 50, mcp: 200, value: 4096 } as const
 
 /**
  * ⚖️ O PAPEL NO PROJETO: o administrador do projeto cuida de tudo dele (agentes, catálogo, permissões, membros); o membro

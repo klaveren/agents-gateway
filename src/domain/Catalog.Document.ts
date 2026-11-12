@@ -3,7 +3,6 @@ import type { IFallbackStep, IModelGroup } from './Fallback.Policy'
 import type { IAgent, IAgentDiagnostics, IAgentTarget, IAgentTerminal, IAgentTrigger } from './models/Agent.Model'
 import type { IImportProblem } from './models/ImportProblem.Model'
 import type { IMcpContainer, IMcpProcess, IMcpServerConfig } from './models/McpServer.Model'
-import { mcpEnvNames } from './models/McpServer.Model'
 import type { IProject } from './models/Project.Model'
 import type { IProjectDoc } from './models/ProjectDoc.Model'
 import type { IProtocolAddendum, TProtocolKind } from './models/Protocol.Model'
@@ -253,6 +252,8 @@ export const PROJECT_SHAPE: TShape<IProject> = {
   description: 'value',
   importIgnore: { omit: 'configuração da varredura do importador (os repositórios desta instalação), não conteúdo do catálogo' },
   importScope: { omit: 'configuração da varredura do importador (os repositórios desta instalação), não conteúdo do catálogo' },
+  env: 'record',
+  mcpEnv: { set: { server: 'value', name: 'value', value: 'value' } },
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },
@@ -266,7 +267,9 @@ export const MCP_CONTAINER_SHAPE: TShape<IMcpContainer> = {
   cpus: 'value',
   network: 'value',
   allowedHosts: 'set',
-  // Só os NOMES: os valores estão cifrados no cofre (`mcp:<id>:env:<NOME>`).
+  // As fixas vão com o valor (visível por definição); das do projeto, só os NOMES — o valor é de cada projeto.
+  vars: 'record',
+  projectVars: 'set',
   env: 'set',
 }
 
@@ -274,7 +277,9 @@ export const MCP_PROCESS_SHAPE: TShape<IMcpProcess> = {
   package: 'value',
   command: 'value',
   args: 'list',
-  // Só os NOMES, como no contêiner.
+  // Como no contêiner.
+  vars: 'record',
+  projectVars: 'set',
   env: 'set',
   scope: 'value',
 }
@@ -427,9 +432,12 @@ export function projectPermissionsDocument(projectId: string, rules: readonly IP
   return documentOf('project-permissions', projectId, projectId, { projectId, rules: field({ list: PERMISSION_RULE_SHAPE }, rules) })
 }
 
-/** O que o servidor pede ao cofre: `env:<NOME>` por variável e `header` com `auth: header`. Ordenado. */
+/**
+ * O que o servidor pede ao cofre: `header` com `auth: header`. ⚖️ As variáveis secretas não entram: o valor é de cada
+ * projeto (Projeto → Ambiente → Variáveis), não do servidor.
+ */
 export function mcpSecretRefs(server: IMcpServerConfig): string[] {
-  return [...mcpEnvNames(server).map((name) => `env:${name}`), ...(server.auth === 'header' ? ['header'] : [])].sort(byText)
+  return server.auth === 'header' ? ['header'] : []
 }
 
 export function mcpDocument(server: IMcpServerConfig): ICatalogDocument {
