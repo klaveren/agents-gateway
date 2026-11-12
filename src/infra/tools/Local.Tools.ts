@@ -5,7 +5,7 @@ import type { IPermissionAsker, IPermissionChecker } from '@application/Permissi
 import { cercoPlan } from '@domain/Cerco.Plan'
 import { commandMatches, definesGitAlias, hasGitDeny, type IPermissionRule } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
-import { exec, execFileSync } from 'node:child_process'
+import { exec } from 'node:child_process'
 import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, posix, relative, resolve } from 'node:path'
@@ -45,6 +45,7 @@ import type { IEditDiagnostics } from './Edit.Diagnostics'
 import type { IAgentDiagnostics } from '@domain/models/Agent.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
 import { fetchUrlTool } from './Web.Fetch'
+import { discoveredGitSync } from '@infra/workspace/Git.Safe'
 import { gitGuard, IGitGuardOptions } from './Git.Guard'
 import { IImportDesk, IRepositoryBrowser, makeImportTools } from './Import.Tools'
 
@@ -176,12 +177,8 @@ export interface ILocalToolDeps {
 
 /** A branch atual da pasta (o alvo do `git push` sem refspec); fora de um repositório, nada. */
 function currentBranchOf(dir: string): string | undefined {
-  try {
-    const branch = execFileSync('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-    return branch && branch !== 'HEAD' ? branch : undefined
-  } catch {
-    return undefined
-  }
+  const branch = discoveredGitSync(dir, ['rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 3000 })?.trim()
+  return branch && branch !== 'HEAD' ? branch : undefined
 }
 
 /** Quem pede, a partir do contexto do turno: o agente e o projeto da CONVERSA. */
@@ -435,24 +432,28 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     if (!sessionId) return { status: 'error', result: 'bash_start só funciona dentro de uma conversa.' }
     const printing = secretPrintRefusal(command, context, deps.secrets)
     if (printing) return { status: 'error', result: printing }
-    if (processes.running(sessionId).length >= BACKGROUND_LIMITS.perSession)
-      return { status: 'error', result: `Já há ${BACKGROUND_LIMITS.perSession} processos em segundo plano nesta conversa: pare um com bash_stop.` }
+    // ⛔ A vaga é guardada ANTES da preparação (que espera): chamadas juntas não passam todas pela conta (`reserve`).
+    const slot = processes.reserve(sessionId)
+    if (slot === 'session') return { status: 'error', result: `Já há ${BACKGROUND_LIMITS.perSession} processos em segundo plano nesta conversa: pare um com bash_stop.` }
     // ⛔ O teto do gateway inteiro: cinco por conversa, em muitas conversas, ainda enchia a máquina.
-    if (processes.runningTotal() >= backgroundMaxProcesses())
-      return { status: 'error', result: `O servidor já tem ${backgroundMaxProcesses()} processos em segundo plano (somadas as conversas): espere um acabar.` }
-    const prepared = await prepareSandboxed(command, context, permissions)
-    if ('status' in prepared) return prepared
-    const id = processes.newId()
-    const entry = processes.start(sessionId, id, (name ?? command).slice(0, 80), command, prepared.line, {
-      cwd: prepared.root,
-      env: prepared.env,
-      shell: SANDBOX_SHELL,
-      logFile: join(prepared.logDir, `${id}.log`),
-      onExit: prepared.release,
-    })
-    return {
-      status: 'success',
-      result: `${prepared.notes}Iniciado em segundo plano: id ${entry.id} (${entry.name}). Leia com bash_logs id ${entry.id}; pare com bash_stop id ${entry.id}. Vive até 8 h.`,
+    if (slot === 'total') return { status: 'error', result: `O servidor já tem ${backgroundMaxProcesses()} processos em segundo plano (somadas as conversas): espere um acabar.` }
+    try {
+      const prepared = await prepareSandboxed(command, context, permissions)
+      if ('status' in prepared) return prepared
+      const id = processes.newId()
+      const entry = processes.start(sessionId, id, (name ?? command).slice(0, 80), command, prepared.line, {
+        cwd: prepared.root,
+        env: prepared.env,
+        shell: SANDBOX_SHELL,
+        logFile: join(prepared.logDir, `${id}.log`),
+        onExit: prepared.release,
+      })
+      return {
+        status: 'success',
+        result: `${prepared.notes}Iniciado em segundo plano: id ${entry.id} (${entry.name}). Leia com bash_logs id ${entry.id}; pare com bash_stop id ${entry.id}. Vive até 8 h.`,
+      }
+    } finally {
+      slot()
     }
   }
 

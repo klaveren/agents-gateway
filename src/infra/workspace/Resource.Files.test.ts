@@ -1,9 +1,9 @@
 import assert from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { agentFolderOwner, agentFolders, isResourceFilePath, readOnlyResourceDirs, ResourceFilesStore } from './Resource.Files'
+import { agentFolderOwner, agentFolders, isResourceFilePath, readOnlyResourceDirs, realAgentFolder, ResourceFilesStore } from './Resource.Files'
 
 describe('ResourceFilesStore — o depósito e as pastas dos arquivos de recurso', () => {
   const data = mkdtempSync(join(tmpdir(), 'gw-files-'))
@@ -144,6 +144,35 @@ describe('ResourceFilesStore — o depósito e as pastas dos arquivos de recurso
     store.writeAgent('rex', undefined, [], ['sub/vitima.txt'])
     assert.deepStrictEqual(readdirSync(fora), ['vitima.txt'])
     assert.strictEqual(readFileSync(join(fora, 'vitima.txt'), 'utf8'), 'intacto')
+    rmSync(fora, { recursive: true, force: true })
+  })
+
+  it('⛔ a PRÓPRIA pasta do agente, ou a `agents` acima dela, trocada por symlink: o gateway não grava, não repõe nem lista pelo link', () => {
+    const fora = mkdtempSync(join(tmpdir(), 'gw-fora-'))
+    writeFileSync(join(fora, 'vitima.txt'), 'intacto')
+    const c = store.put(Buffer.from('plantado'))
+    const check = (id: string) => {
+      const dir = store.dirOf('agent', id, 'p9')
+      assert.strictEqual(realAgentFolder(dir), false)
+      assert.throws(() => store.writeAgent(id, 'p9', [{ path: 'a.txt', ...c }], []), /link/)
+      assert.throws(() => store.writeAgent(id, 'p9', [], ['vitima.txt']), /link/)
+      store.restoreAgent(id, 'p9', [{ path: 'b.txt', ...c }])
+      assert.deepStrictEqual(store.snapshotAgent(id, 'p9'), [])
+      assert.deepStrictEqual(readdirSync(fora), ['vitima.txt'])
+    }
+    // A pasta de um agente que ainda não tinha pasta aponta para fora.
+    const dir = store.dirOf('agent', 'novo', 'p9')
+    mkdirSync(dirname(dir), { recursive: true })
+    symlinkSync(fora, dir)
+    check('novo')
+    // A `agents` inteira aponta para fora: nem a pasta do agente é criada do outro lado.
+    rmSync(dirname(dir), { recursive: true, force: true })
+    symlinkSync(fora, dirname(dir))
+    check('outro')
+    unlinkSync(dirname(dir))
+    // ⚖️ A pasta de verdade segue valendo (e é criada se faltar).
+    assert.strictEqual(realAgentFolder(dir), true)
+    assert.ok(statSync(dir).isDirectory())
     rmSync(fora, { recursive: true, force: true })
   })
 })

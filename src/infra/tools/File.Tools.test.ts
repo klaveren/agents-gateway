@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deniedPath, makeFileTools, resolveInside } from './File.Tools'
@@ -63,6 +63,41 @@ describe('File.Tools', () => {
     assert.equal(filtered.result, 'src/c.md:1: # foo title')
   })
 
+  it('⛔ search_files: a regex de retrocesso exponencial não para o gateway; a busca acaba com o aviso', async () => {
+    writeFileSync(join(dir, 'src', 'redos.txt'), `${'a'.repeat(40)}b\n`)
+    const started = Date.now()
+    const out = await run('search_files', { pattern: '(a+)+$', path: 'src' })
+    assert.equal(out.status, 'error')
+    assert.match(out.result, /too slow/)
+    assert.ok(Date.now() - started < 10_000)
+    rmSync(join(dir, 'src', 'redos.txt'))
+    assert.match((await run('search_files', { pattern: 'x'.repeat(1001) })).result, /too long/)
+  })
+
+  it('⛔ edit_file: o resultado também tem teto (replace_all não multiplica o arquivo)', async () => {
+    writeFileSync(join(dir, 'muitos.txt'), 'a'.repeat(100 * 1024))
+    const out = await run('edit_file', { path: 'muitos.txt', old_string: 'a', new_string: 'b'.repeat(100), replace_all: true })
+    assert.equal(out.status, 'error')
+    assert.match(out.result, /larger than 5 MB/)
+    assert.equal(statSync(join(dir, 'muitos.txt')).size, 100 * 1024)
+    rmSync(join(dir, 'muitos.txt'))
+  })
+
+  it('⛔ list_files/search_files: o padrão não sai da pasta pedida (absoluto ou com `..` nem começa a varrer)', async () => {
+    for (const pattern of ['../*', 'sub/../../*', '/etc/host*']) {
+      const listed = await run('list_files', { pattern })
+      assert.equal(listed.status, 'error', pattern)
+      assert.match(listed.result, /must be relative/)
+      const searched = await run('search_files', { pattern: 'localhost', glob: pattern })
+      assert.equal(searched.status, 'error', pattern)
+      assert.match(searched.result, /must be relative/)
+    }
+    // Um nome com dois pontos no meio continua valendo.
+    writeFileSync(join(dir, 'a..b.txt'), 'x')
+    assert.match((await run('list_files', { pattern: 'a..b.*' })).result, /a\.\.b\.txt/)
+    rmSync(join(dir, 'a..b.txt'))
+  })
+
   it('write_file creates parent folders', async () => {
     const out = await run('write_file', { path: 'deep/er/new.txt', content: 'hello' })
     assert.equal(out.result, 'Wrote 5 bytes to deep/er/new.txt')
@@ -113,6 +148,10 @@ describe('File.Tools', () => {
     assert.ok(!listed.result.includes('.env') && !listed.result.includes('x.pem'))
     assert.ok(deniedPath(join(dir, 'secrets.json'), dir))
     assert.ok(deniedPath(join(dir, 'id_rsa.pub'), dir))
+    // ⛔ No disco do Mac `.ENV` é o `.env` e `.GIT/config` é o `.git/config`.
+    for (const path of ['.ENV', '.Env.local', 'X.PEM', '.GIT/config', 'sub/.Git/hooks/pre-commit', '.HOME/.Accounts/x']) assert.ok(deniedPath(join(dir, path), dir), path)
+    assert.match((await run('read_file', { path: '.ENV' })).result, /this file is protected/)
+    assert.match((await run('write_file', { path: '.GIT/config', content: 'x' })).result, /protected/)
     assert.equal(deniedPath(join(dir, 'a.txt'), dir), undefined)
   })
 

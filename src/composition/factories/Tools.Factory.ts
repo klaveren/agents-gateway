@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs'
+import { realAgentFolder } from '@infra/workspace/Resource.Files'
 import { McpOAuth } from '@infra/mcp/Mcp.OAuth'
 import { agentFolderAccess } from '@domain/Capability.Catalog'
 import { makeResourceSecrets } from './ResourceSecrets.Factory'
@@ -290,11 +290,8 @@ export function agentFolderOf(agentId: string, conversationProject?: string): { 
   if (!agent || !dir) return undefined
   const access = agentFolderAccess(agent.allowedTools)
   if (!access.read) return undefined
-  try {
-    mkdirSync(dir, { recursive: true, mode: 0o755 })
-  } catch {
-    return undefined
-  }
+  // ⛔ Só a pasta de verdade: um link plantado em `agents/<id>` não vira pasta privada (ver `realAgentFolder`).
+  if (!realAgentFolder(dir)) return undefined
   // ⛔ Agente compartilhado numa conversa de OUTRO projeto: a pasta dele é só leitura (escrever ali seria um recado da conversa de
   // um projeto para as do outro, que carregam essa mesma pasta).
   return { dir, ...access, write: access.write && runsUnder(agent, conversationProject) === agent.projectId }

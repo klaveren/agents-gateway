@@ -2,6 +2,7 @@ import { constants as fsc, existsSync, realpathSync } from 'node:fs'
 import { FileHandle, glob, lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { createContext, Script } from 'node:vm'
 import {
   DELIVER_FILE_TOOL,
   DELIVERED_FILE_MAX_BYTES,
@@ -50,6 +51,30 @@ const WRITE_MAX_BYTES = 1024 * 1024
 const SEARCH_FILE_MAX_BYTES = 1024 * 1024
 const LIST_MAX = 500
 const SEARCH_MAX = 200
+const SEARCH_PATTERN_MAX_CHARS = 1000
+/** O tempo que UMA busca pode gastar casando a regex, somados os arquivos. */
+const SEARCH_REGEX_BUDGET_MS = 1500
+
+const MATCH_BOX = createContext({ regex: undefined, lines: undefined, max: 0 })
+const MATCH_LINES = new Script('(() => { const hits = []; for (let i = 0; i < lines.length && hits.length < max; i++) if (regex.test(lines[i])) hits.push(i); return hits })()')
+
+/**
+ * ⛔ A regex do `search_files` é do agente e roda no processo do gateway, que é um só para todas as conversas: uma
+ * regex de retrocesso exponencial (`(a+)+$`) o pararia inteiro. Por isso ela roda com prazo: o `timeout` do `vm`
+ * interrompe a regex no meio. Devolve os índices das linhas que casam (no máximo `max`); `undefined` se o prazo acabou.
+ */
+export function matchingLines(regex: RegExp, lines: readonly string[], max: number, timeoutMs: number): number[] | undefined {
+  if (timeoutMs < 1) return undefined
+  Object.assign(MATCH_BOX, { regex, lines, max })
+  try {
+    return Array.from(MATCH_LINES.runInContext(MATCH_BOX, { timeout: Math.ceil(timeoutMs) }) as number[])
+  } catch (error: unknown) {
+    if ((error as { code?: string }).code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') return undefined
+    throw error
+  } finally {
+    Object.assign(MATCH_BOX, { regex: undefined, lines: undefined })
+  }
+}
 const LINE_MAX_CHARS = 200
 const BINARY_SNIFF_BYTES = 8 * 1024
 const SKIPPED_DIRS = new Set(['node_modules', '.git'])
@@ -89,15 +114,16 @@ export function resolveInside(root: string, path: string): string | undefined {
 
 /** ⛔ Os arquivos sempre protegidos: segredos e o dado interno do gateway (fora da raiz das tools). */
 export function deniedPath(absPath: string, root: string): string | undefined {
-  const name = basename(absPath)
+  // ⛔ Sem distinção de caixa: no disco do Mac (APFS) `.ENV` é o `.env` e `.GIT/config` é o `.git/config`.
+  const name = basename(absPath).toLowerCase()
   if (name === '.env' || name.startsWith('.env.')) return 'environment file'
   if (name.endsWith('.key') || name.endsWith('.pem')) return 'key file'
   if (name.startsWith('id_rsa')) return 'SSH key'
   if (name.startsWith('secrets.')) return 'secrets file'
   // As credenciais de um comando (Projeto → Contas): o comando as usa; a ferramenta de arquivo não as lê.
-  if (/(^|[\\/])\.home[\\/]\.accounts([\\/]|$)/.test(absPath)) return 'account credentials'
+  if (/(^|[\\/])\.home[\\/]\.accounts([\\/]|$)/i.test(absPath)) return 'account credentials'
   // O `.git` por dentro (config, hooks, objetos) é do git: editar à mão quebraria o repositório ou plantaria um hook.
-  if (/(^|[\\/])\.git([\\/]|$)/.test(absPath)) return 'git internals'
+  if (/(^|[\\/])\.git([\\/]|$)/i.test(absPath)) return 'git internals'
   const real = realOf(resolve(absPath))
   // Os arquivos de recurso globais se LEEM (a gravação é recusada à parte: `isResourceFilePath`).
   if (isInside(realOf(dataDir()), real) && !isInside(realOf(resolve(root)), real) && !isInside(realOf(globalResourcesDir()), real)) return 'gateway data'
@@ -238,18 +264,32 @@ async function writeChecked(abs: string, content: string): Promise<void> {
   }
 }
 
-/** Percorre o glob sem entrar em node_modules/.git e devolve só caminhos relativos ao cwd. */
-async function walk(cwd: string, pattern: string): Promise<string[]> {
+// ⛔ Teto da varredura: o padrão vem do agente, e "tudo" numa pasta com milhões de arquivos enchia a memória do gateway.
+const WALK_MAX = 100_000
+const WALK_CAPPED = `scan stopped at ${WALK_MAX} entries: narrow \`path\` or the pattern`
+
+/**
+ * Percorre o glob sem entrar em node_modules/.git e devolve só caminhos relativos ao cwd.
+ * ⛔ O padrão é relativo à pasta pedida: absoluto ou com `..` fazia o gateway varrer o disco do servidor fora do projeto
+ * (o resultado era descartado depois, mas a varredura já tinha acontecido).
+ */
+async function walk(cwd: string, pattern: string): Promise<{ names: string[]; capped: boolean }> {
+  if (isAbsolute(pattern) || pattern.split(/[\\/]/).includes('..')) throw new Error('the pattern must be relative, without `..` (use `path` to choose the folder)')
   const found: string[] = []
+  let capped = false
   const exclude = (entry: unknown) => {
     const name = typeof entry === 'string' ? basename(entry) : ((entry as { name?: string }).name ?? '')
     return SKIPPED_DIRS.has(name)
   }
   for await (const entry of glob(pattern, { cwd, exclude: exclude as never })) {
     if (entry.split(sep).some((part) => SKIPPED_DIRS.has(part))) continue
+    if (found.length >= WALK_MAX) {
+      capped = true
+      break
+    }
     found.push(entry)
   }
-  return found.sort()
+  return { names: found.sort(), capped }
 }
 
 function numbered(lines: string[], first: number): string {
@@ -324,13 +364,15 @@ function listFilesTool(deps: IFileToolDeps): ILocalTool {
       if ('error' in checked) return checked.error
       try {
         const names: string[] = []
-        for (const name of await walk(checked.abs, pattern)) {
+        const walked = await walk(checked.abs, pattern)
+        for (const name of walked.names) {
           const abs = resolveInside(root, join(checked.abs, name))
           if (listable(abs, root, own, (item) => !!shared || !deps.access?.(context, 'read', relOf(root, item), false))) names.push(show(abs))
         }
-        if (!names.length) return { status: 'success', result: 'No files match.' }
+        const note = walked.capped ? `\n(${WALK_CAPPED})` : ''
+        if (!names.length) return { status: 'success', result: `No files match.${note}` }
         const shown = names.slice(0, LIST_MAX).join('\n')
-        return { status: 'success', result: names.length > LIST_MAX ? `${shown}\n… ${names.length - LIST_MAX} more` : shown }
+        return { status: 'success', result: (names.length > LIST_MAX ? `${shown}\n… ${names.length - LIST_MAX} more` : shown) + note }
       } catch (error: unknown) {
         return fail(`Could not list files: ${toMessage(error)}`)
       }
@@ -357,6 +399,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
       const { root, own, shared, show } = placeOf(deps, context, args.path, true)
       const source = typeof args.pattern === 'string' ? args.pattern : ''
       if (!source) return fail('pattern is required.')
+      if (source.length > SEARCH_PATTERN_MAX_CHARS) return fail(`pattern is too long (limit ${SEARCH_PATTERN_MAX_CHARS} characters).`)
       let regex: RegExp
       try {
         regex = new RegExp(source)
@@ -369,7 +412,9 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
       try {
         const matches: string[] = []
         let truncated = false
-        for (const name of await walk(checked.abs, fileGlob)) {
+        let budget = SEARCH_REGEX_BUDGET_MS
+        const walked = await walk(checked.abs, fileGlob)
+        for (const name of walked.names) {
           const abs = resolveInside(root, join(checked.abs, name))
           if (!listable(abs, root, own, (item) => !!shared || !deps.access?.(context, 'read', relOf(root, item), false))) continue
           let text: string
@@ -385,8 +430,11 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
             continue // não é arquivo, é link, mudou no caminho: fora da busca
           }
           const lines = text.split('\n')
-          for (let index = 0; index < lines.length; index++) {
-            if (!regex.test(lines[index])) continue
+          const started = performance.now()
+          const hits = matchingLines(regex, lines, SEARCH_MAX - matches.length + 1, budget)
+          budget -= performance.now() - started
+          if (!hits) return fail('Search stopped: the regular expression is too slow (catastrophic backtracking?). Use a simpler pattern, or narrow `path`/`glob`.')
+          for (const index of hits) {
             if (matches.length >= SEARCH_MAX) {
               truncated = true
               break
@@ -395,8 +443,9 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
           }
           if (truncated) break
         }
-        if (!matches.length) return { status: 'success', result: 'No matches.' }
-        return { status: 'success', result: truncated ? `${matches.join('\n')}\n… more matches not shown (limit ${SEARCH_MAX})` : matches.join('\n') }
+        const note = walked.capped ? `\n(${WALK_CAPPED})` : ''
+        if (!matches.length) return { status: 'success', result: `No matches.${note}` }
+        return { status: 'success', result: (truncated ? `${matches.join('\n')}\n… more matches not shown (limit ${SEARCH_MAX})` : matches.join('\n')) + note }
       } catch (error: unknown) {
         return fail(`Search failed: ${toMessage(error)}`)
       }
@@ -477,6 +526,8 @@ function editFileTool(deps: IFileToolDeps): ILocalTool {
         const count = text.split(from).length - 1
         if (count === 0) return fail('old_string not found in the file')
         if (count > 1 && args.replace_all !== true) return fail(`old_string appears ${count} times: add more context to make it unique, or pass replace_all: true`)
+        // ⛔ O teto vale também para o RESULTADO: `replace_all` de um trecho curto por um longo multiplica o arquivo.
+        if (Buffer.byteLength(text) + count * (Buffer.byteLength(to) - Buffer.byteLength(from)) > READ_SLICE_MAX_BYTES) return fail('the edited file would be larger than 5 MB')
         // split/join: sem os `$` especiais do replace.
         await writeChecked(checked.abs, text.split(from).join(to))
         return { status: 'success', result: `Edited ${show(checked.abs)} (${count} replacement${count === 1 ? '' : 's'})` }

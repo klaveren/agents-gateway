@@ -1,5 +1,23 @@
-import { exec, execFileSync } from 'node:child_process'
-import { type Dirent, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { exec } from 'node:child_process'
+import {
+  closeSync,
+  constants as fsc,
+  type Dirent,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readSync,
+  realpathSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -10,6 +28,7 @@ import { commandDirOf } from '@infra/accounts/Ssh.Kit'
 import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
 import { globToRegex, pathMatches } from '@domain/Permission.Policy'
 import { FILE_DIRS } from '@domain/models/ResourceFile.Model'
+import { discoveredGitSync } from '@infra/workspace/Git.Safe'
 import { agentFolders, globalResourcesDir, projectResourceDirs, readOnlyResourceDirs } from '@infra/workspace/Resource.Files'
 
 const run = promisify(exec)
@@ -136,6 +155,9 @@ const LINUX_BRIDGE_PORT = 3128
 /** O shell do comando embrulhado: o srt monta a linha para ele. */
 export const SANDBOX_SHELL = '/bin/bash'
 
+/** Depois de quanto tempo o teste do cerco que falhou é refeito. */
+const PROBE_RETRY_MS = 60_000
+
 /**
  * ⛔ O CERCO DO AGENTE DE PROJETO: o comando só lê e grava na pasta do projeto (e lê as ferramentas do
  * servidor, `<dados>/tools`). O banco, as chaves, os logins, os outros projetos, o app (`.env`) e o HOME do
@@ -149,6 +171,8 @@ export const SANDBOX_SHELL = '/bin/bash'
 export class ProjectSandbox implements IProjectSandbox {
   private manager?: Promise<ISandboxManager>
   private probe?: Promise<ISandboxStatus>
+  /** Quando o teste do cerco falhou (ver `status`). */
+  private failedAt?: number
   /** Quantos comandos cercados rodam agora (a varredura dos pontos de montagem só roda com zero: ver `sweepMountPoints`). */
   private active = 0
   /** As pastas onde um comando já rodou: a varredura do fim passa por elas. */
@@ -158,6 +182,7 @@ export class ProjectSandbox implements IProjectSandbox {
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly load: () => Promise<{ SandboxManager: ISandboxManager }> = () => esmImport('@anthropic-ai/sandbox-runtime'),
     private readonly platform: NodeJS.Platform = process.platform,
+    private readonly now: () => number = Date.now,
   ) {}
 
   /** ⛔ `CERCO_READ_ALLOWLIST=1` (padrão desligado): o cerco lê só o liberado, não o host inteiro. Só no Linux (bubblewrap). */
@@ -347,8 +372,15 @@ export class ProjectSandbox implements IProjectSandbox {
     return manager.wrapWithSandbox(`${prelude}; ${command}`, SANDBOX_SHELL, this.policy(projectId, bridgeSockets(manager)))
   }
 
-  /** Funciona aqui? Testado UMA vez (um `true` embrulhado), e o resultado fica. */
+  /**
+   * Funciona aqui? Testado com um `true` embrulhado, e o resultado fica. ⛔ A FALHA fica só por um minuto: um tropeço
+   * passageiro (o teste que estourou o tempo, o `/tmp` cheio) deixava o terminal de todos bloqueado até reiniciar.
+   */
   status(): Promise<ISandboxStatus> {
+    if (this.failedAt !== undefined && this.now() - this.failedAt >= PROBE_RETRY_MS) {
+      this.failedAt = undefined
+      this.probe = undefined
+    }
     this.probe ??= this.check()
     return this.probe
   }
@@ -371,12 +403,14 @@ export class ProjectSandbox implements IProjectSandbox {
       const failure = error as { stderr?: string; message?: string }
       const reason = (failure.stderr || failure.message || String(error)).trim().split('\n').pop()?.slice(0, 300)
       console.warn(`[sandbox] ${SANDBOX_UNAVAILABLE} (${mechanism}): ${reason}. O Bash dos agentes de projeto fica bloqueado.`)
+      this.failedAt = this.now()
       return { available: false, mechanism, reason }
     }
   }
 
   private ready(): Promise<ISandboxManager> {
-    this.manager ??= this.load().then(async ({ SandboxManager }) => {
+    if (this.manager) return this.manager
+    const loading = this.load().then(async ({ SandboxManager }) => {
       // ⛔ A rede do cerco é a PORTA DO GATEWAY (`Network.Gate`): o comando só alcança 127.0.0.1:<porta>, e cada
       // conexão é decidida pelas regras do agente do comando. Sem `ask`: nada passa por fora.
       const port = await networkGate().start()
@@ -389,7 +423,12 @@ export class ProjectSandbox implements IProjectSandbox {
       })
       return SandboxManager
     })
-    return this.manager
+    this.manager = loading
+    // A carga que falhou não fica guardada: a próxima tenta de novo.
+    loading.catch(() => {
+      if (this.manager === loading) this.manager = undefined
+    })
+    return loading
   }
 
   private nested(): boolean {
@@ -723,20 +762,69 @@ function runtimeHelpers(): string[] {
   }
 }
 
+/** O teto do `.gitconfig` que o servidor lê para acrescentar a linha do proxy: maior que isto, ele não mexe. */
+const GITCONFIG_MAX_BYTES = 1024 * 1024
+
 /**
- * O auxiliar de ProxyCommand do SSH: abre um CONNECT na porta do gateway (com o token do `HTTPS_PROXY`) e liga a
- * entrada e a saída do ssh ao túnel. Escrito na HOME do comando (dentro do cerco), que ele pode ler.
+ * ⛔ A casa do comando (`.home`) é do AGENTE: ele grava nela de dentro do cerco, e o servidor grava nela de FORA, com os
+ * direitos dele. Um link plantado ali (`.gitconfig` → o banco, a chave dos segredos) era lido e regravado pelo servidor;
+ * um link sem alvo fazia o servidor criar o arquivo onde o agente quisesse; um FIFO travava o processo inteiro na
+ * leitura. Tudo o que o servidor abre na casa passa por aqui: a casa tem de ser pasta de verdade (não um link), o
+ * arquivo abre sem seguir link e sem bloquear, e só vale arquivo comum com um nome só (o hard link de um arquivo de
+ * outro lugar tem dois). `undefined` = não é do servidor mexer.
+ * ⚠️ A pasta é conferida antes e depois de abrir. Trocá-la por um link exatamente nesse intervalo ainda alcança um
+ * arquivo COM ESTE NOME noutra pasta, e o que se grava é fixo (a linha do proxy, o auxiliar do SSH): nada do agente.
  */
+function openInHome(home: string, name: string, flags: number): number | undefined {
+  let fd: number | undefined
+  try {
+    const before = lstatSync(home)
+    if (!before.isDirectory()) return undefined
+    fd = openSync(join(home, name), flags | fsc.O_NOFOLLOW | fsc.O_NONBLOCK, 0o600)
+    const info = fstatSync(fd)
+    const after = lstatSync(home)
+    if (info.isFile() && info.nlink === 1 && after.isDirectory() && after.dev === before.dev && after.ino === before.ino) return fd
+  } catch {
+    // Um link, um FIFO, uma pasta no lugar do arquivo, a casa que sumiu: segue sem mexer.
+  }
+  if (fd !== undefined) closeSync(fd)
+  return undefined
+}
+
+/** O que há no arquivo aberto, até o teto; `undefined` se passa dele (ou cresceu durante a leitura). */
+function readCapped(fd: number, max: number): string | undefined {
+  if (fstatSync(fd).size > max) return undefined
+  const buffer = Buffer.alloc(max + 1)
+  let length = 0
+  for (;;) {
+    const read = readSync(fd, buffer, length, buffer.length - length, length)
+    if (!read) break
+    length += read
+    if (length > max) return undefined
+  }
+  return buffer.toString('utf8', 0, length)
+}
+
 /**
  * ⚖️ O git (libcurl) só manda a senha do proxy DEPOIS do 407, e o portão fecha a conexão junto com o 407: o `git fetch`
  * por HTTPS caía com "Proxy CONNECT aborted" mesmo com a regra de rede. `proxyAuthMethod = basic` manda o token já no
- * primeiro CONNECT, como o curl faz. Vai no `.gitconfig` da casa do comando, sem apagar o que o agente pôs lá.
+ * primeiro CONNECT, como o curl faz. Vai no `.gitconfig` da casa do comando, sem apagar o que o agente pôs lá: a linha
+ * é ACRESCENTADA ao fim (nunca regrava o arquivo). ⛔ Só pelo `openInHome`: o arquivo é do agente.
  */
 export function ensureGitProxyAuth(home: string): void {
-  const path = join(home, '.gitconfig')
-  const current = existsSync(path) ? readFileSync(path, 'utf8') : ''
-  if (/proxyAuthMethod/i.test(current)) return
-  writeFileSync(path, `${current}${current && !current.endsWith('\n') ? '\n' : ''}[http]\n\tproxyAuthMethod = basic\n`)
+  const existing = openInHome(home, '.gitconfig', fsc.O_RDWR | fsc.O_APPEND)
+  // Com `O_EXCL` só cria onde não há NADA: um link (com ou sem alvo) no lugar faz a criação falhar.
+  const fd = existing ?? openInHome(home, '.gitconfig', fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL)
+  if (fd === undefined) return
+  try {
+    const current = existing === undefined ? '' : readCapped(fd, GITCONFIG_MAX_BYTES)
+    if (current === undefined || /proxyAuthMethod/i.test(current)) return
+    writeSync(fd, `${current && !current.endsWith('\n') ? '\n' : ''}[http]\n\tproxyAuthMethod = basic\n`)
+  } catch {
+    // Sem a linha, o git do agente pelo proxy falha como antes; o comando segue.
+  } finally {
+    closeSync(fd)
+  }
 }
 
 /**
@@ -780,12 +868,9 @@ export const MOUNT_POINT_DIRS: readonly string[] = ['node_modules/.bin', '.claud
 /** Dos candidatos, os que o git rastreia (num repositório): esses nunca saem. Sem resposta do git, todos contam como rastreados. */
 function trackedByGit(dir: string, names: readonly string[]): Set<string> {
   if (!names.length || !existsSync(join(dir, '.git'))) return new Set()
-  try {
-    const out = execFileSync('git', ['-C', dir, 'ls-files', '-z', '--', ...names], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
-    return new Set(out.split('\0').filter(Boolean))
-  } catch {
-    return new Set(names)
-  }
+  // ⛔ O `.git` da pasta pode ser do agente: o git que pergunta por ele vai travado (`discoveredGitSync`).
+  const out = discoveredGitSync(dir, ['ls-files', '-z', '--', ...names])
+  return out === undefined ? new Set(names) : new Set(out.split('\0').filter(Boolean))
 }
 
 /**
@@ -840,6 +925,18 @@ export function sweepProjectMountPoints(env: NodeJS.ProcessEnv = process.env): s
     for (const repository of listDir(join(dir, 'repositories'))) swept.push(...sweepMountPoints(join(dir, 'repositories', repository)))
   }
   return swept
+}
+
+/**
+ * A varredura do boot dos logs de comando (`<dados>/run/logs`): a lista de processos vive na memória, então depois de um
+ * reinício ninguém mais lê esses arquivos (saída crua, até 20 MB cada) e eles ficavam no disco para sempre.
+ */
+export function sweepCommandLogs(env: NodeJS.ProcessEnv = process.env): void {
+  try {
+    rmSync(join(dataDir(env), 'run', 'logs'), { recursive: true, force: true })
+  } catch {
+    // Sem permissão ou em uso: fica para o próximo boot.
+  }
 }
 
 let sweepOnExit: Set<string> | undefined
@@ -899,38 +996,53 @@ export function cleanLegacyScratch(base: string): void {
   }
 }
 
-function writeConnector(home: string): string {
-  const path = join(home, '.gateway-connect.cjs')
-  if (!existsSync(path))
-    writeFileSync(
-      path,
-      [
-        "const net = require('net')",
-        'const [host, port] = process.argv.slice(2)',
-        'const proxy = new URL(process.env.HTTPS_PROXY)',
-        'const socket = net.connect(Number(proxy.port), proxy.hostname, () => {',
-        "  const auth = Buffer.from(decodeURIComponent(proxy.username) + ':' + decodeURIComponent(proxy.password)).toString('base64')",
-        "  socket.write('CONNECT ' + host + ':' + port + ' HTTP/1.1\\r\\nHost: ' + host + ':' + port + '\\r\\nProxy-Authorization: Basic ' + auth + '\\r\\n\\r\\n')",
-        '})',
-        'let buffer = Buffer.alloc(0)',
-        'const onHead = (chunk) => {',
-        '  buffer = Buffer.concat([buffer, chunk])',
-        "  const end = buffer.indexOf('\\r\\n\\r\\n')",
-        '  if (end < 0) return',
-        "  socket.off('data', onHead)",
-        "  if (!/^HTTP\\/1\\.[01] 200/.test(buffer.toString('utf8', 0, end))) { process.stderr.write(buffer.toString('utf8', 0, end) + '\\n'); process.exit(1) }",
-        '  const rest = buffer.subarray(end + 4)',
-        '  if (rest.length) process.stdout.write(rest)',
-        '  socket.pipe(process.stdout)',
-        '  process.stdin.pipe(socket)',
-        '}',
-        "socket.on('data', onHead)",
-        "socket.on('error', (error) => { process.stderr.write(String(error) + '\\n'); process.exit(1) })",
-        '',
-      ].join('\n'),
-      { mode: 0o600 },
-    )
-  return path
+/**
+ * O auxiliar de ProxyCommand do SSH: abre um CONNECT na porta do gateway (com o token do `HTTPS_PROXY`) e liga a
+ * entrada e a saída do ssh ao túnel. Escrito na HOME do comando (dentro do cerco), que ele pode ler.
+ */
+const CONNECTOR_NAME = '.gateway-connect.cjs'
+const CONNECTOR_SOURCE = [
+  "const net = require('net')",
+  'const [host, port] = process.argv.slice(2)',
+  'const proxy = new URL(process.env.HTTPS_PROXY)',
+  'const socket = net.connect(Number(proxy.port), proxy.hostname, () => {',
+  "  const auth = Buffer.from(decodeURIComponent(proxy.username) + ':' + decodeURIComponent(proxy.password)).toString('base64')",
+  "  socket.write('CONNECT ' + host + ':' + port + ' HTTP/1.1\\r\\nHost: ' + host + ':' + port + '\\r\\nProxy-Authorization: Basic ' + auth + '\\r\\n\\r\\n')",
+  '})',
+  'let buffer = Buffer.alloc(0)',
+  'const onHead = (chunk) => {',
+  '  buffer = Buffer.concat([buffer, chunk])',
+  "  const end = buffer.indexOf('\\r\\n\\r\\n')",
+  '  if (end < 0) return',
+  "  socket.off('data', onHead)",
+  "  if (!/^HTTP\\/1\\.[01] 200/.test(buffer.toString('utf8', 0, end))) { process.stderr.write(buffer.toString('utf8', 0, end) + '\\n'); process.exit(1) }",
+  '  const rest = buffer.subarray(end + 4)',
+  '  if (rest.length) process.stdout.write(rest)',
+  '  socket.pipe(process.stdout)',
+  '  process.stdin.pipe(socket)',
+  '}',
+  "socket.on('data', onHead)",
+  "socket.on('error', (error) => { process.stderr.write(String(error) + '\\n'); process.exit(1) })",
+  '',
+].join('\n')
+
+/**
+ * Grava o auxiliar na casa do comando, uma vez (o que já existe fica), e devolve o caminho dele. ⛔ Só pelo `openInHome`,
+ * e criando com `O_EXCL`: um link plantado no lugar não leva o servidor a gravar noutro arquivo. O auxiliar só roda
+ * DENTRO do cerco: a cópia que o agente trocou não alcança nada além do que ele já alcança.
+ */
+export function writeConnector(home: string): string {
+  const fd = openInHome(home, CONNECTOR_NAME, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL)
+  if (fd !== undefined) {
+    try {
+      writeSync(fd, CONNECTOR_SOURCE)
+    } catch {
+      // Sem o auxiliar, o ssh do agente pelo proxy falha; o comando segue.
+    } finally {
+      closeSync(fd)
+    }
+  }
+  return join(home, CONNECTOR_NAME)
 }
 
 function quote(value: string): string {

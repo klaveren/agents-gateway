@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -15,10 +15,12 @@ import {
   forBubblewrap,
   withWriteGlobsExpanded,
   hostSocketDirs,
+  writeConnector,
   localForwards,
   noProxyFor,
   projectPathIssue,
   ProjectSandbox,
+  sweepCommandLogs,
   sweepMountPoints,
   systemReadAllowlist,
   writeFolders,
@@ -163,6 +165,103 @@ describe('ProjectSandbox', () => {
     assert.strictEqual(readFileSync(gitconfig, 'utf8'), '[user]\n\tname = Maya\n[http]\n\tproxyAuthMethod = basic\n')
   })
 
+  describe('⛔ a casa do comando é do agente: o que o servidor grava nela não segue o que ele plantou', () => {
+    let seq = 0
+    /** Uma casa nova e, fora dela, o arquivo que o agente quer alcançar (o banco, a chave dos segredos). */
+    const scene = () => {
+      const base = join(root, `casa-plantada-${++seq}`)
+      const home = join(base, '.home')
+      const outside = join(base, 'fora')
+      mkdirSync(home, { recursive: true })
+      mkdirSync(outside, { recursive: true })
+      const victim = join(outside, 'gateway.db')
+      writeFileSync(victim, 'SQLite format 3\u0000dados')
+      return { base, home, outside, victim }
+    }
+    const untouched = (victim: string) => assert.strictEqual(readFileSync(victim, 'utf8'), 'SQLite format 3\u0000dados')
+
+    it('`.gitconfig` que é link para um arquivo de fora: o alvo não é lido nem regravado', () => {
+      const { home, victim } = scene()
+      symlinkSync(victim, join(home, '.gitconfig'))
+      ensureGitProxyAuth(home)
+      untouched(victim)
+      assert.ok(lstatSync(join(home, '.gitconfig')).isSymbolicLink(), 'o link fica como o agente deixou')
+    })
+
+    it('`.gitconfig` que é hard link de um arquivo de fora (dois nomes): não é regravado', () => {
+      const { home, victim } = scene()
+      linkSync(victim, join(home, '.gitconfig'))
+      ensureGitProxyAuth(home)
+      untouched(victim)
+    })
+
+    it('`.gitconfig` que é link sem alvo: nada é criado no alvo', () => {
+      const { home, outside } = scene()
+      symlinkSync(join(outside, 'novo.conf'), join(home, '.gitconfig'))
+      ensureGitProxyAuth(home)
+      assert.strictEqual(existsSync(join(outside, 'novo.conf')), false)
+    })
+
+    it('`.gitconfig` que é um FIFO não trava o servidor na leitura', () => {
+      const { home } = scene()
+      execFileSync('mkfifo', [join(home, '.gitconfig')])
+      ensureGitProxyAuth(home)
+      assert.ok(lstatSync(join(home, '.gitconfig')).isFIFO())
+    })
+
+    it('`.gitconfig` gigante não é carregado na memória do servidor', () => {
+      const { home } = scene()
+      const big = `[user]\n\tname = ${'x'.repeat(2 * 1024 * 1024)}\n`
+      writeFileSync(join(home, '.gitconfig'), big)
+      ensureGitProxyAuth(home)
+      assert.strictEqual(statSync(join(home, '.gitconfig')).size, Buffer.byteLength(big))
+    })
+
+    it('a casa que é link para outra pasta: nada se grava lá (nem a linha do proxy, nem o auxiliar do SSH)', () => {
+      const { base, outside } = scene()
+      rmSync(join(base, '.home'), { recursive: true })
+      writeFileSync(join(outside, '.gitconfig'), '[user]\n\tname = Dono\n')
+      symlinkSync(outside, join(base, '.home'))
+      ensureGitProxyAuth(join(base, '.home'))
+      writeConnector(join(base, '.home'))
+      assert.strictEqual(readFileSync(join(outside, '.gitconfig'), 'utf8'), '[user]\n\tname = Dono\n')
+      assert.strictEqual(existsSync(join(outside, '.gateway-connect.cjs')), false)
+    })
+
+    it('o auxiliar do SSH que é link sem alvo: o servidor não cria o arquivo no alvo', () => {
+      const { home, outside } = scene()
+      symlinkSync(join(outside, 'plantado.cjs'), join(home, '.gateway-connect.cjs'))
+      assert.strictEqual(writeConnector(home), join(home, '.gateway-connect.cjs'))
+      assert.strictEqual(existsSync(join(outside, 'plantado.cjs')), false)
+    })
+
+    it('o auxiliar do SSH que é link para um arquivo de fora: o alvo fica como estava', () => {
+      const { home, victim } = scene()
+      symlinkSync(victim, join(home, '.gateway-connect.cjs'))
+      writeConnector(home)
+      untouched(victim)
+    })
+
+    it('⚖️ sem nada plantado, o auxiliar do SSH é gravado uma vez, só para o dono, e o que já existe fica', () => {
+      const { home } = scene()
+      const path = writeConnector(home)
+      assert.strictEqual(path, join(home, '.gateway-connect.cjs'))
+      assert.match(readFileSync(path, 'utf8'), /CONNECT /)
+      assert.strictEqual(statSync(path).mode & 0o777, 0o600)
+      writeFileSync(path, '// do agente\n')
+      writeConnector(home)
+      assert.strictEqual(readFileSync(path, 'utf8'), '// do agente\n')
+    })
+
+    it('⚖️ sem casa (a pasta não existe), não cria nada nem derruba o comando', () => {
+      const { base } = scene()
+      const missing = join(base, 'nao-existe')
+      ensureGitProxyAuth(missing)
+      writeConnector(missing)
+      assert.strictEqual(existsSync(missing), false)
+    })
+  })
+
   it('⛔ M4: a limpeza dos restos antigos (.home/.accounts, .cache/logs, .cache/proxychains-*.conf) roda uma vez, só nesses caminhos, sem seguir link', () => {
     const base = join(root, 'projeto-velho')
     const outside = join(root, 'fora-do-projeto')
@@ -202,6 +301,30 @@ describe('ProjectSandbox', () => {
     symlinkSync(outside, join(base, '.home'))
     cleanLegacyScratch(base)
     assert.ok(existsSync(join(outside, '.accounts', 'chave')))
+  })
+
+  it('⛔ a falha do teste do cerco não fica para sempre: depois de um minuto o próximo pedido testa de novo', async () => {
+    if (process.platform !== 'darwin' && process.platform !== 'linux') return
+    const srt = fakeSrt()
+    let loads = 0
+    let now = 1_000_000
+    const load = async () => {
+      loads += 1
+      if (loads === 1) throw new Error('falha passageira')
+      return srt.load()
+    }
+    const sandbox = new ProjectSandbox(env, load, process.platform, () => now)
+    assert.strictEqual((await sandbox.status()).available, false)
+    // Dentro do minuto vale o resultado guardado: não se testa a cada comando.
+    now += 59_000
+    assert.strictEqual((await sandbox.status()).available, false)
+    assert.strictEqual(loads, 1)
+    now += 2_000
+    assert.strictEqual((await sandbox.status()).available, true)
+    // O que deu certo fica.
+    now += 600_000
+    assert.strictEqual((await sandbox.status()).available, true)
+    assert.strictEqual(loads, 2)
   })
 
   it('⚖️ a limpeza dos pontos de montagem do bwrap: uma por comando embrulhado, o teste do status incluído', async () => {
@@ -537,6 +660,28 @@ describe('sweepMountPoints — as sobras de ponto de montagem na pasta do projet
     assert.ok(existsSync(join(dir, '.gitmodules')))
   })
 
+  it('⛔ o `.git` da pasta pode ser do agente: o `core.fsmonitor` plantado nele não roda no servidor quando a varredura pergunta ao git', () => {
+    const dir = join(base, 'repo-plantado')
+    mkdirSync(dir, { recursive: true })
+    const mark = join(base, 'fsmonitor-rodou')
+    const hook = join(base, 'fsmonitor.sh')
+    writeFileSync(hook, `#!/bin/sh\ntouch '${mark}'\nprintf 'x\\0'\n`, { mode: 0o755 })
+    const git = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore' })
+    git('init', '-q')
+    writeFileSync(join(dir, '.gitmodules'), '')
+    git('add', '.gitmodules')
+    git('config', 'core.fsmonitor', hook)
+    git('update-index', '--fsmonitor')
+    rmSync(mark, { force: true })
+    writeFileSync(join(dir, 'bunfig.toml'), '')
+    assert.deepStrictEqual(
+      sweepMountPoints(dir, () => undefined).map((path) => path.slice(dir.length + 1)),
+      ['bunfig.toml'],
+    )
+    assert.ok(existsSync(join(dir, '.gitmodules')), 'o rastreado fica')
+    assert.ok(!existsSync(mark), 'o programa da config do repositório rodou no servidor')
+  })
+
   it('pasta que não existe, ou é link, não quebra nem é seguida', () => {
     assert.deepStrictEqual(sweepMountPoints(join(base, 'nao-existe')), [])
     const real = join(base, 'real')
@@ -565,5 +710,21 @@ describe('ensureEmptyAttributes — o .git/info/attributes que o git consegue le
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('sweepCommandLogs', () => {
+  it('no boot, os logs de comando do processo anterior somem; o resto de `run` fica', () => {
+    const data = mkdtempSync(join(tmpdir(), 'gw-run-logs-'))
+    const env = { CONVERSATIONS_DB: join(data, 'gateway.db') } as NodeJS.ProcessEnv
+    mkdirSync(join(data, 'run', 'logs', 'c1'), { recursive: true })
+    writeFileSync(join(data, 'run', 'logs', 'c1', 'cmd-1.log'), 'saída crua')
+    mkdirSync(join(data, 'run', 'outra'), { recursive: true })
+    sweepCommandLogs(env)
+    assert.strictEqual(existsSync(join(data, 'run', 'logs')), false)
+    assert.strictEqual(existsSync(join(data, 'run', 'outra')), true)
+    // Sem a pasta (instalação nova): não falha.
+    sweepCommandLogs({ CONVERSATIONS_DB: join(data, 'nao-existe', 'gateway.db') } as NodeJS.ProcessEnv)
+    rmSync(data, { recursive: true, force: true })
   })
 })

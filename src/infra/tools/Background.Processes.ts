@@ -180,6 +180,8 @@ export const backgroundMaxProcesses = (): number => positiveInt(process.env.BACK
  */
 export class BackgroundProcesses {
   private readonly entries = new Map<string, IProcessEntry>()
+  /** As vagas guardadas por conversa: comandos em preparação, ainda sem processo (`reserve`). */
+  private readonly pending = new Map<string, number>()
 
   constructor() {
     process.once('exit', () => this.stopAll())
@@ -197,6 +199,27 @@ export class BackgroundProcesses {
 
   running(sessionId: string): IProcessEntry[] {
     return this.list(sessionId).filter((entry) => entry.background && entry.status === 'running')
+  }
+
+  /**
+   * ⛔ Guarda a vaga ANTES de preparar o comando: a preparação espera (cerco, permissão), e várias chamadas juntas
+   * passariam todas pela conta antes de a primeira registrar o processo. Devolve quem solta a vaga (o processo já
+   * registrado conta por si), ou qual teto estourou.
+   */
+  reserve(sessionId: string): (() => void) | 'session' | 'total' {
+    const waiting = this.pending.get(sessionId) ?? 0
+    if (this.running(sessionId).length + waiting >= BACKGROUND_LIMITS.perSession) return 'session'
+    const allWaiting = [...this.pending.values()].reduce((sum, count) => sum + count, 0)
+    if (this.runningTotal() + allWaiting >= backgroundMaxProcesses()) return 'total'
+    this.pending.set(sessionId, waiting + 1)
+    let held = true
+    return () => {
+      if (!held) return
+      held = false
+      const left = (this.pending.get(sessionId) ?? 1) - 1
+      if (left > 0) this.pending.set(sessionId, left)
+      else this.pending.delete(sessionId)
+    }
   }
 
   /** Quantos rodam agora, de todas as conversas (o teto global). */

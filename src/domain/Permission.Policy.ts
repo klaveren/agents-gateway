@@ -161,7 +161,9 @@ export function matches(rule: ISystemRule, subject: IPermissionSubject): boolean
       // chega absoluto). Para liberar fora, a regra é absoluta. A negação vale em qualquer lugar (`**/.env`).
       return [subject.value, ...(subject.aliases ?? [])].some((value) => {
         if (rule.decision === 'allow' && isOutsidePath(value) && !isOutsidePath(rule.pattern.trim())) return false
-        return pathMatches(rule.pattern, value) && !rule.except?.some((pattern) => pathMatches(pattern, value))
+        // ⛔ NEGAR não distingue caixa: no disco do Mac (APFS) `.ENV` é o `.env`. Liberar (e a exceção) segue exato.
+        const denied = rule.decision === 'deny' && pathMatches(rule.pattern.toLowerCase(), value.toLowerCase())
+        return (denied || pathMatches(rule.pattern, value)) && !rule.except?.some((pattern) => pathMatches(pattern, value))
       })
     case 'network':
       return hostMatches(rule.pattern, subject.value)
