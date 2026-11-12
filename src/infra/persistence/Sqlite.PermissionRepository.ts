@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IPermissionRule } from '@domain/Permission.Policy'
-import { IPermissionDecision, IPermissionRepository, PERMISSION_DECISIONS_KEPT } from '@domain/ports/PermissionRepository.Port'
+import { IPermissionDecision, IPermissionDecisionFilter, IPermissionRepository, PERMISSION_DECISIONS_KEPT } from '@domain/ports/PermissionRepository.Port'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS project_permissions (
@@ -78,13 +78,16 @@ export class SqlitePermissionRepository implements IPermissionRepository {
       .run(project, project, PERMISSION_DECISIONS_KEPT)
   }
 
-  decisions(projectId: string, options: { agentId?: string; limit?: number } = {}): IPermissionDecision[] {
+  decisions(projectId: string, options: IPermissionDecisionFilter = {}): IPermissionDecision[] {
     const limit = Math.min(options.limit ?? 100, PERMISSION_DECISIONS_KEPT)
-    const rows = (
-      options.agentId
-        ? this.db.prepare('SELECT * FROM permission_decisions WHERE project_id = ? AND agent_id = ? ORDER BY id DESC LIMIT ?').all(projectId, options.agentId, limit)
-        : this.db.prepare('SELECT * FROM permission_decisions WHERE project_id = ? ORDER BY id DESC LIMIT ?').all(projectId, limit)
-    ) as TRow[]
+    const filters = [
+      { column: 'agent_id', value: options.agentId },
+      { column: 'category', value: options.category },
+    ].filter((filter): filter is { column: string; value: string } => Boolean(filter.value))
+    const where = ['project_id = ?', ...filters.map((filter) => `${filter.column} = ?`)].join(' AND ')
+    const rows = this.db
+      .prepare(`SELECT * FROM permission_decisions WHERE ${where} ORDER BY id DESC LIMIT ?`)
+      .all(projectId, ...filters.map((filter) => filter.value), limit) as TRow[]
     return rows.map((row) => ({
       at: new Date(String(row.at)),
       ...(row.project_id ? { projectId: String(row.project_id) } : {}),

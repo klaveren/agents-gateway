@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import { PermissionsService } from '@application/Permissions.Service'
 import { IPermissionSubject, PERMISSION_CATEGORIES, SYSTEM_RULES, TPermissionCategory } from '@domain/Permission.Policy'
+import { PERMISSION_DECISIONS_KEPT } from '@domain/ports/PermissionRepository.Port'
 import { analyzeShell, opaqueRefusal } from '@infra/permissions/Shell.Parse'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
@@ -93,7 +94,11 @@ export class PermissionsController {
     await this.respond(res, async () => {
       const projectId = await this.project(req, 'listPermissionDecisions')
       const agentId = typeof req.query.agentId === 'string' && req.query.agentId ? req.query.agentId : undefined
-      return this.deps.permissions.decisions(projectId, { ...(agentId ? { agentId } : {}), limit: 200 })
+      const category = req.query.category === undefined || req.query.category === '' ? undefined : (req.query.category as TPermissionCategory)
+      if (category && !PERMISSION_CATEGORIES.includes(category))
+        throw new HttpError(422, 'validation_error', 'Request query is invalid', [{ field: 'category', message: `one of ${PERMISSION_CATEGORIES.join(', ')}` }])
+      // A guia pede as da categoria DELA: aí vale tudo o que o registro guarda. Sem categoria, as últimas 200.
+      return this.deps.permissions.decisions(projectId, { ...(agentId ? { agentId } : {}), ...(category ? { category, limit: PERMISSION_DECISIONS_KEPT } : { limit: 200 }) })
     })
   }
 

@@ -66,6 +66,16 @@ describe('Permissões do projeto: o admin do projeto, só o projeto dele', () =>
     assert.strictEqual(permissions.projectRules('alfa').rules.length, 1, 'a Bia não apagou nada')
   })
 
+  it('as decisões saem pela categoria pedida; a categoria que não existe é 422', async () => {
+    permissions.check({ projectId: 'alfa' }, { category: 'read', value: 'src/a.ts' }, { log: true })
+    permissions.check({ projectId: 'alfa' }, { category: 'network', value: 'example.com' }, { log: true })
+    const listed = async (query: Record<string, string>) =>
+      (await call(ANA, 'decisions', { params: { projectId: 'alfa' }, query })).body?.result.map((entry: { subject: string }) => entry.subject)
+    assert.deepStrictEqual(await listed({}), ['example.com', 'src/a.ts'])
+    assert.deepStrictEqual(await listed({ category: 'read' }), ['src/a.ts'])
+    assert.strictEqual((await call(ANA, 'decisions', { params: { projectId: 'alfa' }, query: { category: 'tudo' } })).status, 422)
+  })
+
   it('⛔ o admin do gateway não entra no projeto de que não é admin', async () => {
     assert.strictEqual((await call(ROOT, 'get', { params: { projectId: 'alfa' } })).status, 404)
     assert.strictEqual((await call(ROOT, 'save', { params: { projectId: 'alfa' }, body: { rules: [] } })).status, 404)

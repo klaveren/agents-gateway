@@ -1,6 +1,6 @@
 import { cleanRules, decide, IPermissionLayers, IPermissionRule, IPermissionSubject, IPermissionVerdict, permissionIssues } from '@domain/Permission.Policy'
 import { InvalidPermissionsError } from '@domain/errors/Domain.Error'
-import { IPermissionDecision, IPermissionRepository } from '@domain/ports/PermissionRepository.Port'
+import { IPermissionDecision, IPermissionDecisionFilter, IPermissionRepository } from '@domain/ports/PermissionRepository.Port'
 import { CatalogHistoryHook, ICatalogChange } from './CatalogHistory.Service'
 
 /** Quem pede: o agente que está respondendo, na conversa de que projeto. */
@@ -60,7 +60,7 @@ export class PermissionsService implements IPermissionChecker {
     return this.evaluate(asker, subject)
   }
 
-  decisions(projectId: string, options?: { agentId?: string; limit?: number }): IPermissionDecision[] {
+  decisions(projectId: string, options?: IPermissionDecisionFilter): IPermissionDecision[] {
     return this.repository.decisions(projectId, options)
   }
 

@@ -4,6 +4,7 @@ import { useConnectionsStore } from '@/stores/connections'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import HistoryPanel from '@/components/HistoryPanel.vue'
+import ListPager from '@/components/ListPager.vue'
 import PermissionCategoryTabs from '@/components/PermissionCategoryTabs.vue'
 import SaveFooter from '@/components/SaveFooter.vue'
 import PermissionRules from '@/components/PermissionRules.vue'
@@ -16,6 +17,7 @@ import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
 import { LAYER_LABEL, PERMISSION_SECTIONS } from '@/lib/permissions'
 import type { IPermissionDecision, IPermissionRule, TPermissionCategory } from '@/lib/types'
+import { usePaged } from '@/composables/usePaged'
 import { useResource } from '@/composables/useResource'
 import { useAgentsStore } from '@/stores/agents'
 import { usePermissionsStore } from '@/stores/permissions'
@@ -52,6 +54,7 @@ const saved = computed(() => JSON.stringify(stored.data.value?.rules ?? []))
 const system = computed(() => stored.data.value?.system ?? [])
 const meta = computed(() => ({ updatedAt: stored.data.value?.updatedAt, updatedBy: stored.data.value?.updatedBy }))
 const decisions = ref<IPermissionDecision[]>([])
+const decisionPage = usePaged(decisions)
 const decisionAgent = ref('')
 const actionError = ref<string>()
 const error = computed(() => actionError.value ?? (stored.error.value === undefined ? undefined : stored.error.value instanceof Error ? stored.error.value.message : String(stored.error.value)))
@@ -72,9 +75,14 @@ watch(
   { immediate: true },
 )
 
+/** As decisões da guia aberta: cada categoria mostra as últimas DELA (a guia de rede não se perde atrás do terminal). */
+let decisionsAsked = 0
 async function loadDecisions() {
   if (!project.value) return
-  decisions.value = await permissions.decisions(project.value.id, decisionAgent.value || undefined).catch(() => [])
+  const turn = ++decisionsAsked
+  const listed = await permissions.decisions(project.value.id, { category: section.value, ...(decisionAgent.value ? { agentId: decisionAgent.value } : {}) }).catch(() => [])
+  // Só a última pedida vale: a guia (ou o agente) pode ter mudado enquanto a resposta vinha.
+  if (turn === decisionsAsked) decisions.value = listed
 }
 
 async function save() {
@@ -114,7 +122,11 @@ watch(
     if (ready.value) void loadDecisions()
   },
 )
-watch(decisionAgent, () => void loadDecisions())
+// Outra guia ou outro agente: a lista é outra (e a de antes sai da tela enquanto a nova não chega).
+watch([decisionAgent, section], () => {
+  decisions.value = []
+  void loadDecisions()
+})
 </script>
 
 <template>
@@ -189,7 +201,7 @@ watch(decisionAgent, () => void loadDecisions())
 
           <section class="flex flex-col gap-2">
             <div class="flex items-center gap-2">
-              <h2 class="text-sm font-medium text-zinc-200">Últimas decisões</h2>
+              <h2 class="text-sm font-medium text-zinc-200">Últimas decisões · {{ label(section) }}</h2>
               <select v-model="decisionAgent" class="input ml-auto w-48 text-sm" aria-label="Agente">
                 <option value="">Todos os agentes</option>
                 <option v-for="agent in agents.list" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
@@ -197,15 +209,16 @@ watch(decisionAgent, () => void loadDecisions())
               <button type="button" class="btn btn-sm btn-ghost" @click="loadDecisions">Atualizar</button>
             </div>
             <ul v-if="decisions.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800 text-xs">
-              <li v-for="(entry, index) in decisions" :key="index" class="flex items-baseline gap-3 px-3 py-1.5">
+              <li v-for="(entry, index) in decisionPage.items.value" :key="index" class="flex items-baseline gap-3 px-3 py-1.5" data-test="decision">
                 <span class="w-32 shrink-0 text-zinc-500">{{ fullTime(entry.at) }}</span>
                 <span class="w-12 shrink-0" :class="entry.allowed ? 'text-emerald-300' : 'text-rose-300'">{{ entry.allowed ? 'permitiu' : 'negou' }}</span>
                 <span class="w-24 shrink-0 truncate text-zinc-400">{{ agents.byId.get(entry.agentId ?? '')?.name ?? entry.agentId ?? '—' }}</span>
-                <code class="min-w-0 flex-1 truncate text-zinc-200" :title="entry.subject">{{ label(entry.category) }}: {{ entry.subject }}</code>
+                <code class="min-w-0 flex-1 truncate text-zinc-200" :title="entry.subject">{{ entry.subject }}</code>
                 <span class="shrink-0 text-zinc-500">{{ entry.pattern ? `"${entry.pattern}"` : '' }} · {{ LAYER_LABEL[entry.layer] }}</span>
               </li>
             </ul>
-            <p v-else class="text-xs text-zinc-500">Nenhuma decisão registrada ainda.</p>
+            <p v-else class="text-xs text-zinc-500" data-test="no-decisions">Nenhuma decisão de {{ label(section) }} registrada ainda.</p>
+            <ListPager v-model="decisionPage.page.value" :pages="decisionPage.pages.value" :total="decisionPage.total.value" :size="decisionPage.size" />
           </section>
           <SaveFooter v-if="!connectedOrigin" label="Salvar permissões" :busy="busy" :disabled="!dirty" :pending="dirty" @save="save" />
         </template>

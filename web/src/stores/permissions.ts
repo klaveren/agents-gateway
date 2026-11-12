@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { api } from '@/lib/api'
 import { keyedResource } from '@/lib/resource'
-import type { IPermissionDecision, IPermissionRule } from '@/lib/types'
+import type { IPermissionDecision, IPermissionRule, TPermissionCategory } from '@/lib/types'
 
 /** As permissões de um projeto como o servidor as devolve: as regras dele e as do sistema (só leitura). */
 export interface IProjectPermissions {
@@ -36,8 +36,11 @@ export const usePermissionsStore = defineStore('permissions', () => {
     return missing.length
   }
 
-  async function decisions(projectId: string, agentId?: string): Promise<IPermissionDecision[]> {
-    return api<IPermissionDecision[]>(`${path(projectId)}/decisions`, { query: agentId ? { agentId } : {} })
+  /** As últimas decisões, das mais novas: de uma categoria (a guia aberta) e, se pedido, de um agente só. */
+  async function decisions(projectId: string, filter: { agentId?: string; category?: TPermissionCategory } = {}): Promise<IPermissionDecision[]> {
+    return api<IPermissionDecision[]>(`${path(projectId)}/decisions`, {
+      query: { ...(filter.agentId ? { agentId: filter.agentId } : {}), ...(filter.category ? { category: filter.category } : {}) },
+    })
   }
 
   return { projects, save, addMissing, decisions }

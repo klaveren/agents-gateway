@@ -5,9 +5,10 @@ import { LAYER_LABEL, PERMISSION_SECTIONS } from '@/lib/permissions'
 import type { IPermissionPart, TPermissionCategory } from '@/lib/types'
 
 /** O testador: a decisão para um comando, caminho ou ferramenta — com cada parte e a regra que decidiu. Não registra. */
-const props = defineProps<{ projectId: string; agentId?: string; /** A categoria da guia aberta: o teste já vem nela. */ initial?: TPermissionCategory }>()
+const props = defineProps<{ projectId: string; agentId?: string; /** A categoria da guia aberta: o teste é sempre nela. */ initial?: TPermissionCategory }>()
 
-const category = ref<TPermissionCategory>(props.initial ?? 'terminal')
+/** Quem escolhe a categoria é a guia: o campo só mostra qual é. */
+const category = computed<TPermissionCategory>(() => props.initial ?? 'terminal')
 /** O exemplo do que testar na categoria escolhida. */
 const placeholder = computed(() =>
   category.value === 'terminal' ? 'git push origin main && cat .env' : (PERMISSION_SECTIONS.find((section) => section.category === category.value)?.example ?? ''),
@@ -16,15 +17,11 @@ const value = ref('')
 const result = ref<{ allowed: boolean; parts: IPermissionPart[] }>()
 const error = ref<string>()
 const busy = ref(false)
-watch(
-  () => props.initial,
-  (next) => {
-    if (!next || next === category.value) return
-    category.value = next
-    result.value = undefined
-    error.value = undefined
-  },
-)
+// Outra guia: o resultado era da categoria anterior.
+watch(category, () => {
+  result.value = undefined
+  error.value = undefined
+})
 
 async function run() {
   if (!value.value.trim()) return
@@ -47,7 +44,7 @@ async function run() {
   <div class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
     <h3 class="text-sm font-medium text-zinc-200">Testar{{ agentId ? ' com este agente' : '' }}</h3>
     <div class="flex flex-wrap gap-2">
-      <select v-model="category" class="input w-44 text-sm" aria-label="Categoria">
+      <select :value="category" class="input w-44 cursor-not-allowed text-sm text-zinc-400" aria-label="Categoria" title="A categoria é a da guia aberta" disabled data-test="tester-category">
         <option v-for="section in PERMISSION_SECTIONS" :key="section.category" :value="section.category">{{ section.label }}</option>
       </select>
       <input v-model="value" class="input min-w-0 flex-1 font-mono text-[13px]" :placeholder="placeholder" @keydown.enter.prevent="run" />
