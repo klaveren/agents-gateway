@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { api } from '@/lib/api'
 import type { IAgentDetail } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
+import { useConnectionsStore } from '@/stores/connections'
 import AgentForm from './AgentForm.vue'
 
 vi.mock('@/lib/api', async (original) => ({ ...(await original<typeof import('@/lib/api')>()), api: vi.fn() }))
@@ -37,10 +38,11 @@ const AGENT: IAgentDetail = {
   ...({} as object),
 }
 
-async function mount(agent: IAgentDetail, extra: (path: string) => unknown = () => undefined) {
+async function mount(agent: IAgentDetail, extra: (path: string, init?: { method?: string; body?: unknown }) => unknown = () => undefined, connected?: string) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().isAdmin = true
+  if (connected) useConnectionsStore().list = [{ projectId: connected, url: 'https://origem.test', state: 'ok', changes: [], skipped: [], secrets: [], modelMap: {} } as never]
   const calls: Array<{ path: string; init?: { method?: string; body?: unknown } }> = []
   vi.mocked(api).mockImplementation(async (path: string, init?: { method?: string; body?: unknown }) => {
     calls.push({ path, init })
@@ -53,8 +55,10 @@ async function mount(agent: IAgentDetail, extra: (path: string) => unknown = () 
           { id: 'rapido', name: 'Rápido', steps: [] },
         ],
       }
+    const own = extra(path, init)
+    if (own !== undefined) return own
     if (init?.method === 'PUT') return { ...agent }
-    return extra(path) ?? []
+    return []
   })
   const router = createRouter({
     history: createMemoryHistory(),
@@ -69,6 +73,12 @@ async function mount(agent: IAgentDetail, extra: (path: string) => unknown = () 
   app.use(pinia).use(router).mount(host)
   await flush()
   return { host, calls }
+}
+
+const click = async (element: Element | null | undefined) => {
+  expect(element, 'o elemento existe').toBeTruthy()
+  ;(element as HTMLElement).click()
+  await flush()
 }
 
 const select = (host: HTMLElement) => host.querySelector<HTMLSelectElement>('select[aria-label="Sequência de troca"]')!
@@ -155,5 +165,63 @@ describe('AgentForm — MCPs', () => {
     filter.dispatchEvent(new Event('input'))
     await flush()
     expect(host.querySelector('[data-test="mcp-chips"] button.on')?.textContent).toContain('send_message')
+  })
+})
+
+describe('AgentForm — projeto conectado: pedido aprovado na camada local', () => {
+  const LOCAL = '/connections/alfa/agents/a1/local'
+  const view = (tools: string[]) => ({
+    agentId: 'a1',
+    projectId: 'alfa',
+    origin: { providers: AGENT.providers, allowedTools: ['bash'], permissions: [] },
+    layer: { allowedTools: tools, disabledTools: [], permissions: [{ category: 'terminal', pattern: 'ls', decision: 'allow' }] },
+  })
+  const pending = {
+    id: 'pr-1',
+    kind: 'agent-local',
+    agentId: 'a1',
+    add: [],
+    remove: [],
+    entries: { field: 'allowedTools', add: ['mcp:github'] },
+    widenings: [{ key: 'agent/a1#allowedTools+mcp:github', description: 'Liga o MCP github' }],
+    requestedWidenings: [],
+    changed: false,
+    reason: 'abrir PR',
+    requestedBy: { by: 'root@x.test' },
+    createdAt: '2026-11-03T12:00:00Z',
+    expiresAt: '2026-11-10T12:00:00Z',
+    status: 'pending',
+  }
+
+  it('relê a camada: o próximo "Salvar ajustes locais" leva a ferramenta aprovada e não apaga as regras locais', async () => {
+    let approved = false
+    const { host, calls } = await mount(
+      { ...AGENT, projectId: 'alfa', allowedTools: ['bash'] },
+      (path, init) => {
+        if (path === '/agents/a1/permission-requests') return approved ? [] : [pending]
+        if (path === '/permission-requests/pr-1/approve') {
+          approved = true
+          // ⚠️ A aprovação da camada local não devolve `permissions`.
+          return { request: { ...pending, status: 'approved' } }
+        }
+        if (path.endsWith('/initial-context')) return { docIds: [], docs: [], totalTokens: 0 }
+        if (path === LOCAL) return init?.method === 'PUT' ? { ...view(['mcp:github']), layer: init.body } : view(approved ? ['mcp:github'] : [])
+        return undefined
+      },
+      'alfa',
+    )
+    await click([...host.querySelectorAll<HTMLElement>('[role="tab"]')].find((tab) => tab.textContent?.includes('Permissões')))
+    const box = host.querySelector<HTMLInputElement>('[data-test="permission-requests"] [data-test="widening-confirm"] input[type="checkbox"]')!
+    box.checked = true
+    box.dispatchEvent(new Event('change'))
+    await flush()
+    await click(host.querySelector('[data-test="permission-requests"] [data-test="widening-submit"]'))
+    expect(calls.filter((call) => call.path === LOCAL && !call.init?.method)).toHaveLength(2)
+
+    host.querySelector('form')!.dispatchEvent(new Event('submit'))
+    await flush()
+    const saved = calls.find((call) => call.path === LOCAL && call.init?.method === 'PUT')?.init?.body as { allowedTools: string[]; permissions: unknown[] }
+    expect(saved.allowedTools).toEqual(['mcp:github'])
+    expect(saved.permissions).toEqual([{ category: 'terminal', pattern: 'ls', decision: 'allow' }])
   })
 })

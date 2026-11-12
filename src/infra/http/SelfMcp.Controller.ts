@@ -328,28 +328,49 @@ function pendingReply(answer: ISelfReply) {
 }
 
 /**
- * 🔌 `patch_agent` com `localLayer`: o ajuste da camada local de um agente de projeto conectado (desligar o que veio da
- * origem, trocar os modelos daqui). Vai sozinho no patch: o resto do agente é da origem e não muda aqui.
+ * 🔌 `patch_agent` com `localLayer`: a camada local de um agente de projeto conectado. Vai sozinho no patch: o resto do
+ * agente é da origem e não muda aqui. ⚖️ O que NÃO amplia (desligar o que veio da origem, trocar os modelos daqui) vale
+ * já; o que LIGA (`allowedTools`: ferramenta, MCP, delegação) vira pedido, que a pessoa aprova na tela.
  */
-async function adjustLocalLayer(api: TSelfApi, agentId: string, patch: Record<string, unknown>) {
+async function adjustLocalLayer(api: TSelfApi, agentId: string, patch: Record<string, unknown>, reason: string) {
   const refused = (message: string) => ({ ...text({ status: 422, code: 'validation_error', message }), isError: true })
   if (Object.keys(patch).length > 1) return refused('`localLayer` goes alone in the patch: the other fields of a connected-project agent are changed at the origin')
   const change = patch.localLayer
-  if (!change || typeof change !== 'object' || Array.isArray(change)) return refused('`localLayer` must be an object: { "disabledTools"?: [...], "providers"?: [...] | null }')
+  if (!change || typeof change !== 'object' || Array.isArray(change))
+    return refused('`localLayer` must be an object: { "allowedTools"?: [...], "disabledTools"?: [...], "providers"?: [...] | null }')
+  const { allowedTools, ...adjust } = change as Record<string, unknown>
+  if (allowedTools !== undefined && (!Array.isArray(allowedTools) || allowedTools.some((tool) => typeof tool !== 'string')))
+    return refused('`localLayer.allowedTools` must be a list of names: a tool, `mcp:<id>/*` or `agent:<id>`')
+  const asked = (allowedTools as string[] | undefined) ?? []
+  const off = Array.isArray(adjust.disabledTools) ? (adjust.disabledTools as unknown[]) : []
+  const both = asked.filter((tool) => off.includes(tool))
+  if (both.length) return refused(`in both \`allowedTools\` and \`disabledTools\`: ${both.join(', ')}. Turn it on or off, not both`)
   const found = await api('GET', `/agents/${encodeURIComponent(agentId)}`)
   if (!found.ok) return reply(found)
   const agent = found.result as Record<string, unknown>
   if (typeof agent.projectId !== 'string') return refused('This agent is not in a connected project: change its fields directly (allowedTools, providers…)')
-  const saved = await api('PATCH', `/connections/${encodeURIComponent(agent.projectId)}/agents/${encodeURIComponent(agentId)}/local`, { body: change })
-  if (!saved.ok) return reply(saved)
+  // O pedido primeiro: se ele for recusado (motivo em branco, MCP que não existe aqui), nada foi aplicado.
+  let pending: { notice: string; pending?: unknown[] } | undefined
+  if (allowedTools !== undefined) {
+    const requested = await api('POST', `/agents/${encodeURIComponent(agentId)}/local-tool-requests`, { body: { allowedTools: asked, reason } })
+    if (!requested.ok) return reply(requested)
+    pending = requested.result as { notice: string; pending?: unknown[] }
+  }
+  // ⛔ O aviso do que ficou pendente vem PRIMEIRO e em texto, como no `pendingReply`: é o que o agente repassa à pessoa.
+  const first = pending ? [{ type: 'text' as const, text: pending.notice }] : []
+  if (!Object.keys(adjust).length) return { content: [...first, ...text({ agentId, applied: [], ...(pending?.pending ? { pending: pending.pending } : {}) }).content] }
+  const saved = await api('PATCH', `/connections/${encodeURIComponent(agent.projectId)}/agents/${encodeURIComponent(agentId)}/local`, { body: adjust })
+  if (!saved.ok) return { ...reply(saved), content: [...first, ...reply(saved).content] }
   const { layer, ignored } = saved.result as { layer: TAgentLocalLayerInput; ignored: string[] }
-  return text({
+  const done = text({
     agentId,
     localLayer: layer,
     effectiveAllowedTools: mergeLocalLayer(agent as unknown as IAgent, layer).allowedTools,
     ...(ignored.length ? { ignored, ignoredNote: 'The agent does not have these: nothing to turn off (names must be as in allowedTools)' } : {}),
-    notice: 'Applied now, on this machine only; the origin did not change. A conversation already open may keep the tools and model it started with.',
+    ...(pending?.pending ? { pending: pending.pending } : {}),
+    notice: `${Object.keys(adjust).join(' and ')} applied now, on this machine only; the origin did not change. A conversation already open may keep the tools and model it started with.`,
   })
+  return { content: [...first, ...done.content] }
 }
 
 const permissionRuleShape = z.object({
@@ -501,7 +522,7 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     'list_permission_rules',
     {
       description:
-        "The permission rules { category, pattern, decision: allow|deny } of a target — `{ scope: 'agent' | 'project', id }` — and its requests waiting for an administrator. Agent rules decide before the project's; deny wins within a layer; no rule = denied. Any agent may read its OWN rules (`scope: 'agent'` without `id`); other agents and projects are for administrators.",
+        "The permission rules { category, pattern, decision: allow|deny } of a target — `{ scope: 'agent' | 'project', id }` — and its requests waiting for an administrator (`pending`: decided by a person on the screen, account menu → Notificações). Agent rules decide before the project's; deny wins within a layer; no rule = denied. The project rules are the layer below EVERY agent of the project: read them before asking for a rule an agent may already have from there. Agent of a connected project: `origin` are the rules that came from the origin (read-only), `rules` the ones of this machine. Any agent may read its OWN rules (`scope: 'agent'` without `id`); other agents and projects are for administrators.",
       inputSchema: { scope: permissionTarget.scope, id: permissionTarget.id.optional().describe("The agent id or the project id. Absent with scope 'agent' = you.") },
       annotations: { readOnlyHint: true },
     },
@@ -1160,7 +1181,7 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     'save_permission_rules',
     {
       description:
-        "Add/remove permission rules of a target `{ scope: 'agent' | 'project', id }`. Restrictions (add deny, remove allow) apply now. Widenings (add allow, remove deny) stay PENDING until an administrator confirms on the screen; you cannot approve. Tell the person what is pending and where (the result says); never say access was granted before that.",
+        "Add/remove permission rules of a target `{ scope: 'agent' | 'project', id }`. WHERE: a rule that serves SEVERAL agents of a project goes ONCE in the project (scope 'project': the layer below every agent of it), never repeated agent by agent; a rule for ONE agent goes in that agent. Exception: a CONNECTED project's own rules come from its origin (409 project_read_only) — there, ask per agent; it is kept on this machine only and the origin never changes. Restrictions (add deny, remove allow) apply now. Widenings (add allow, remove deny) stay PENDING until an administrator confirms on the screen (account menu → Notificações, one by one or all at once); you cannot approve. Tell the person what is pending and where (the result says); never say access was granted before that. When they decide, a gateway notice comes into the conversation that asked (queued into the running turn, or as a new turn): do not poll, and if none came, list_permission_rules shows what is still pending.",
       inputSchema: {
         ...permissionTarget,
         add: z.array(permissionRuleShape).optional(),
@@ -1197,17 +1218,19 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     'patch_agent',
     {
       description:
-        'Change only some fields of an agent (same fields and rules as save_agent; null removes). What widens access (tools, delegation, permissions, exposure, sandbox…) stays PENDING until an administrator confirms on the screen; the rest applies now. Tell the person what is pending and where (the result says); never say it was granted before that. An agent of a CONNECTED project (get_agent shows `localLayer`; a plain patch answers 409 project_read_only) is read-only here: send only `{ "localLayer": { "disabledTools": [...], "providers": [...] } }` to turn off, on THIS machine, tools that came from the origin (names as in allowedTools; it adds to what is already off) and to change the models used here (`providers: null` = back to the ones of the origin). It applies now and never changes the origin. Turning a tool back on, adding tools, delegation or permission rules, and a looser sandbox are done by a person on the agent screen.',
+        'Change only some fields of an agent (same fields and rules as save_agent; null removes). What widens access (tools, delegation, permissions, exposure, sandbox…) stays PENDING until an administrator confirms on the screen (account menu → Notificações, one by one or all at once); the rest applies now. Tell the person what is pending and where (the result says); never say it was granted before that. When they decide, a gateway notice comes into the conversation that asked (queued into the running turn, or as a new turn): do not poll, and if none came, list_permission_rules shows what is still pending. An agent of a CONNECTED project (get_agent shows `localLayer`; a plain patch answers 409 project_read_only) is read-only here: send only `{ "localLayer": { "allowedTools"?: [...], "disabledTools"?: [...], "providers"?: [...] | null } }`. `allowedTools` ASKS to turn on, on THIS machine only, a tool, an MCP (`mcp:<id>/*`) or delegation (`agent:<id>`), including one that was turned off here: each entry becomes a PENDING request and nothing is on before the person approves it. `disabledTools` turns off tools that came from the origin (names as in allowedTools; it adds to what is already off) and `providers` changes the models used here (`null` = back to the ones of the origin): both apply now. None of it ever changes the origin. Permission rules of such an agent: save_permission_rules with the agent as the target. Sandbox, exposure and the other fields are changed at the origin.',
       inputSchema: {
         agentId: z.string(),
         patch: z
           .record(z.string(), z.unknown())
-          .describe('Field → new value, e.g. { "allowedTools": [...] }. Connected project: only { "localLayer": { "disabledTools"?, "providers"? } }.'),
+          .describe('Field → new value, e.g. { "allowedTools": [...] }. Connected project: only { "localLayer": { "allowedTools"?, "disabledTools"?, "providers"? } }.'),
         reason: z.string().describe('Why; shown to whoever confirms.'),
       },
     },
     async ({ agentId, patch, reason }) =>
-      'localLayer' in patch ? adjustLocalLayer(api, agentId, patch) : pendingReply(await api('PATCH', `/agents/${encodeURIComponent(agentId)}`, { body: { patch, reason } })),
+      'localLayer' in patch
+        ? adjustLocalLayer(api, agentId, patch, reason)
+        : pendingReply(await api('PATCH', `/agents/${encodeURIComponent(agentId)}`, { body: { patch, reason } })),
   )
 
   server.registerTool(

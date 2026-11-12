@@ -147,7 +147,7 @@ const CONNECTED_WRITABLE: readonly RegExp[] = [
   /^\/projects\/:projectId\/(accounts|permissions\/test)(\/|$)/,
   /^\/catalog\/import\/plan$/,
   /^\/permission-requests\/:requestId\/(approve|reject)$/,
-  /^\/agents\/:agentId\/permission-rules$/,
+  /^\/agents\/:agentId\/(permission-rules|local-tool-requests)$/,
 ]
 
 /**
@@ -173,7 +173,7 @@ export function refuseConnected(projectId: string | null | undefined): void {
     throw new HttpError(
       409,
       'project_read_only',
-      `O projeto ${projectId} é conectado a ${connection.url}: o catálogo é só leitura aqui. A mudança é feita na origem. O que vale só nesta máquina (modelos, ferramentas a mais ou desligadas, regras) é a camada local do agente: na tela dele, ou \`patch_agent\` com \`localLayer\`.`,
+      `O projeto ${projectId} é conectado a ${connection.url}: o catálogo é só leitura aqui. A mudança é feita na origem. O que vale só nesta máquina (modelos, ferramentas a mais ou desligadas, regras) é a camada local do agente: na tela dele, ou \`patch_agent\` com \`localLayer\` (ligar ferramenta, MCP ou delegação vira pedido, aprovado em Notificações) e \`save_permission_rules\` no agente, para as regras.`,
     )
 }
 

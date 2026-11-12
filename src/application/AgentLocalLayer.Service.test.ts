@@ -126,3 +126,68 @@ describe('camada local: o ajuste que um agente faz (patch_agent com localLayer)'
     await assert.rejects(build([EMode.AGENT], ORIGIN, false).adjust('logiccus', 'sre', { disabledTools: ['run_bash'] }, 'dev'), /sre/)
   })
 })
+
+describe('camada local: ligar ferramentas aqui (o pedido `agent-local`, aprovado na tela)', () => {
+  const ORIGIN = ['mcp:tickets/*', 'agent:atlas']
+  const sre = {
+    id: 'sre',
+    name: 'SRE',
+    projectId: 'logiccus',
+    providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
+    systemPrompt: 'faça',
+    modes: [EMode.AGENT],
+    allowedTools: ORIGIN,
+  } as IAgent
+  const validation = { rules: { knownTools: [], modelEnabled: () => true, mcpServerExists: (id: string) => id !== 'fantasma' }, issues: () => [] }
+
+  it('a que não veio da origem entra a mais; nada é gravado até o `save`', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    const plan = service.enabling(sre, ['mcp:local/*'])!
+    assert.deepEqual(plan.before.allowedTools, ORIGIN)
+    assert.deepEqual(plan.after.allowedTools, [...ORIGIN, 'mcp:local/*'])
+    plan.check(validation)
+    assert.equal(service.of(sre), undefined)
+    plan.save(validation, 'dev')
+    assert.deepEqual(service.of(sre)?.allowedTools, ['mcp:local/*'])
+    assert.equal(service.of(sre)?.updatedBy, 'dev')
+  })
+
+  it('a que a camada tinha desligado volta: sai de `disabledTools`, não entra em `allowedTools`', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    await service.adjust('logiccus', 'sre', { disabledTools: ['agent:atlas'] }, 'dev')
+    const plan = service.enabling(sre, ['agent:atlas'])!
+    assert.deepEqual(plan.before.allowedTools, ['mcp:tickets/*'])
+    assert.deepEqual(plan.after.allowedTools, ORIGIN)
+    plan.save(validation, 'dev')
+    // A camada que ficou vazia some: o agente volta a rodar como veio.
+    assert.equal(service.of(sre), undefined)
+  })
+
+  it('a que já está ligada não muda o agente; o resto da camada fica como estava', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    const rule = { category: 'terminal' as const, pattern: 'npm test', decision: 'allow' as const }
+    await service.save('logiccus', 'sre', { allowedTools: ['mcp:local/*'], disabledTools: ['agent:atlas'], permissions: [rule] }, 'dev')
+    const plan = service.enabling(sre, ['mcp:tickets/*', 'mcp:local/*'])!
+    assert.deepEqual(plan.after.allowedTools, plan.before.allowedTools)
+    plan.save(validation, 'dev')
+    assert.deepEqual(service.of(sre)?.disabledTools, ['agent:atlas'])
+    assert.deepEqual(service.of(sre)?.permissions, [rule])
+  })
+
+  it('⛔ o que o cadastro recusa (MCP que não existe) não passa na conferência nem grava', () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    const refusing = {
+      ...validation,
+      issues: (agent: IAgent) => (agent.allowedTools.includes('mcp:fantasma/*') ? [{ field: 'allowedTools', message: 'unknown MCP server: fantasma' }] : []),
+    }
+    const plan = service.enabling(sre, ['mcp:fantasma/*'])!
+    assert.throws(() => plan.check(refusing), InvalidAgentError)
+    assert.throws(() => plan.save(refusing, 'dev'), InvalidAgentError)
+    assert.equal(service.of(sre), undefined)
+  })
+
+  it('agente global, ou de projeto que não é conectado: não há camada', () => {
+    assert.equal(build([EMode.AGENT], ORIGIN, false).enabling(sre, ['mcp:local/*']), undefined)
+    assert.equal(build([EMode.AGENT], ORIGIN).enabling({ ...sre, projectId: undefined }, ['mcp:local/*']), undefined)
+  })
+})

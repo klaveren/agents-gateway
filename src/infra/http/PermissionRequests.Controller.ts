@@ -45,6 +45,8 @@ const changeSchema = z.object({
 // O `patch_agent`: os campos do `PUT /agents` que o patch muda (sem id, arquivos e problemas da importação).
 const patchFields = Object.fromEntries(AGENT_PATCH_FIELDS.map((field) => [field, true])) as { [K in TAgentPatchField]: true }
 const patchSchema = z.object({ patch: agentBodySchema.pick(patchFields).partial().strict(), reason: z.string().max(1000) })
+// 🔌 As entradas de `allowedTools` a LIGAR na camada local (ferramenta, `mcp:<id>/*`, `agent:<id>`).
+const localToolsSchema = z.object({ allowedTools: z.array(z.string().min(1).max(200)).max(100), reason: z.string().max(1000) }).strict()
 const approveSchema = z.object({ confirm: z.array(z.string().max(1000)).max(500).optional(), value: z.string().max(SECRET_LIMITS.value).optional() })
 const secretSchema = z.object({ value: z.string().max(SECRET_LIMITS.value).optional(), description: z.string().max(SECRET_LIMITS.description).optional() }).strict()
 const secretRequestSchema = z.object({
@@ -79,6 +81,7 @@ export class PermissionRequestsController {
       'approve',
       'reject',
       'patchAgent',
+      'requestLocalTools',
       'listSecrets',
       'saveSecret',
       'removeSecret',
@@ -139,6 +142,18 @@ export class PermissionRequestsController {
     })
   }
 
+  /**
+   * `POST /agents/:agentId/local-tool-requests { allowedTools, reason }` — 🔌 ligar ferramenta, MCP ou delegação num agente
+   * de projeto CONECTADO, só nesta máquina. ⛔ Nada vale já: cada entrada vira um pedido, aprovado na tela.
+   */
+  async requestLocalTools(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { service, by } = await this.admin({ agentId: req.params.agentId as string }, 'requestLocalTools')
+      const body = parseBody(localToolsSchema, req.body)
+      return service.requestLocalTools(req.params.agentId as string, body, requesterOf(req, by))
+    })
+  }
+
   /** `GET /projects/:projectId/permission-requests?status=open|all` — os pedidos para as regras do projeto. */
   async listForProject(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
@@ -175,7 +190,8 @@ export class PermissionRequestsController {
   async approve(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { service, by } = await this.decider(req, 'approvePermissionRequest')
-      // 🔌 Projeto conectado: as regras do agente vão para a camada local e a variável é valor daqui; o resto mudaria o catálogo.
+      // 🔌 Projeto conectado: as regras e as ferramentas do agente (`agent-local`) vão para a camada local e a variável é
+      // valor daqui; o resto mudaria o catálogo.
       const request = service.get(req.params.requestId as string)
       if (request.kind === 'agent-patch' || request.kind === 'project-rules') refuseConnected(this.projectOf(request))
       const { confirm, value } = parseBody(approveSchema, req.body)

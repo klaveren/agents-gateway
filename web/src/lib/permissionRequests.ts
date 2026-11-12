@@ -7,11 +7,14 @@ export type TPermissionRequestStatus = 'pending' | 'approved' | 'rejected' | 'ex
  * Um pedido de permissão de um agente (o servidor recalcula `widenings` sobre o agente de agora). ⛔ Só um administrador
  * na tela aprova: o `confirm` são EXATAMENTE as chaves de `widenings`.
  */
-export type TPermissionRequestKind = 'agent-rules' | 'project-rules' | 'agent-patch' | 'secret'
+export type TPermissionRequestKind = 'agent-rules' | 'project-rules' | 'agent-patch' | 'agent-local' | 'secret'
 
 export interface IPermissionRequest {
   id: string
-  /** O que muda: as regras de um agente, as de um projeto, campos de um agente (`patch_agent`) ou uma variável secreta. */
+  /**
+   * O que muda: as regras de um agente, as de um projeto, campos de um agente (`patch_agent`), uma variável secreta, ou
+   * (🔌 `agent-local`) uma ferramenta, um MCP ou uma delegação ligada SÓ NESTA MÁQUINA num agente de projeto conectado.
+   */
   kind: TPermissionRequestKind
   agentId?: string
   agentName?: string
@@ -21,7 +24,7 @@ export interface IPermissionRequest {
   remove: IPermissionRule[]
   /** `agent-patch`: os campos pedidos, com o valor (`null` = tirar). */
   patch?: Record<string, unknown>
-  /** `agent-patch` de um campo-lista: a entrada a ACRESCENTAR ao valor de agora (`allowedTools` + `agent:ana`). */
+  /** `agent-patch` de um campo-lista: a entrada a ACRESCENTAR ao valor de agora (`allowedTools` + `agent:ana`). `agent-local`: a entrada a ligar aqui. */
   entries?: { field: string; add: string[] }
   /** `secret.project`: skill/command compartilhado — o projeto que recebe e cujo valor o pedido preenche (ausente = a origem). */
   /** `secret`: a variável pedida (só o nome — ⛔ o valor é digitado por quem aprova, nunca vem no pedido). */
@@ -69,6 +72,54 @@ export function patchLine(field: string, value: unknown): string {
 /** "allowedTools + agent:ana" — a entrada de lista que o pedido acrescenta. */
 export function entriesLine(entries: { field: string; add: string[] }): string {
   return `${entries.field} + ${entries.add.join(', ')}`
+}
+
+/** "Ligar só nesta máquina: agent:ana" — a entrada que o pedido `agent-local` liga na camada local do agente. */
+export function localLine(entries: { field: string; add: string[] }): string {
+  return `Ligar só nesta máquina: ${entries.add.join(', ')}`
+}
+
+/** A linha da entrada de lista de um pedido: a do `agent-local` diz que é só daqui. */
+export const requestEntriesLine = (request: Pick<IPermissionRequest, 'kind'>, entries: { field: string; add: string[] }): string =>
+  request.kind === 'agent-local' ? localLine(entries) : entriesLine(entries)
+
+const entryKind = (entry: string | undefined) => (entry?.startsWith('agent:') ? 'Delegação' : entry?.startsWith('mcp:') ? 'MCP' : 'Ferramenta')
+
+/** O tipo do pedido, em uma palavra: "Regra", "Delegação", "MCP", "Ferramenta", "Campo do agente", "Variável secreta". */
+export function kindLabel(request: IPermissionRequest): string {
+  if (request.kind === 'secret') return 'Variável secreta'
+  if (request.entries) return entryKind(request.entries.add[0])
+  return request.kind === 'agent-patch' ? 'Campo do agente' : 'Regra'
+}
+
+/**
+ * O pedido numa linha, para a lista do "Aprovar todos": o que ele abre AGORA (as ampliações que o servidor recalculou);
+ * sem ampliação, o que ele troca. O `agent-local` diz que é só desta máquina.
+ */
+export function itemSummary(request: IPermissionRequest): string {
+  const here = request.kind === 'agent-local' ? ' — só nesta máquina' : ''
+  if (request.widenings.length) return `${request.widenings.map((item) => item.description).join('; ')}${here}`
+  if (request.secret) return secretLine(request.secret)
+  if (request.entries) return requestEntriesLine(request, request.entries)
+  const patch = Object.entries(request.patch ?? {}).map(([field, value]) => patchLine(field, value))
+  return [...request.add.map((rule) => ruleLine(rule, 'add')), ...request.remove.map((rule) => ruleLine(rule, 'remove')), ...patch].join('; ')
+}
+
+/**
+ * De quem é o pedido: o agente, o projeto (as regras dele) ou a skill/command da variável. É por ele que a tela de
+ * Notificações separa as listas. ⚠️ No pedido `secret` de skill ou command, `agentId` é quem PEDIU, não o alvo.
+ */
+export function targetKey(request: IPermissionRequest): string {
+  if (request.kind === 'secret' && request.secret) return `${request.secret.scope}:${request.secret.scopeId}`
+  if (request.kind === 'project-rules') return `project:${request.projectId ?? ''}`
+  return `agent:${request.agentId ?? ''}`
+}
+
+/** "Agente Theo", "Projeto Alfa", "Skill gitlab" — o título da lista de um alvo. */
+export function targetTitle(request: IPermissionRequest): string {
+  if (request.kind === 'secret' && request.secret && request.secret.scope !== 'agent') return `${request.secret.scope === 'skill' ? 'Skill' : 'Command'} ${request.secret.scopeId}`
+  if (request.kind === 'project-rules') return `Projeto ${request.projectName ?? request.projectId ?? ''}`
+  return `Agente ${request.agentName ?? request.agentId ?? request.secret?.scopeId ?? ''}`
 }
 
 /** A chave da store: os de um agente, os das regras de um projeto, ou todos (`''`). */

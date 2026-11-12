@@ -70,6 +70,11 @@ const tick = async (box: Element | null | undefined, on = true) => {
 const item = (host: HTMLElement, id: string) => host.querySelector<HTMLElement>(`[data-test="request-item"][data-request="${id}"]`)!
 const buttons = (host: HTMLElement, text: string) => [...document.body.querySelectorAll('button')].filter((b) => b.textContent?.trim() === text)
 
+const dialog = () => document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+const confirmDialog = () => click(dialog()?.querySelector('.btn:last-child'))
+const listed = () => [...(dialog()?.querySelectorAll('[data-test="bulk-list"] li') ?? [])].map((line) => line.getAttribute('data-request'))
+const approveBody = (id: string) => vi.mocked(api).mock.calls.find(([path]) => path === `/permission-requests/${id}/approve`)?.[1]?.body
+
 describe('NotificationsView', () => {
   beforeEach(() => {
     order = []
@@ -85,6 +90,7 @@ describe('NotificationsView', () => {
       }),
       request('s1', {
         agentId: undefined,
+        agentName: undefined,
         kind: 'project-rules',
         projectId: 'alfa',
         projectName: 'Alfa',
@@ -103,7 +109,10 @@ describe('NotificationsView', () => {
         if (id === 'a2') throw new ApiError(409, 'widening_confirmation_required', 'x', { widenings: [{ key: 'k:novo', description: 'novo' }] })
         return { request: { ...all.find((r) => r.id === id)!, status: 'approved' }, body: init?.body }
       }
-      if (action === 'reject') return { ...all.find((r) => r.id === id)!, status: 'rejected' }
+      if (action === 'reject') {
+        order.push(`reject:${id}`)
+        return { ...all.find((r) => r.id === id)!, status: 'rejected' }
+      }
       throw new Error(`inesperado: ${path}`)
     })
   })
@@ -113,24 +122,44 @@ describe('NotificationsView', () => {
     document.body.innerHTML = ''
   })
 
-  it('agrupa por batchId (sem ele, o pedido é o próprio lote) e põe o vencido numa seção à parte', async () => {
+  it('uma lista por alvo, com o pedido e o motivo uma vez por chamada; o vencido fica na guia dele', async () => {
     const host = await mount(NotificationsView)
     const groups = [...host.querySelectorAll('[data-test="request-group"]')]
-    expect(groups.map((group) => group.getAttribute('data-group'))).toEqual(['batch:b1', 'solo:s1'])
-    expect(groups[0].querySelectorAll('[data-test="request-item"]')).toHaveLength(2)
+    expect(groups.map((group) => group.getAttribute('data-group'))).toEqual(['agent:theo', 'project:alfa'])
+    expect(groups.map((group) => group.querySelector('[data-test="group-title"]')?.textContent)).toEqual(['Agente Theo', 'Projeto Alfa'])
+    expect([...groups[0].querySelectorAll('[data-test="request-item"]')].map((line) => line.getAttribute('data-request'))).toEqual(['a2', 'a1'])
+    // a1 e a2 vieram da mesma chamada: o pedido e o motivo aparecem uma vez
+    expect(groups[0].querySelectorAll('[data-test="request-ask"]')).toHaveLength(1)
     expect(groups[0].querySelector('[data-test="request-conversation"]')?.getAttribute('href')).toBe('/c/c-42')
-    expect(groups[1].textContent).toContain('projeto Alfa')
+    expect(groups[0].querySelector('[data-test="request-kind"]')?.textContent).toBe('Regra')
+    expect(host.querySelector('[data-test="pending-total"]')?.textContent).toContain('3 pedidos')
+
+    expect(host.querySelector('[data-test="expired-section"]')).toBeNull()
+    expect(host.querySelector('[data-test="tab-expired"]')?.textContent).toContain('1')
+    await click(host.querySelector('[data-test="tab-expired"]'))
+    expect(host.querySelector('[data-test="request-group"]')).toBeNull()
     const expired = host.querySelector('[data-test="expired-section"]')!
     expect(expired.querySelectorAll('[data-test="expired-item"]')).toHaveLength(1)
     expect(expired.querySelector('[data-test="widening-confirm"]')).toBeNull()
     await click(expired.querySelector('[data-test="request-discard"]'))
     expect(vi.mocked(api)).toHaveBeenCalledWith('/permission-requests/e1/reject', { method: 'POST', body: {} })
+    // sem vencido, a guia some e a tela volta aos pendentes
+    expect(host.querySelector('[data-test="tab-expired"]')).toBeNull()
+    expect(host.querySelectorAll('[data-test="request-group"]')).toHaveLength(2)
+  })
+
+  it('duas chamadas do mesmo agente: cada uma abre com o seu pedido e o seu motivo', async () => {
+    all = [request('a1', { batchId: 'b1', reason: 'primeiro' }), request('a3', { batchId: 'b2', reason: 'segundo', createdAt: '2026-11-04T12:00:00Z' })]
+    const host = await mount(NotificationsView)
+    expect(host.querySelectorAll('[data-test="request-group"]')).toHaveLength(1)
+    expect([...host.querySelectorAll('[data-test="request-reason"]')].map((line) => line.textContent)).toEqual(['segundo', 'primeiro'])
   })
 
   it('vazio: "Nada esperando por você."', async () => {
     all = []
     const host = await mount(NotificationsView)
     expect(host.querySelector('[data-test="notifications-empty"]')?.textContent).toContain('Nada esperando por você.')
+    expect(host.querySelector('[data-test="bulk-bar"]')).toBeNull()
   })
 
   it('aprovar um item manda as chaves dele e só liga com todas as caixas dele marcadas', async () => {
@@ -142,40 +171,127 @@ describe('NotificationsView', () => {
     expect(approve.disabled).toBe(true)
     await tick(y)
     expect(approve.disabled).toBe(false)
-    // o irmão do lote não foi tocado
+    // o irmão da mesma chamada não foi tocado
     expect(item(host, 'a1').querySelector<HTMLButtonElement>('[data-test="item-approve"]')!.disabled).toBe(true)
+    // sem ampliação, não há o que marcar
+    expect(item(host, 's1').querySelector<HTMLButtonElement>('[data-test="item-approve"]')!.disabled).toBe(false)
     await click(approve)
     expect(vi.mocked(api)).toHaveBeenCalledWith('/permission-requests/a2/approve', { method: 'POST', body: { confirm: ['k:a2:x', 'k:a2:y'] } })
   })
 
-  it('em lote: só aprova o que está todo marcado, um de cada vez, depois de confirmar; a falha aparece no item', async () => {
+  it('recusar um item não pede caixa nenhuma e o tira da lista', async () => {
     const host = await mount(NotificationsView)
-    // a1 inteiro marcado, a2 só com uma caixa, s1 (sem ampliação) escolhido
-    await tick(item(host, 'a1').querySelector('input[data-key]'))
-    await tick(item(host, 'a2').querySelector('input[data-key]'))
-    await tick(item(host, 's1').querySelector('[data-test="item-select"]'))
-    const bulk = host.querySelector<HTMLButtonElement>('[data-test="approve-selected"]')!
-    expect(bulk.textContent).toContain('Aprovar marcados (2)')
-    await click(bulk)
-    expect(document.body.textContent).toContain('Aprovar 2 pedidos?')
-    expect(document.body.textContent).toContain('Isto amplia o acesso dos agentes listados.')
-    expect(order).toEqual([])
-    await click(buttons(document.body as unknown as HTMLElement, 'Aprovar').find((b) => b.classList.contains('btn') && b.closest('[role="alertdialog"]')))
-    expect(order).toEqual(['approve:a1', 'approve:s1'])
-    expect(vi.mocked(api)).toHaveBeenCalledWith('/permission-requests/s1/approve', { method: 'POST', body: { confirm: [] } })
+    await click(item(host, 'a1').querySelector('[data-test="item-reject"]'))
+    expect(order).toEqual(['reject:a1'])
     expect(host.querySelector('[data-request="a1"]')).toBeNull()
+    expect(item(host, 'a2')).toBeTruthy()
   })
 
-  it('a falha de um item do lote mostra o erro nele (409 recalcula e desmarca) e segue com os outros', async () => {
+  it('"Aprovar todos" mostra a lista antes; confirmada, aprova um por vez com as chaves de cada um, e a falha fica no item', async () => {
     const host = await mount(NotificationsView)
-    await tick(host.querySelector('[data-test="select-all"]'))
-    expect(host.querySelector('[data-test="approve-selected"]')!.textContent).toContain('(3)')
-    await click(host.querySelector('[data-test="approve-selected"]'))
-    await click(document.body.querySelector('[role="alertdialog"] .btn:last-child'))
-    expect(order.sort()).toEqual(['approve:a1', 'approve:a2', 'approve:s1'])
+    const all3 = host.querySelector<HTMLButtonElement>('[data-test="approve-all"]')!
+    expect(all3.textContent).toContain('Aprovar todos (3)')
+    await click(all3)
+    expect(dialog()?.textContent).toContain('Aprovar 3 pedidos?')
+    expect(dialog()?.textContent).toContain('é exatamente isto que passa a valer')
+    expect(listed()).toEqual(['a2', 'a1', 's1'])
+    expect(dialog()?.textContent).toContain('Agente Theo (2)')
+    expect(dialog()?.textContent).toContain('x; y')
+    expect(dialog()?.textContent).toContain('abre a1')
+    expect(dialog()?.textContent).toContain('Acrescentar: permitir terminal "cmd s1"')
+    expect(order).toEqual([])
+
+    await confirmDialog()
+    expect(dialog()).toBeNull()
+    expect(order).toEqual(['approve:a2', 'approve:a1', 'approve:s1'])
+    expect(approveBody('a1')).toEqual({ confirm: ['k:a1'] })
+    expect(approveBody('a2')).toEqual({ confirm: ['k:a2:x', 'k:a2:y'] })
+    expect(approveBody('s1')).toEqual({ confirm: [] })
+    expect(host.querySelector('[data-request="a1"]')).toBeNull()
+    expect(host.querySelector('[data-request="s1"]')).toBeNull()
+    // o que o servidor recalculou fica, com o erro nele e a lista nova por confirmar
     expect(item(host, 'a2').querySelector('[data-test="request-error"]')?.textContent).toContain('a lista foi recalculada')
-    expect(item(host, 'a2').querySelectorAll('input[data-key]')).toHaveLength(1)
+    expect([...item(host, 'a2').querySelectorAll('input[data-key]')].map((box) => box.getAttribute('data-key'))).toEqual(['k:novo'])
     expect(item(host, 'a2').querySelector<HTMLButtonElement>('[data-test="item-approve"]')!.disabled).toBe(true)
+    const outcome = host.querySelector('[data-test="bulk-outcome"]')?.textContent?.replace(/\s+/g, ' ').trim()
+    expect(outcome).toBe('2 aprovados. 1 não passou: o motivo está em cada um.')
+  })
+
+  it('cancelar a confirmação não aprova nada', async () => {
+    const host = await mount(NotificationsView)
+    await click(host.querySelector('[data-test="approve-all"]'))
+    await click(dialog()?.querySelector('.btn:first-child'))
+    expect(dialog()).toBeNull()
+    expect(order).toEqual([])
+    expect(host.querySelectorAll('[data-test="request-item"]')).toHaveLength(3)
+  })
+
+  it('"Aprovar todos" de uma lista leva só os pedidos dela; a lista de um pedido só não tem o botão', async () => {
+    const host = await mount(NotificationsView)
+    expect(host.querySelector('[data-group="project:alfa"] [data-test="group-approve-all"]')).toBeNull()
+    const button = host.querySelector<HTMLButtonElement>('[data-group="agent:theo"] [data-test="group-approve-all"]')!
+    expect(button.textContent).toContain('Aprovar todos (2)')
+    await click(button)
+    expect(dialog()?.textContent).toContain('Aprovar 2 pedidos?')
+    expect(listed()).toEqual(['a2', 'a1'])
+    await confirmDialog()
+    expect(order).toEqual(['approve:a2', 'approve:a1'])
+    expect(item(host, 's1')).toBeTruthy()
+  })
+
+  it('"Recusar todos" lista, confirma e recusa cada um', async () => {
+    const host = await mount(NotificationsView)
+    await click(host.querySelector('[data-test="reject-all"]'))
+    expect(dialog()?.textContent).toContain('Recusar 3 pedidos?')
+    expect(dialog()?.textContent).toContain('Nada desta lista passa a valer.')
+    expect(order).toEqual([])
+    await confirmDialog()
+    expect(order).toEqual(['reject:a2', 'reject:a1', 'reject:s1'])
+    expect(host.querySelector('[data-test="notifications-empty"]')).toBeTruthy()
+    expect(host.querySelector('[data-test="bulk-outcome"]')?.textContent?.trim()).toBe('3 recusados.')
+  })
+
+  it('lista com mais de dez pedidos: pagina, e o "Aprovar todos" leva os de todas as páginas', async () => {
+    all = Array.from({ length: 12 }, (_, index) => request(`n${index}`, { createdAt: `2026-11-03T12:00:${String(59 - index).padStart(2, '0')}Z` }))
+    const host = await mount(NotificationsView)
+    expect(host.querySelectorAll('[data-test="request-item"]')).toHaveLength(10)
+    expect(host.querySelector('[data-test="group-count"]')?.textContent).toBe('12')
+    await click(host.querySelector('[data-group="agent:theo"] [data-test="pager-next"]'))
+    expect([...host.querySelectorAll('[data-test="request-item"]')].map((line) => line.getAttribute('data-request'))).toEqual(['n10', 'n11'])
+    await click(host.querySelector('[data-test="approve-all"]'))
+    expect(listed()).toHaveLength(12)
+    await confirmDialog()
+    expect(order).toHaveLength(12)
+    expect(host.querySelector('[data-test="notifications-empty"]')).toBeTruthy()
+    expect(host.querySelector('[data-test="bulk-outcome"]')?.textContent?.trim()).toBe('12 aprovados.')
+  })
+
+  it('ferramenta ligada só nesta máquina: diz o que é, onde vale, e a lista do "Aprovar todos" repete', async () => {
+    all = [
+      request('l1', { kind: 'agent-local', add: [], entries: { field: 'allowedTools', add: ['mcp:github'] }, widenings: [{ key: 'agent/theo#allowedTools+mcp:github', description: 'Liga o MCP github' }] }),
+      request('l2', { kind: 'agent-local', add: [], entries: { field: 'allowedTools', add: ['agent:zeus'] }, widenings: [], createdAt: '2026-11-03T11:00:00Z' }),
+    ]
+    const host = await mount(NotificationsView)
+    expect(item(host, 'l1').querySelector('[data-test="request-kind"]')?.textContent).toBe('MCP')
+    expect(item(host, 'l2').querySelector('[data-test="request-kind"]')?.textContent).toBe('Delegação')
+    expect(item(host, 'l1').querySelector('[data-test="request-local"]')?.textContent).toBe('só nesta máquina')
+    expect(item(host, 'l1').querySelector('[data-test="request-entries"]')?.textContent).toBe('Ligar só nesta máquina: mcp:github')
+    await click(host.querySelector('[data-test="approve-all"]'))
+    expect(dialog()?.textContent).toContain('Liga o MCP github — só nesta máquina')
+    expect(dialog()?.textContent).toContain('Ligar só nesta máquina: agent:zeus')
+  })
+
+  it('vencidos: "Descartar todos" lista e descarta cada um', async () => {
+    all = [request('e1', { status: 'expired' }), request('e2', { status: 'expired', createdAt: '2026-11-01T12:00:00Z' }), request('a1')]
+    const host = await mount(NotificationsView)
+    await click(host.querySelector('[data-test="tab-expired"]'))
+    await click(host.querySelector('[data-test="discard-all"]'))
+    expect(dialog()?.textContent).toContain('Descartar 2 pedidos?')
+    expect(listed()).toEqual(['e1', 'e2'])
+    await confirmDialog()
+    expect(order).toEqual(['reject:e1', 'reject:e2'])
+    expect(host.querySelector('[data-test="bulk-outcome"]')?.textContent?.trim()).toBe('2 descartados.')
+    expect(item(host, 'a1')).toBeTruthy()
   })
 
   describe('pedido de variável secreta', () => {
@@ -200,13 +316,16 @@ describe('NotificationsView', () => {
         secret('v1'),
       ]
       const host = await mount(NotificationsView)
-      expect(item(host, 'p1').querySelector('[data-test="secret-project"]')?.textContent).toBe('valor do projeto Alfa')
+      expect(item(host, 'p1').querySelector('[data-test="secret-project"]')?.textContent?.trim()).toBe('valor do projeto Alfa')
       expect(item(host, 'v1').querySelector('[data-test="secret-project"]')).toBeNull()
+      // a variável da skill tem a lista dela
+      expect(host.querySelector('[data-test="group-title"]')?.textContent).toBe('Skill gitlab')
     })
 
     it('mostra nome, escopo, descrição e motivo; Aprovar só liga com a caixa E o valor; manda { confirm, value } e limpa', async () => {
       all = [secret('v1')]
       const host = await mount(NotificationsView)
+      expect(item(host, 'v1').querySelector('[data-test="request-kind"]')?.textContent).toBe('Variável secreta')
       expect(item(host, 'v1').textContent).toContain('Variável secreta pedida: GITLAB_TOKEN para skill gitlab')
       expect(item(host, 'v1').textContent).toContain('token da API')
       expect(host.textContent).toContain('preciso disto')
@@ -224,23 +343,28 @@ describe('NotificationsView', () => {
       expect(host.innerHTML).not.toContain('s3gredo')
     })
 
-    it('em lote, o secreto sem valor não conta como marcado', async () => {
+    it('fica fora do "Aprovar todos" (só vale com o valor digitado), e a confirmação avisa; entra no "Recusar todos"', async () => {
       all = [secret('v1'), request('a1')]
       const host = await mount(NotificationsView)
-      await tick(host.querySelector('[data-test="select-all"]'))
-      expect(host.querySelector('[data-test="approve-selected"]')!.textContent).toContain('(1)')
-      await typeValue(host, 'v1', 'abc')
-      expect(host.querySelector('[data-test="approve-selected"]')!.textContent).toContain('(2)')
-      await typeValue(host, 'v1', '')
-      expect(host.querySelector('[data-test="approve-selected"]')!.textContent).toContain('(1)')
-    })
-  })
+      expect(host.querySelector('[data-test="approve-all"]')!.textContent).toContain('Aprovar todos (1)')
+      await click(host.querySelector('[data-test="approve-all"]'))
+      expect(dialog()?.textContent).toContain('Aprovar 1 pedido?')
+      expect(listed()).toEqual(['a1'])
+      expect(dialog()?.querySelector('[data-test="bulk-skipped"]')?.textContent).toContain('1 variável secreta fica de fora')
+      await confirmDialog()
+      expect(order).toEqual(['approve:a1'])
+      expect(item(host, 'v1')).toBeTruthy()
 
-  it('"Marcar todos do lote" marca só o lote', async () => {
-    const host = await mount(NotificationsView)
-    await tick(host.querySelector('[data-group="batch:b1"] [data-test="group-toggle"]'))
-    expect(host.querySelector('[data-test="approve-selected"]')!.textContent).toContain('(2)')
-    expect(item(host, 'a1').querySelector<HTMLButtonElement>('[data-test="item-approve"]')!.disabled).toBe(false)
+      await click(host.querySelector('[data-test="reject-all"]'))
+      expect(listed()).toEqual(['v1'])
+      expect(dialog()?.querySelector('[data-test="bulk-skipped"]')).toBeNull()
+    })
+
+    it('só variável secreta esperando: o "Aprovar todos" fica desligado', async () => {
+      all = [secret('v1')]
+      const host = await mount(NotificationsView)
+      expect(host.querySelector<HTMLButtonElement>('[data-test="approve-all"]')!.disabled).toBe(true)
+    })
   })
 })
 

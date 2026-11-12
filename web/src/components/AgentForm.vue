@@ -454,6 +454,8 @@
     if (!props.agent) return
     // O patch aprovado muda outros campos: o agente é relido (o formulário volta ao gravado).
     if (request.kind === 'agent-patch') return void agents.details.refresh(props.agent.id).catch(() => undefined)
+    // 🔌 A ferramenta ligada só nesta máquina entrou na camada local: ela é relida (não vêm regras na resposta).
+    if (request.kind === 'agent-local') return void reloadLocal(props.agent)
     form.value.permissions = (permissions ?? []).map((rule) => ({ ...rule }))
     // 🔌 No projeto conectado a aprovação gravou na camada local: o agente (a origem) não mudou.
     if (layerMode.value) {
@@ -776,6 +778,12 @@
     // As regras do formulário são só as locais: as da origem aparecem acima delas, travadas.
     form.value.permissions = view.layer.permissions.map((rule) => ({ ...rule }))
     form.value.providers = view.layer.providers?.length ? view.layer.providers.map((target) => ({ ...target, models: [...target.models] })) : formProviders(props.agent)
+  }
+  /** Relê a camada gravada (o formulário volta a ela): depois de uma aprovação que escreveu ali por fora do Salvar. */
+  async function reloadLocal(agent: IAgentDetail) {
+    if (!layerMode.value || !agent.projectId) return
+    const view = await connections.readLocal(agent.projectId, agent.id).catch(() => undefined)
+    if (view && props.agent?.id === agent.id) applyLocal(view)
   }
   const layerError = ref<string>()
   watch(

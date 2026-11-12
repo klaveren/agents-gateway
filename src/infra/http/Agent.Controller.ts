@@ -2081,6 +2081,26 @@ export class AgentController {
     return { status: finished?.status ?? 'ok', ...(finished?.error ? { error: finished.error } : {}) }
   }
 
+  /**
+   * ⛔ O AVISO do gateway numa conversa, em nome de quem está na requisição (quem decidiu um pedido de permissão na tela):
+   * as mesmas regras do `POST …/turns` — só a conversa de quem decide, nunca a de delegação. O id da conversa veio de um
+   * RÓTULO do pedido: sem esta conferência, quem pede escolheria em que conversa alheia o texto entra.
+   * ⚖️ Com um turno rodando, entra na FILA dele (não derruba nada); parada, vira um turno novo, que segue sozinho. A
+   * arquivada fica como está: o aviso não a traz de volta.
+   */
+  async serverNotice(sessionId: string, message: string): Promise<'queued' | 'turn' | 'archived'> {
+    // Conferida sem reabrir: a arquivada de quem decide não volta à memória só para ser pulada.
+    await this.requireOwnedConversation(sessionId)
+    const stored = await this.usecases.conversations.findSession(sessionId).catch(() => undefined)
+    if (stored?.archivedAt) return 'archived'
+    const resolved = await this.requireOwnedSession(sessionId, { resume: true })
+    if (this.usecases.sendMessage.enqueue(sessionId, message) !== undefined) return 'queued'
+    const session = await this.usecases.getSession.execute(sessionId)
+    const input = await this.turnInput(sessionId, resolved, { message })
+    this.launch(sessionId, session, input, undefined)
+    return 'turn'
+  }
+
   /** Começa o turno assíncrono (um por conversa: rodando, é 409). */
   private launch(
     sessionId: string,

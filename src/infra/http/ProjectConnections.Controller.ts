@@ -58,7 +58,7 @@ const localAdjustSchema = z
     {
       error: (issue) =>
         issue.code === 'unrecognized_keys'
-          ? 'only disabledTools and providers can be adjusted here: tools to turn on, delegation, MCPs and permission rules are changed on the agent screen'
+          ? 'only disabledTools and providers can be adjusted here. To turn on a tool, an MCP or delegation, ask with POST /agents/:agentId/local-tool-requests (`patch_agent` with `localLayer.allowedTools`): a person approves it on the screen. Permission rules: POST /agents/:agentId/permission-rules (`save_permission_rules`)'
           : undefined,
     },
   )

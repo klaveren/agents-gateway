@@ -49,6 +49,7 @@ import { ConnectService } from '@application/Connect.Service'
 import { SqliteRemoteUsageRepository } from '@infra/persistence/Sqlite.RemoteUsageRepository'
 import { remoteUsageRows } from '@domain/models/RemoteUsage.Model'
 import { ProjectConnectionService } from '@application/ProjectConnection.Service'
+import { PermissionDecisionNoticeService } from '@application/PermissionDecisionNotice.Service'
 import { catalogItemKey } from '@application/CatalogHistory.Service'
 import { RemoteClient } from '@infra/connect/Remote.Client'
 import { SqliteProjectConnectionRepository } from '@infra/persistence/Sqlite.ProjectConnectionRepository'
@@ -178,6 +179,12 @@ export function makeController(): AgentController {
   makePermissionRequests().useAgentValidation(async () => ({ rules: await controller.agentRules(), issues: (agent) => controller.projectIssues(agent) }))
   // E a camada local do agente de projeto conectado.
   makeAgentLocalLayers().useAgentValidation(async () => ({ rules: await controller.agentRules(), issues: (agent) => controller.projectIssues(agent) }))
+  // ⛔ A decisão de um pedido volta à conversa que pediu, amarrada a quem decidiu (a identidade da requisição): o aviso sai
+  // depois, e entra com as regras do `POST …/turns` — na fila do turno rodando, ou num turno novo.
+  const notices = new PermissionDecisionNoticeService({
+    delivery: () => AsyncResource.bind((conversationId: string, text: string) => controller.serverNotice(conversationId, text)),
+  })
+  makePermissionRequests().useDecisionListener((request, decider) => notices.decided(request, decider))
   return controller
 }
 

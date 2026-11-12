@@ -39,13 +39,19 @@ export function authHeaders(extra: Record<string, string> = {}): Record<string, 
 /**
  * ⛔ O CSRF da sessão: o gateway o põe num cookie legível (`gw_csrf_<porta>`) e só aceita o "só pela tela" (aprovar
  * permissão, gravar segredo) com o mesmo valor devolvido no `X-CSRF`.
+ * ⚠️ Cookie não separa porta: com dois gateways no mesmo host (`localhost:3210` e `localhost:3110`), o primeiro
+ * `gw_csrf_` da lista pode ser o do OUTRO, e aprovar era recusado. Vale o desta porta; sem ele (atrás de proxy, a porta
+ * do nome é a interna), o que houver.
  */
-function readCsrf(): string | undefined {
+export function readCsrf(): string | undefined {
   try {
+    const found = new Map<string, string>()
     for (const part of document.cookie.split(';')) {
       const at = part.indexOf('=')
-      if (at !== -1 && part.slice(0, at).trim().startsWith('gw_csrf_')) return decodeURIComponent(part.slice(at + 1).trim()) || undefined
+      const name = at === -1 ? '' : part.slice(0, at).trim()
+      if (name.startsWith('gw_csrf_')) found.set(name, decodeURIComponent(part.slice(at + 1).trim()))
     }
+    return found.get(`gw_csrf_${location.port}`) || [...found.values()].find(Boolean)
   } catch {
     /* sem document (teste) ou cookie ilegível: segue sem o cabeçalho */
   }

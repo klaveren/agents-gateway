@@ -1,6 +1,7 @@
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
 import { agentWidenings } from '@domain/AgentPatch.Policy'
 import { AUTO_TOOLS, isAutoToolOff } from '@domain/Auto.Tools'
+import { toCapabilities } from '@domain/Capability.Catalog'
 import { AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
 import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
 import { IAgentLocalLayer, isEmptyLayer, mergeLocalLayer, TAgentLocalLayerInput, trimLocalLayer } from '@domain/models/AgentLocalLayer.Model'
@@ -28,6 +29,15 @@ export interface IAgentLayerValidation {
 export interface IAgentLocalLayerAdjust {
   disabledTools?: string[]
   providers?: IAgentTarget[] | null
+}
+
+/** Ligar ferramentas aqui (ver `enabling`): o agente antes e depois, a conferência e a gravação. */
+export interface IAgentLocalEnabling {
+  before: IAgent
+  after: IAgent
+  /** ⛔ Lança `InvalidAgentError` com o que a camada nova não pode ter (MCP que não existe, agente de outro projeto). */
+  check(validation: IAgentLayerValidation): void
+  save(validation: IAgentLayerValidation, by: string): void
 }
 
 /** O que a tela mostra: a origem e o que esta máquina acrescentou ou desligou. */
@@ -78,8 +88,7 @@ export class AgentLocalLayerService {
   async save(projectId: string, agentId: string, input: TAgentLocalLayerInput, by: string): Promise<IAgentLocalLayerView> {
     const agent = this.agent(projectId, agentId)
     const layer = await this.checked(agent, input)
-    if (isEmptyLayer(layer)) this.deps.repository.remove(agentId)
-    else this.deps.repository.save({ agentId, ...layer, updatedAt: this.now(), updatedBy: by })
+    this.store(agentId, layer, by)
     return this.view(agent, this.deps.repository.get(agentId))
   }
 
@@ -92,13 +101,7 @@ export class AgentLocalLayerService {
    */
   async adjust(projectId: string, agentId: string, change: IAgentLocalLayerAdjust, by: string): Promise<IAgentLocalLayerView & { ignored: string[] }> {
     const agent = this.agent(projectId, agentId)
-    const stored = this.deps.repository.get(agentId)
-    const current: TAgentLocalLayerInput = {
-      ...(stored?.providers ? { providers: stored.providers } : {}),
-      allowedTools: stored?.allowedTools ?? [],
-      disabledTools: stored?.disabledTools ?? [],
-      permissions: stored?.permissions ?? [],
-    }
+    const current = inputOf(this.deps.repository.get(agentId))
     const asked = new Set(change.disabledTools ?? [])
     const providers = change.providers === undefined ? current.providers : (change.providers ?? undefined)
     // As ferramentas só encolhem por construção; o que pode ampliar é o sandbox e a rede dos modelos novos.
@@ -114,10 +117,35 @@ export class AgentLocalLayerService {
       disabledTools: [...new Set([...(current.disabledTools ?? []), ...asked])],
       permissions: current.permissions,
     })
-    if (isEmptyLayer(layer)) this.deps.repository.remove(agentId)
-    else this.deps.repository.save({ agentId, ...layer, updatedAt: this.now(), updatedBy: by })
+    this.store(agentId, layer, by)
     const ignored = [...asked].filter((tool) => !layer.disabledTools?.includes(tool) && !current.allowedTools.includes(tool))
     return { ...this.view(agent, this.deps.repository.get(agentId)), ignored }
+  }
+
+  /**
+   * 🔌 LIGAR ferramentas, MCPs e delegações AQUI (o pedido `agent-local`, aprovado na tela): o agente como roda agora
+   * (`before`) e como rodaria com elas (`after`) — a que a camada tinha desligado volta, a que não veio da origem entra
+   * a mais. O id antigo (`run_bash`) vale como a capacidade dele. `undefined` = o agente não é de projeto conectado.
+   * ⚖️ Tudo síncrono: `check` confere com as regras do cadastro que quem chama já leu (o pedido já nasce conferido), e
+   * `save` confere de novo e grava na mesma volta.
+   */
+  enabling(agent: IAgent, tools: readonly string[]): IAgentLocalEnabling | undefined {
+    if (!agent.projectId || !this.deps.connected(agent.projectId)) return undefined
+    const current = inputOf(this.deps.repository.get(agent.id))
+    const off = new Set(current.disabledTools ?? [])
+    const more: string[] = []
+    for (const tool of tools) {
+      const known = [tool, ...toCapabilities([tool])].filter((entry) => off.has(entry))
+      if (known.length) known.forEach((entry) => off.delete(entry))
+      else more.push(...toCapabilities([tool]))
+    }
+    const next = trimLocalLayer(agent, { ...current, allowedTools: [...current.allowedTools, ...more], disabledTools: [...off] })
+    return {
+      before: mergeLocalLayer(agent, current),
+      after: mergeLocalLayer(agent, next),
+      check: (validation) => void this.checkedWith(validation, agent, next),
+      save: (validation, by) => this.store(agent.id, this.checkedWith(validation, agent, next), by),
+    }
   }
 
   remove(projectId: string, agentId: string): IAgentLocalLayerView {
@@ -184,6 +212,11 @@ export class AgentLocalLayerService {
    * problema do que veio da origem não é desta máquina resolver.
    */
   private async checked(agent: IAgent, input: TAgentLocalLayerInput): Promise<TAgentLocalLayerInput> {
+    if (!this.validation) throw new Error('agent validation is not wired (useAgentValidation)')
+    return this.checkedWith(await this.validation(), agent, input)
+  }
+
+  private checkedWith({ rules, issues: projectIssues }: IAgentLayerValidation, agent: IAgent, input: TAgentLocalLayerInput): TAgentLocalLayerInput {
     const issues: TIssue[] = [...permissionIssues(input.permissions)]
     for (const tool of input.allowedTools.filter(isAutoToolOff))
       issues.push({ field: 'allowedTools', message: `allowedTools cannot turn off a tool (${tool}): list its name in disabledTools` })
@@ -196,8 +229,6 @@ export class AgentLocalLayerService {
       allowedTools: layer.allowedTools.filter((tool) => !AUTO_TOOLS.includes(tool)),
       permissions: layer.permissions,
     }
-    if (!this.validation) throw new Error('agent validation is not wired (useAgentValidation)')
-    const { rules, issues: projectIssues } = await this.validation()
     // Os campos da camada. `modes` fala dos provedores (o protocolo não roda a lane do agente): vai para a guia Modelos.
     const mine = (field: string) =>
       field === 'allowedTools' || field === 'permissions' || field.startsWith('permissions[') || (!!layer.providers && ['providers', 'models', 'modes'].includes(field))
@@ -210,6 +241,12 @@ export class AgentLocalLayerService {
       .map((issue) => (issue.field === 'modes' ? { ...issue, field: 'providers' } : issue))
     if (found.length) throw new InvalidAgentError(found)
     return layer
+  }
+
+  /** Grava a camada conferida; vazia, é o mesmo que apagar. */
+  private store(agentId: string, layer: TAgentLocalLayerInput, by: string): void {
+    if (isEmptyLayer(layer)) this.deps.repository.remove(agentId)
+    else this.deps.repository.save({ agentId, ...layer, updatedAt: this.now(), updatedBy: by })
   }
 
   private view(agent: IAgent, layer: IAgentLocalLayer | undefined): IAgentLocalLayerView {
@@ -227,3 +264,11 @@ export class AgentLocalLayerService {
     }
   }
 }
+
+/** A camada gravada como entrada (a que não existe é a vazia). */
+const inputOf = (stored: IAgentLocalLayer | undefined): TAgentLocalLayerInput => ({
+  ...(stored?.providers ? { providers: stored.providers } : {}),
+  allowedTools: stored?.allowedTools ?? [],
+  disabledTools: stored?.disabledTools ?? [],
+  permissions: stored?.permissions ?? [],
+})

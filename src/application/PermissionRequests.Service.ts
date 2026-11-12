@@ -118,6 +118,9 @@ export interface IProjectRulesPort {
   save(projectId: string, rules: IPermissionRule[], by: string, change: Omit<ICatalogChange, 'by'>): IPermissionRule[]
 }
 
+/** A decisão de um pedido, para avisar a conversa que pediu (ver `PermissionDecisionNotice.Service`). */
+export type TPermissionDecisionListener = (request: IPermissionRequestView, decider: Pick<IPermissionDecider, 'by'>) => void
+
 export interface IPermissionRequestsDeps {
   /** As variáveis secretas: a aprovação de um pedido `secret` grava o valor digitado na tela. Ausente = sem esse pedido. */
   secrets?: {
@@ -131,6 +134,14 @@ export interface IPermissionRequestsDeps {
    * troca e a aprovação leem e gravam — o agente que veio da origem não muda. `undefined` = agente comum.
    */
   localRules?(agent: IAgent): { rules: IPermissionRule[]; save(rules: readonly IPermissionRule[], by: string): IPermissionRule[] } | undefined
+  /**
+   * 🔌 Ligar ferramentas, MCPs e delegações na camada LOCAL de um agente de projeto conectado (o pedido `agent-local`):
+   * o agente como roda agora e como rodaria com elas, a conferência e a gravação. `undefined` = agente comum.
+   */
+  localLayer?(
+    agent: IAgent,
+    tools: readonly string[],
+  ): { before: IAgent; after: IAgent; check(validation: IAgentValidation): void; save(validation: IAgentValidation, by: string): void } | undefined
   /** As regras dos projetos (a camada de baixo). Ausente: sem pedido de projeto. */
   projects?: IProjectRulesPort
   /** O aviso às telas abertas (`catalog.changed`, tipo `permission-request`): o pedido novo aparece sem reler. */
@@ -155,7 +166,8 @@ interface IRulesTarget {
 /**
  * OS PEDIDOS DE PERMISSÃO DOS AGENTES: o agente muda, pelo MCP do gateway, as regras de permissão de um agente (o dele
  * inclusive), as de um projeto, ou campos de um agente (`patch_agent`); o que RESTRINGE vale já, o que AMPLIA vira um
- * pedido pendente que só um administrador NA TELA aprova.
+ * pedido pendente que só um administrador NA TELA aprova. 🔌 No agente de projeto conectado, o que se pede é para ESTA
+ * máquina: a aprovação grava a camada local dele (regras, e ferramentas/MCPs/delegações com `agent-local`).
  *
  * ⛔ SEM CAMINHO DE APROVAÇÃO PARA AGENTE: o MCP do gateway não tem ferramenta de aprovar, a rota de aprovar recusa o
  * que não chegou pela sessão da tela (`onScreen`), e o serviço recusa de novo aqui — duas trancas, para a segunda valer
@@ -169,6 +181,7 @@ export class PermissionRequestsService {
   private readonly newId: () => string
   private readonly ttlDays: number
   private validation?: () => Promise<IAgentValidation>
+  private decided?: TPermissionDecisionListener
 
   constructor(private readonly deps: IPermissionRequestsDeps) {
     this.now = deps.now ?? (() => new Date())
@@ -179,6 +192,11 @@ export class PermissionRequestsService {
   /** As regras do momento para gravar um agente inteiro (vêm do controller dos agentes, ligado na composição). */
   useAgentValidation(validation: () => Promise<IAgentValidation>): void {
     this.validation = validation
+  }
+
+  /** Quem ouve cada decisão (aprovado ou recusado): o aviso à conversa que pediu, ligado na composição. */
+  useDecisionListener(listener: TPermissionDecisionListener): void {
+    this.decided = listener
   }
 
   rules(ref: IRulesRef, options: { conversationProjectId?: string } = {}): IPermissionRulesView {
@@ -309,6 +327,61 @@ export class PermissionRequestsService {
   }
 
   /**
+   * 🔌 `patch_agent` com `localLayer.allowedTools`: LIGAR ferramenta, MCP ou delegação num agente de projeto CONECTADO.
+   * ⛔ Nada vale já: cada entrada vira um pedido, e a aprovação na tela grava a camada local DESTA máquina — o agente que
+   * veio da origem não muda. O conjunto inteiro é conferido antes de nascer qualquer pedido.
+   */
+  async requestLocalTools(agentId: string, input: { allowedTools: readonly string[]; reason: string }, requester: IPermissionRequester): Promise<IAgentPatchResult> {
+    const reason = input.reason.trim()
+    const tools = [...new Set(input.allowedTools.map((tool) => tool.trim()).filter(Boolean))]
+    const asked: Array<{ field: string; message: string }> = []
+    if (!reason) asked.push({ field: 'reason', message: 'required: why the agent needs this (shown to whoever confirms)' })
+    if (!tools.length) asked.push({ field: 'localLayer.allowedTools', message: 'send at least one tool, MCP (`mcp:<id>/*`) or agent (`agent:<id>`) to turn on' })
+    if (asked.length) throw new InvalidAgentError(asked)
+    this.agent(agentId)
+    const validation = await this.agentValidation()
+    // Depois de esperar: daqui até gravar, nada assíncrono.
+    const agent = this.agent(agentId)
+    const whole = this.deps.localLayer?.(agent, tools)
+    if (!whole)
+      throw new InvalidAgentError([
+        { field: 'localLayer', message: 'only an agent of a CONNECTED project has a local layer: for any other agent, send `allowedTools` in the patch itself' },
+      ])
+    whole.check(validation)
+
+    // ⚖️ UM PEDIDO POR ENTRADA, e só da que muda o agente (a que ele já tem ligada não vira pedido). A mesma entrada com
+    // pedido aberto não repete: volta o que já está na fila.
+    const open = this.deps.repository.list({ agentId, kind: 'agent-local', open: true }).filter((request) => requestStatus(request, this.now(), this.ttlDays) === 'pending')
+    const waiting: IPermissionRequestView[] = []
+    const fresh: Array<{ tool: string; widenings: IWidening[] }> = []
+    for (const tool of tools) {
+      const plan = this.deps.localLayer!(agent, [tool])!
+      if (agentHash(plan.before) === agentHash(plan.after)) continue
+      const same = open.find((request) => request.entries?.add.length === 1 && request.entries.add[0] === tool)
+      if (same) waiting.push(this.view(same))
+      else fresh.push({ tool, widenings: agentWidenings(plan.before, plan.after) })
+    }
+    const { ids, batch } = this.batch(fresh.length)
+    const created = fresh.map((item, index) =>
+      this.store(ids[index], {
+        kind: 'agent-local',
+        agentId,
+        ...(agent.projectId ? { projectId: agent.projectId } : {}),
+        add: [],
+        remove: [],
+        entries: { field: 'allowedTools', add: [item.tool] },
+        widenings: refs(item.widenings),
+        reason,
+        requestedBy: requester,
+        baseHash: agentHash(whole.before),
+        ...batch,
+      }),
+    )
+    const pending = [...created, ...waiting]
+    return { agentId, applied: [], ...(pending.length ? { pending } : {}), notice: notice(agentScreen(agent.name), [], pending) }
+  }
+
+  /**
    * `request_secret`: o agente pede uma VARIÁVEL SECRETA pelo nome (ver `ResourceSecret.Model`). ⛔ Nada de valor aqui: a
    * pessoa digita o valor na tela, ao aprovar. Já existe? O pedido troca o valor (a pessoa decide).
    */
@@ -383,9 +456,9 @@ export class PermissionRequestsService {
       )
       this.deps.repository.decide(id, { status: 'approved', by: decider.by, at: this.now() })
       this.publish(pending)
-      return { request: this.get(id) }
+      return { request: this.settled(id, decider) }
     }
-    const validation = this.open(id).kind === 'agent-patch' ? await this.agentValidation() : undefined
+    const validation = pending.kind === 'agent-patch' || pending.kind === 'agent-local' ? await this.agentValidation() : undefined
     const request = this.open(id)
     const note = `pedido de permissão ${request.id} aprovado (pedido por ${label(request.requestedBy)}): ${request.reason}`
     let permissions: IPermissionRule[] | undefined
@@ -405,6 +478,12 @@ export class PermissionRequestsService {
         change: { source: 'api', note, widenings: wideningKeys(widenings) },
       })
       permissions = saved.permissions ?? []
+    } else if (request.kind === 'agent-local') {
+      // 🔌 Só a camada local desta máquina: o agente que veio da origem não é gravado.
+      const plan = this.deps.localLayer?.(this.agent(request.agentId!), request.entries?.add ?? [])
+      if (!plan) throw new PermissionRequestForbiddenError()
+      gate(agentWidenings(plan.before, plan.after), confirm)
+      plan.save(validation!, decider.by)
     } else {
       const target = this.rulesTarget(request)
       const widenings = requestWidenings(target.item, target.rules, request)
@@ -413,7 +492,7 @@ export class PermissionRequestsService {
     }
     this.deps.repository.decide(id, { status: 'approved', by: decider.by, at: this.now() })
     this.publish(request)
-    return { request: this.get(id), permissions }
+    return { request: this.settled(id, decider), ...(permissions ? { permissions } : {}) }
   }
 
   /** Recusar (ou descartar o vencido): só admin, mas não precisa ser na tela — recusar nunca abre acesso. */
@@ -425,7 +504,18 @@ export class PermissionRequestsService {
     if (!this.deps.repository.decide(id, { status: 'rejected', by: decider.by, at: this.now(), ...(text ? { note: text } : {}) }))
       throw new PermissionRequestClosedError(id, this.deps.repository.get(id)?.status ?? 'decided')
     this.publish(request)
-    return this.get(id)
+    return this.settled(id, decider)
+  }
+
+  /** O pedido decidido, como ficou — e o aviso a quem ouve as decisões. ⛔ O aviso nunca derruba a decisão já gravada. */
+  private settled(id: string, decider: Pick<IPermissionDecider, 'by'>): IPermissionRequestView {
+    const view = this.get(id)
+    try {
+      this.decided?.(view, decider)
+    } catch (error) {
+      console.warn('[pedidos de permissão] não foi possível avisar a conversa que pediu:', error)
+    }
+    return view
   }
 
   private store(id: string, fields: Omit<IPermissionRequest, 'id' | 'createdAt' | 'status'>): IPermissionRequestView {
@@ -506,6 +596,12 @@ export class PermissionRequestsService {
         } else if (request.kind === 'agent-patch' && agent) {
           widenings = refs(agentWidenings(agent, requestedAgent(agent, request)))
           changed = agentHash(agent) !== baseHash
+        } else if (request.kind === 'agent-local') {
+          const plan = agent ? this.deps.localLayer?.(agent, request.entries?.add ?? []) : undefined
+          if (plan) {
+            widenings = refs(agentWidenings(plan.before, plan.after))
+            changed = agentHash(plan.before) !== baseHash
+          }
         } else if (request.kind !== 'agent-patch') {
           const target = this.rulesTarget(request)
           widenings = refs(requestWidenings(target.item, target.rules, request))
@@ -576,9 +672,9 @@ function notice(screen: string, done: readonly string[], pending: readonly IPerm
   if (done.length) lines.push(`Aplicado agora (restringe ou não abre acesso):`, ...done.map((line) => `  ${line}`))
   if (pending?.length) {
     lines.push(
-      `PENDENTE — NÃO aplicado: ${pending.length === 1 ? 'esta mudança amplia' : `estas ${pending.length} mudanças ampliam`} acesso e só ${pending.length === 1 ? 'vale' : 'valem'} depois que um administrador confirmar NA TELA, em ${screen} (ou no menu da conta → Notificações). Cada item é aprovado ou recusado sozinho; vencem em ${pending[0].expiresAt.toISOString().slice(0, 10)}.`,
+      `PENDENTE — NÃO aplicado: ${pending.length === 1 ? 'esta mudança amplia' : `estas ${pending.length} mudanças ampliam`} acesso e só ${pending.length === 1 ? 'vale' : 'valem'} depois que um administrador confirmar NA TELA, em ${screen} (ou no menu da conta → Notificações, onde ela aprova ou recusa um por um, ou aprova todos de uma vez). Vencem em ${pending[0].expiresAt.toISOString().slice(0, 10)}.`,
       ...pending.map((item) => `  • ${itemLine(item)} (pedido ${item.id})`),
-      `Avise a pessoa agora, com a lista acima. Não diga que o acesso foi liberado: até ela confirmar na tela, nada disso vale.`,
+      `Avise a pessoa agora, com a lista acima. Não diga que o acesso foi liberado: até ela confirmar na tela, nada disso vale. Quando ela decidir, o gateway avisa nesta conversa: não fique conferindo.`,
     )
   }
   if (!lines.length) lines.push('Nada mudou: já estava assim.')
@@ -586,7 +682,12 @@ function notice(screen: string, done: readonly string[], pending: readonly IPerm
 }
 
 /** Um item do pedido em uma linha: o que ele amplia, ou o que ele muda. */
-function itemLine(item: IPermissionRequestView): string {
+export function itemLine(item: IPermissionRequestView): string {
+  // 🔌 Ligar na camada local: diz que é só desta máquina (e cobre o religar, que não tem ampliação a descrever).
+  if (item.kind === 'agent-local') {
+    const what = item.widenings.length ? item.widenings.map((widening) => widening.description).join('; ') : `ligar de novo ${item.entries?.add.join(', ') ?? ''}`
+    return `${what} — só nesta máquina (camada local${item.agentName ? ` de ${item.agentName}` : ''})`
+  }
   if (item.widenings.length) return item.widenings.map((widening) => widening.description).join('; ')
   if (item.entries) return `${item.entries.field} + ${item.entries.add.join(', ')}`
   return Object.keys(item.patch ?? {}).join(', ') || [...item.add, ...item.remove].map(ruleText).join(', ')
