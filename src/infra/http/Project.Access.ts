@@ -173,7 +173,7 @@ export function refuseConnected(projectId: string | null | undefined): void {
     throw new HttpError(
       409,
       'project_read_only',
-      `O projeto ${projectId} é conectado a ${connection.url}: o catálogo é só leitura aqui. A mudança é feita na origem; para mexer localmente, desconecte o projeto.`,
+      `O projeto ${projectId} é conectado a ${connection.url}: o catálogo é só leitura aqui. A mudança é feita na origem. O que vale só nesta máquina (modelos, ferramentas a mais ou desligadas, regras) é a camada local do agente: na tela dele, ou \`patch_agent\` com \`localLayer\`.`,
     )
 }
 
