@@ -381,6 +381,7 @@ function buildRoutes(
     { method: 'get', path: '/agents/:agentId/permission-rules', handler: permissionRequests.rules },
     { method: 'post', path: '/agents/:agentId/permission-rules', handler: permissionRequests.change },
     { method: 'get', path: '/agents/:agentId/permission-requests', handler: permissionRequests.listForAgent },
+    { method: 'post', path: '/agents/:agentId/local-tool-requests', handler: permissionRequests.requestLocalTools },
     { method: 'get', path: '/projects/:projectId/permission-rules', handler: permissionRequests.rules },
     { method: 'post', path: '/projects/:projectId/permission-rules', handler: permissionRequests.change },
     { method: 'get', path: '/projects/:projectId/permission-requests', handler: permissionRequests.listForProject },

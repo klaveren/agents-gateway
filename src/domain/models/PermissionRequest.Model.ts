@@ -23,9 +23,11 @@ export interface IPermissionRequester {
 /**
  * O que o pedido muda: as regras de um agente, as regras de um projeto (a camada de baixo), ou campos de um agente
  * (`patch_agent`: ferramentas, delegação, exposição, sandbox…).
+ * 🔌 `agent-local`: ligar uma ferramenta, um MCP ou uma delegação num agente de projeto CONECTADO — a aprovação grava
+ * a camada local dele (ver `AgentLocalLayer.Model`), nunca o agente que veio da origem.
  */
-export type TPermissionRequestKind = 'agent-rules' | 'project-rules' | 'agent-patch' | 'secret'
-export const PERMISSION_REQUEST_KINDS: readonly TPermissionRequestKind[] = ['agent-rules', 'project-rules', 'agent-patch', 'secret']
+export type TPermissionRequestKind = 'agent-rules' | 'project-rules' | 'agent-patch' | 'agent-local' | 'secret'
+export const PERMISSION_REQUEST_KINDS: readonly TPermissionRequestKind[] = ['agent-rules', 'project-rules', 'agent-patch', 'agent-local', 'secret']
 
 /**
  * `secret`: o agente pediu uma VARIÁVEL SECRETA (ver `ResourceSecret.Model`) pelo nome — a pessoa digita o valor na tela, ao
@@ -47,7 +49,7 @@ export interface IPermissionRequestSecret {
 export interface IPermissionRequest {
   id: string
   kind: TPermissionRequestKind
-  /** O agente que muda (`agent-rules`, `agent-patch`). */
+  /** O agente que muda (`agent-rules`, `agent-patch`, `agent-local`). */
   agentId?: string
   /** O projeto: o que muda (`project-rules`) ou o do agente quando o pedido foi feito (ausente = global). */
   projectId?: string
@@ -56,7 +58,10 @@ export interface IPermissionRequest {
   remove: IPermissionRule[]
   /** `agent-patch`: os campos do agente com o valor pedido (`null` = tirar). Só os que ampliam. */
   patch?: Record<string, unknown>
-  /** `agent-patch` de um campo-lista: as entradas a ACRESCENTAR ao valor de agora (uma por pedido; ver `splitAgentPatchItems`). */
+  /**
+   * `agent-patch` de um campo-lista: as entradas a ACRESCENTAR ao valor de agora (uma por pedido; ver `splitAgentPatchItems`).
+   * `agent-local`: a entrada de `allowedTools` a LIGAR na camada local (a que estava desligada volta; a nova entra a mais).
+   */
   entries?: { field: string; add: string[] }
   /**
    * ⚖️ UM PEDIDO É UM ITEM (uma regra, um campo, uma entrada de lista): a pessoa aprova ou recusa cada um. Os itens que

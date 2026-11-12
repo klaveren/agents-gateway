@@ -245,10 +245,11 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
       assert.strictEqual((await patch('sre', { localLayer: { providers: [{ provider: 'claude', models: ['claude-haiku-5'] }] } })).error, false)
       assert.deepStrictEqual(running().providers, [{ provider: 'claude', models: ['claude-haiku-5'] }])
 
-      // ⛔ O que liga é da tela; a camada vai sozinha no patch; fora de projeto conectado não há camada.
-      const widen = await patch('sre', { localLayer: { allowedTools: ['agent:ops'] } })
-      assert.deepStrictEqual([widen.error, widen.body.code], [true, 'validation_error'])
-      assert.match(JSON.stringify(widen.body.details), /agent screen/)
+      // ⛔ Ligar não é ajuste: a rota do ajuste recusa e diz onde se pede. A camada vai sozinha no patch; fora de projeto
+      // conectado não há camada.
+      const widen = await call('PATCH', LOCAL, { allowedTools: ['agent:ops'] })
+      assert.deepStrictEqual([widen.status, widen.body.code], [422, 'validation_error'])
+      assert.match(JSON.stringify(widen.body), /local-tool-requests/)
       assert.strictEqual((await patch('sre', { localLayer: { disabledTools: [] }, name: 'Outro' })).error, true)
       assert.strictEqual((await patch('ajudante', { localLayer: { disabledTools: ['x'] } })).error, true)
       assert.strictEqual((await patch('de-fora', { localLayer: { disabledTools: ['x'] } })).error, true)
@@ -260,6 +261,92 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
     } finally {
       await client.close()
       // Religar é na tela: a delegação do `ops` volta.
+      await call('PUT', OPS, { allowedTools: [], disabledTools: [AUTO_TOOLS[1]], permissions: [] })
+    }
+  })
+
+  it('patch_agent com localLayer.allowedTools: ligar vira PEDIDO; só a tela aprova, e só a camada local muda', async () => {
+    const OPS = '/connections/logiccus/agents/ops/local'
+    const before = (await call('GET', LOCAL)).body.result.layer
+    const client = new Client({ name: 'teste', version: '1.0.0' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: bearer() } }))
+    const patch = async (agentId: string, change: Record<string, unknown>, reason = 'preciso delegar') => {
+      const answer = (await client.callTool({ name: 'patch_agent', arguments: { agentId, patch: change, reason } })) as {
+        content: Array<{ text: string }>
+        isError?: boolean
+      }
+      const texts = answer.content.map((item) => item.text)
+      return { error: answer.isError === true, texts, body: JSON.parse(texts[texts.length - 1]) }
+    }
+    const approve = (id: string, confirm: string[], headers?: Record<string, string>) => call('POST', `/permission-requests/${id}/approve`, { confirm }, headers)
+    try {
+      // `agent:ajudante` já está ligado aqui: só o que muda o agente vira pedido.
+      const asked = await patch('sre', { localLayer: { allowedTools: ['agent:ops', 'agent:ajudante'] } })
+      assert.strictEqual(asked.error, false, JSON.stringify(asked.body))
+      assert.match(asked.texts[0], /PENDENTE/)
+      assert.match(asked.texts[0], /Notificações/)
+      assert.match(asked.texts[0], /só nesta máquina/)
+      assert.deepStrictEqual(asked.body.applied, [])
+      assert.strictEqual(asked.body.pending.length, 1)
+      const [request] = asked.body.pending
+      assert.deepStrictEqual([request.kind, request.agentId, request.entries], ['agent-local', 'sre', { field: 'allowedTools', add: ['agent:ops'] }])
+      assert.deepStrictEqual(running().allowedTools, ['agent:ajudante'])
+      // Pedir de novo não repete: volta o que já está na fila.
+      const again = await patch('sre', { localLayer: { allowedTools: ['agent:ops'] } })
+      assert.deepStrictEqual(
+        again.body.pending.map((item: { id: string }) => item.id),
+        [request.id],
+      )
+
+      // ⛔ Token não aprova, e a confirmação tem de ser a das ampliações de agora.
+      const confirm = request.widenings.map((item: { key: string }) => item.key)
+      assert.ok(confirm.length > 0)
+      assert.strictEqual((await approve(request.id, confirm)).status, 403)
+      assert.notStrictEqual((await approve(request.id, [], screen())).status, 200)
+      assert.deepStrictEqual(running().allowedTools, ['agent:ajudante'])
+      const approved = await approve(request.id, confirm, screen())
+      assert.strictEqual(approved.status, 200, JSON.stringify(approved.body))
+      assert.strictEqual(approved.body.result.request.status, 'approved')
+      // Só a camada: o agente RODA com a delegação, o que veio da origem não mudou.
+      assert.deepStrictEqual(running().allowedTools, ['agent:ajudante', 'agent:ops'])
+      assert.deepStrictEqual(stored().allowedTools, [`off:${AUTO}`])
+      assert.deepStrictEqual((await call('GET', LOCAL)).body.result.layer.allowedTools, ['agent:ajudante', AUTO, 'agent:ops'])
+
+      // O ajuste e o pedido na mesma chamada: desligar vale já, ligar espera.
+      const mixed = await patch('sre', { localLayer: { disabledTools: ['agent:fantasma'], allowedTools: ['agent:ajudante'] } })
+      assert.strictEqual(mixed.error, false, JSON.stringify(mixed.body))
+      assert.strictEqual(mixed.body.pending, undefined)
+      assert.deepStrictEqual(mixed.body.ignored, ['agent:fantasma'])
+
+      // Religar o que foi desligado AQUI não amplia nada além do que a origem já dava, mas é pedido do mesmo jeito.
+      const back = await patch('ops', { localLayer: { allowedTools: [AUTO_TOOLS[1]] } })
+      assert.strictEqual(back.error, false, JSON.stringify(back.body))
+      const [again2] = back.body.pending
+      assert.deepStrictEqual(again2.entries, { field: 'allowedTools', add: [AUTO_TOOLS[1]] })
+      assert.deepStrictEqual(makeAgents().get('ops')!.allowedTools, ['agent:ajudante', `off:${AUTO_TOOLS[1]}`])
+      const backConfirm = again2.widenings.map((item: { key: string }) => item.key)
+      assert.strictEqual((await approve(again2.id, backConfirm, screen())).status, 200)
+      assert.deepStrictEqual(makeAgents().get('ops')!.allowedTools, ['agent:ajudante'])
+      assert.deepStrictEqual(makeAgents().entry('ops')!.agent.allowedTools, ['agent:ajudante'])
+
+      // ⛔ O que o cadastro recusa nem vira pedido; sem motivo, também não; fora de projeto conectado não há camada.
+      const unknown = await patch('sre', { localLayer: { allowedTools: ['mcp:nao-existe/*'] } })
+      assert.strictEqual(unknown.error, true)
+      assert.match(JSON.stringify(unknown.body), /unknown MCP server/)
+      assert.strictEqual((await patch('sre', { localLayer: { allowedTools: ['agent:de-fora'] } })).error, true)
+      assert.strictEqual((await patch('sre', { localLayer: { allowedTools: ['agent:ops'], disabledTools: ['agent:ops'] } })).error, true)
+      assert.strictEqual((await patch('ajudante', { localLayer: { allowedTools: ['agent:ops'] } })).error, true)
+      const direct = await call('POST', '/agents/sre/local-tool-requests', { allowedTools: ['agent:ops'], reason: '  ' })
+      assert.strictEqual(direct.status, 422, JSON.stringify(direct.body))
+      const pendingNow = (await call('GET', '/agents/sre/permission-requests')).body.result as Array<{ status: string }>
+      assert.deepStrictEqual(
+        pendingNow.filter((item) => item.status === 'pending'),
+        [],
+      )
+    } finally {
+      await client.close()
+      // Os testes seguintes contam com as camadas de antes.
+      await call('PUT', LOCAL, before)
       await call('PUT', OPS, { allowedTools: [], disabledTools: [AUTO_TOOLS[1]], permissions: [] })
     }
   })

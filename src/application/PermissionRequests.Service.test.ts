@@ -214,6 +214,66 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
     assert.strictEqual(service.list({ all: true }).length, 1)
   })
 
+  it('a decisão avisa quem ouve (o aviso à conversa que pediu); ⛔ o aviso que falha não desfaz a decisão', async () => {
+    const heard: Array<{ id: string; status: string; conversationId?: string; by: string }> = []
+    service.useDecisionListener(
+      (request, decider) => void heard.push({ id: request.id, status: request.status, conversationId: request.requestedBy.conversationId, by: decider.by }),
+    )
+    const { pending } = service.change(theoRef, { add: [allow('terminal', 'npm test'), allow('read', 'lib/**')], reason: 'x' }, asker)
+    assert.deepStrictEqual(heard, [])
+    await service.approve(
+      pending![0].id,
+      pending![0].widenings.map((item) => item.key),
+      screen,
+    )
+    service.reject(pending![1].id, { by: 'outra@x.test' }, 'não')
+    assert.deepStrictEqual(heard, [
+      { id: pending![0].id, status: 'approved', conversationId: 'c-1', by: 'root@x.test' },
+      { id: pending![1].id, status: 'rejected', conversationId: 'c-1', by: 'outra@x.test' },
+    ])
+    // A aprovação recusada (fora da tela) não é decisão: ninguém é avisado.
+    const again = service.change(theoRef, { add: [allow('terminal', 'npm run build')], reason: 'y' }, asker).pending![0]
+    await assert.rejects(
+      service.approve(
+        again.id,
+        again.widenings.map((item) => item.key),
+        { by: 'root@x.test', onScreen: false },
+      ),
+      PermissionRequestForbiddenError,
+    )
+    assert.strictEqual(heard.length, 2)
+
+    service.useDecisionListener(() => {
+      throw new Error('a conversa sumiu')
+    })
+    const original = console.warn
+    console.warn = () => undefined
+    try {
+      const approved = await service.approve(
+        again.id,
+        again.widenings.map((item) => item.key),
+        screen,
+      )
+      assert.strictEqual(approved.request.status, 'approved')
+    } finally {
+      console.warn = original
+    }
+    assert.ok(rulesOf().some((rule) => rule.pattern === 'npm run build'))
+  })
+
+  it('🔌 ligar na camada local: o agente que não é de projeto conectado não tem camada, e nada vira pedido', async () => {
+    await assert.rejects(service.requestLocalTools('theo', { allowedTools: ['search_web'], reason: 'x' }, asker), (error: unknown) => {
+      assert.ok(error instanceof InvalidAgentError)
+      return error.issues.some((issue) => issue.field === 'localLayer' && /CONNECTED project/.test(issue.message))
+    })
+    await assert.rejects(service.requestLocalTools('theo', { allowedTools: [' '], reason: ' ' }, asker), (error: unknown) => {
+      assert.ok(error instanceof InvalidAgentError)
+      return error.issues.map((issue) => issue.field).join() === 'reason,localLayer.allowedTools'
+    })
+    await assert.rejects(service.requestLocalTools('fantasma', { allowedTools: ['search_web'], reason: 'x' }, asker), AgentNotFoundError)
+    assert.strictEqual(service.list({ all: true }).length, 0)
+  })
+
   it('vencido (7 dias): aparece como vencido e não é aprovado; pode ser descartado', async () => {
     const { pending } = service.change(theoRef, { add: [allow('terminal', 'npm test')], reason: 'x' }, asker)
     now = new Date('2026-11-10T12:00:00Z')

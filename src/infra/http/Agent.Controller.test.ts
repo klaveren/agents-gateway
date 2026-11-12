@@ -744,6 +744,70 @@ describe('AgentController', () => {
         assert.strictEqual(locals.statusCode, 200)
       })
     })
+
+    describe('aviso do gateway numa conversa (`serverNotice`): a decisão de um pedido de permissão', () => {
+      const stored = (overrides: Record<string, unknown> = {}) => ({ id: 's-alice', agentId: 'pesquisa-teste', metadata: aliceSession.metadata, ...overrides })
+      const conversations = (found: unknown) => Object.assign(new NullConversationRepository(), { findSession: async () => found })
+
+      it('com um turno rodando, entra na FILA dele e nenhum turno novo começa', async () => {
+        const queued: string[] = []
+        let turns = 0
+        const controller = withAlice({
+          enqueue: (_id, text) => queued.push(text),
+          sendMessage: async function* () {
+            turns++
+            yield { type: 'message.started', sessionId: 's-alice', timestamp: new Date() }
+          },
+        })
+        assert.strictEqual(await withCaller(ALICE, () => controller.serverNotice('s-alice', 'aviso')), 'queued')
+        assert.deepStrictEqual([queued, turns], [['aviso'], 0])
+      })
+
+      it('parada, vira um turno novo com o texto do aviso', async () => {
+        const sent: string[] = []
+        const controller = withAlice({
+          enqueue: () => undefined,
+          sendMessage: async function* (_id, input) {
+            sent.push(input.text)
+            yield { type: 'message.started', sessionId: 's-alice', timestamp: new Date() }
+          },
+        })
+        assert.strictEqual(await withCaller(ALICE, () => controller.serverNotice('s-alice', 'aviso')), 'turn')
+        await new Promise((resolve) => setImmediate(resolve))
+        assert.strictEqual(sent.length, 1)
+        assert.match(sent[0], /aviso$/)
+      })
+
+      it('⛔ a conversa de outra pessoa, a de delegação e a identidade forjada: não existe, e nada entra', async () => {
+        const queued: string[] = []
+        const enqueue = (_id: string, text: string) => queued.push(text)
+        await assert.rejects(
+          withCaller(BOB, () => withAlice({ enqueue }).serverNotice('s-alice', 'aviso')),
+          SessionNotFoundError,
+        )
+        const delegated = owned('s-alice', { id: 'alice', email: 'a@x.test', account: 'acc-1' })
+        delegated.metadata = { ...delegated.metadata, delegatedBy: 's-mae' }
+        await assert.rejects(
+          withCaller(ALICE, () => controllerWith({ describe: () => delegated, enqueue }, fakeCatalog(), proof).serverNotice('s-alice', 'aviso')),
+          SessionNotFoundError,
+        )
+        await assert.rejects(withCaller(FORGED_ALICE, () => withAlice({ enqueue }).serverNotice('s-alice', 'aviso')))
+        assert.deepStrictEqual(queued, [])
+      })
+
+      it('a arquivada fica como está: nem fila, nem turno, nem volta à memória', async () => {
+        const calls: string[] = []
+        const gone = () => {
+          throw new SessionNotFoundError('s-alice')
+        }
+        const controller = controllerWith({ describe: gone, enqueue: () => calls.push('fila'), sendMessage: async function* () {} }, fakeCatalog(), proof, {
+          conversations: conversations(stored({ archivedAt: new Date() })) as never,
+          resumeSession: { execute: async () => void calls.push('retomada') } as never,
+        })
+        assert.strictEqual(await withCaller(ALICE, () => controller.serverNotice('s-alice', 'aviso')), 'archived')
+        assert.deepStrictEqual(calls, [])
+      })
+    })
   })
   /**
    * Audiência, disponibilidade, configurações e contexto da primeira mensagem.

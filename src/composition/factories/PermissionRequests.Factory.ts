@@ -19,6 +19,7 @@ export function makePermissionRequests(): PermissionRequestsService {
     repository: new SqlitePermissionRequestRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH),
     agents: makeAgents(),
     localRules: (agent) => makeAgentLocalLayers().localRules(agent),
+    localLayer: (agent, tools) => makeAgentLocalLayers().enabling(agent, tools),
     projects: {
       exists: (projectId) => makeProjects().exists(projectId),
       name: (projectId) => (makeProjects().exists(projectId) ? makeProjects().get(projectId).name : undefined),

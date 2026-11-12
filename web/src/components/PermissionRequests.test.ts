@@ -142,6 +142,21 @@ describe('PermissionRequests (Pedidos pendentes)', () => {
     expect(expired.textContent).toContain('Pedidos pendentes (0)')
   })
 
+  it('mais de dez pedidos: a lista pagina', async () => {
+    lists['/agents/theo/permission-requests'] = Array.from({ length: 12 }, (_, index) => request({ id: `pr-${index}` }))
+    const host = await mount({ agentId: 'theo' })
+    expect(host.textContent).toContain('Pedidos pendentes (12)')
+    expect(host.querySelectorAll('[data-request]')).toHaveLength(10)
+    await click(host.querySelector('[data-test="pager-next"]'))
+    expect([...host.querySelectorAll('[data-request]')].map((line) => line.getAttribute('data-request'))).toEqual(['pr-10', 'pr-11'])
+  })
+
+  it('ferramenta pedida para a camada local: a linha diz que liga só nesta máquina', async () => {
+    lists['/agents/theo/permission-requests'] = [request({ kind: 'agent-local', add: [], remove: [], entries: { field: 'allowedTools', add: ['mcp:github'] } })]
+    const host = await mount({ agentId: 'theo' })
+    expect(host.querySelector('[data-test="request-entries"]')?.textContent).toBe('Ligar só nesta máquina: mcp:github')
+  })
+
   it('as regras de um projeto: a lista do projeto', async () => {
     const host = await mount({ projectId: 'alfa' })
     expect(vi.mocked(api)).toHaveBeenCalledWith('/projects/alfa/permission-requests')

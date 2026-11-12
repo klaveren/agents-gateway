@@ -1231,12 +1231,23 @@ const permissionRequestSchema = {
   type: 'object',
   properties: {
     id: { type: 'string' },
-    kind: { type: 'string', enum: ['agent-rules', 'project-rules', 'agent-patch'], description: 'What changes: an agent rules, a project rules, or agent fields.' },
+    kind: {
+      type: 'string',
+      enum: ['agent-rules', 'project-rules', 'agent-patch', 'agent-local', 'secret'],
+      description:
+        'What changes: an agent rules, a project rules, agent fields, the LOCAL layer of an agent of a connected project (`agent-local`: a tool, MCP or delegation turned on on this machine only), or a secret variable.',
+    },
     agentId: { type: 'string' },
     agentName: { type: 'string' },
     projectId: { type: 'string' },
     projectName: { type: 'string' },
     patch: { type: 'object', description: '`agent-patch`: the requested field values (null = remove).' },
+    entries: {
+      type: 'object',
+      properties: { field: { type: 'string' }, add: { type: 'array', items: { type: 'string' } } },
+      description: '`agent-patch` of a list field: the entries to add. `agent-local`: the `allowedTools` entry to turn on in the local layer.',
+    },
+    batchId: { type: 'string', description: 'One request is one item; the items of the same call share it.' },
     add: { type: 'array', items: permissionRuleSchema },
     remove: { type: 'array', items: permissionRuleSchema },
     widenings: { type: 'array', items: wideningSchema, description: 'What approving would widen NOW (on the current agent): the keys `confirm` must carry.' },
@@ -3966,6 +3977,44 @@ export const OPENAPI_DOCUMENT = {
                   applied: { type: 'object', properties: { add: { type: 'array', items: permissionRuleSchema }, remove: { type: 'array', items: permissionRuleSchema } } },
                   pending: permissionRequestSchema,
                   rules: { type: 'array', items: permissionRuleSchema, description: 'The agent rules now (the pending ones are not in it).' },
+                  notice: { type: 'string' },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/agents/{agentId}/local-tool-requests': {
+      post: {
+        summary:
+          'Ask to turn on tools, MCPs (`mcp:<id>/*`) or delegation (`agent:<id>`) for an agent of a CONNECTED project, on this machine only (the self MCP `patch_agent` with `localLayer.allowedTools`). NOTHING applies now: each entry becomes one pending permission request (`agent-local`) that only an administrator signed in on the screen can approve; the approval writes the agent local layer, never the origin. Administrators only',
+        description:
+          'An entry the agent already has is skipped; one already waiting comes back in `pending` instead of a duplicate. The whole resulting layer is validated before anything is stored (422: an MCP that does not exist here, an agent of another project). 422 too when the agent is not of a connected project. `notice` is the text the agent must relay to the person (pt-BR): what is pending and where to confirm it.',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            required: ['allowedTools', 'reason'],
+            properties: {
+              allowedTools: { type: 'array', items: { type: 'string', maxLength: 200 }, maxItems: 100 },
+              reason: { type: 'string', maxLength: 1000, description: 'Why: shown to the administrator who confirms.' },
+            },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'Nothing applied; one pending request per entry',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  agentId: { type: 'string' },
+                  applied: { type: 'array', items: { type: 'string' }, description: 'Always empty here.' },
+                  pending: { type: 'array', items: permissionRequestSchema },
                   notice: { type: 'string' },
                 },
               }),

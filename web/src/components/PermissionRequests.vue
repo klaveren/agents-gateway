@@ -2,11 +2,13 @@
   import { computed, ref } from 'vue'
   import { ApiError } from '@/lib/api'
   import type { IWideningRef } from '@/lib/catalogHistory'
-  import { type IPermissionRequest, entriesLine, patchLine, requestsKey, ruleLine, secretLine, secretProjectLine } from '@/lib/permissionRequests'
+  import { type IPermissionRequest, patchLine, requestEntriesLine, requestsKey, ruleLine, secretLine, secretProjectLine } from '@/lib/permissionRequests'
   import type { IPermissionRule } from '@/lib/types'
+  import { usePaged } from '@/composables/usePaged'
   import { useResource } from '@/composables/useResource'
   import { useProjectsStore } from '@/stores/projects'
   import { usePermissionRequestsStore } from '@/stores/permissionRequests'
+  import ListPager from './ListPager.vue'
   import WideningConfirm from './WideningConfirm.vue'
 
   /**
@@ -23,6 +25,8 @@
   const { data } = useResource(store.lists, () => (props.agentId || props.projectId ? requestsKey(props) : undefined))
   const requests = computed(() => data.value ?? [])
   const pending = computed(() => requests.value.filter((request) => request.status === 'pending').length)
+  // Um pedido decidido sai da lista: quem fica continua na página em que estava.
+  const paged = usePaged(requests, { by: (request) => request.id })
 
   const busy = ref<string>()
   const failures = ref<Record<string, string>>({})
@@ -91,7 +95,7 @@
         aplicado.
       </p>
     </div>
-    <article v-for="request in requests" :key="request.id" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3" :data-request="request.id">
+    <article v-for="request in paged.items.value" :key="request.id" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3" :data-request="request.id">
       <p class="text-xs text-zinc-400">
         Pedido
         <template v-if="request.requestedBy.agentId">
@@ -116,10 +120,10 @@
         <li v-for="(value, field) in request.patch ?? {}" :key="`patch:${field}`" class="truncate" :title="patchLine(String(field), value)">
           {{ patchLine(String(field), value) }}
         </li>
-        <li v-if="request.entries" data-test="request-entries">{{ entriesLine(request.entries) }}</li>
+        <li v-if="request.entries" data-test="request-entries">{{ requestEntriesLine(request, request.entries) }}</li>
       </ul>
       <p v-if="request.changed" class="text-xs text-amber-300">
-        {{ request.kind === 'agent-patch' ? 'O agente mudou' : 'As regras mudaram' }} desde o pedido: a lista abaixo foi recalculada sobre o que vale agora.
+        {{ request.kind === 'agent-patch' || request.kind === 'agent-local' ? 'O agente mudou' : 'As regras mudaram' }} desde o pedido: a lista abaixo foi recalculada sobre o que vale agora.
       </p>
 
       <template v-if="request.status === 'expired'">
@@ -187,5 +191,6 @@
       <p v-if="request.status === 'pending'" class="text-[11px] text-zinc-500">Vence em {{ when(request.expiresAt) }}.</p>
       <p v-if="failures[request.id]" class="text-sm text-rose-300" data-test="request-error">{{ failures[request.id] }}</p>
     </article>
+    <ListPager v-model="paged.page.value" :pages="paged.pages.value" :total="paged.total.value" :size="paged.size" />
   </section>
 </template>

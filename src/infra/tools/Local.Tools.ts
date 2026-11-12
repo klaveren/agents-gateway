@@ -735,7 +735,8 @@ const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0
 const REMOTE_PLAIN_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/
 
 /** Pedir a regra: a saída que o agente tem quando o terminal nega (a ferramenta é a do MCP do gateway, quando ele a tem). */
-const RULE_HINT = 'peça a regra (com save_permission_rules, se você tem a ferramenta; senão, a quem coordena você); uma pessoa aprova'
+const RULE_HINT =
+  'peça a regra (com save_permission_rules, se você tem a ferramenta; senão, a quem coordena você): no PROJETO se ela serve a vários agentes dele, no agente se é só de um. O pedido fica pendente até uma pessoa aprovar na tela (menu da conta → Notificações)'
 
 /**
  * ⚠️ No cerco, "Read-only file system" é o caminho SEM regra de escrita para o agente, não o disco: o `/proc/mounts` de
