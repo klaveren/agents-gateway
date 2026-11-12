@@ -68,7 +68,6 @@ const tick = async (box: Element | null | undefined, on = true) => {
   await flush()
 }
 const item = (host: HTMLElement, id: string) => host.querySelector<HTMLElement>(`[data-test="request-item"][data-request="${id}"]`)!
-const buttons = (host: HTMLElement, text: string) => [...document.body.querySelectorAll('button')].filter((b) => b.textContent?.trim() === text)
 
 const dialog = () => document.body.querySelector<HTMLElement>('[role="alertdialog"]')
 const confirmDialog = () => click(dialog()?.querySelector('.btn:last-child'))
@@ -268,7 +267,12 @@ describe('NotificationsView', () => {
 
   it('ferramenta ligada só nesta máquina: diz o que é, onde vale, e a lista do "Aprovar todos" repete', async () => {
     all = [
-      request('l1', { kind: 'agent-local', add: [], entries: { field: 'allowedTools', add: ['mcp:github'] }, widenings: [{ key: 'agent/theo#allowedTools+mcp:github', description: 'Liga o MCP github' }] }),
+      request('l1', {
+        kind: 'agent-local',
+        add: [],
+        entries: { field: 'allowedTools', add: ['mcp:github'] },
+        widenings: [{ key: 'agent/theo#allowedTools+mcp:github', description: 'Liga o MCP github' }],
+      }),
       request('l2', { kind: 'agent-local', add: [], entries: { field: 'allowedTools', add: ['agent:zeus'] }, widenings: [], createdAt: '2026-11-03T11:00:00Z' }),
     ]
     const host = await mount(NotificationsView)
@@ -312,7 +316,13 @@ describe('NotificationsView', () => {
 
     it('pedido de um projeto que recebe o compartilhamento diz "valor do projeto <nome>"; o da origem não diz', async () => {
       all = [
-        request('p1', { kind: 'secret', add: [], secret: { scope: 'skill', scopeId: 'gitlab', name: 'T', project: 'alfa' }, widenings: [{ key: 'secret/skill/gitlab#T', description: 'x' }], createdAt: '2026-11-04T12:00:00Z' }),
+        request('p1', {
+          kind: 'secret',
+          add: [],
+          secret: { scope: 'skill', scopeId: 'gitlab', name: 'T', project: 'alfa' },
+          widenings: [{ key: 'secret/skill/gitlab#T', description: 'x' }],
+          createdAt: '2026-11-04T12:00:00Z',
+        }),
         secret('v1'),
       ]
       const host = await mount(NotificationsView)

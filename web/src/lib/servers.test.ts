@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { addServer, forgetServers, loadServers, serverList, switchServer } from './servers'
 
 type TWindow = { webkit?: unknown }
-const LIST = { current: 'local', manage: true, servers: [{ id: 'local', name: 'Este Mac', local: true }, { id: 's4', name: 'Servidor 4', url: 'https://quatro.exemplo.com' }] }
+const LIST = {
+  current: 'local',
+  manage: true,
+  servers: [
+    { id: 'local', name: 'Este Mac', local: true },
+    { id: 's4', name: 'Servidor 4', url: 'https://quatro.exemplo.com' },
+  ],
+}
 
 function install(postMessage: (message: Record<string, unknown>) => Promise<unknown>) {
   const spy = vi.fn(postMessage)

@@ -30,7 +30,16 @@ const PROJECTS = [
   { id: 'delta', name: 'Delta', role: 'admin' },
 ].map((project) => ({ ...project, createdAt: '', updatedAt: '' }))
 
-const agent = (overrides: Partial<IAgentDetail> = {}): IAgentDetail => ({ id: 'zeus', name: 'Zeus', providers: [], modes: ['chat'], allowedTools: [], systemPrompt: 'Oi', projectId: 'alfa', ...overrides })
+const agent = (overrides: Partial<IAgentDetail> = {}): IAgentDetail => ({
+  id: 'zeus',
+  name: 'Zeus',
+  providers: [],
+  modes: ['chat'],
+  allowedTools: [],
+  systemPrompt: 'Oi',
+  projectId: 'alfa',
+  ...overrides,
+})
 
 /** `data`: o que o servidor responde por caminho (com `?project=` quando a chamada leva o projeto). */
 async function mount(component: Component, props: Record<string, unknown>, current: string, data: Record<string, unknown> = {}) {
@@ -83,7 +92,9 @@ describe('agente: aba Compartilhar', () => {
       ['beta', true],
       ['delta', false],
     ])
-    expect(host.textContent).toContain('O outro projeto conversa com o agente, sem editar. A conversa roda na pasta e nas regras do projeto de lá. Segredos não vão junto: cada projeto configura os seus.')
+    expect(host.textContent).toContain(
+      'O outro projeto conversa com o agente, sem editar. A conversa roda na pasta e nas regras do projeto de lá. Segredos não vão junto: cada projeto configura os seus.',
+    )
     await click(boxes(host)[1])
     await click(host.querySelector('[data-test="save-footer"] button'))
     expect(api).toHaveBeenCalledWith('/agents/zeus/shares', { method: 'PUT', body: { projects: ['beta', 'delta'] } })
@@ -131,7 +142,15 @@ describe('agente compartilhado: só leitura', () => {
 })
 
 describe('selo do agente compartilhado', () => {
-  const shared: IAgent = { id: 'zeus', name: 'Zeus', providers: [{ id: 'claude', name: 'Claude', models: ['m'], pricing: {} } as never], modes: ['chat'], allowedTools: [], projectId: 'alfa', sharedFrom: 'alfa' }
+  const shared: IAgent = {
+    id: 'zeus',
+    name: 'Zeus',
+    providers: [{ id: 'claude', name: 'Claude', models: ['m'], pricing: {} } as never],
+    modes: ['chat'],
+    allowedTools: [],
+    projectId: 'alfa',
+    sharedFrom: 'alfa',
+  }
   const own: IAgent = { ...shared, id: 'hera', name: 'Hera', projectId: 'beta', sharedFrom: undefined }
 
   it('na lista de agentes', async () => {

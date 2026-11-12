@@ -9,13 +9,23 @@ export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
+/**
+ * A marca que guarda o lugar de um bloco de código enquanto o resto é marcado. ⛔ Com um caractere que o texto não
+ * tem (o `\0` é tirado da entrada): `[[fence:0]]` escrito pelo modelo continua sendo texto, não vira o bloco.
+ */
+const FENCE = '\u0000'
+const FENCE_MARK = new RegExp(`${FENCE}fence:(\\d+)${FENCE}`, 'g')
+
 /** O que vale dentro de uma linha: código, negrito, itálico e link. */
 function inline(text: string): string {
-  return text
-    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label: string, url: string) => link(label, url))
+  return (
+    text
+      .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      // ⛔ Bloco de código dentro da URL não é link: a marca dele viraria `<pre>` dentro do `href` e quebraria a tag.
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (match, label: string, url: string) => (url.includes(FENCE) ? match : link(label, url)))
+  )
 }
 
 /** ⛔ Host de uma URL já escapada (`&amp;` volta a `&` só para o parse; o host sai escapado de novo). */
@@ -55,9 +65,9 @@ const cells = (row: string) =>
 
 export function renderMarkdown(text: string): string {
   const fences: string[] = []
-  const escaped = escapeHtml(text).replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang: string, code: string) => {
+  const escaped = escapeHtml(text.split(FENCE).join('')).replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang: string, code: string) => {
     fences.push(`<pre><code data-lang="${lang}">${code.replace(/\n$/, '')}</code></pre>`)
-    return `[[fence:${fences.length - 1}]]`
+    return `${FENCE}fence:${fences.length - 1}${FENCE}`
   })
 
   // Cada item é um bloco (título, lista, tabela…) ou uma linha de texto; só linhas de texto vizinhas levam `<br>`.
@@ -118,5 +128,5 @@ export function renderMarkdown(text: string): string {
     html += part.html
     previous = part
   })
-  return html.replace(/\[\[fence:(\d+)\]\]/g, (_match, index: string) => fences[Number(index)] ?? '')
+  return html.replace(FENCE_MARK, (_match, index: string) => fences[Number(index)] ?? '')
 }

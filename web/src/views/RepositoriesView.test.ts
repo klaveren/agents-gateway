@@ -20,7 +20,12 @@ type TCall = { path: string; init?: { method?: string; body?: unknown } }
 type TReply = (path: string, init?: { method?: string; body?: unknown }) => unknown
 
 const listed = [
-  { name: 'api', branch: 'automation', origin: 'https://github.com/empresa/api.git', worktrees: [{ name: 'api-fix', branch: 'henrique/fix', path: 'repositories/_worktrees/api-fix' }] },
+  {
+    name: 'api',
+    branch: 'automation',
+    origin: 'https://github.com/empresa/api.git',
+    worktrees: [{ name: 'api-fix', branch: 'henrique/fix', path: 'repositories/_worktrees/api-fix' }],
+  },
   { name: 'notas', branch: 'develop', worktrees: [] },
 ]
 
@@ -119,7 +124,9 @@ describe('RepositoriesView — os repositórios do projeto', () => {
   it('clona com a URL e a conta de git do projeto (a de SSH não entra na lista)', async () => {
     const { host, calls } = await mount({
       reply: (path, init) =>
-        path === '/projects/p1/repositories' && init?.method === 'POST' ? { name: 'site', branch: 'main', origin: 'https://github.com/empresa/site.git', worktrees: [] } : undefined,
+        path === '/projects/p1/repositories' && init?.method === 'POST'
+          ? { name: 'site', branch: 'main', origin: 'https://github.com/empresa/site.git', worktrees: [] }
+          : undefined,
     })
     test(host, 'new-repository')!.click()
     await flush()

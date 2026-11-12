@@ -37,6 +37,13 @@ describe('renderMarkdown', () => {
     expect(renderMarkdown('[a.com](https://a.com/x)')).not.toContain('link-host')
   })
 
+  it('⛔ bloco de código dentro da URL não vira link (a marca dele quebraria o href); a marca escrita à mão é só texto', () => {
+    const html = renderMarkdown('```js\nconst a = 1\n```\n[x](https://evil.example/```js\nb```)')
+    expect(html).not.toContain('<a ')
+    expect(html).toContain('<pre><code data-lang="js">b</code></pre>')
+    expect(renderMarkdown('```\ncodigo\n```\nveja [[fence:0]] e \u0000fence:0\u0000')).toBe('<pre><code data-lang="">codigo</code></pre><br>veja [[fence:0]] e fence:0')
+  })
+
   it('o host também sai escapado', () => {
     const html = renderMarkdown('[x](https://a.com"onmouseover=alert(1)/y)')
     expect(html).not.toContain('"onmouseover')

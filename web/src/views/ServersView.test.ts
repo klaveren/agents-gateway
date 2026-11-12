@@ -24,7 +24,11 @@ function install(manage = true, refuse?: string) {
       if (refuse) throw new Error(refuse)
       servers.push({ id: 'novo', name: String(message.name), url: String(message.url) })
     }
-    if (message.op === 'remove') servers.splice(servers.findIndex((server) => server.id === message.id), 1)
+    if (message.op === 'remove')
+      servers.splice(
+        servers.findIndex((server) => server.id === message.id),
+        1,
+      )
     return { current: manage ? 'local' : 's4', manage, servers: manage ? [...servers] : servers.map(({ id, name, local }) => ({ id, name, local })) }
   })
   ;(globalThis as TWindow).webkit = { messageHandlers: { gatewayServers: { postMessage: post } } }

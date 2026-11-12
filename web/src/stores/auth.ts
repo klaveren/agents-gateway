@@ -6,6 +6,7 @@ import { setEdition, type TEdition } from '@/lib/edition'
 import { readLocal, writeLocal } from '@/lib/storage'
 import type { ISession, ISettings, IUser } from '@/lib/types'
 import { useAgentsStore } from './agents'
+import { useConnectionsStore } from './connections'
 import { useConversationsStore } from './conversations'
 import { useMcpStore } from './mcp'
 import { usePackagesStore } from './packages'
@@ -60,6 +61,7 @@ export const useAuthStore = defineStore('auth', () => {
     useSchedulesStore().reset()
     usePackagesStore().reset()
     useImportsStore().reset()
+    useConnectionsStore().reset()
     // As stores do catálogo, da importação e as outras: todo dado lido pelo `keyedResource`.
     clearResources()
   }
@@ -80,6 +82,10 @@ export const useAuthStore = defineStore('auth', () => {
     const everyone = useProjectsStore().seesAll
     conversations.subscribe(everyone)
     void conversations.load(everyone)
+    // As conexões são da conta: quem entrou lê as dela agora, sem esperar a próxima volta do relógio.
+    void useConnectionsStore()
+      .refresh()
+      .catch(() => undefined)
     const settings = useSettingsStore()
     const agents = useAgentsStore()
     await Promise.all([
@@ -102,7 +108,11 @@ export const useAuthStore = defineStore('auth', () => {
   async function scan(): Promise<void> {
     try {
       // ⚖️ As três de uma vez: o gateway pode estar longe (~220 ms de ida e volta), e cada espera em fila soma isso.
-      const status = api<{ localAccounts: boolean; setupRequired: boolean; edition?: TEdition }>('/auth/status').catch(() => ({ localAccounts: false, setupRequired: false, edition: undefined }))
+      const status = api<{ localAccounts: boolean; setupRequired: boolean; edition?: TEdition }>('/auth/status').catch(() => ({
+        localAccounts: false,
+        setupRequired: false,
+        edition: undefined,
+      }))
       // O token antigo vira cookie ANTES de perguntar quem é (só quando há um no navegador).
       await migrateStoredSession()
       const [found, me, admin] = await Promise.all([

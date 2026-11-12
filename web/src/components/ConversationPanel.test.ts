@@ -104,6 +104,8 @@ describe('ConversationPanel', () => {
     expect(done.textContent).toContain('entregue no turno 2')
     const external = done.querySelector('a[target="_blank"]')
     expect(external?.getAttribute('href')).toBe('https://x.dev/pr/1')
+    // ⛔ O texto do link é do agente: o host de destino aparece ao lado.
+    expect(external?.querySelector('[data-link-host]')?.textContent).toBe('x.dev')
     expect(done.querySelector('a[href="/c/gw_abc"]')).toBeTruthy()
     expect(done.querySelector('span.font-mono')?.textContent).toBe('src/a.ts')
     const badge = host.querySelector('[data-item="p2"] [data-test="delegated"]')

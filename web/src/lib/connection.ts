@@ -22,5 +22,8 @@ export function changeLabel(change: IConnectionChange): string {
 
 /** A origem sem o `/v1` e o protocolo: o que a pessoa reconhece. */
 export function originLabel(url: string): string {
-  return url.replace(/^https?:\/\//, '').replace(/\/v1\/?$/, '').replace(/\/$/, '')
+  return url
+    .replace(/^https?:\/\//, '')
+    .replace(/\/v1\/?$/, '')
+    .replace(/\/$/, '')
 }

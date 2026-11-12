@@ -94,12 +94,23 @@ describe('AgentModelGroup', () => {
   })
 
   it('⚖️ o seletor de passo só oferece modelo habilitado; passo desabilitado vem marcado e sai ao salvar', async () => {
-    const velha = { id: 'velha', name: 'Velha', steps: [{ provider: 'claude', model: 'sonnet' }, { provider: 'claude', model: 'haiku' }] }
-    const { host, puts, part } = await mount('velha', [PADRAO, velha], [
-      { modelId: 'sonnet', enabled: false, available: true },
-      { modelId: 'haiku', enabled: true, available: true },
-      { modelId: 'opus', enabled: true, available: false },
-    ])
+    const velha = {
+      id: 'velha',
+      name: 'Velha',
+      steps: [
+        { provider: 'claude', model: 'sonnet' },
+        { provider: 'claude', model: 'haiku' },
+      ],
+    }
+    const { host, puts, part } = await mount(
+      'velha',
+      [PADRAO, velha],
+      [
+        { modelId: 'sonnet', enabled: false, available: true },
+        { modelId: 'haiku', enabled: true, available: true },
+        { modelId: 'opus', enabled: true, available: false },
+      ],
+    )
     const options = [...host.querySelectorAll('[data-test=group-models] select option')].map((option) => option.textContent ?? '')
     expect(options.join('|')).not.toContain('sonnet')
     expect(options.join('|')).not.toContain('opus')

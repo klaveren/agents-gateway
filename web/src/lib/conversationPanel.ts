@@ -68,3 +68,25 @@ export function linkKind(href: string | undefined): TLinkKind | undefined {
   if (/^gw_[\w-]+$/.test(href)) return 'conversation'
   return 'path'
 }
+
+/**
+ * O host de destino de um link externo, para aparecer ao lado do texto: quem escreve o texto é o agente, e ele pode
+ * mentir (`Reautenticar` → outro site). Vazio quando o texto já é o próprio endereço, ou o endereço não se lê.
+ */
+export function linkHost(link: { label: string; href?: string }): string {
+  if (linkKind(link.href) !== 'external' || !link.href) return ''
+  const host = hostOf(link.href)
+  const bare = link.label
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/$/, '')
+  return !host || link.label.trim() === link.href || bare === host ? '' : host
+}
+
+function hostOf(href: string): string {
+  try {
+    return new URL(href).hostname
+  } catch {
+    return ''
+  }
+}
