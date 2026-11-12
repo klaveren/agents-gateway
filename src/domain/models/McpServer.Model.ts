@@ -116,6 +116,12 @@ export interface IMcpServerConfig {
   identity?: boolean
   /** Só em `auth: oauth`. */
   oauth?: IMcpOAuth
+  /**
+   * 🔌 DESTA MÁQUINA: o servidor de um projeto CONECTADO cadastrado aqui (a configuração extra do ambiente). A origem
+   * não o conhece: a atualização não o toca, e ele segue editável. ⛔ Fora do documento do catálogo (ver `MCP_SHAPE`):
+   * a marca não é exportada. Ausente = não.
+   */
+  local?: boolean
   enabled: boolean
   createdAt: Date
   updatedAt: Date

@@ -38,6 +38,11 @@ export interface IProjectConnectionDeps {
    * origem removeu sai; ao desconectar, cada uma passa a ser do próprio agente.
    */
   layers?: { applyAll(projectId: string, by: string): void; forget(agentId: string): void }
+  /**
+   * 🔌 Os MCPs "desta máquina" do projeto conectado (ver `IMcpServerConfig.local`): a atualização não os troca nem os
+   * remove; ao desconectar, viram MCPs comuns do projeto.
+   */
+  localMcps?: { ids(projectId: string): string[]; release(projectId: string): void }
   /** O uso das conversas daqui (as linhas do relatório), para mandar o do projeto conectado à origem. */
   usage?: (query: IUsageQuery) => Promise<IUsageRow[]>
   /** Os modelos desta instalação (sem o mapa, que é da conexão). */
@@ -155,6 +160,7 @@ export class ProjectConnectionService {
     this.require(projectId)
     // ⚠️ Antes de esquecer a conexão: a camada local só vale em projeto conectado, e o agente não pode perder o que tinha.
     this.deps.layers?.applyAll(projectId, by)
+    this.deps.localMcps?.release(projectId)
     this.deps.repository.remove(projectId)
   }
 
@@ -452,7 +458,11 @@ export class ProjectConnectionService {
         .filter((document) => document.kind === 'mcp')
         .map((document) => document.id),
     )
-    let documents = parsed.documents.filter((document) => !(document.kind === 'mcp' && globals.has(document.id))).map((document) => forLocal(document, models))
+    // 🔌 O MCP cadastrado AQUI no projeto é desta máquina: com o mesmo id de um da origem, também vale o daqui.
+    const mine = new Set(this.deps.localMcps?.ids(projectId) ?? [])
+    let documents = parsed.documents
+      .filter((document) => !(document.kind === 'mcp' && (globals.has(document.id) || mine.has(document.id))))
+      .map((document) => forLocal(document, models))
     const skipped: IConnectionSkipped[] = parsed.errors.map((error) => ({ ref: error.path, message: error.message }))
     const leave = (refs: ReadonlySet<string>) => (documents = documents.filter((document) => !refs.has(itemRef(document.kind, document.id, document.projectId))))
 
@@ -492,7 +502,7 @@ export class ProjectConnectionService {
     const removed: string[] = []
     const local = this.deps.reader.list(scope)
     for (const kind of REMOVAL_ORDER)
-      for (const current of local.filter((document) => document.kind === kind && !kept.has(`${document.kind}/${document.id}`)))
+      for (const current of local.filter((document) => document.kind === kind && !kept.has(`${document.kind}/${document.id}`) && !(kind === 'mcp' && mine.has(document.id))))
         try {
           // Quem delegava a ele só pela camada local não pode travar a saída (`AgentInUseError`).
           if (current.kind === 'agent') this.deps.layers?.forget(current.id)

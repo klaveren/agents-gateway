@@ -141,6 +141,8 @@ const CONNECTED_WRITABLE: readonly RegExp[] = [
   /^\/(agents\/:agentId|resources\/:resourceId)\/secrets\//,
   /^\/agents\/:agentId\/(hooks|schedules)(\/|$)/,
   /^\/mcp-servers\/:id\/(env|secret|oauth|test|install|stop)(\/|$)/,
+  // O MCP "desta máquina" (cadastrado aqui) é configuração do ambiente; o que veio da origem a rota recusa.
+  /^\/mcp-servers(\/:id)?$/,
   /^\/projects\/:id\/members$/,
   /^\/projects\/:projectId\/(accounts|permissions\/test)(\/|$)/,
   /^\/catalog\/import\/plan$/,
@@ -157,6 +159,11 @@ function guardConnected(projectIds: ReadonlyArray<string | null | undefined>): v
   const request = currentRequest()
   if (!request || request.method === 'GET' || CONNECTED_WRITABLE.some((pattern) => pattern.test(request.route))) return
   for (const projectId of projectIds) refuseConnected(projectId)
+}
+
+/** 🔌 O projeto é conectado (a cópia do de outro gateway)? */
+export function isConnectedProject(projectId: string | null | undefined): boolean {
+  return !!projectId && !!registry?.connection?.(projectId)
 }
 
 /** ⛔ Recusa o que mudaria o catálogo de um projeto conectado, em qualquer rota (a que passa pela lista acima confere aqui o caso que não pode). */

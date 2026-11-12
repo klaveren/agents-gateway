@@ -301,6 +301,7 @@ export const MCP_SHAPE: TShape<IMcpServerConfig> = {
   oauth: { object: { clientId: 'value', scopes: 'value', authorizationServer: 'value' } },
   enabled: 'value',
   projectId: 'value',
+  local: { omit: 'a marca "desta máquina" do MCP de projeto conectado: é do ambiente daqui, não do catálogo' },
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },

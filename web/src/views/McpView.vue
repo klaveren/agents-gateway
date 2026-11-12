@@ -63,8 +63,10 @@ import { computed, onMounted, ref, watch } from 'vue'
   /** Mexe nos MCPs: o admin do gateway (os globais) ou o admin do projeto atual (os dele). */
   const canManage = computed(() => auth.isAdmin || projects.manages)
   /** O MCP aberto é só leitura: global é do admin do gateway; o de projeto, de quem administra o projeto. */
-  /** 🔌 MCP de projeto conectado: só leitura (vem da origem). */
-  const connectedOrigin = computed(() => connections.originOf(selected.value?.projectId))
+  /** 🔌 MCP de projeto conectado: só leitura (vem da origem). O cadastrado aqui (`local`) é desta máquina, e segue editável. */
+  const connectedOrigin = computed(() => (selected.value?.local ? undefined : connections.originOf(selected.value?.projectId)))
+  /** 🔌 O projeto do topo é conectado e quem está na tela o administra: o MCP novo nasce nele, como "desta máquina". */
+  const localHere = computed(() => !!connections.originOf(projects.current) && projects.manages)
   const locked = computed(() => !!selected.value && (!!connectedOrigin.value || (selected.value.projectId ? !projects.manages : !auth.isAdmin)))
   const adding = computed(() => route.name === 'mcp-new')
   /** ⚖️ A rota leva a CHAVE (`n8n`, `cliente-a.n8n`): o mesmo id pode estar em dois projetos. */
@@ -91,7 +93,7 @@ import { computed, onMounted, ref, watch } from 'vue'
   const blank = (): INewMcpServer => ({
     id: '',
     // Quem não administra o gateway só cria no projeto (o global é do admin do gateway).
-    projectId: auth.isAdmin ? undefined : projects.current,
+    projectId: auth.isAdmin && !localHere.value ? undefined : projects.current,
     name: '',
     kind: 'process',
     container: blankContainer(),
@@ -119,6 +121,10 @@ import { computed, onMounted, ref, watch } from 'vue'
   const installing = ref(false)
   const envValues = ref<Record<string, string>>({})
   const form = ref<INewMcpServer>(blank())
+  // 🔌 A conexão pode chegar depois da tela: o formulário ainda em branco passa para o projeto conectado.
+  watch(localHere, (here) => {
+    if (here && !form.value.id && !form.value.projectId) form.value.projectId = projects.current
+  })
   const formIssues = ref<Record<string, string[]>>({})
   const formError = ref<string>()
 
@@ -453,7 +459,7 @@ import { computed, onMounted, ref, watch } from 'vue'
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">MCPs</h1>
-        <RouterLink v-if="!connections.originOf(projects.current)" to="/mcp/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar MCP">
+        <RouterLink to="/mcp/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar MCP">
           <Icon name="plus" class="h-5 w-5" />
         </RouterLink>
       </header>
@@ -477,6 +483,7 @@ import { computed, onMounted, ref, watch } from 'vue'
           <span class="block truncate text-sm font-medium">{{ server.name }}</span>
           <span class="block truncate text-xs text-zinc-500">
             {{ scopeLabel(server.projectId) }} ·
+            <template v-if="server.local">desta máquina ·</template>
             {{
               !server.enabled
                 ? 'desligado'
@@ -535,9 +542,14 @@ import { computed, onMounted, ref, watch } from 'vue'
               Escopo
               <select v-model="form.projectId" class="input" :disabled="lite">
                 <option v-if="auth.isAdmin" :value="undefined">Global — qualquer agente</option>
-                <option v-for="project in projects.list.filter((item) => item.role === 'admin' && (item.id === projects.current || item.id === form.projectId))" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
+                <option v-for="project in projects.list.filter((item) => item.role === 'admin' && (item.id === projects.current || item.id === form.projectId))" :key="project.id" :value="project.id">
+                  Projeto {{ project.name }}{{ connections.originOf(project.id) ? ' — desta máquina' : '' }}
+                </option>
               </select>
-              <small class="hint">
+              <small v-if="connections.originOf(form.projectId)" class="hint" data-test="local-scope-hint">
+                Projeto conectado: este MCP fica só nesta máquina. A origem não o recebe, e a atualização não o altera. Os agentes o usam pela guia MCPs.
+              </small>
+              <small v-else class="hint">
                 {{
                   form.projectId
                     ? 'Só os agentes deste projeto usam; as chaves ficam com o projeto. Outro projeto pode ter um MCP com o mesmo identificador.'
@@ -632,7 +644,7 @@ import { computed, onMounted, ref, watch } from 'vue'
           <span class="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-violet-500/20 text-base font-semibold text-violet-200">{{ initials(selected.name) }}</span>
           <div class="min-w-0">
             <h2 class="truncate text-lg font-semibold">{{ selected.name }}</h2>
-            <p class="truncate font-mono text-xs text-zinc-500">mcp:{{ selected.id }}/… · {{ scopeLabel(selected.projectId) }}</p>
+            <p class="truncate font-mono text-xs text-zinc-500">mcp:{{ selected.id }}/… · {{ scopeLabel(selected.projectId) }}{{ selected.local ? ' · desta máquina' : '' }}</p>
           </div>
           <label class="ml-auto flex shrink-0 items-center gap-2 text-xs text-zinc-400">
             Ligado
@@ -644,6 +656,9 @@ import { computed, onMounted, ref, watch } from 'vue'
         <HistoryPanel v-if="tab === 'history'" kind="mcp" :id="selected.key" :readonly="locked" @restored="restored" />
         <template v-else>
           <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
+          <p v-else-if="selected.local" class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200" data-test="local-mcp">
+            MCP desta máquina: a origem do projeto não o conhece, e a atualização não o altera. Aqui ele é seu para editar e remover.
+          </p>
           <p v-else-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
           <fieldset :disabled="locked" class="contents">
           <p v-if="selected.selfReference" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -874,7 +889,9 @@ import { computed, onMounted, ref, watch } from 'vue'
               <div class="flex flex-wrap items-center gap-2">
                 <select v-model="moveTo" class="input sm:w-1/2" :disabled="lite">
                   <option value="" :disabled="!auth.isAdmin">Global — qualquer agente</option>
-                  <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === selected?.projectId)" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
+                  <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === selected?.projectId)" :key="project.id" :value="project.id">
+                    Projeto {{ project.name }}{{ connections.originOf(project.id) ? ' — desta máquina' : '' }}
+                  </option>
                 </select>
                 <button v-if="moveDirty && !lite" type="button" class="btn btn-secondary" :disabled="busy" @click="move">Mover</button>
               </div>

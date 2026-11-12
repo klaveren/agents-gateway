@@ -158,6 +158,39 @@ describe('McpServersService', () => {
     assert.strictEqual(secrets.get('mcp:pw:env:NODE_OPTIONS'), undefined)
   })
 
+  it('🔌 desta máquina: a marca nasce com o servidor de projeto, segue a troca de escopo e sai ao desconectar', () => {
+    const secrets = new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:')
+    const repository = new SqliteMcpServerRepository(':memory:')
+    const service = new McpServersService(
+      repository,
+      secrets,
+      () => [],
+      () => true,
+    )
+    const url = 'https://mcp.exemplo.com/mcp'
+    assert.strictEqual(service.create({ id: 'meu', projectId: 'logiccus', name: 'Meu', url, local: true }, 'root').local, true)
+    service.create({ id: 'da-origem', projectId: 'logiccus', name: 'Da origem', url }, 'root')
+    // ⛔ Global nunca é "desta máquina": a marca é do servidor de projeto conectado.
+    assert.strictEqual(service.create({ id: 'solto', name: 'Solto', url, local: true }, 'root').local, undefined)
+    assert.deepStrictEqual(service.localIn('logiccus'), ['meu'])
+    assert.deepStrictEqual(service.localIn('outro'), [])
+
+    // Editar não mexe na marca; ela sobrevive ao banco (a coluna).
+    assert.strictEqual(service.update('logiccus.meu', { name: 'Meu MCP' }, 'root').local, true)
+    assert.strictEqual(repository.get('logiccus.meu')?.local, true)
+    assert.strictEqual(repository.get('logiccus.da-origem')?.local, undefined)
+
+    // Entrou num projeto conectado: é daqui. Saiu para o global: deixa de ser.
+    assert.strictEqual(service.update('solto', { projectId: 'logiccus', local: true }, 'root').local, true)
+    assert.strictEqual(service.update('logiccus.solto', { projectId: null, local: false }, 'root').local, undefined)
+    assert.strictEqual(service.update('logiccus.meu', { projectId: null, local: true }, 'root').local, undefined)
+
+    service.update('solto', { projectId: 'logiccus', local: true }, 'root')
+    service.releaseLocal('logiccus')
+    assert.deepStrictEqual(service.localIn('logiccus'), [])
+    assert.strictEqual(service.get('logiccus.solto').local, undefined)
+  })
+
   it('⛔ o MCP do próprio gateway não troca a credencial: sempre a de quem conversa', () => {
     const repository = new SqliteMcpServerRepository(':memory:')
     const now = new Date()

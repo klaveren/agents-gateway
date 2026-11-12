@@ -44,6 +44,8 @@ export interface IMcpServerInput {
   oauth?: IMcpOAuth
   /** O segredo de `auth: header` (ou o client secret de `oauth`), na criação. Depois, por `saveSecret`. */
   secret?: string
+  /** 🔌 Cadastrado num projeto conectado (ver `IMcpServerConfig.local`): quem sabe é a rota, nunca o corpo do pedido. */
+  local?: boolean
 }
 
 export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'tags' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'oauth' | 'enabled'>> & {
@@ -51,6 +53,8 @@ export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'tags' | 
   process?: Partial<IMcpProcess>
   /** Troca o escopo: um projeto, ou `null` para global. Ausente = fica onde está. */
   projectId?: string | null
+  /** 🔌 A marca "desta máquina" depois de uma troca de escopo (o destino é conectado?). Ausente = fica como está. */
+  local?: boolean
 }
 
 const NAME_MAX = 80
@@ -79,7 +83,7 @@ export class McpServersService {
   constructor(
     private readonly servers: IMcpServerRepository,
     private readonly secrets: ICredentialStore,
-    /** Os agentes como gravados (todas as escolhas, inclusive de servidor desligado). */
+    /** Os agentes com TODAS as escolhas (inclusive de servidor desligado, e as da camada local de um projeto conectado). */
     private readonly agents: () => readonly IAgent[],
     /** O projeto existe? Sem projetos ligados, nenhum: só há servidor global. */
     private readonly projectExists: (projectId: string) => boolean = () => false,
@@ -146,6 +150,7 @@ export class McpServersService {
       headerName: ['none', 'oauth'].includes(input.auth ?? 'none') ? undefined : input.headerName?.trim() || undefined,
       ...(input.identity ? { identity: true } : {}),
       ...(input.auth === 'oauth' && input.oauth ? { oauth: oauthOf(input.oauth) } : {}),
+      ...(input.local && projectId ? { local: true } : {}),
       enabled: true,
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -173,7 +178,7 @@ export class McpServersService {
    */
   update(key: string, change: TMcpServerChange, by: string): IMcpServerConfig {
     const current = this.get(key)
-    const { container, process: proc, projectId: scope, ...rest } = change
+    const { container, process: proc, projectId: scope, local, ...rest } = change
     const id = current.id
     const target = scope === undefined ? current.projectId : scope?.trim() || undefined
     const moving = target !== current.projectId
@@ -219,6 +224,8 @@ export class McpServersService {
       identity: next.identity === true,
       oauth: next.oauth,
       enabled: next.enabled,
+      // Só servidor de projeto é "desta máquina": o que vira global perde a marca.
+      ...(local !== undefined ? { local: local && !!target } : {}),
       ...(next.container ? { container: next.container } : {}),
       ...(next.process ? { process: next.process } : {}),
       updatedAt: this.now(),
@@ -283,6 +290,19 @@ export class McpServersService {
       )
     this.forget(server)
     this.history.record([{ kind: 'mcp', id: key, ...(server.projectId ? { projectId: server.projectId } : {}) }], { by })
+  }
+
+  /** 🔌 Os ids dos servidores "desta máquina" de um projeto conectado: a atualização da origem não os toca. */
+  localIn(projectId: string): string[] {
+    return this.servers
+      .list()
+      .filter((server) => server.projectId === projectId && server.local)
+      .map((server) => server.id)
+  }
+
+  /** 🔌 O projeto foi desconectado: os servidores "desta máquina" viram servidores comuns dele. */
+  releaseLocal(projectId: string): void {
+    for (const server of this.servers.list().filter((item) => item.projectId === projectId && item.local)) this.servers.update(mcpServerKey(server), { local: false })
   }
 
   /**
