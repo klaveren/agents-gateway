@@ -8,6 +8,8 @@ import { CATALOG_KINDS, TCatalogKind } from '@domain/Catalog.Document'
 import { MODEL_GROUP_BOUNDS, MODEL_GROUP_ID, SWITCHABLE_FAILURES } from '@domain/Fallback.Policy'
 import type { TProviderFailure } from '@domain/Provider.Failure'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
+import type { IAgent } from '@domain/models/Agent.Model'
+import { isEmptyLayer, mergeLocalLayer, TAgentLocalLayerInput } from '@domain/models/AgentLocalLayer.Model'
 import { ISelfReply, selfApi, selfBase, TSelfApi } from './Self.Api'
 import { agentScopeOf, scopedWrites } from './SelfMcp.Guard'
 
@@ -28,6 +30,9 @@ function callerApi(req: Request): TSelfApi {
 }
 
 const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] })
+
+/** O que o `get_agent` acrescenta ao agente de projeto conectado; vem junto de `allowedTools` quando se pede só alguns campos. */
+const LOCAL_LAYER_FIELDS: readonly string[] = ['localLayer', 'effectiveAllowedTools']
 
 /** O erro da API vira resultado de ferramenta com `isError` — o cliente vê a mensagem; nada lança. */
 function reply(answer: ISelfReply, pick: (result: unknown) => unknown = (result) => result) {
@@ -568,10 +573,39 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     'list_tools',
     {
       description:
-        'Everything an agent can be given in allowedTools: capabilities (`cap:terminal`, `cap:files.read`, `cap:files.write`, `cap:web.search`, `cap:web.fetch`, `cap:todos` — the gateway decides per provider what runs; `runs` says how), other local tools (by name), provider-only SDK extras (`sdk:…`, with risk) and the MCP servers with their tools (`mcp:<server>/<tool>` or `mcp:<server>/*`; a server with `projectId` serves only agents of that project). Prefer capabilities over the old ids (run_bash, sdk:Read…), which are converted on save.',
+        'Everything an agent can be given in allowedTools: capabilities (`cap:terminal`, `cap:files.read`, `cap:files.write`, `cap:web.search`, `cap:web.fetch`, `cap:todos` — the gateway decides per provider what runs; `runs` says how), other local tools (by name), provider-only SDK extras (`sdk:…`, with risk) and the MCP servers with their tools (`mcp:<server>/<tool>` or `mcp:<server>/*`; a server with `projectId` serves only agents of that project). Without `server`, each MCP server comes with the NAMES of its tools only; `server: "<id>"` returns just that server, with the description of each tool (`q` keeps the tools whose name or description has the text). Prefer capabilities over the old ids (run_bash, sdk:Read…), which are converted on save.',
+      inputSchema: {
+        server: z.string().optional().describe('One MCP server (its id, or `<project>.<id>`): only it, with the description of each tool'),
+        q: z.string().optional().describe('With `server`: keeps the tools whose name or description has this text'),
+      },
       annotations: { readOnlyHint: true },
     },
-    async () => {
+    async ({ server: only, q }) => {
+      const servers = await api('GET', '/mcp-servers')
+      const enabled = servers.ok
+        ? ((servers.result as Array<{ key?: string; id: string; projectId?: string; name: string; enabled: boolean }>) ?? []).filter((entry) => entry.enabled)
+        : []
+      const listOf = async (entry: (typeof enabled)[number]) => {
+        const listed = await api('GET', `/mcp-servers/${encodeURIComponent(entry.key ?? entry.id)}/tools`)
+        const found = listed.ok ? ((listed.result as Array<{ name: string; description: string }>) ?? []) : []
+        // `projectId`: o servidor só serve a agente daquele projeto (ausente = global).
+        return { head: { server: entry.id, ...(entry.projectId ? { projectId: entry.projectId } : {}), name: entry.name, all: `mcp:${entry.id}/*` }, found }
+      }
+      // ⚖️ UM servidor: só ele, com as descrições. A lista inteira com descrição passa do que um cliente aceita numa resposta.
+      if (only?.trim()) {
+        if (!servers.ok) return reply(servers)
+        const wanted = only.trim()
+        const entry = enabled.find((item) => (item.key ?? item.id) === wanted) ?? enabled.find((item) => item.id === wanted)
+        if (!entry)
+          return {
+            ...text({ status: 404, code: 'not_found', message: `unknown or disabled MCP server: ${wanted}`, servers: enabled.map((item) => item.key ?? item.id) }),
+            isError: true,
+          }
+        const { head, found } = await listOf(entry)
+        const needle = q?.trim().toLowerCase()
+        const kept = needle ? found.filter((tool) => `${tool.name} ${tool.description ?? ''}`.toLowerCase().includes(needle)) : found
+        return text({ ...head, total: found.length, tools: kept.map((tool) => ({ ref: `mcp:${entry.id}/${tool.name}`, description: tool.description })) })
+      }
       const catalog = await api('GET', '/tools')
       if (!catalog.ok) return reply(catalog)
       const { tools, native, capabilities } = catalog.result as {
@@ -579,21 +613,12 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
         capabilities?: Array<{ id: string; label: string; description: string; risk: string; runs: Record<string, string> }>
         native?: Array<{ id: string; protocol: string; label: string; risk: string; officialOnly: boolean }>
       }
-      const servers = await api('GET', '/mcp-servers')
-      const mcp = servers.ok
-        ? await Promise.all(
-            ((servers.result as Array<{ key?: string; id: string; projectId?: string; name: string; enabled: boolean }>) ?? [])
-              .filter((entry) => entry.enabled)
-              .map(async (entry) => {
-                const listed = await api('GET', `/mcp-servers/${encodeURIComponent(entry.key ?? entry.id)}/tools`)
-                const names = listed.ok
-                  ? ((listed.result as Array<{ name: string; description: string }>) ?? []).map((tool) => ({ ref: `mcp:${entry.id}/${tool.name}`, description: tool.description }))
-                  : []
-                // `projectId`: o servidor só serve a agente daquele projeto (ausente = global).
-                return { server: entry.id, ...(entry.projectId ? { projectId: entry.projectId } : {}), name: entry.name, all: `mcp:${entry.id}/*`, tools: names }
-              }),
-          )
-        : []
+      const mcp = await Promise.all(
+        enabled.map(async (entry) => {
+          const { head, found } = await listOf(entry)
+          return { ...head, tools: found.map((tool) => tool.name) }
+        }),
+      )
       return text({ capabilities, local: (tools ?? []).map((tool) => ({ name: tool.name, description: tool.description })), native, mcp })
     },
   )
@@ -602,14 +627,23 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     'get_agent',
     {
       description:
-        'One agent in full, system prompt included, and its importIssues (problems recorded when it was imported; fix them, then resolve_import_issue). `fields` returns only those fields (e.g. ["allowedTools","permissions"]).',
+        'One agent in full, system prompt included, and its importIssues (problems recorded when it was imported; fix them, then resolve_import_issue). `fields` returns only those fields (e.g. ["allowedTools","permissions"]). In a connected project the agent is the one from the origin: `localLayer` is what this machine adds or turns off, and `effectiveAllowedTools` is what it runs with here (both come with `allowedTools`).',
       inputSchema: { agentId: z.string(), fields: z.array(z.string()).optional() },
       annotations: { readOnlyHint: true },
     },
-    async ({ agentId, fields }) =>
-      reply(await api('GET', `/agents/${encodeURIComponent(agentId)}`), (result) =>
-        fields?.length ? Object.fromEntries(Object.entries(result as Record<string, unknown>).filter(([key]) => key === 'id' || fields.includes(key))) : result,
-      ),
+    async ({ agentId, fields }) => {
+      const found = await api('GET', `/agents/${encodeURIComponent(agentId)}`)
+      if (!found.ok) return reply(found)
+      const agent = found.result as Record<string, unknown> & Pick<IAgent, 'allowedTools'>
+      // 🔌 Projeto conectado: o cadastro é o da origem, e o agente RODA com a camada desta máquina por cima. Sem ela aqui,
+      // o agente lê as próprias ferramentas e conclui que o que foi ligado na camada "não chegou".
+      const local =
+        typeof agent.projectId === 'string' ? await api('GET', `/connections/${encodeURIComponent(agent.projectId)}/agents/${encodeURIComponent(agentId)}/local`) : undefined
+      const layer = local?.ok ? (local.result as { layer?: TAgentLocalLayerInput }).layer : undefined
+      const full = layer && !isEmptyLayer(layer) ? { ...agent, localLayer: layer, effectiveAllowedTools: mergeLocalLayer(agent as unknown as IAgent, layer).allowedTools } : agent
+      const asked = (key: string) => key === 'id' || fields!.includes(key) || (LOCAL_LAYER_FIELDS.includes(key) && fields!.includes('allowedTools'))
+      return text(fields?.length ? Object.fromEntries(Object.entries(full).filter(([key]) => asked(key))) : full)
+    },
   )
 
   server.registerTool(

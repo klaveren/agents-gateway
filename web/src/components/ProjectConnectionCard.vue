@@ -7,7 +7,7 @@ import ConfirmDialog from './ConfirmDialog.vue'
 
 /**
  * 🔌 O projeto conectado: de onde vem, a versão daqui e a da origem, o aviso de atualização (um só, sempre para a
- * última), o que não entrou e as variáveis que o projeto pede. O catálogo é só leitura: mudar é na origem (um ticket).
+ * última), o que não entrou e as variáveis que o projeto pede. O catálogo é só leitura: mudar é na origem.
  */
 const props = defineProps<{ projectId: string }>()
 const connections = useConnectionsStore()
@@ -71,7 +71,7 @@ async function disconnect() {
       <span class="ml-auto text-xs" :class="connection.state === 'ok' ? 'text-emerald-300' : 'text-amber-300'">{{ STATE[connection.state] }}</span>
     </div>
     <p class="text-xs text-zinc-400">
-      Agentes, skills, comandos, specs e regras vêm da origem. Para mudar algo, abra um ticket: a mudança é feita lá e chega aqui pela atualização.
+      Agentes, skills, comandos, specs e regras vêm da origem. A mudança é feita lá e chega aqui pela atualização.
     </p>
     <p v-if="connection.state !== 'ok' && connection.lastError" class="text-xs text-amber-300">{{ connection.lastError }}</p>
 

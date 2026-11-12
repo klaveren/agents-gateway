@@ -17,7 +17,7 @@ export interface IMcpProxyDeps {
   proof?: ICallerProof
   /** A sessão viva (do provider). `undefined` = não existe mais. */
   session: (sessionId: string) => Pick<ISession, 'agentId' | 'metadata'> | undefined
-  /** O agente como gravado: as escolhas (`allowedTools`) e o projeto dele (ausente = global). */
+  /** O agente como RODA aqui (com a camada local): as escolhas (`allowedTools`) e o projeto dele (ausente = global). */
   agent: (agentId: string) => { allowedTools: readonly string[]; projectId?: string } | undefined
 }
 

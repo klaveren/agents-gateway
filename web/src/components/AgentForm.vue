@@ -130,8 +130,16 @@
       .map((entry) => entry.slice(`mcp:${server.id}/`.length))
       .filter((name) => !listed.some((tool) => tool.name === name))
     // A lite mostra só o que o servidor lista: a escolhida que ele não oferece (a semente tem as da PRO) não aparece.
-    if (lite.value) return listed
-    return [...listed, ...chosen.map((name) => ({ name, unlisted: true }))]
+    // Em ordem alfabética: o servidor lista na ordem que quiser, e a tela se lê pelo nome.
+    return [...listed, ...(lite.value ? [] : chosen.map((name) => ({ name, unlisted: true })))].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
+  }
+  /** O que se digitou no filtro de cada servidor (pela chave dele). Só esconde da tela: o que está marcado continua marcado. */
+  const mcpFilter = ref<Record<string, string>>({})
+  /** As ferramentas do servidor que passam no filtro dele (nome ou descrição). */
+  function mcpShown(server: IMcpServer): ReturnType<typeof mcpChips> {
+    const needle = (mcpFilter.value[server.key] ?? '').trim().toLowerCase()
+    const chips = mcpChips(server)
+    return needle ? chips.filter((tool) => `${tool.name} ${tool.description ?? ''}`.toLowerCase().includes(needle)) : chips
   }
   /** O peso, por chamada ao modelo, das ferramentas deste servidor que o agente tem (todas, com `*`). */
   function mcpWeight(server: IMcpServer): number {
@@ -1593,9 +1601,21 @@
                 <span v-if="fromOrigin(mcpRef(server.id, '*'))" class="ml-1 text-[10px]" :class="originTone(form.allowedTools.includes(mcpRef(server.id, '*')))">{{ originTag(form.allowedTools.includes(mcpRef(server.id, '*'))) }}</span>
               </label>
             </div>
-            <div v-if="!form.allowedTools.includes(mcpRef(server.id, '*'))" class="mt-2 flex flex-wrap gap-1.5">
+            <div v-if="!form.allowedTools.includes(mcpRef(server.id, '*')) && mcpChips(server).length" class="mt-2 flex items-center gap-2">
+              <input
+                v-model="mcpFilter[server.key]"
+                type="search"
+                class="input w-full max-w-72 py-1 text-xs"
+                placeholder="Filtrar ferramentas"
+                :aria-label="`Filtrar ferramentas de ${server.name}`"
+                data-test="mcp-filter"
+                @keydown.enter.prevent
+              />
+              <span v-if="mcpFilter[server.key]?.trim()" class="text-[11px] text-zinc-500" data-test="mcp-filter-count">{{ mcpShown(server).length }} de {{ mcpChips(server).length }}</span>
+            </div>
+            <div v-if="!form.allowedTools.includes(mcpRef(server.id, '*'))" class="mt-2 flex flex-wrap gap-1.5" data-test="mcp-chips">
               <button
-                v-for="tool in mcpChips(server)"
+                v-for="tool in mcpShown(server)"
                 :key="tool.name"
                 type="button"
                 class="chip font-mono text-xs disabled:cursor-not-allowed"
@@ -1608,6 +1628,7 @@
                 <span v-if="tool.unlisted" class="ml-1 text-[10px] text-zinc-500">não listada</span>
               </button>
               <span v-if="!mcpChips(server).length" class="text-xs text-zinc-500">Nenhuma ferramenta listada agora.</span>
+              <span v-else-if="!mcpShown(server).length" class="text-xs text-zinc-500">Nenhuma ferramenta com esse texto.</span>
             </div>
           </div>
         </div>

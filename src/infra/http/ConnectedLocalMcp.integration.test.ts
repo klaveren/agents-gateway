@@ -5,9 +5,17 @@ import { ProjectConnectionService } from '@application/ProjectConnection.Service
 import { makeAgentLocalLayers } from '@composition/factories/AgentLocalLayers.Factory'
 import { makeAgents } from '@composition/factories/Agents.Factory'
 import { makeAuth } from '@composition/factories/Auth.Factory'
-import { makeAuthController, makeController, makeMcpServersController, makeProjectsController, makeProvidersController } from '@composition/factories/Controller.Factory'
+import {
+  makeAuthController,
+  makeController,
+  makeMcpProxyController,
+  makeMcpServersController,
+  makeProjectsController,
+  makeProvidersController,
+} from '@composition/factories/Controller.Factory'
 import { makeMcpServers } from '@composition/factories/McpServers.Factory'
 import { useConnectedProjects } from '@composition/factories/Projects.Factory'
+import { makeTools } from '@composition/factories/Tools.Factory'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { SqliteProjectConnectionRepository } from '@infra/persistence/Sqlite.ProjectConnectionRepository'
@@ -37,6 +45,17 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
   }
   const listed = async (key: string) => (await call('GET', '/mcp-servers?project=logiccus')).body.result.find((server: { key: string }) => server.key === key)
 
+  /** O que o CLI recebe ao abrir a ponte de um servidor, numa conversa do `sre`. */
+  const bridge = async (key: string) => {
+    const res = await fetch(`${base}/mcp-proxy/${key}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'X-Tool-Authorization': `Bearer ${admin}`, 'X-Gateway-Session': 'conversa' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+    })
+    await res.text()
+    return res.status
+  }
+
   before(async () => {
     process.env.MCP_SERVER_URL = ''
     const repository = new SqliteProjectConnectionRepository(':memory:')
@@ -53,7 +72,8 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
       makeProvidersController(),
       u,
       makeMcpServersController(),
-      ...[u, u, u],
+      makeMcpProxyController(),
+      ...[u, u],
       makeProjectsController(),
       ...[u, u, u, u, u, u, u, u, u, u, u],
       new ProjectConnectionsController({ connections, layers: makeAgentLocalLayers(), proof: makeAuth().proof }),
@@ -74,6 +94,8 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
     const made = (await setup.json()) as TEnvelope
     assert.ok(made.result, JSON.stringify(made))
     admin = made.result.token
+    // Uma conversa viva do `sre`, de quem chama.
+    makeTools().mcp.setSessionLookup((id) => (id === 'conversa' ? { agentId: 'sre', metadata: { owner: { id: made.result.user.id } } } : undefined))
     for (const id of ['logiccus', 'outro']) assert.strictEqual((await call('POST', '/projects', { id, name: id })).status, 201)
     // O que "veio da origem": cadastrado ANTES de o projeto ser conectado (sem a marca).
     assert.strictEqual((await call('POST', '/mcp-servers', { id: 'agents', projectId: 'logiccus', name: 'Agents MCP', url: URL })).status, 201)
@@ -145,6 +167,7 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
   })
 
   it('o agente usa o MCP daqui pela camada local; em uso por ela, não se apaga', async () => {
+    assert.strictEqual(await bridge('logiccus.meu'), 404)
     const layer = await call('PUT', '/connections/logiccus/agents/sre/local', { allowedTools: ['mcp:meu/*'], permissions: [] })
     assert.strictEqual(layer.status, 200, JSON.stringify(layer.body))
     assert.deepStrictEqual(makeAgents().get('sre')!.allowedTools, ['mcp:meu/*'])
@@ -152,6 +175,8 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
       (await listed('logiccus.meu')).agents.map((agent: { id: string }) => agent.id),
       ['sre'],
     )
+    // A ponte dos SDKs (`/v1/mcp-proxy`) confere o agente que RODA: o MCP que só a camada liga passa por ela.
+    assert.strictEqual(await bridge('logiccus.meu'), 200)
     const inUse = await call('DELETE', '/mcp-servers/logiccus.meu')
     assert.deepStrictEqual([inUse.status, inUse.body.code], [409, 'mcp_server_in_use'], JSON.stringify(inUse.body))
     assert.strictEqual((await call('DELETE', '/connections/logiccus/agents/sre/local')).status, 200)

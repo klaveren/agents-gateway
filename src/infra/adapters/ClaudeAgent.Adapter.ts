@@ -28,6 +28,7 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
+import { cliToolResultDirs, trackCliToolResults } from './support/Cli.ToolResults'
 import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SERVER_NAME, usesGatewayCredential, withLocalNames } from '@infra/tools/bridges/Claude.ToolBridge'
 import { turnGrants } from '@infra/tools/Turn.Grants'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
@@ -205,9 +206,11 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       Object.keys(context.secretEnv ?? {}),
       this.agentFolder?.(agent.id, context.conversationProjectId),
       agent.adminOnly === true,
-      // Lida a cada chamada: parou de compartilhar, a pasta sai na próxima.
-      () => this.sharedFolders?.(askerOf(context).projectId, agent.id) ?? [],
+      // Lida a cada chamada: parou de compartilhar, a pasta sai na próxima. Junto, a saída grande que o CLI guardou desta conversa.
+      () => [...(this.sharedFolders?.(askerOf(context).projectId, agent.id) ?? []), ...cliToolResultDirs(sessionId)],
     )
+    const trackResults = () => configDir && trackCliToolResults(sessionId, { configDir, cwd: workDir, cliSessionId: native.sdkSessionId })
+    trackResults()
     // ⛔ O CLI é um processo filho: o header do MCP do gateway fica no argv dele, ao alcance do agente. Leva a CONCESSÃO do
     // turno (ver `Grant.Credential`), nunca o token de quem conversa.
     const grant = remotes.some(usesGatewayCredential) ? turnGrants().register({ tools: [], context: { ...context, sessionId } }) : undefined
@@ -290,6 +293,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
           // O CLI é a autoridade sobre o id da sessão; adotamos o que ele devolve.
           native.sdkSessionId = message.session_id
           native.started = true
+          trackResults()
 
           // O `init` diz o que o CLI de fato ligou. Nativa pedida e ausente (um compatível que não a
           // suporta, uma versão do CLI que a renomeou) vira aviso — em vez de um agente que só não usa.
@@ -798,7 +802,8 @@ function sharedFolderVerdict(toolName: string, input: Record<string, unknown>, c
     const abs = realOf(resolve(cwd, value))
     const dir = real.find((item) => abs === item || abs.startsWith(item + sep))
     if (!dir) continue
-    if (!SHARED_READ_TOOLS.has(toolName)) return { refused: `${toolName}: ${value} (shared resource files are read-only: the project that owns them edits them in the gateway)` }
+    if (!SHARED_READ_TOOLS.has(toolName))
+      return { refused: `${toolName}: ${value} (this folder is read-only here: shared resource files are edited in the gateway by the project that owns them)` }
     const reason = deniedPath(abs, dir)
     if (reason) return { refused: `${toolName}: ${value} (${reason})` }
     inside += 1

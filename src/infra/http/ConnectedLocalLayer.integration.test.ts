@@ -1,4 +1,6 @@
 import assert from 'node:assert'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
 import { ProjectConnectionService } from '@application/ProjectConnection.Service'
@@ -147,6 +149,29 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
 
     const read = await call('GET', LOCAL)
     assert.deepStrictEqual(read.body.result.layer.providers, [{ provider: 'claude', models: ['claude-haiku-5'] }])
+  })
+
+  it('get_agent (MCP do gateway): o agente lê a origem E o que roda aqui; sem camada, nada a mais', async () => {
+    const client = new Client({ name: 'teste', version: '1.0.0' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: bearer() } }))
+    const read = async (agentId: string, fields?: string[]) =>
+      JSON.parse(((await client.callTool({ name: 'get_agent', arguments: { agentId, ...(fields ? { fields } : {}) } })) as { content: Array<{ text: string }> }).content[0].text)
+    try {
+      const picked = await read('sre', ['allowedTools'])
+      assert.deepStrictEqual(Object.keys(picked).sort(), ['allowedTools', 'effectiveAllowedTools', 'id', 'localLayer'])
+      assert.deepStrictEqual(picked.allowedTools, [`off:${AUTO}`])
+      assert.deepStrictEqual(picked.effectiveAllowedTools, ['agent:ajudante'])
+      assert.deepStrictEqual(picked.localLayer.allowedTools, ['agent:ajudante', AUTO])
+      assert.deepStrictEqual(Object.keys(await read('sre', ['name'])).sort(), ['id', 'name'])
+      assert.deepStrictEqual((await read('sre')).effectiveAllowedTools, ['agent:ajudante'])
+      // Sem camada (e fora de projeto conectado): só o agente.
+      for (const id of ['ops', 'de-fora', 'ajudante']) {
+        const plain = await read(id)
+        assert.deepStrictEqual([plain.localLayer, plain.effectiveAllowedTools], [undefined, undefined], id)
+      }
+    } finally {
+      await client.close()
+    }
   })
 
   it('desliga o que veio da origem: o agente roda sem aquilo, o gravado não muda, e a atualização não religa', async () => {
