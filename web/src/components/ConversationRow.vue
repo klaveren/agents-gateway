@@ -214,8 +214,15 @@ async function remove(): Promise<void> {
 
 <template>
   <div ref="root" class="group relative overflow-x-clip rounded-xl" :class="{ 'z-30': menuOpen }" data-testid="conversation-row">
-    <!-- Atrás da linha, à direita: só ficam ao alcance quando a linha desliza. -->
-    <div class="absolute inset-y-0 right-0 flex" :style="{ width: `${ACTIONS_WIDTH}px` }" :aria-hidden="!isOpen">
+    <!-- Atrás da linha, à direita: só ficam ao alcance quando a linha desliza. Com a linha no lugar, somem de vez (depois
+         da volta dela): cobertos, ainda vazavam um fio de cor na borda arredondada. -->
+    <div
+      class="absolute inset-y-0 right-0 flex"
+      :class="{ 'invisible transition-[visibility] delay-200 duration-0 motion-reduce:delay-0': offset === 0 }"
+      :style="{ width: `${ACTIONS_WIDTH}px` }"
+      :aria-hidden="!isOpen"
+      data-testid="conversation-actions"
+    >
       <button
         type="button"
         class="flex w-1/2 flex-col items-center justify-center gap-1 bg-emerald-600 text-xs font-medium text-white hover:bg-emerald-500"
