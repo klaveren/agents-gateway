@@ -1,6 +1,8 @@
 <script setup lang="ts">
   import { computed, onMounted, ref, watch } from 'vue'
   import { api } from '@/lib/api'
+  import ListPager from '@/components/ListPager.vue'
+  import { usePaged } from '@/composables/usePaged'
   import { copyText } from '@/lib/clipboard'
   import { fullTime } from '@/lib/format'
   import { useAgentsStore } from '@/stores/agents'
@@ -62,6 +64,9 @@
 
   const toolOptions = computed(() => [...new Set([...knownTools.value, ...(tool.value ? [tool.value] : [])])].sort())
   const rowKey = (item: IErrorItem, index: number) => `${item.conversationId ?? ''}:${item.turn}:${item.kind}:${item.tool ?? ''}:${index}`
+  /** A chave da linha é a posição dela na lista INTEIRA: virar a página não troca a linha aberta pela vizinha. */
+  const rows = computed(() => (log.value?.items ?? []).map((item, index) => ({ item, key: rowKey(item, index) })))
+  const errorPage = usePaged(rows)
   const agentName = (id: string) => (id ? (agents.byId.get(id)?.name ?? id) : 'sem agente')
   const ORIGINS = { ui: 'tela', api: 'API', hook: 'hook', schedule: 'agendamento' }
 
@@ -197,7 +202,7 @@
 
         <p v-if="!log.items.length" class="text-sm text-zinc-500">Nenhum erro no período.</p>
         <ul v-else class="flex flex-col gap-2" data-test="error-list">
-          <li v-for="(item, index) in log.items" :key="rowKey(item, index)" class="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2" data-test="error-item">
+          <li v-for="{ item, key } in errorPage.items.value" :key="key" class="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2" data-test="error-item">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               <span class="rounded-full border px-2 py-0.5" :class="kindOf(item.kind).badge">{{ kindOf(item.kind).label }}</span>
               <span class="text-zinc-400" :title="fullTime(item.at)">{{ ago(item.at) }}</span>
@@ -213,19 +218,20 @@
             <div class="mt-1.5 flex items-start gap-2">
               <button
                 class="min-w-0 flex-1 cursor-pointer text-left font-mono text-xs break-words whitespace-pre-wrap text-zinc-300"
-                :class="expanded.has(rowKey(item, index)) ? '' : 'line-clamp-2'"
-                :aria-expanded="expanded.has(rowKey(item, index))"
+                :class="expanded.has(key) ? '' : 'line-clamp-2'"
+                :aria-expanded="expanded.has(key)"
                 data-test="message"
-                @click="toggle(rowKey(item, index))"
+                @click="toggle(key)"
               >
                 {{ item.message }}
               </button>
-              <button class="btn btn-secondary shrink-0 !px-2 !py-0.5 text-xs" aria-label="Copiar a mensagem" @click="copy(rowKey(item, index), item.message)">
-                {{ copied === rowKey(item, index) ? 'Copiado' : 'Copiar' }}
+              <button class="btn btn-secondary shrink-0 !px-2 !py-0.5 text-xs" aria-label="Copiar a mensagem" @click="copy(key, item.message)">
+                {{ copied === key ? 'Copiado' : 'Copiar' }}
               </button>
             </div>
           </li>
         </ul>
+        <ListPager v-model="errorPage.page.value" :pages="errorPage.pages.value" :total="errorPage.total.value" :size="errorPage.size" />
       </template>
     </div>
   </div>

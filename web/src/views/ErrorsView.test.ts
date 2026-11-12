@@ -119,4 +119,21 @@ describe('ErrorsView', () => {
     expect(message.className).not.toContain('line-clamp-2')
     expect(message.getAttribute('aria-expanded')).toBe('true')
   })
+
+  it('vem de 10 em 10; virar a página não abre a linha vizinha da que estava aberta', async () => {
+    result = log(Array.from({ length: 12 }, (_, index) => ({ ...item, message: `erro ${index + 1}` })))
+    const host = await mount()
+    const messages = () => [...host.querySelectorAll('[data-test="message"]')]
+    expect(messages()).toHaveLength(10)
+    expect(host.querySelector('[data-test="pager"]')!.textContent).toContain('1–10 de 12')
+    await click(messages()[0])
+    expect(messages()[0].getAttribute('aria-expanded')).toBe('true')
+
+    await click(host.querySelector('[data-test="pager-next"]'))
+    expect(messages().map((message) => message.textContent?.trim())).toEqual(['erro 11', 'erro 12'])
+    expect(messages().map((message) => message.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
+
+    await click(host.querySelector('[data-test="pager-prev"]'))
+    expect(messages()[0].getAttribute('aria-expanded')).toBe('true')
+  })
 })

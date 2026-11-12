@@ -6,6 +6,8 @@ import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
 import type { IPermissionRule } from '@/lib/types'
 import { useResource } from '@/composables/useResource'
+import ListPager from '@/components/ListPager.vue'
+import { usePaged } from '@/composables/usePaged'
 import { type IProjectAccount, type TAccountKind, useAccountsStore } from '@/stores/accounts'
 import { usePermissionsStore } from '@/stores/permissions'
 import { useProjectsStore } from '@/stores/projects'
@@ -51,6 +53,7 @@ const permissions = usePermissionsStore()
 const ready = ref(false)
 const listed = useResource(store.lists, () => (ready.value && project.value ? project.value.id : undefined))
 const accounts = computed(() => listed.data.value ?? [])
+const accountPage = usePaged(accounts, { by: (item) => item.id })
 const actionError = ref<string>()
 const error = computed(() => actionError.value ?? (listed.error.value === undefined ? undefined : listed.error.value instanceof Error ? listed.error.value.message : String(listed.error.value)))
 const notice = ref<string>()
@@ -330,7 +333,7 @@ watch(
         </form>
 
         <ul v-if="accounts.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-          <li v-for="account in accounts" :key="account.id" class="flex flex-col gap-1.5 px-3 py-2.5">
+          <li v-for="account in accountPage.items.value" :key="account.id" class="flex flex-col gap-1.5 px-3 py-2.5">
             <div class="flex flex-wrap items-center gap-2">
               <span class="font-medium text-zinc-100">{{ account.label }}</span>
               <code class="text-xs text-zinc-500">{{ account.id }}</code>
@@ -369,6 +372,7 @@ watch(
           </li>
         </ul>
         <p v-else-if="editing === null" class="text-xs text-zinc-500">Nenhuma conta neste projeto.</p>
+        <ListPager v-model="accountPage.page.value" :pages="accountPage.pages.value" :total="accountPage.total.value" :size="accountPage.size" />
       </template>
     </section>
 

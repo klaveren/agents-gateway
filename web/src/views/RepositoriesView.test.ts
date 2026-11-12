@@ -163,6 +163,36 @@ describe('RepositoriesView — os repositórios do projeto', () => {
     expect(test(host, 'repository-notas')).toBeTruthy()
   })
 
+  it('vem de 10 em 10: remover fica na página em que se estava, e o repositório novo leva para a dele', async () => {
+    const many = Array.from({ length: 12 }, (_, index) => ({ name: `a${String(index + 1).padStart(2, '0')}`, branch: 'automation', worktrees: [] }))
+    const { host } = await mount({
+      reply: (path, init) => {
+        if (path !== '/projects/p1/repositories') return init?.method === 'DELETE' ? { kept: [] } : undefined
+        return init?.method === 'POST' ? { name: 'rascunho', branch: 'automation', worktrees: [] } : many
+      },
+    })
+    const shown = () => [...test(host, 'repository-list')!.children].map((row) => row.getAttribute('data-test'))
+    expect(shown()).toHaveLength(10)
+    expect(test(host, 'pager')!.textContent).toContain('1–10 de 12')
+
+    test(host, 'new-repository')!.click()
+    await flush()
+    test(host, 'mode-local')!.click()
+    test(host, 'mode-local')!.dispatchEvent(new Event('change'))
+    await flush()
+    fill(test(host, 'repository-name'), 'rascunho')
+    test(host, 'repository-form')!.dispatchEvent(new Event('submit'))
+    await flush()
+    expect(shown()).toEqual(['repository-a11', 'repository-a12', 'repository-rascunho'])
+
+    test(host, 'remove-a12')!.click()
+    await flush()
+    confirm('Remover')!.click()
+    await flush()
+    expect(shown()).toEqual(['repository-a11', 'repository-rascunho'])
+    expect(test(host, 'pager')!.textContent).toContain('11–12 de 12')
+  })
+
   it('quem não administra o projeto nem o gateway não vê a tela', async () => {
     const { host, calls } = await mount({ role: 'member' })
     expect(host.textContent).toContain('Só quem administra este projeto vê os repositórios.')

@@ -18,6 +18,8 @@ import { renderMarkdown } from '@/lib/markdown'
 import { useResource } from '@/composables/useResource'
 import { useLedgerStore } from '@/stores/ledger'
 import ConfirmDialog from './ConfirmDialog.vue'
+import ListPager from './ListPager.vue'
+import { usePaged } from '@/composables/usePaged'
 
 /**
  * A guia MEMÓRIA de um agente: o ledger dele — o que aprendeu de COMO AGIR, por tema (gatilho, linhas, playbook). O
@@ -34,6 +36,7 @@ const ledgerWarnings = computed(() => (index.value?.warnings ?? []).filter((warn
 
 const filter = ref('')
 const shown = computed(() => filterContexts(contexts.value, filter.value))
+const contextPage = usePaged(shown)
 
 /** O contexto aberto: `''` = um novo; `undefined` = nenhum. */
 const open = ref<string>()
@@ -43,6 +46,11 @@ const { data: context } = useResource(store.contexts, () => (open.value ? contex
 
 const history = ref(false)
 const { data: revisions } = useResource(store.revisions, () => (open.value && history.value ? contextKey(props.agentId, open.value) : undefined))
+const linePage = usePaged(
+  computed(() => context.value?.lines ?? []),
+  { by: (line) => line.id },
+)
+const revisionPage = usePaged(computed(() => revisions.value ?? []))
 
 const draft = ref({ topic: '', trigger: '', playbook: '' })
 const preview = ref(false)
@@ -59,6 +67,7 @@ const confirm = ref<{ kind: 'context' } | { kind: 'line'; line: ILedgerLine }>()
 
 /** A busca nas linhas (no servidor); `undefined` = nenhuma feita. */
 const found = ref<{ query: string; lines: Array<ILedgerLine & { topic: string }> }>()
+const foundPage = usePaged(computed(() => found.value?.lines ?? []))
 
 function blankLine(): TLedgerLineInput {
   return { type: 'APRENDIZADO', trigger: '', learning: '', ref: '' }
@@ -214,7 +223,7 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
         <button type="button" class="ml-auto underline hover:text-zinc-200" @click="found = undefined">fechar</button>
       </div>
       <button
-        v-for="line in found.lines"
+        v-for="line in foundPage.items.value"
         :key="line.id"
         type="button"
         class="truncate text-left font-mono text-[12px] text-zinc-300 hover:text-zinc-100"
@@ -222,10 +231,11 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
       >
         {{ line.topic }} #{{ line.id }} {{ lineText(line) }}
       </button>
+      <ListPager v-model="foundPage.page.value" :pages="foundPage.pages.value" :total="foundPage.total.value" :size="foundPage.size" />
     </div>
 
     <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800" data-test="ledger-contexts">
-      <li v-for="item in shown" :key="item.topic">
+      <li v-for="item in contextPage.items.value" :key="item.topic">
         <button type="button" class="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-800/40" @click="openContext(item.topic)">
           <span class="min-w-0 flex-1">
             <span class="block truncate font-mono text-[13px] text-zinc-200">{{ item.topic }}</span>
@@ -249,6 +259,7 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
       <li v-if="index && !contexts.length" class="px-3 py-3 text-xs text-zinc-500">Nenhum contexto ainda: o agente cria os dele com <code>ledger_write</code>.</li>
       <li v-else-if="index && !shown.length" class="px-3 py-3 text-xs text-zinc-500">Nenhum contexto com "{{ filter }}".</li>
     </ul>
+    <ListPager v-model="contextPage.page.value" :pages="contextPage.pages.value" :total="contextPage.total.value" :size="contextPage.size" />
     <button v-if="!creating" type="button" class="btn btn-secondary self-start" @click="openContext('')">+ Novo contexto</button>
 
     <div v-if="editing" class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3" data-test="ledger-context">
@@ -290,7 +301,7 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
 
         <h4 class="mt-2 text-xs font-medium uppercase tracking-wide text-zinc-400">Linhas</h4>
         <ul class="flex flex-col divide-y divide-zinc-800 rounded-lg border border-zinc-800" data-test="ledger-lines">
-          <li v-for="line in context.lines" :key="line.id" class="flex flex-col gap-2 px-3 py-2">
+          <li v-for="line in linePage.items.value" :key="line.id" class="flex flex-col gap-2 px-3 py-2">
             <div v-if="editingLine !== line.id" class="flex items-start gap-2">
               <span class="min-w-0 flex-1">
                 <span class="block font-mono text-[12px] text-zinc-200">#{{ line.id }} {{ lineText(line) }}</span>
@@ -317,6 +328,7 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
           </li>
           <li v-if="!context.lines.length" class="px-3 py-2 text-xs text-zinc-500">Sem linhas.</li>
         </ul>
+        <ListPager v-model="linePage.page.value" :pages="linePage.pages.value" :total="linePage.total.value" :size="linePage.size" />
 
         <div class="grid gap-2 sm:grid-cols-[10rem_1fr]" data-test="ledger-line-new">
           <select v-model="lineDraft.type" class="input text-sm" :title="LEDGER_LINE_TYPES.find((type) => type.id === lineDraft.type)?.hint">
@@ -337,7 +349,7 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
           {{ history ? 'Esconder o histórico' : 'Ver o histórico' }}
         </button>
         <ol v-if="history" class="flex flex-col gap-2" data-test="ledger-history">
-          <li v-for="revision in revisions ?? []" :key="revision.id" class="rounded-lg border border-zinc-800 px-3 py-2 text-xs">
+          <li v-for="revision in revisionPage.items.value" :key="revision.id" class="rounded-lg border border-zinc-800 px-3 py-2 text-xs">
             <p class="text-zinc-300">
               <strong class="font-medium">{{ authorLabel(revision.by) }}</strong> {{ ACTION_LABEL[revision.action] }}<template v-if="revision.lineId"> #{{ revision.lineId }}</template>
               <span class="text-zinc-500"> · {{ fullTime(revision.at) }}</span>
@@ -347,6 +359,7 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
           </li>
           <li v-if="revisions && !revisions.length" class="text-xs text-zinc-500">Sem revisões.</li>
         </ol>
+        <ListPager v-model="revisionPage.page.value" :pages="revisionPage.pages.value" :total="revisionPage.total.value" :size="revisionPage.size" />
       </template>
     </div>
 
