@@ -44,17 +44,23 @@ afterEach(() => {
 })
 
 describe('PermissionsView — as regras do sistema', () => {
-  it('aparecem só na primeira guia, não em cada categoria', async () => {
+  it('têm a guia delas: fora das categorias, e sem o editor nem o salvar', async () => {
     const { host } = await mount()
     expect(test(host, 'tab-terminal')!.getAttribute('aria-selected')).toBe('true')
-    expect(test(host, 'system-rules')!.textContent).toContain('Regras do sistema')
+    expect(test(host, 'system-rules')).toBeNull()
+    expect(test(host, 'tab-system')!.textContent).toContain('1')
+
+    test(host, 'tab-system')!.click()
+    await flush()
+    expect(test(host, 'tab-system')!.getAttribute('aria-selected')).toBe('true')
+    expect(test(host, 'tab-terminal')!.getAttribute('aria-selected')).toBe('false')
+    expect(test(host, 'system-rules')!.textContent).toContain('**/.env')
+    expect(test(host, 'system-rules')!.textContent).toContain('segredo')
+    expect(host.textContent).not.toContain('Salvar permissões')
 
     test(host, 'tab-read')!.click()
     await flush()
     expect(test(host, 'system-rules')).toBeNull()
-
-    test(host, 'tab-terminal')!.click()
-    await flush()
-    expect(test(host, 'system-rules')).toBeTruthy()
+    expect(test(host, 'tab-read')!.getAttribute('aria-selected')).toBe('true')
   })
 })

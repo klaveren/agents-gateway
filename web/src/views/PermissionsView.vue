@@ -57,9 +57,8 @@ const actionError = ref<string>()
 const error = computed(() => actionError.value ?? (stored.error.value === undefined ? undefined : stored.error.value instanceof Error ? stored.error.value.message : String(stored.error.value)))
 const notice = ref<string>()
 const busy = ref(false)
-const showSystem = ref(false)
-/** A guia: as regras ou o histórico delas (`#historico` no endereço abre nele). */
-const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
+/** A guia: as regras (por categoria), as do sistema ou o histórico (`#historico` no endereço abre nele). */
+const tab = ref<'edit' | 'system' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
 /** A categoria aberta: uma guia por categoria, como no agente. */
 const section = ref<TPermissionCategory>('terminal')
 
@@ -139,6 +138,19 @@ watch(decisionAgent, () => void loadDecisions())
           (segredos e comandos que derrubam o servidor) valem sempre.
         </div>
         <PermissionCategoryTabs v-model="section" :rules="rules" :active="tab === 'edit'" @pick="tab = 'edit'">
+          <!-- As regras do sistema valem para todas as categorias: têm a guia delas. -->
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="tab === 'system'"
+            data-test="tab-system"
+            class="flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+            :class="tab === 'system' ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+            @click="tab = 'system'"
+          >
+            Sistema
+            <span v-if="system.length" class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">{{ system.length }}</span>
+          </button>
           <button
             type="button"
             role="tab"
@@ -152,6 +164,16 @@ watch(decisionAgent, () => void loadDecisions())
           </button>
         </PermissionCategoryTabs>
         <HistoryPanel v-if="tab === 'history'" kind="project-permissions" :id="project.id" @restored="restored" />
+        <section v-else-if="tab === 'system'" class="flex flex-col gap-2" data-test="system-rules">
+          <p class="text-xs text-zinc-500">Regras do sistema: valem sempre, sem exceção, antes das do agente e das do projeto. Não se editam.</p>
+          <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800 text-xs">
+            <li v-for="(rule, index) in system" :key="index" class="flex items-baseline gap-3 px-3 py-1.5">
+              <span class="w-28 shrink-0 text-zinc-500">{{ label(rule.category) }}</span>
+              <code class="min-w-0 flex-1 truncate text-zinc-200" :title="rule.pattern">{{ rule.pattern }}</code>
+              <span class="shrink-0 text-zinc-500">{{ rule.note }}</span>
+            </li>
+          </ul>
+        </section>
         <template v-else>
           <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
           <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
@@ -162,21 +184,6 @@ watch(decisionAgent, () => void loadDecisions())
           </fieldset>
           <p v-if="notice" class="text-xs text-emerald-300">{{ notice }}</p>
           <p v-else-if="meta.updatedBy" class="text-xs text-zinc-500">Alterado por {{ meta.updatedBy }} em {{ fullTime(meta.updatedAt) }}</p>
-
-          <!-- As regras do sistema valem para todas as categorias: aparecem uma vez, na primeira guia. -->
-          <section v-if="section === PERMISSION_SECTIONS[0]!.category" class="rounded-xl border border-zinc-800" data-test="system-rules">
-            <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-300" @click="showSystem = !showSystem">
-              Regras do sistema <span class="text-xs text-zinc-500">{{ system.length }} · valem sempre, sem exceção</span>
-              <span class="ml-auto text-xs text-zinc-500">{{ showSystem ? '▴' : '▾' }}</span>
-            </button>
-            <ul v-if="showSystem" class="flex flex-col gap-0.5 border-t border-zinc-800 px-3 py-2 text-xs">
-              <li v-for="(rule, index) in system" :key="index" class="flex gap-2">
-                <span class="w-28 shrink-0 text-zinc-500">{{ label(rule.category) }}</span>
-                <code class="min-w-0 flex-1 truncate text-zinc-300">{{ rule.pattern }}</code>
-                <span class="shrink-0 text-zinc-500">{{ rule.note }}</span>
-              </li>
-            </ul>
-          </section>
 
           <PermissionTester :project-id="project.id" :initial="section" />
 
