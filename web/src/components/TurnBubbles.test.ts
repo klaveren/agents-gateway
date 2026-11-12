@@ -119,3 +119,21 @@ describe('TurnBubbles — aviso do gateway', () => {
     expect(host.querySelector('.bg-emerald-600\\/90')?.textContent).toContain('oi')
   })
 })
+
+describe('TurnBubbles — conversa com outro agente', () => {
+  it('o talk com mensagem vira link para a conversa (também o delegate_to_agent dos turnos antigos); o talk que só lista, não', async () => {
+    const reply = JSON.stringify({ to: 'integra', conversation: 'gw_filha', reply: 'feito' })
+    const host = await mount({
+      toolCalls: [
+        { tool: 'talk', args: {}, result: JSON.stringify({ agents: [{ id: 'integra' }], conversations: [{ conversation: 'gw_x', to: 'integra' }] }) },
+        { tool: 'mcp__gateway-local__talk', args: { to: 'integra', message: 'oi' }, result: [{ type: 'text', text: reply }] },
+        { tool: 'delegate_to_agent', args: { agentId: 'tradutor', message: 'x' }, result: '{"sessionId":"gw_velha","reply":"ok"}' },
+      ] as ITurn['toolCalls'],
+    })
+    const links = [...host.querySelectorAll<HTMLAnchorElement>('[data-test="tools"] a')]
+    expect(links.map((link) => [link.getAttribute('href'), link.textContent?.trim()])).toEqual([
+      ['/c/gw_filha', 'Falou com integra →'],
+      ['/c/gw_velha', 'Falou com tradutor →'],
+    ])
+  })
+})
