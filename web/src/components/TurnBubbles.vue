@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { computed, onBeforeUnmount, ref } from 'vue'
+  import { computed, ref } from 'vue'
   import { copyText } from '@/lib/clipboard'
   import { url } from '@/lib/api'
   import { bytes, CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
@@ -59,16 +59,12 @@
     return { agentId, sessionId }
   }
   /**
-   * ⚖️ NO CELULAR, as ferramentas viram UMA linha: "Executou N ferramentas ›", que abre a lista inteira. À vista ficam só
-   * as que ainda rodam e as delegações (são links para a conversa filha). Em tela larga, todas à vista.
+   * ⚖️ As ferramentas viram UMA linha: "Executou N ferramentas ›", que abre a lista inteira. À vista ficam só as que ainda
+   * rodam e as delegações (são links para a conversa filha). Era só no celular; virou o padrão em toda largura — o turno
+   * longo empurrava a resposta para baixo de dezenas de chips.
    */
-  const narrowQuery = typeof window !== 'undefined' ? window.matchMedia?.('(max-width: 767px)') : undefined
-  const narrow = ref(!!narrowQuery?.matches)
-  const onMedia = (event: MediaQueryListEvent) => (narrow.value = event.matches)
-  narrowQuery?.addEventListener?.('change', onMedia)
-  onBeforeUnmount(() => narrowQuery?.removeEventListener?.('change', onMedia))
   const showAllTools = ref(false)
-  const grouped = computed(() => narrow.value && tools.value.length > 1)
+  const grouped = computed(() => tools.value.length > 1)
   const shownTools = computed(() => {
     const all = tools.value.map((tool, index) => ({ tool, index }))
     if (!grouped.value || showAllTools.value) return all

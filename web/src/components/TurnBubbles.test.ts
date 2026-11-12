@@ -33,11 +33,14 @@ describe('TurnBubbles — ferramenta com erro', () => {
         { tool: 'bash', args: {}, error: 'falhou\nem duas linhas' },
       ] as ITurn['toolCalls'],
     })
-    const chip = host.querySelector<HTMLButtonElement>('button[aria-expanded]')!
+    // As que terminaram ficam na linha "Executou N ferramentas": abrir a lista mostra o chip com ✕.
+    host.querySelector<HTMLButtonElement>('[data-test="tools-toggle"]')!.click()
+    await nextTick()
+    const chip = host.querySelector<HTMLButtonElement>('[data-test="tools"] button[aria-expanded]')!
     expect(chip.textContent).toContain('✕')
     expect(chip.getAttribute('aria-expanded')).toBe('false')
     expect(host.querySelector('[data-test="tool-error"]')).toBeNull()
-    expect(host.querySelectorAll('button[aria-expanded]')).toHaveLength(1)
+    expect(host.querySelectorAll('[data-test="tools"] button[aria-expanded]')).toHaveLength(1)
 
     chip.click()
     await nextTick()
@@ -52,14 +55,7 @@ describe('TurnBubbles — ferramenta com erro', () => {
   })
 })
 
-describe('TurnBubbles — ferramentas no celular', () => {
-  const narrow = (matches: boolean) =>
-    Object.defineProperty(window, 'matchMedia', {
-      configurable: true,
-      value: () => ({ matches, addEventListener: () => undefined, removeEventListener: () => undefined }),
-    })
-  afterEach(() => Reflect.deleteProperty(window, 'matchMedia'))
-
+describe('TurnBubbles — ferramentas agrupadas', () => {
   const calls = [
     { tool: 'Read', args: {} },
     { tool: 'run_bash', args: {}, error: 'falhou' },
@@ -71,7 +67,6 @@ describe('TurnBubbles — ferramentas no celular', () => {
   ] as ITurn['toolCalls']
 
   it('uma linha "Executou N ferramentas", com os erros, que abre a lista inteira e recolhe', async () => {
-    narrow(true)
     const host = await mount({ toolCalls: calls })
     const toggle = host.querySelector<HTMLButtonElement>('[data-test="tools-toggle"]')!
     expect(toggle.textContent).toContain('Executou 7 ferramentas')
@@ -84,16 +79,9 @@ describe('TurnBubbles — ferramentas no celular', () => {
   })
 
   it('uma ferramenta só fica como chip, sem a linha', async () => {
-    narrow(true)
     const host = await mount({ toolCalls: [{ tool: 'Read', args: {} }] as ITurn['toolCalls'] })
     expect(host.querySelector('[data-test="tools-toggle"]')).toBeNull()
     expect(host.querySelector('[data-test="tools"]')!.textContent).toContain('Read')
-  })
-
-  it('em tela larga, todas à vista e sem botão', async () => {
-    narrow(false)
-    const host = await mount({ toolCalls: calls })
-    expect(host.querySelector('[data-test="tools-toggle"]')).toBeNull()
   })
 })
 
