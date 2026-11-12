@@ -134,6 +134,18 @@ export class SqliteAgentRepository implements IAgentRepository {
     this.db.prepare('INSERT OR IGNORE INTO agent_meta (key, value) VALUES (?, ?)').run(mark, new Date().toISOString())
   }
 
+  migrateAllOnce(key: string, change: (agent: IAgent) => IAgent | undefined, by: string): void {
+    const mark = `migration:${key}`
+    if (this.db.prepare('SELECT 1 FROM agent_meta WHERE key = ?').get(mark)) return
+    for (const { createdAt: _created, updatedAt: _updated, updatedBy: _by, ...agent } of this.list()) {
+      const next = change(agent)
+      if (!next) continue
+      this.save(next, by)
+      console.log(`[agentes] ${agent.id}: migração ${key} aplicada`)
+    }
+    this.db.prepare('INSERT OR IGNORE INTO agent_meta (key, value) VALUES (?, ?)').run(mark, new Date().toISOString())
+  }
+
   delete(id: string): boolean {
     return this.db.prepare('DELETE FROM agents WHERE id = ?').run(id).changes > 0
   }

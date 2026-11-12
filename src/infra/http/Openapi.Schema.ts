@@ -144,6 +144,23 @@ const turnSchema = {
   },
 }
 
+const watchSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    kind: { type: 'string', enum: ['command', 'timer'], description: '`command` = the gateway runs a check command; `timer` = a wake-up time (`wake_me`)' },
+    label: { type: 'string', description: 'What is being waited for, as the agent wrote it' },
+    command: { type: 'string', description: 'The check command (secrets masked). Only for `command`' },
+    everySeconds: { type: 'integer', description: 'Seconds between checks. Only for `command`' },
+    status: { type: 'string', enum: ['active', 'met', 'expired', 'failed', 'cancelled'] },
+    createdAt: { type: 'string', format: 'date-time' },
+    deadlineAt: { type: 'string', format: 'date-time', description: 'When the watch gives up; for `timer`, when it wakes the conversation' },
+    checks: { type: 'integer' },
+    endReason: { type: 'string' },
+  },
+  required: ['id', 'kind', 'label', 'status', 'createdAt', 'deadlineAt', 'checks'],
+}
+
 const sharedConversationSchema = {
   type: 'object',
   description: 'The public, read-only projection: no tool calls, reasoning, attachments, classification, usage or metadata.',
@@ -6148,6 +6165,37 @@ export const OPENAPI_DOCUMENT = {
           '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) },
           '404': failures['404'],
           '422': failures['422'],
+        },
+      },
+    },
+    '/sessions/{id}/watches': {
+      get: {
+        summary:
+          'The ACTIVE watches of a conversation: what the agent left the gateway checking (`watch_start`) or waiting for (`wake_me`) so the conversation resumes by itself. Only the owner; anyone else gets 404',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK. Empty `watches` = nothing is being watched.',
+            ...json(
+              envelope({ type: 'object', properties: { sessionId: { type: 'string' }, watches: { type: 'array', items: watchSchema } }, required: ['sessionId', 'watches'] }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/sessions/{id}/watches/{watchId}': {
+      delete: {
+        summary: 'Cancels an active watch of a conversation. No notice reaches the conversation for a cancelled watch. Only the owner; anyone else gets 404',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'watchId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'OK: the watch, now `cancelled`.', ...json(envelope(watchSchema)) },
+          '401': failures['401'],
+          '404': failures['404'],
         },
       },
     },

@@ -58,6 +58,6 @@ export function loopRefusal(times: number, stopAt: number): string {
   return [
     `Recusado pelo detector de laço do gateway: esta é a ${times}ª chamada idêntica neste turno (você já fez ${times - 1}), e o resultado não muda.`,
     countdown,
-    'Mude a abordagem ou responda com o que já sabe. Para esperar algo (um processo, um horário), não repita a chamada: use bash_start e bash_logs, ou encerre o turno dizendo quando retomar.',
+    'Mude a abordagem ou responda com o que já sabe. Para esperar algo (um processo, um horário), não repita a chamada: use bash_start e bash_logs, ou arme uma vigia (watch_start, wake_me) e encerre o turno. Sem vigia armada, não prometa avisar: diga que é preciso perguntar de novo.',
   ].join(' ')
 }

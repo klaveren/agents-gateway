@@ -6,6 +6,7 @@ import { after, before, describe, it } from 'node:test'
 import type Anthropic from '@anthropic-ai/sdk'
 import type { query } from '@anthropic-ai/claude-agent-sdk'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
+import { waitLine } from '@domain/Ambient.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
@@ -114,7 +115,7 @@ describe('AgentProvider — o ambiente e o id da conversa', () => {
     const directory = projectWorkspacePath('alfa')
     assert.strictEqual(
       queries[0].options?.systemPrompt,
-      `Você escreve código.\n\n## Ambiente\n- Agente: dev.\n- Projeto: Alfa (projectId "alfa").\n- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`,
+      `Você escreve código.\n\n## Ambiente\n- Agente: dev.\n- Projeto: Alfa (projectId "alfa").\n- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.\n${waitLine({})}`,
     )
     assert.strictEqual(queries[0].options?.cwd, directory, 'o diretório dito é o `cwd` da lane')
     assert.strictEqual(await promptText(queries[0].prompt), `<contexto>id desta conversa: ${session.id}</contexto>\n\noi`)
@@ -132,7 +133,7 @@ describe('AgentProvider — o ambiente e o id da conversa', () => {
     await run(provider.sendMessage(session.id, { text: 'oi' }))
     await run(provider.sendMessage(session.id, { text: 'segue' }))
 
-    assert.strictEqual(chats[0].system, 'Você monta agentes.\n\n## Ambiente\n- Agente: atlas.\n- Diretório de trabalho: uma pasta vazia, só desta conversa.')
+    assert.strictEqual(chats[0].system, `Você monta agentes.\n\n## Ambiente\n- Agente: atlas.\n- Diretório de trabalho: uma pasta vazia, só desta conversa.\n${waitLine({})}`)
     assert.strictEqual(chats[0].last, `<contexto>id desta conversa: ${session.id}</contexto>\n\noi`)
     assert.strictEqual(chats[1].last, 'segue')
 
@@ -148,7 +149,7 @@ describe('AgentProvider — o ambiente e o id da conversa', () => {
     await run(provider.sendMessage(session.id, { text: 'crie um agente' }))
     assert.match(
       String(queries[0].options?.systemPrompt),
-      /\n- Projeto atual: Alfa \(projectId "alfa"\)\. Agentes, hooks e conversas que você criar aqui pertencem a este projeto\.\n- Diretório de trabalho: uma pasta vazia, só desta conversa\.$/,
+      /\n- Projeto atual: Alfa \(projectId "alfa"\)\. Agentes, hooks e conversas que você criar aqui pertencem a este projeto\.\n- Diretório de trabalho: uma pasta vazia, só desta conversa\.\n- Você não volta sozinho a esta conversa[^\n]+$/,
     )
     assert.notStrictEqual(queries[0].options?.cwd, projectWorkspacePath('alfa'))
   })

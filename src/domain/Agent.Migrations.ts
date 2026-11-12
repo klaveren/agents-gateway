@@ -13,21 +13,22 @@ import {
   ATLAS_BUILDERS_SECTION,
   ATLAS_KNOWLEDGE_LINE,
   ATLAS_MIGRATION_SECTION,
-  ATLAS_TALK_LINE,
   ATLAS_TRIGGERS,
   BUILDER_DELEGATIONS,
   LEGACY_ATLAS_ADMIN_LITE_PROMPT,
   LEGACY_ATLAS_ADMIN_PROMPT,
   LEGACY_ATLAS_BUILDERS_RULE,
+  LEGACY_ATLAS_TALK_LINE,
   LEGACY_ATLAS_TRIGGER_SECTIONS,
   RETIRED_ATLAS_AGENT_TOOL,
   RETIRED_ATLAS_TOOLS,
 } from './Agent.Seed'
 import { IAgent } from './models/Agent.Model'
 import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
-import { toCapabilities } from './Capability.Catalog'
+import { hasWatch, toCapabilities } from './Capability.Catalog'
 import { EProvider } from './enums/EProvider.Enum'
 import { gatewayEdition, TEdition } from './Edition.Policy'
+import { IAgentRepository } from './ports/AgentRepository.Port'
 
 /** A nativa que saiu do catálogo (a lista de tarefas agora é do gateway). */
 export const RETIRED_TODO_NATIVE = 'sdk:TodoWrite'
@@ -37,7 +38,27 @@ export interface IAgentMigration {
   key: string
   /** Os agentes da semente que ela toca; `'*'` = todos os que existem no banco quando o gateway sobe. */
   agentIds: readonly string[] | '*'
+  /**
+   * `'gateway'` (com `agentIds: '*'`): UMA VEZ POR BANCO, não por agente (ver `migrateAllOnce`). É a de quem LIGA algo
+   * em todos: o agente criado depois fica como quem o criou deixou, em vez de ganhar de volta no boot seguinte.
+   */
+  once?: 'gateway'
   change: (agent: IAgent) => IAgent | undefined
+}
+
+/** O que o boot faz com as migrações (ver `makeAgents`): cada uma, uma vez, nos agentes que ela toca. */
+export function applyAgentMigrations(repository: IAgentRepository, by = 'seed', migrations: readonly IAgentMigration[] = AGENT_MIGRATIONS): void {
+  for (const migration of migrations) {
+    if (migration.once === 'gateway') repository.migrateAllOnce(migration.key, migration.change, by)
+    else
+      for (const id of migration.agentIds === '*' ? repository.list().map((agent) => agent.id) : migration.agentIds) repository.migrateOnce(migration.key, id, migration.change, by)
+  }
+}
+
+/** O prompt sem a linha de conversar com outro agente (ver `LEGACY_ATLAS_TALK_LINE`), onde ela ainda está idêntica. */
+export function withoutAtlasTalkLine(prompt: string): string {
+  if (!prompt.includes(LEGACY_ATLAS_TALK_LINE)) return prompt
+  return prompt.split(`\n${LEGACY_ATLAS_TALK_LINE}`).join('').split(LEGACY_ATLAS_TALK_LINE).join('').trim()
 }
 
 const hasTrigger = (agent: IAgent, id: string) => (agent.triggers ?? []).some((trigger) => trigger.id === id)
@@ -45,7 +66,7 @@ const hasTrigger = (agent: IAgent, id: string) => (agent.triggers ?? []).some((t
 /**
  * O prompt do Atlas Admin depois que as seções viraram trigger. O da semente de antes, intacto, vira o de hoje. O que
  * quem administra mexeu perde só as seções que AINDA são idênticas às de antes (a editada fica, é dele) e ganha no fim
- * as duas linhas novas (na lite, só a de conversar: ela não tem o importador).
+ * a linha do importador (menos na lite, que não o tem).
  */
 export function atlasTriggersPrompt(prompt: string, edition: TEdition = gatewayEdition()): string {
   if (prompt === LEGACY_ATLAS_ADMIN_PROMPT) return ATLAS_ADMIN_PROMPT
@@ -56,8 +77,7 @@ export function atlasTriggersPrompt(prompt: string, edition: TEdition = gatewayE
   if (edition !== 'lite' && !next.includes('## Instalar o que falta')) next = next.replace(ATLAS_INSTALL_REFERENCE.legacy, ATLAS_INSTALL_REFERENCE.current)
   next = next.replace(ATLAS_AGENT_LINE, ATLAS_ADMIN_AGENT_LINE).replace(LEGACY_ATLAS_BUILDERS_RULE, ATLAS_ADMIN_BUILDERS_RULE)
   if (next !== prompt) next = next.replace(/\n{3,}/g, '\n\n').trimEnd()
-  const lines = [...(next.includes('start_conversation') ? [] : [ATLAS_TALK_LINE]), ...(edition === 'lite' || next.includes('migrate-environment') ? [] : [ATLAS_IMPORT_LINE])]
-  return lines.length ? `${next.trimEnd()}\n\n${lines.join('\n')}` : next
+  return edition === 'lite' || next.includes('migrate-environment') ? next : `${next.trimEnd()}\n\n${ATLAS_IMPORT_LINE}`
 }
 
 /**
@@ -175,5 +195,23 @@ export const AGENT_MIGRATIONS: readonly IAgentMigration[] = [
       const allowedTools = toCapabilities(agent.allowedTools)
       return allowedTools.length === agent.allowedTools.length && allowedTools.every((tool, index) => tool === agent.allowedTools[index]) ? undefined : { ...agent, allowedTools }
     },
+  },
+  {
+    // A linha "conversar com outro agente (start_conversation, send_message)" citava ferramentas que agente nenhum
+    // recebe: sai do Atlas Admin que a ganhou (pela semente ou pela `atlas-triggers`), onde o texto ainda é idêntico.
+    key: 'atlas-talk-line',
+    agentIds: ['atlas-admin'],
+    change: (agent) => {
+      const systemPrompt = withoutAtlasTalkLine(agent.systemPrompt)
+      return systemPrompt === agent.systemPrompt ? undefined : { ...agent, systemPrompt }
+    },
+  },
+  {
+    // As VIGIAS (`watch_start`, `wake_me`): todo agente que conversa com gente ganha a capacidade, uma vez. Subagente
+    // não: a conversa de delegação recusa vigia. Depois, quem administra desliga onde quiser (por isso `once: 'gateway'`).
+    key: 'watch-capability',
+    agentIds: '*',
+    once: 'gateway',
+    change: (agent) => (agent.role === 'subagent' || hasWatch(agent.allowedTools) ? undefined : { ...agent, allowedTools: [...agent.allowedTools, 'cap:watch'] }),
   },
 ]

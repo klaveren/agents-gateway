@@ -2,6 +2,7 @@ import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
 import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
 import { AGENT_TRIGGER_TOOL } from './models/Resource.Model'
+import { WATCH_START_TOOL, WATCH_TOOLS } from './models/Watch.Model'
 import { TNativeToolRisk } from './Native.Tools'
 
 /**
@@ -14,7 +15,7 @@ import { TNativeToolRisk } from './Native.Tools'
  */
 export const CAPABILITY_PREFIX = 'cap:'
 
-export type TCapabilityId = 'terminal' | 'files.read' | 'files.write' | 'web.search' | 'web.fetch' | 'todos' | 'triggers'
+export type TCapabilityId = 'terminal' | 'files.read' | 'files.write' | 'web.search' | 'web.fetch' | 'todos' | 'triggers' | 'watch'
 
 /** O que roda num provedor: ferramentas concretas (locais ou `sdk:`), o que o CLI já faz sozinho, ou nada. */
 type TRun = { tools: readonly string[]; note: string } | { builtIn: string } | { unavailable: true }
@@ -105,6 +106,15 @@ export const CAPABILITIES: readonly ICapability[] = [
     local: [AGENT_TRIGGER_TOOL],
     runs: {},
   },
+  {
+    id: 'watch',
+    label: 'Vigias',
+    description:
+      'O agente deixa o gateway conferindo algo (um comando, de tempos em tempos) ou esperando um horário, e a conversa retoma sozinha quando acontecer. A vigia por comando pede o Terminal; sem ele, só o despertador.',
+    risk: 'session',
+    local: WATCH_TOOLS,
+    runs: {},
+  },
 ]
 
 export function isCapability(id: string): boolean {
@@ -123,6 +133,8 @@ export const CAPABILITY_TOOLS: ReadonlySet<string> = new Set(
     'sdk:codex:shell',
   ),
 )
+
+const TERMINAL_TOOL = 'run_bash'
 
 /** ⛔ Os terminais que NÃO passam pelas permissões (o Bash nativo do Claude, o do Codex): nunca saem da resolução. */
 const UNGUARDED_TERMINALS: ReadonlySet<string> = new Set(['sdk:Bash', 'sdk:codex:shell'])
@@ -158,7 +170,9 @@ export function resolveCapabilities(allowedTools: readonly string[], target: IRe
     } else if ('tools' in run) resolved.push(...run.tools)
     else if ('unavailable' in run) unavailable.push(item.label)
   }
-  return { allowedTools: [...new Set(resolved)], unavailable }
+  const tools = [...new Set(resolved)]
+  // ⛔ A vigia por comando roda no terminal do agente: sem o terminal, sobra o despertador (`wake_me`).
+  return { allowedTools: tools.includes(TERMINAL_TOOL) ? tools : tools.filter((tool) => tool !== WATCH_START_TOOL), unavailable }
 }
 
 /** Como a capacidade roda em cada provedor, para a tela ("nativa do Claude", "do gateway", "indisponível"). */
@@ -209,6 +223,11 @@ export function agentFolderAccess(allowedTools: readonly string[]): { read: bool
 }
 
 /** O agente tem o terminal (a capacidade, ou a ferramenta dela já resolvida)? */
+/** O agente arma vigia (a capacidade, ou uma das ferramentas dela escolhida direto): é a quem a regra de espera fala. */
+export function hasWatch(allowedTools: readonly string[]): boolean {
+  return allowedTools.includes('cap:watch') || WATCH_TOOLS.some((tool) => allowedTools.includes(tool))
+}
+
 export function hasTerminal(allowedTools: readonly string[]): boolean {
   const caps = new Set(toCapabilities(allowedTools))
   return caps.has('cap:terminal') || !!capability('cap:terminal')?.local.some((tool) => caps.has(tool))

@@ -1,6 +1,9 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { ambientSection, conversationNote } from './Ambient.Policy'
+import { ambientSection, conversationNote, waitLine } from './Ambient.Policy'
+
+/** A linha de todo agente sem vigia: não promete avisar depois. */
+const NO_WATCH = waitLine({})
 
 describe('Ambient.Policy', () => {
   it('com o painel: um item por pedido, e as etapas do item no update_todos', () => {
@@ -11,7 +14,7 @@ describe('Ambient.Policy', () => {
   })
 
   it('sem projeto nem diretório: o agente e a pasta vazia da conversa', () => {
-    assert.strictEqual(ambientSection({ agentId: 'atlas' }), '## Ambiente\n- Agente: atlas.\n- Diretório de trabalho: uma pasta vazia, só desta conversa.')
+    assert.strictEqual(ambientSection({ agentId: 'atlas' }), `## Ambiente\n- Agente: atlas.\n- Diretório de trabalho: uma pasta vazia, só desta conversa.\n${NO_WATCH}`)
   })
 
   it('o agente do projeto: o projeto e a pasta dele', () => {
@@ -22,6 +25,7 @@ describe('Ambient.Policy', () => {
         '- Agente: dev.',
         '- Projeto: Alfa (projectId "alfa").',
         '- Diretório de trabalho: /dados/projects/alfa — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.',
+        NO_WATCH,
       ].join('\n'),
     )
   })
@@ -34,6 +38,7 @@ describe('Ambient.Policy', () => {
         '- Agente: atlas.',
         '- Projeto atual: projectId "alfa". Agentes, hooks e conversas que você criar aqui pertencem a este projeto.',
         '- Diretório de trabalho: uma pasta vazia, só desta conversa.',
+        NO_WATCH,
       ].join('\n'),
     )
   })
@@ -64,5 +69,21 @@ describe('Ambient.Policy', () => {
       /use `\$TMPDIR` \(persiste entre os comandos do terminal\)\. O `\/tmp` do terminal é seu e some no fim do comando.*pasta tmp do projeto/,
     )
     assert.doesNotMatch(ambientSection({ agentId: 'maya' }), /TMPDIR/)
+  })
+
+  it('⛔ a promessa vazia: sem vigia, o agente não promete avisar; com vigia, espera no turno ou arma uma', () => {
+    assert.match(NO_WATCH, /^- Você não volta sozinho a esta conversa: só fala quando recebe mensagem\. Não prometa avisar depois/)
+    assert.match(NO_WATCH, /é preciso perguntar de novo\.$/)
+    assert.doesNotMatch(NO_WATCH, /watch_start|wake_me/)
+
+    const full = ambientSection({ agentId: 'argos', terminal: true, watch: true })
+    assert.match(full, /se é curto \(até uns minutos\), espere DENTRO do turno e confira antes de responder/)
+    assert.match(full, /arme uma vigia — `watch_start` \(um comando confere de tempos em tempos[^\n]+ou `wake_me`/)
+    assert.match(full, /Só prometa "te aviso quando…" com a vigia armada/)
+
+    // Sem o terminal não há vigia por comando: só o despertador.
+    const alarm = waitLine({ watch: true })
+    assert.match(alarm, /arme uma vigia — `wake_me` \(acorda esta conversa num horário/)
+    assert.doesNotMatch(alarm, /watch_start/)
   })
 })
