@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { ITodoItem } from '@/lib/types'
 
 /**
  * A lista de tarefas que o agente mantém na conversa (`update_todos`), logo acima da caixa de mensagem. Recolhida, mostra
  * a contagem e o que está em andamento; aberta, a lista inteira.
+ * ⚖️ Tudo concluído, ela recolhe sozinha (não ocupa a tela à toa); com tarefa por fazer, volta a abrir. No meio, vale o
+ * clique de quem lê.
  */
 const props = defineProps<{ items: ITodoItem[] }>()
-const open = ref(true)
 
 const done = computed(() => props.items.filter((item) => item.status === 'done').length)
 const current = computed(() => props.items.find((item) => item.status === 'in_progress'))
 const finished = computed(() => props.items.every((item) => item.status === 'done' || item.status === 'cancelled'))
+const open = ref(!finished.value)
+watch(finished, (value) => (open.value = !value))
 </script>
 
 <template>
