@@ -1,3 +1,5 @@
+import { makeProjects } from './Projects.Factory'
+import { makeTools } from './Tools.Factory'
 import { ResourceSecretsService } from '@application/ResourceSecrets.Service'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteResourceSecretRepository } from '@infra/persistence/Sqlite.ResourceSecretRepository'
@@ -17,7 +19,14 @@ export function makeResourceSecrets(): ResourceSecretsService {
   const configured = process.env.CONVERSATIONS_DB?.trim()
   instance = new ResourceSecretsService({
     store: new SqliteResourceSecretRepository(makeSecretBox(), configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH),
-    exists: (scope, scopeId) => (scope === 'agent' ? !!makeAgents().get(scopeId) : makeGuidance().resourceKindOf(scopeId) === scope),
+    exists: (scope, scopeId) =>
+      scope === 'agent'
+        ? !!makeAgents().get(scopeId)
+        : scope === 'project'
+          ? makeProjects().exists(scopeId)
+          : scope === 'mcp'
+            ? !!makeTools().mcp.get(scopeId)
+            : makeGuidance().resourceKindOf(scopeId) === scope,
     agentProject: (agentId) => {
       const agent = makeAgents().get(agentId)
       return agent ? (agent.projectId ?? null) : undefined

@@ -114,6 +114,11 @@ export class SqliteResourceSecretRepository {
     }
   }
 
+  /** Os projetos com valores do recurso (`''` = a origem). */
+  projects(scope: TSecretScope, scopeId: string): string[] {
+    return (this.db.prepare('SELECT DISTINCT project FROM resource_secrets WHERE scope = ? AND scope_id = ?').all(scope, scopeId) as TRow[]).map((row) => String(row.project))
+  }
+
   /** O projeto foi apagado: os valores que ele configurou para recursos de outros vão junto. */
   removeProject(project: string): void {
     if (project !== ORIGIN_PROJECT) this.db.prepare('DELETE FROM resource_secrets WHERE project = ?').run(project)

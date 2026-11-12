@@ -1,3 +1,4 @@
+import { projectFixedEnv } from './ProjectVariables.Factory'
 import { markAnswersDelivered } from '@domain/models/ConversationPanel.Model'
 import type { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { makeConversationRepository } from './Conversations.Factory'
@@ -125,6 +126,7 @@ export function makeOrchestrator(): AgentProvider {
         ? { markDelivered: async (sessionId, ids) => panelRepository.savePanel!(sessionId, markAnswersDelivered(await panelRepository.panel!(sessionId), ids)) }
         : {}),
     })
+  provider.useProjectEnv((projectId) => projectFixedEnv(projectId))
   provider.useSecrets({
     envFor: (agentId, sessionId, project) => makeResourceSecrets().envFor(agentId, sessionId, project),
     // Os nomes das skills e commands que o agente pode carregar: os liberados para ele (o índice do prompt).

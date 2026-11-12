@@ -145,6 +145,8 @@ const CONNECTED_WRITABLE: readonly RegExp[] = [
   /^\/mcp-servers(\/:id)?$/,
   /^\/projects\/:id\/members$/,
   /^\/projects\/:projectId\/(accounts|permissions\/test)(\/|$)/,
+  // As secretas do projeto e os valores dos MCPs são desta máquina (o visível de MCP confere o conectado na rota).
+  /^\/projects\/:projectId\/(secrets|mcp-variables)(\/|$)/,
   /^\/catalog\/import\/plan$/,
   /^\/permission-requests\/:requestId\/(approve|reject)$/,
   /^\/agents\/:agentId\/(permission-rules|local-tool-requests)$/,

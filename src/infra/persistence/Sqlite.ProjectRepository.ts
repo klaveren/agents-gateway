@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IAgenticScope, normalizeScope } from '@domain/Import.Scope'
-import { IProject, IProjectMember, TProjectRole } from '@domain/models/Project.Model'
+import { IProject, IProjectMcpVar, IProjectMember, TProjectRole } from '@domain/models/Project.Model'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
 
 const SCHEMA = `
@@ -39,6 +39,10 @@ const ADDED_COLUMNS: ReadonlyArray<{ column: string; definition: string }> = [
   { column: 'import_ignore', definition: 'TEXT' },
   // JSON `{ disabled, extra }`; NULL = os lugares padrão, todos ligados.
   { column: 'import_scope', definition: 'TEXT' },
+  // JSON `{ NOME: valor }` (as variáveis fixas); NULL = nenhuma.
+  { column: 'env', definition: 'TEXT' },
+  // JSON `[{ server, name, value }]` (os valores visíveis dos MCPs); NULL = nenhum.
+  { column: 'mcp_env', definition: 'TEXT' },
 ]
 
 /** Os projetos e os membros, no mesmo arquivo das conversas. Sem arquivo, em memória (`:memory:`). */
@@ -74,7 +78,7 @@ export class SqliteProjectRepository implements IProjectRepository {
       .run(project.id, project.name, project.description ?? null, project.createdAt.toISOString(), project.updatedAt.toISOString(), project.updatedBy ?? null)
   }
 
-  update(id: string, patch: Partial<Pick<IProject, 'name' | 'description' | 'importIgnore' | 'importScope' | 'updatedAt' | 'updatedBy'>>): IProject | undefined {
+  update(id: string, patch: Partial<Pick<IProject, 'name' | 'description' | 'importIgnore' | 'importScope' | 'env' | 'mcpEnv' | 'updatedAt' | 'updatedBy'>>): IProject | undefined {
     if (patch.name !== undefined) this.db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(patch.name, id)
     if ('description' in patch) this.db.prepare('UPDATE projects SET description = ? WHERE id = ?').run(patch.description ?? null, id)
     if ('importIgnore' in patch)
@@ -83,6 +87,8 @@ export class SqliteProjectRepository implements IProjectRepository {
       const scope = patch.importScope
       this.db.prepare('UPDATE projects SET import_scope = ? WHERE id = ?').run(scope && (scope.disabled.length || scope.extra.length) ? JSON.stringify(scope) : null, id)
     }
+    if ('env' in patch) this.db.prepare('UPDATE projects SET env = ? WHERE id = ?').run(patch.env && Object.keys(patch.env).length ? JSON.stringify(patch.env) : null, id)
+    if ('mcpEnv' in patch) this.db.prepare('UPDATE projects SET mcp_env = ? WHERE id = ?').run(patch.mcpEnv?.length ? JSON.stringify(patch.mcpEnv) : null, id)
     if (patch.updatedAt) this.db.prepare('UPDATE projects SET updated_at = ?, updated_by = ? WHERE id = ?').run(patch.updatedAt.toISOString(), patch.updatedBy ?? null, id)
     return this.get(id)
   }
@@ -133,9 +139,34 @@ function toProject(row: TRow): IProject {
     ...(typeof row.description === 'string' && row.description ? { description: row.description } : {}),
     ...(importIgnoreOf(row.import_ignore).length ? { importIgnore: importIgnoreOf(row.import_ignore) } : {}),
     ...(importScopeOf(row.import_scope) ? { importScope: importScopeOf(row.import_scope) } : {}),
+    ...(envOf(row.env) ? { env: envOf(row.env) } : {}),
+    ...(mcpEnvOf(row.mcp_env).length ? { mcpEnv: mcpEnvOf(row.mcp_env) } : {}),
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),
     ...(typeof row.updated_by === 'string' ? { updatedBy: row.updated_by } : {}),
+  }
+}
+
+function envOf(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== 'string' || !value) return undefined
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>
+    const entries = Object.entries(parsed ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+    return entries.length ? Object.fromEntries(entries) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function mcpEnvOf(value: unknown): IProjectMcpVar[] {
+  if (typeof value !== 'string' || !value) return []
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is IProjectMcpVar => !!item && typeof item.server === 'string' && typeof item.name === 'string' && typeof item.value === 'string')
+      : []
+  } catch {
+    return []
   }
 }
 

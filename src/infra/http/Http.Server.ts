@@ -2,6 +2,7 @@ import { PermissionsService } from '@application/Permissions.Service'
 import { ConnectController } from './Connect.Controller'
 import { requestScope } from './Request.Scope'
 import { ProjectConnectionsController } from './ProjectConnections.Controller'
+import { ProjectVariablesController } from './ProjectVariables.Controller'
 import { AuditController } from './Audit.Controller'
 import { SqliteAuditRepository } from '@infra/persistence/Sqlite.AuditRepository'
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
@@ -158,6 +159,8 @@ export class HttpServer {
     connect: ConnectController = new ConnectController({}),
     /** 🔌 Os projetos conectados, do lado do dev (ver `ProjectConnections.Controller`). */
     connections: ProjectConnectionsController = new ProjectConnectionsController({}),
+    /** As variáveis do projeto (ver `ProjectVariables.Controller`): as secretas e os valores que os MCPs pedem. */
+    variables: ProjectVariablesController = new ProjectVariablesController({}),
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -237,6 +240,13 @@ export class HttpServer {
       { method: 'put', path: '/connections/:projectId/agents/:agentId/local', handler: connections.saveLocal },
       { method: 'patch', path: '/connections/:projectId/agents/:agentId/local', handler: connections.adjustLocal },
       { method: 'delete', path: '/connections/:projectId/agents/:agentId/local', handler: connections.removeLocal },
+      { method: 'get', path: '/projects/:projectId/secrets', handler: variables.secrets },
+      { method: 'put', path: '/projects/:projectId/secrets/:name', handler: variables.saveSecret },
+      { method: 'delete', path: '/projects/:projectId/secrets/:name', handler: variables.removeSecret },
+      { method: 'get', path: '/projects/:projectId/mcp-variables', handler: variables.mcpVariables },
+      { method: 'put', path: '/projects/:projectId/mcp-variables/:server/:name', handler: variables.saveMcpVariable },
+      { method: 'delete', path: '/projects/:projectId/mcp-variables/:server/:name', handler: variables.removeMcpVariable },
+      { method: 'post', path: '/projects/:projectId/accounts/:accountId/move-to-variables', handler: variables.moveAccount },
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -525,7 +535,6 @@ function buildRoutes(
     { method: 'delete', path: '/mcp-servers/:id/secret', handler: mcpServers.clearSecret },
     { method: 'post', path: '/mcp-servers/:id/test', handler: mcpServers.test },
     { method: 'get', path: '/mcp-servers/:id/tools', handler: mcpServers.tools },
-    { method: 'put', path: '/mcp-servers/:id/env/:name', handler: mcpServers.saveEnv },
     { method: 'post', path: '/mcp-servers/:id/stop', handler: mcpServers.stopInstances },
     { method: 'post', path: '/mcp-servers/:id/install', handler: mcpServers.install },
     // O login OAuth de cada pessoa num MCP remoto (ver `McpOAuth`): conectar, desconectar e o retorno do provedor.

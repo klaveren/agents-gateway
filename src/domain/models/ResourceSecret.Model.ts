@@ -9,14 +9,26 @@ import { ENV_NAME, RESERVED_ENV } from './ProjectAccount.Model'
  * o devolve, nem ao admin. Fora do histórico e da exportação do catálogo.
  *
  * ⚖️ QUANDO VALE: a do agente, em todo comando dele; a de uma skill ou de um command, só depois que ele foi CARREGADO na
- * conversa (`use_resource`, `/skill`, `/command`). Nome repetido: command > skill > agente > conta do projeto.
+ * conversa (`use_resource`, `/skill`, `/command`); a do projeto, em toda conversa dele. Nome repetido: command > skill >
+ * agente > projeto > conta do projeto.
  *
  * ⛔ POR PROJETO (skill e command): o segredo NÃO vai junto no compartilhamento. Os valores da ORIGEM (o projeto do recurso,
  * ou o global) moram sob o projeto `''` (`ORIGIN_PROJECT`); cada projeto que recebeu o recurso configura os SEUS, com os
  * mesmos nomes, sob o id dele. Um agente do projeto P usa os valores de P — nunca os da origem.
  */
-export type TSecretScope = 'agent' | 'skill' | 'command'
-export const SECRET_SCOPES: readonly TSecretScope[] = ['agent', 'skill', 'command']
+export type TSecretScope = 'agent' | 'skill' | 'command' | 'project' | 'mcp'
+/** Os escopos que um agente pede (`request_secret`) e que a tela do recurso grava. */
+export const SECRET_SCOPES = ['agent', 'skill', 'command'] as const satisfies readonly TSecretScope[]
+
+/**
+ * ⚖️ AS SECRETAS DO PROJETO (`project`, `scopeId` = o projeto, sob `ORIGIN_PROJECT`): valem para todo agente nas conversas
+ * do projeto, por BAIXO das do agente. Num projeto conectado são desta máquina: nunca vão para a origem.
+ *
+ * ⛔ AS DO MCP (`mcp`, `scopeId` = a chave do servidor, `project` = o projeto): o valor que CADA projeto dá à variável
+ * secreta que o MCP pede. Vai só para o processo do MCP, nunca para o terminal do agente — e o MCP não guarda segredo.
+ */
+export const PROJECT_SECRET_SCOPE = 'project'
+export const MCP_SECRET_SCOPE = 'mcp'
 
 /** O "projeto" dos valores da ORIGEM (o projeto dono do recurso, ou o global) e de todo agente. */
 export const ORIGIN_PROJECT = ''
@@ -70,13 +82,13 @@ export interface ISecretSource {
 }
 
 /**
- * As variáveis que valem agora, por PRECEDÊNCIA: command > skill > agente (a conta do projeto fica por baixo, no
- * terminal). Entre dois do mesmo tipo, o carregado por último vence.
+ * As variáveis que valem agora, por PRECEDÊNCIA: command > skill > agente > projeto (a conta do projeto fica por baixo,
+ * no terminal). Entre dois do mesmo tipo, o carregado por último vence.
  */
-export function effectiveSources(agent: readonly ISecretSource[], loaded: readonly ISecretSource[][]): ISecretSource[] {
+export function effectiveSources(agent: readonly ISecretSource[], loaded: readonly ISecretSource[][], project: readonly ISecretSource[] = []): ISecretSource[] {
   const byName = new Map<string, ISecretSource>()
-  const rank: Record<TSecretScope, number> = { agent: 0, skill: 1, command: 2 }
-  for (const source of [...agent, ...loaded.flat()]) {
+  const rank: Record<TSecretScope, number> = { mcp: -2, project: -1, agent: 0, skill: 1, command: 2 }
+  for (const source of [...project, ...agent, ...loaded.flat()]) {
     const current = byName.get(source.name)
     if (!current || rank[source.scope] >= rank[current.scope]) byName.set(source.name, source)
   }

@@ -1,7 +1,7 @@
 import { IMcpServerInput, McpServersService } from '@application/McpServers.Service'
 import { McpOAuth } from '@infra/mcp/Mcp.OAuth'
 import type { IProjectCaller } from '@application/Projects.Service'
-import { IMcpServerConfig, isLaunchedMcp, mcpServerKey, parseMcpServerKey } from '@domain/models/McpServer.Model'
+import { IMcpServerConfig, isLaunchedMcp, mcpServerKey, mcpServesProject, parseMcpServerKey } from '@domain/models/McpServer.Model'
 import { installPackage, installStatus, moveInstall, removeInstall } from '@infra/mcp/Mcp.Install'
 import { caller } from '@infra/mcp/Caller.Identity'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
@@ -27,6 +27,12 @@ export interface IMcpServersControllerDeps {
 const transport = z.enum(['auto', 'http', 'sse'])
 const auth = z.enum(['caller', 'header', 'none', 'oauth'])
 const oauthSchema = z.object({ clientId: z.string().max(300), scopes: z.string().max(2000).optional(), authorizationServer: z.string().max(500).optional() })
+/** As variáveis: fixas (com valor), as que o projeto preenche e as secretas do projeto (só nomes). */
+const varsSchema = {
+  vars: z.record(z.string().max(64), z.string().max(4096)).optional(),
+  projectVars: z.array(z.string().max(64)).max(20).optional(),
+  env: z.array(z.string().max(64)).max(20).optional(),
+}
 const containerSchema = z.object({
   image: z.string().max(300).optional(),
   args: z.array(z.string().max(300)).max(32).optional(),
@@ -35,13 +41,13 @@ const containerSchema = z.object({
   cpus: z.number().optional(),
   network: z.enum(['none', 'allowlist']).optional(),
   allowedHosts: z.array(z.string().max(200)).max(50).optional(),
-  env: z.array(z.string().max(64)).max(20).optional(),
+  ...varsSchema,
 })
 const processSchema = z.object({
   package: z.string().max(300).optional(),
   command: z.string().max(300).optional(),
   args: z.array(z.string().max(300)).max(32).optional(),
-  env: z.array(z.string().max(64)).max(20).optional(),
+  ...varsSchema,
   scope: z.enum(['conversation', 'shared']).optional(),
 })
 const projectId = z.string().max(64)
@@ -79,7 +85,6 @@ const updateSchema = z.object({
   enabled: z.boolean().optional(),
 })
 const secretSchema = z.object({ secret: z.string().max(4000) })
-const envSchema = z.object({ value: z.string().max(8000) })
 
 /**
  * A guia MCPs: o cadastro dos servidores de onde os agentes tiram ferramentas.
@@ -106,7 +111,6 @@ export class McpServersController {
       'clearSecret',
       'test',
       'tools',
-      'saveEnv',
       'stopInstances',
       'install',
       'oauthStart',
@@ -299,20 +303,6 @@ export class McpServersController {
     )
   }
 
-  /** O valor de uma variável secreta do contêiner. ⛔ Só entra; nunca volta. */
-  async saveEnv(req: Request, res: Response) {
-    await this.respond(
-      res,
-      async () => {
-        const id = this.idOf(req)
-        const by = await this.requireAdmin('saveMcpEnv', id, true)
-        this.deps.service.saveEnv(id, req.params.name as string, parseBody(envSchema, req.body).value, by)
-        return this.dto(this.deps.service.get(id))
-      },
-      { message: 'Variable saved' },
-    )
-  }
-
   /** Encerra as instâncias (conversas) de um contêiner — a próxima ferramenta sobe uma nova. */
   async stopInstances(req: Request, res: Response) {
     await this.respond(res, async () => {
@@ -344,9 +334,9 @@ export class McpServersController {
     await this.respond(res, async () => {
       const id = this.idOf(req)
       await this.requireAdmin('testMcpServer', id)
-      this.deps.service.get(id)
+      const project = await this.probeProject(req, this.deps.service.get(id), 'testMcpServer')
       // O teste conecta como quem está na tela: um MCP `caller` recusa a conexão anônima.
-      const result = await this.deps.registry.test(id, caller()?.token)
+      const result = await this.deps.registry.test(id, caller()?.token, project)
       return { ok: result.ok, tools: result.tools.length, ...(result.message ? { message: result.message } : {}) }
     })
   }
@@ -355,9 +345,20 @@ export class McpServersController {
     await this.respond(res, async () => {
       const id = this.idOf(req)
       await this.requireAdmin('listMcpTools', id)
-      this.deps.service.get(id)
-      return (await this.deps.registry.probeTools(id, caller()?.token)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
+      const project = await this.probeProject(req, this.deps.service.get(id), 'listMcpTools')
+      return (await this.deps.registry.probeTools(id, caller()?.token, project)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
     })
+  }
+
+  /**
+   * ⛔ O projeto cujos valores o teste usa (`?project=`, o seletor da tela): só um que o servidor serve e que quem testa
+   * administra. Ausente = o do próprio servidor (de projeto), ou nenhum.
+   */
+  private async probeProject(req: Request, server: IMcpServerConfig, operation: string): Promise<string | undefined> {
+    const asked = typeof req.query.project === 'string' && req.query.project ? req.query.project : server.projectId
+    if (!asked || !mcpServesProject(server, asked)) return server.projectId
+    await requireProjectAdmin(this.deps.proof, asked, operation)
+    return asked
   }
 
   /** O servidor para quem administra: o `toDto` com a visão da conta (os agentes de projetos que ela não administra não aparecem). */
@@ -407,8 +408,8 @@ export class McpServersController {
       name: server.name,
       ...(server.tags?.length ? { tags: server.tags } : {}),
       kind: server.kind ?? 'remote',
-      ...(server.container ? { container: server.container, env: this.deps.service.envStatus(key) } : {}),
-      ...(server.process ? { process: server.process, env: this.deps.service.envStatus(key), install: installStatus(key, server.process.package) } : {}),
+      ...(server.container ? { container: server.container } : {}),
+      ...(server.process ? { process: server.process, install: installStatus(key, server.process.package) } : {}),
       url: server.url,
       transport: server.transport,
       auth: server.auth,

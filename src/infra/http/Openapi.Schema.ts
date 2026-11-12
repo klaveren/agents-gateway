@@ -600,6 +600,15 @@ const repositorySchema = {
   },
 }
 
+/** O projeto cujos valores o MCP em contêiner ou processo usa no teste (o seletor da tela). */
+const projectQuery = {
+  name: 'project',
+  in: 'query',
+  required: false,
+  schema: { type: 'string' },
+  description: 'Container/process MCP: the project whose values it starts with (one it serves and you administer)',
+}
+
 const projectSchema = {
   type: 'object',
   properties: {
@@ -608,6 +617,12 @@ const projectSchema = {
     description: { type: 'string' },
     folder: { type: 'string', description: 'Administrators only: the project folder on the server.' },
     members: { type: 'integer', description: 'Administrators only.' },
+    env: { type: 'object', additionalProperties: { type: 'string' }, description: 'Administrators only: the fixed variables.' },
+    mcpEnv: {
+      type: 'array',
+      description: 'Administrators only: the visible values given to the MCP variables.',
+      items: { type: 'object', properties: { server: { type: 'string' }, name: { type: 'string' }, value: { type: 'string' } } },
+    },
   },
 }
 
@@ -1996,7 +2011,7 @@ export const OPENAPI_DOCUMENT = {
     '/mcp-servers/{id}/test': {
       post: {
         summary: 'Connect now (ignoring the backoff) and count the tools. Administrators only',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, projectQuery],
         responses: {
           '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { ok: { type: 'boolean' }, tools: { type: 'integer' }, message: { type: 'string' } } })) },
           '401': failures['401'],
@@ -2004,15 +2019,97 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
-    '/mcp-servers/{id}/env/{name}': {
+    '/projects/{projectId}/secrets': {
+      get: {
+        summary:
+          'The SECRET variables of a project: names and whether they have a value — never the value. In the terminal of every agent in the project, below the agent own. Project administrators only',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: { type: 'object' } })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/projects/{projectId}/secrets/{name}': {
       put: {
-        summary: 'Save the value of a declared secret variable of a container MCP (encrypted; never returned). Administrators only',
+        summary: 'Save a secret variable of the project (the value only goes in; on the screen only, never with an access token). In a connected project it stays on this machine',
         parameters: [
-          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: { required: true, ...json({ type: 'object', properties: { value: { type: 'string' }, description: { type: 'string' } } }) },
+        responses: {
+          '200': { description: 'Saved', ...json(envelope({ type: 'object' })) },
+          '401': failures['401'],
+          '403': failures['403'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+      delete: {
+        summary: 'Delete a secret variable of the project (on the screen only)',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Deleted' }, '401': failures['401'], '403': failures['403'], '404': failures['404'] },
+      },
+    },
+    '/projects/{projectId}/mcp-variables': {
+      get: {
+        summary:
+          'The MCP servers this project sees that ask it for values: each with the variables it asks (`secret`, `configured`, and `value` for the visible ones). The values go only to the MCP process, never to the agent terminal. Project administrators only',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: { type: 'object' } })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/projects/{projectId}/mcp-variables/{server}/{name}': {
+      put: {
+        summary:
+          'Give a value to a variable the MCP asks the project for. A secret one: encrypted, never returned, on the screen only. A visible one: saved in the project (in a connected project it comes from the origin: 409 `project_read_only`)',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'server', in: 'path', required: true, schema: { type: 'string' }, description: 'The MCP id, as agents cite it' },
           { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
         ],
         requestBody: { required: true, ...json({ type: 'object', properties: { value: { type: 'string' } }, required: ['value'] }) },
-        responses: { '200': { description: 'Saved', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+        responses: {
+          '200': { description: 'Saved', ...json(envelope({ type: 'object' })) },
+          '401': failures['401'],
+          '403': failures['403'],
+          '404': failures['404'],
+          '409': { description: 'Conflict (`project_read_only`, `variable_exists`)', content: { 'application/json': { schema: failureEnvelope } } },
+          '422': failures['422'],
+        },
+      },
+      delete: {
+        summary: 'Remove the value the project gave to a variable of the MCP',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'server', in: 'path', required: true, schema: { type: 'string' }, description: 'The MCP id, as agents cite it' },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Deleted' },
+          '401': failures['401'],
+          '403': failures['403'],
+          '404': failures['404'],
+          '409': { description: 'Conflict (`project_read_only`, `variable_exists`)', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/projects/{projectId}/accounts/{accountId}/move-to-variables': {
+      post: {
+        summary:
+          'Turn a "secret variable" account into a secret variable of the project: the value moves, the account goes away. From then on it is valid for EVERY agent of the project (the account was only for agents with the `account <id>` rule). 409 `variable_exists` when the project already has that name. On the screen only',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'accountId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Moved', ...json(envelope({ type: 'object' })) },
+          '401': failures['401'],
+          '403': failures['403'],
+          '404': failures['404'],
+          '409': { description: 'Conflict (`project_read_only`, `variable_exists`)', content: { 'application/json': { schema: failureEnvelope } } },
+        },
       },
     },
     '/projects': {
@@ -2036,9 +2133,24 @@ export const OPENAPI_DOCUMENT = {
     },
     '/projects/{id}': {
       put: {
-        summary: 'Change the name or description of a project (not its id). Administrators only',
+        summary:
+          'Change the name, the description or the variables of a project (not its id). `env` (the FIXED variables: visible values, in the terminal of every agent in the project, below the agent own) and `mcpEnv` (the visible values the project gives to the "project" variables of each MCP, only for the MCP process) replace the whole list. Secrets go to `/projects/{projectId}/secrets` and `/projects/{projectId}/mcp-variables`. In a connected project these come from the origin (409 `project_read_only`). Project administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        requestBody: { required: true, ...json({ type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' } } }) },
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              description: { type: 'string' },
+              env: { type: 'object', additionalProperties: { type: 'string' } },
+              mcpEnv: {
+                type: 'array',
+                items: { type: 'object', required: ['server', 'name', 'value'], properties: { server: { type: 'string' }, name: { type: 'string' }, value: { type: 'string' } } },
+              },
+            },
+          }),
+        },
         responses: { '200': { description: 'OK', ...json(envelope(projectSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
       delete: {
@@ -4899,7 +5011,7 @@ export const OPENAPI_DOCUMENT = {
     '/mcp-servers/{id}/tools': {
       get: {
         summary: 'The tools the server offers now (name, description, input schema). Administrators only',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, projectQuery],
         responses: {
           '200': {
             description: 'OK',

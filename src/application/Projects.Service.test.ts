@@ -210,4 +210,34 @@ describe('ProjectsService', () => {
     assert.deepStrictEqual(repository.update('alfa', { importScope: { disabled: ['.roo/'], extra: [] } })?.importScope, { disabled: ['.roo/'], extra: [] })
     rmSync(dir, { recursive: true, force: true })
   })
+  it('as variáveis do projeto: as fixas com as regras das do agente; os valores dos MCPs, um por par; o banco guarda', () => {
+    const { service, repository } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    service.update('alfa', { env: { DB_HOST: 'db.alfa', LOG_LEVEL: 'debug' }, mcpEnv: [{ server: 'n8n', name: 'N8N_URL', value: 'https://n8n.alfa' }] }, 'ana')
+    assert.deepStrictEqual(repository.get('alfa')?.env, { DB_HOST: 'db.alfa', LOG_LEVEL: 'debug' })
+    assert.deepStrictEqual(repository.get('alfa')?.mcpEnv, [{ server: 'n8n', name: 'N8N_URL', value: 'https://n8n.alfa' }])
+    // Sem `env` no pedido, ficam como estavam.
+    service.update('alfa', { name: 'Alfa 2' }, 'ana')
+    assert.deepStrictEqual(repository.get('alfa')?.env, { DB_HOST: 'db.alfa', LOG_LEVEL: 'debug' })
+
+    for (const env of [{ API_TOKEN: 'x' }, { PATH: '/tmp' }, { minusculo: 'x' }, { GATEWAY_X: 'y' }, { NUL: 'a\0b' }] as Array<Record<string, string>>)
+      assert.throws(() => service.update('alfa', { env }, 'ana'), InvalidProjectError, JSON.stringify(env))
+    assert.throws(
+      () =>
+        service.update(
+          'alfa',
+          {
+            mcpEnv: [
+              { server: 'n8n', name: 'X', value: '1' },
+              { server: 'n8n', name: 'X', value: '2' },
+            ],
+          },
+          'ana',
+        ),
+      InvalidProjectError,
+    )
+    assert.throws(() => service.update('alfa', { mcpEnv: [{ server: 'N8N!', name: 'X', value: '1' }] }, 'ana'), InvalidProjectError)
+    service.update('alfa', { env: {}, mcpEnv: [] }, 'ana')
+    assert.deepStrictEqual([repository.get('alfa')?.env, repository.get('alfa')?.mcpEnv], [undefined, undefined])
+  })
 })

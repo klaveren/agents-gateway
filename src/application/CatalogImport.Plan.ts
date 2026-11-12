@@ -48,7 +48,7 @@ export interface ICatalogImportPlanDeps {
   /** As regras do cadastro de agente, lidas AGORA (as do `PUT /agents/:id`). Ausente: todo agente a gravar vira erro. */
   agentRules?: () => Promise<Omit<IAgentRules, 'takenIds'>>
   /** O cofre dos MCPs: o que já está cadastrado para um servidor que existe. */
-  mcpSecrets: Pick<McpServersService, 'secretStatus' | 'envStatus'>
+  mcpSecrets: Pick<McpServersService, 'secretStatus'>
 }
 
 export interface IPlanOptions {
@@ -405,9 +405,9 @@ export class CatalogImportPlanner {
     if (!refs.length || !current) return refs
     const key = mcpServerKey({ id: document.id, projectId: document.projectId })
     try {
-      const env = this.deps.mcpSecrets.envStatus(key)
+      // Só o header é do servidor: o `env:<NOME>` de um documento antigo é hoje valor de cada projeto.
       const header = this.deps.mcpSecrets.secretStatus(key).configured
-      return refs.filter((ref) => (ref === 'header' ? !header : !env.some((item) => `env:${item.name}` === ref && item.configured)))
+      return refs.filter((ref) => ref === 'header' && !header)
     } catch {
       return refs
     }

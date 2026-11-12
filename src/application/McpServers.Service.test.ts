@@ -115,11 +115,8 @@ describe('McpServersService', () => {
       (error: InvalidMcpServerError) => ['image', 'writable', 'memoryMb', 'allowedHosts', 'env'].every((field) => error.issues.some((issue) => issue.field === field)),
     )
 
-    service.saveEnv('pw', 'API_TOKEN', 's3cr3t', 'root')
-    assert.strictEqual(secrets.get('mcp:pw:env:API_TOKEN'), 's3cr3t')
-    assert.deepStrictEqual(service.envStatus('pw'), [{ name: 'API_TOKEN', configured: true }])
-    assert.throws(() => service.saveEnv('pw', 'OUTRA', 'x', 'root'), InvalidMcpServerError)
-
+    // ⛔ O MCP não guarda segredo: o valor do `API_TOKEN` é de cada projeto. O antigo, deixado no cofre, sai com o servidor.
+    secrets.save('mcp:pw:env:API_TOKEN', 's3cr3t', 'root')
     service.remove('pw', 'admin')
     assert.strictEqual(secrets.get('mcp:pw:env:API_TOKEN'), undefined)
   })
@@ -152,8 +149,6 @@ describe('McpServersService', () => {
       scope: 'shared',
     })
 
-    service.saveEnv('pw', 'NODE_OPTIONS', '--max-old-space-size=512', 'root')
-    assert.deepStrictEqual(service.envStatus('pw'), [{ name: 'NODE_OPTIONS', configured: true }])
     service.remove('pw', 'admin')
     assert.strictEqual(secrets.get('mcp:pw:env:NODE_OPTIONS'), undefined)
   })
@@ -237,5 +232,30 @@ describe('McpServersService', () => {
     )
     assert.throws(() => service.update('gateway', { headerName: 'Authorization' }, 'root'), InvalidMcpServerError)
     assert.strictEqual(service.update('gateway', { name: 'Este gateway' }, 'root').auth, 'caller')
+  })
+  it('as variáveis do MCP: fixa com valor (sem cara de segredo), do projeto e secreta do projeto; um tipo por nome, até 20', () => {
+    const { service } = build()
+    const created = service.create(
+      { id: 'n8n', name: 'n8n', kind: 'process', process: { command: 'npx', vars: { N8N_MODE: 'api' }, projectVars: ['N8N_URL'], env: ['N8N_API_KEY'] } },
+      'root',
+    )
+    assert.deepStrictEqual(created.process, { command: 'npx', args: [], vars: { N8N_MODE: 'api' }, projectVars: ['N8N_URL'], env: ['N8N_API_KEY'], scope: 'conversation' })
+    const issues = (process: Record<string, unknown>) => {
+      try {
+        service.create({ id: 'ruim', name: 'x', kind: 'process', process: { command: 'npx', ...process } }, 'root')
+        return []
+      } catch (error: unknown) {
+        return (error as InvalidMcpServerError).issues.map((issue) => issue.message)
+      }
+    }
+    assert.match(issues({ vars: { API_KEY: 'sk-1' } }).join(), /looks like a secret/)
+    assert.match(issues({ vars: { X: '1' }, env: ['X'] }).join(), /declared twice/)
+    assert.match(issues({ projectVars: ['minusculo'] }).join(), /UPPER_CASE/)
+    assert.match(issues({ env: Array.from({ length: 21 }, (_, index) => `V${index}`) }).join(), /up to 20/)
+    // No contêiner, nenhum dos três tipos usa nome que mexe no `docker` do host.
+    assert.throws(
+      () => service.create({ id: 'c', name: 'c', kind: 'container', container: { image: 'acme/x:1', vars: { DOCKER_HOST: 'tcp://x' } } }, 'root'),
+      (error: InvalidMcpServerError) => error.issues.some((issue) => /reserved/.test(issue.message)),
+    )
   })
 })

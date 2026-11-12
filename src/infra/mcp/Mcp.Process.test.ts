@@ -57,8 +57,11 @@ describe('MCP processo local', () => {
       updatedAt: new Date(),
     }
     servers.insert(config)
-    secrets.save('mcp:fx:env:FIXTURE_TOKEN', 'tok-42', 'root')
-    return new McpRegistry(servers, secrets)
+    const registry = new McpRegistry(servers, secrets)
+    // A conversa diz o projeto; o projeto dá o valor (ver `projectMcpEnv`). `s-c` é do projeto beta.
+    registry.setSessionLookup((sessionId) => ({ agentId: 'a', metadata: { project: sessionId === 's-c' ? 'beta' : 'alfa' } }))
+    registry.useProjectEnv((config, project) => (project && config.process?.env.includes('FIXTURE_TOKEN') ? { FIXTURE_TOKEN: `tok-${project}` } : ({} as Record<string, string>)))
+    return registry
   }
   const whoami = async (registry: McpRegistry, sessionId: string) => {
     const client = await registry.clientFor('fx', sessionId)
@@ -67,7 +70,7 @@ describe('MCP processo local', () => {
     return JSON.parse(result.content[0].text) as { pid: number; cwd: string; token: string | null; key: string | null }
   }
 
-  it('⛔ uma instância por conversa: processos e pastas separados; a variável do cofre chega, o `.env` do gateway não', async () => {
+  it('⛔ uma instância por conversa: processos e pastas separados; o valor do projeto da conversa chega, o `.env` do gateway não', async () => {
     const previousKey = process.env.OPENAI_API_KEY
     process.env.OPENAI_API_KEY = 'sk-nao-pode-vazar'
     const registry = registryWith({})
@@ -76,11 +79,12 @@ describe('MCP processo local', () => {
       const b = await whoami(registry, 's-b')
       assert.notStrictEqual(a.pid, b.pid)
       assert.notStrictEqual(a.cwd, b.cwd)
-      assert.deepStrictEqual([a.token, a.key], ['tok-42', null])
+      assert.deepStrictEqual([a.token, a.key], ['tok-alfa', null])
+      assert.strictEqual((await whoami(registry, 's-c')).token, 'tok-beta')
       assert.strictEqual((await whoami(registry, 's-a')).pid, a.pid)
-      assert.strictEqual(registry.status()[0].instances, 2)
+      assert.strictEqual(registry.status()[0].instances, 3)
 
-      assert.strictEqual(await registry.closeInstances({ serverId: 'fx' }), 2)
+      assert.strictEqual(await registry.closeInstances({ serverId: 'fx' }), 3)
       assert.strictEqual(existsSync(a.cwd), false)
     } finally {
       process.env.OPENAI_API_KEY = previousKey
@@ -105,12 +109,12 @@ describe('MCP processo local', () => {
     }
   })
 
-  it('`shared`: um processo só para todas as conversas, na pasta do servidor', async () => {
-    const registry = registryWith({ scope: 'shared' })
+  it('`shared` sem valor do projeto: um processo só para todas as conversas, na pasta do servidor', async () => {
+    const registry = registryWith({ scope: 'shared', env: [] })
     try {
       const a = await whoami(registry, 's-a')
-      const b = await whoami(registry, 's-b')
-      assert.strictEqual(a.pid, b.pid)
+      const c = await whoami(registry, 's-c')
+      assert.strictEqual(a.pid, c.pid)
       assert.ok(a.cwd.endsWith(join('mcp', 'fx', 'work')), a.cwd)
       assert.strictEqual(registry.status()[0].instances, 1)
     } finally {
@@ -118,9 +122,35 @@ describe('MCP processo local', () => {
     }
   })
 
-  it('"Testar conexão" abre uma instância descartável e lista as ferramentas', async () => {
+  it('⛔ `shared` que pede valor ao projeto: UM POR PROJETO, cada um com o valor e a pasta do seu', async () => {
+    const registry = registryWith({ scope: 'shared' })
+    try {
+      const a = await whoami(registry, 's-a')
+      const b = await whoami(registry, 's-b')
+      const c = await whoami(registry, 's-c')
+      assert.strictEqual(a.pid, b.pid)
+      assert.notStrictEqual(a.pid, c.pid)
+      assert.deepStrictEqual([a.token, c.token], ['tok-alfa', 'tok-beta'])
+      assert.ok(a.cwd.endsWith(join('mcp', 'fx', 'work', 'alfa')), a.cwd)
+      assert.ok(c.cwd.endsWith(join('mcp', 'fx', 'work', 'beta')), c.cwd)
+      assert.strictEqual(registry.status()[0].instances, 2)
+    } finally {
+      await registry.closeInstances()
+    }
+  })
+
+  it('as fixas do MCP chegam a todo projeto, com o valor do cadastro', async () => {
+    const registry = registryWith({ env: [], vars: { FIXTURE_TOKEN: 'fixo' } })
+    try {
+      assert.strictEqual((await whoami(registry, 's-a')).token, 'fixo')
+    } finally {
+      await registry.closeInstances()
+    }
+  })
+
+  it('"Testar conexão" abre uma instância descartável (com os valores do projeto escolhido) e lista as ferramentas', async () => {
     const registry = registryWith({})
-    const result = await registry.test('fx')
+    const result = await registry.test('fx', undefined, 'alfa')
     assert.deepStrictEqual([result.ok, result.tools.map((tool) => tool.name)], [true, ['whoami']])
     assert.strictEqual(registry.status()[0].instances, 0)
   })

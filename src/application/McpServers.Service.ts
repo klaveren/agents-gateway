@@ -96,6 +96,16 @@ export class McpServersService {
    */
   private localExtras?: (agent: IAgent) => readonly string[] | undefined
 
+  /**
+   * Os valores que os PROJETOS deram às variáveis do servidor (o cofre `mcp`): seguem a chave dele numa troca de escopo e
+   * somem com ele. Ligado na composição.
+   */
+  private projectValues?: { move(from: string, to: string, by: string): void; forget(key: string): void }
+
+  useProjectValues(values: { move(from: string, to: string, by: string): void; forget(key: string): void }): void {
+    this.projectValues = values
+  }
+
   useLocalExtras(extras: (agent: IAgent) => readonly string[] | undefined): void {
     this.localExtras = extras
   }
@@ -262,11 +272,13 @@ export class McpServersService {
     const moved = this.servers.move(key, target, this.now(), by)!
     const nextKey = mcpServerKey(moved)
     // O segredo é do servidor: muda de chave com ele (e a chave velha não fica valendo para ninguém).
-    for (const [from, to] of [[mcpSecretKey(key), mcpSecretKey(nextKey)], ...mcpEnvNames(moved).map((name) => [mcpEnvSecretKey(key, name), mcpEnvSecretKey(nextKey, name)])]) {
+    for (const [from, to] of [[mcpSecretKey(key), mcpSecretKey(nextKey)]]) {
       const value = this.secrets.get(from)
       if (value) this.secrets.save(to, value, by)
       this.secrets.clear(from)
     }
+    // Os valores que os projetos deram, também (os de projeto que deixou de ser servido não têm mais quem os leia).
+    this.projectValues?.move(key, nextKey, by)
     // Trocar de escopo troca a chave: a antiga sai (delete), a nova entra (create).
     this.history.record(
       [
@@ -287,19 +299,6 @@ export class McpServersService {
   clearSecret(key: string): void {
     this.get(key)
     this.secrets.clear(mcpSecretKey(key))
-  }
-
-  /** As variáveis secretas do contêiner ou do processo: o NOME e se há valor — ⛔ nunca o valor. */
-  envStatus(key: string): Array<{ name: string; configured: boolean }> {
-    const server = this.get(key)
-    return mcpEnvNames(server).map((name) => ({ name, configured: this.secrets.status([mcpEnvSecretKey(key, name)])[0].configured }))
-  }
-
-  saveEnv(key: string, name: string, value: string, by: string): void {
-    const server = this.get(key)
-    if (!mcpEnvNames(server).includes(name)) throw new InvalidMcpServerError([{ field: 'env', message: `not a declared variable: ${name}` }])
-    if (!value) throw new InvalidMcpServerError([{ field: 'env', message: 'required' }])
-    this.secrets.save(mcpEnvSecretKey(key, name), value, by)
   }
 
   /** ⛔ Com agente usando, recusa e diz quais (409) — apagar deixaria ferramentas apontando para o nada (ver `holders`). */
@@ -343,6 +342,7 @@ export class McpServersService {
     this.servers.delete(key)
     this.secrets.clear(mcpSecretKey(key))
     for (const name of mcpEnvNames(server)) this.secrets.clear(mcpEnvSecretKey(key, name))
+    this.projectValues?.forget(key)
   }
 }
 
@@ -368,8 +368,40 @@ function containerOf(input: Partial<IMcpContainer> = {}): IMcpContainer {
     cpus: Number(input.cpus ?? MCP_CONTAINER_DEFAULTS.cpus),
     network: input.network === 'allowlist' ? 'allowlist' : 'none',
     allowedHosts: clean(input.allowedHosts),
-    env: clean(input.env),
+    ...varsOf(input),
   }
+}
+
+/** As variáveis do cadastro, limpas: fixas com valor, as do projeto e as secretas do projeto (só nomes). */
+function varsOf(input: Partial<Pick<IMcpContainer, 'vars' | 'projectVars' | 'env'>>): Pick<IMcpContainer, 'vars' | 'projectVars' | 'env'> {
+  const clean = (list: unknown) => (Array.isArray(list) ? list.map((entry) => String(entry).trim()).filter(Boolean) : [])
+  const vars = Object.fromEntries(Object.entries(input.vars ?? {}).map(([name, value]) => [name.trim(), typeof value === 'string' ? value : String(value)]))
+  const projectVars = clean(input.projectVars)
+  return { ...(Object.keys(vars).length ? { vars } : {}), ...(projectVars.length ? { projectVars } : {}), env: clean(input.env) }
+}
+
+/** ⛔ Nome com cara de segredo não vira fixa: o valor da fixa aparece na tela e no catálogo. */
+const SECRET_LIKE = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/
+const VAR_VALUE_MAX = 4096
+const VARS_MAX = 20
+
+/** As variáveis: nome em maiúsculas, um tipo só por nome, a fixa sem cara de segredo e com valor de texto, até 20. */
+function varsIssues(vars: Pick<IMcpContainer, 'vars' | 'projectVars' | 'env'>, reserved?: RegExp): Array<{ field: string; message: string }> {
+  const issues: Array<{ field: string; message: string }> = []
+  const fixed = Object.entries(vars.vars ?? {})
+  const names = [...fixed.map(([name]) => name), ...(vars.projectVars ?? []), ...vars.env]
+  for (const name of names) {
+    if (!ENV_NAME.test(name)) issues.push({ field: 'env', message: `use UPPER_CASE names: ${name}` })
+    else if (reserved?.test(name)) issues.push({ field: 'env', message: `reserved name, it would change the host docker process: ${name}` })
+  }
+  for (const name of new Set(names.filter((name, index) => names.indexOf(name) !== index))) issues.push({ field: 'env', message: `${name}: declared twice` })
+  for (const [name, value] of fixed) {
+    if (SECRET_LIKE.test(name)) issues.push({ field: 'env', message: `${name}: looks like a secret — make it a project secret, the fixed value is visible` })
+    if (value.includes('\0')) issues.push({ field: 'env', message: `${name}: the value cannot have a NUL character` })
+    else if (value.length > VAR_VALUE_MAX) issues.push({ field: 'env', message: `${name}: at most ${VAR_VALUE_MAX} characters` })
+  }
+  if (names.length > VARS_MAX) issues.push({ field: 'env', message: `up to ${VARS_MAX} variables` })
+  return issues
 }
 
 /** ⛔ O que o cadastro pode pedir — e só isso: as travas do contêiner não passam por aqui. */
@@ -384,25 +416,20 @@ function containerIssues(container: IMcpContainer): Array<{ field: string; messa
   if (!(container.cpus >= 0.25 && container.cpus <= 4)) issues.push({ field: 'cpus', message: '0.25 to 4' })
   if (container.network === 'allowlist' && !container.allowedHosts.length) issues.push({ field: 'allowedHosts', message: 'list at least one domain (or {meta:key})' })
   for (const host of container.allowedHosts) if (!HOST_PATTERN.test(host)) issues.push({ field: 'allowedHosts', message: `not a domain: ${host}` })
-  for (const name of container.env) {
-    if (!ENV_NAME.test(name)) issues.push({ field: 'env', message: `use UPPER_CASE names: ${name}` })
-    else if (RESERVED_ENV.test(name)) issues.push({ field: 'env', message: `reserved name, it would change the host docker process: ${name}` })
-  }
-  return issues
+  return [...issues, ...varsIssues(container, RESERVED_ENV)]
 }
 
 /** Spec npm: `nome`, `@escopo/nome`, com versão/tag opcional; ou `file:`/caminho absoluto de um pacote local. */
 const NPM_SPEC = /^(?:(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(?:@[\w.^~<>=*|+-]+)?|file:\S+|\/\S+)$/
 
 function processOf(input: Partial<IMcpProcess> = {}): IMcpProcess {
-  const clean = (list: unknown) => (Array.isArray(list) ? list.map((entry) => String(entry).trim()).filter(Boolean) : [])
   const pkg = String(input.package ?? '').trim()
   const command = String(input.command ?? '').trim()
   return {
     ...(pkg ? { package: pkg } : {}),
     ...(command ? { command } : {}),
     args: Array.isArray(input.args) ? input.args.map(String) : MCP_PROCESS_DEFAULTS.args,
-    env: clean(input.env),
+    ...varsOf(input),
     scope: input.scope === 'shared' ? 'shared' : MCP_PROCESS_DEFAULTS.scope,
   }
 }
@@ -417,9 +444,7 @@ function processIssues(proc: IMcpProcess): Array<{ field: string; message: strin
   if (proc.package && (proc.package.length > 300 || !NPM_SPEC.test(proc.package))) issues.push({ field: 'package', message: 'an npm package like @scope/name@version' })
   if (proc.command && (proc.command.length > 300 || /[\n\r\0]/.test(proc.command))) issues.push({ field: 'command', message: 'one line, up to 300 characters' })
   if (proc.args.length > 32 || proc.args.some((arg) => arg.length > 300 || /[\n\r\0]/.test(arg))) issues.push({ field: 'args', message: 'up to 32 arguments, one line each' })
-  for (const name of proc.env) if (!ENV_NAME.test(name)) issues.push({ field: 'env', message: `use UPPER_CASE names: ${name}` })
-  if (proc.env.length > 20) issues.push({ field: 'env', message: 'up to 20 variables' })
-  return issues
+  return [...issues, ...varsIssues(proc)]
 }
 
 /**

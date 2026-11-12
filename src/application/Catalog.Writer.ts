@@ -1,4 +1,5 @@
 import type { IResourceFile } from '@domain/models/ResourceFile.Model'
+import { IProjectMcpVar } from '@domain/models/Project.Model'
 import { ICatalogDocument, parseProtocolItemId } from '@domain/Catalog.Document'
 import type { IAgentRules } from '@domain/Agent.Policy'
 import { CatalogRestoreInvalidError } from '@domain/errors/Domain.Error'
@@ -68,7 +69,7 @@ export interface ICatalogWriterDeps {
     | 'agentLinkIssues'
   >
   permissions: Pick<PermissionsService, 'saveProjectRules'>
-  mcps: Pick<McpServersService, 'list' | 'create' | 'update' | 'remove' | 'secretStatus' | 'envStatus'>
+  mcps: Pick<McpServersService, 'list' | 'create' | 'update' | 'remove' | 'secretStatus'>
   /** Ausente = sem projetos: nem o projeto nem as permissões dele se restauram. */
   projects?: Pick<ProjectsService, 'exists' | 'create' | 'update'>
   agents: {
@@ -290,11 +291,17 @@ export class CatalogWriter implements ICatalogWriter {
     const issues = this.deps.guidance.contextIssues(target.id, initialContext)
     if (issues.length) throw new CatalogRestoreInvalidError(issues)
     const exists = projects.exists(target.id)
-    const change = { name: text(body.name), description: text(body.description) }
+    // As variáveis fixas e os valores visíveis dos MCPs vêm com o projeto (num conectado, da origem; os secretos, nunca).
+    const change = {
+      name: text(body.name),
+      description: text(body.description),
+      env: (body.env as Record<string, string> | undefined) ?? {},
+      mcpEnv: (body.mcpEnv as unknown as IProjectMcpVar[] | undefined) ?? [],
+    }
     return {
       commit: (by) => {
-        if (exists) projects.update(target.id, change, by)
-        else projects.create({ id: target.id, ...change }, by)
+        if (!exists) projects.create({ id: target.id, name: change.name, description: change.description }, by)
+        projects.update(target.id, change, by)
         this.deps.guidance.setInitialContext(target.id, initialContext, by)
       },
     }
@@ -352,10 +359,8 @@ export class CatalogWriter implements ICatalogWriter {
       after: async () => {
         if (existing && saved) await this.deps.mcpChanged?.(saved)
       },
-      missingSecrets: () => {
-        const env = mcps.envStatus(key)
-        return list(body.secrets).filter((ref) => (ref === 'header' ? !mcps.secretStatus(key).configured : !env.some((item) => `env:${item.name}` === ref && item.configured)))
-      },
+      // Só o header é do servidor; o `env:<NOME>` de um documento antigo é hoje valor de cada projeto (Projeto → Variáveis).
+      missingSecrets: () => list(body.secrets).filter((ref) => ref === 'header' && !mcps.secretStatus(key).configured),
     }
   }
 

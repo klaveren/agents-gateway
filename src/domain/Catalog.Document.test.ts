@@ -274,10 +274,10 @@ describe('Catalog.Document — ⛔ segredo nunca entra', () => {
     updatedBy: 'ana',
   }
 
-  it('MCP: só os NOMES das variáveis e do header, e a lista do que o cofre precisa ter', () => {
+  it('MCP: só os NOMES das variáveis e do header, e a lista do que o cofre do servidor precisa ter (só o header)', () => {
     const doc = mcpDocument(server)
     assert.strictEqual(doc.projectId, undefined)
-    assert.deepStrictEqual(doc.body.secrets, ['env:B_KEY', 'env:GH_TOKEN', 'header'])
+    assert.deepStrictEqual(doc.body.secrets, ['header'])
     assert.deepStrictEqual((doc.body.container as Record<string, unknown>).env, ['B_KEY', 'GH_TOKEN'])
     assert.deepStrictEqual((doc.body.container as Record<string, unknown>).allowedHosts, ['api.github.com', 'github.com'])
     assert.strictEqual(doc.body.headerName, 'X-Api-Key')
@@ -307,9 +307,9 @@ describe('Catalog.Document — ⛔ segredo nunca entra', () => {
     }
   })
 
-  it('MCP de processo e remoto: sem header, `secrets` só com as variáveis (ou vazio)', () => {
+  it('MCP de processo e remoto: sem header, `secrets` vazio (as variáveis secretas são de cada projeto)', () => {
     const process = mcpDocument({ ...server, kind: 'process', container: undefined, process: { args: [], env: ['Z'], scope: 'conversation' }, auth: 'caller' })
-    assert.deepStrictEqual(process.body.secrets, ['env:Z'])
+    assert.deepStrictEqual(process.body.secrets, [])
     const remote = mcpDocument({ ...server, kind: 'remote', container: undefined, url: 'https://mcp.example.com/', auth: 'none', headerName: undefined })
     assert.deepStrictEqual(remote.body.secrets, [])
   })

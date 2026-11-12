@@ -145,7 +145,7 @@ describe('McpServers: o admin do projeto, só o projeto dele', () => {
     assert.strictEqual((await call(CAIO, 'create', { body: body('alfa') })).status, 404)
     assert.strictEqual((await call(ANA, 'create', { body: body() })).status, 404, 'global só o gateway cria')
     assert.strictEqual((await call(ROOT, 'create', { body: body() })).status, 201)
-    for (const handler of ['update', 'saveSecret', 'clearSecret', 'saveEnv', 'remove', 'test', 'tools', 'stopInstances', 'install'] as const) {
+    for (const handler of ['update', 'saveSecret', 'clearSecret', 'remove', 'test', 'tools', 'stopInstances', 'install'] as const) {
       const input = { params: { id: 'alfa.n8n', name: 'X' }, body: { name: 'x', secret: 'x', value: 'x' } }
       assert.strictEqual((await call(BIA, handler, input)).status, 404, `${handler}: a Bia`)
       assert.strictEqual((await call(ROOT, handler, input)).status, 404, `${handler}: o root`)

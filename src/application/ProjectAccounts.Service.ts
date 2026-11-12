@@ -119,6 +119,14 @@ export class ProjectAccountsService {
     return this.repository.remove(projectId, id)
   }
 
+  /** ⛔ O nome e o valor de uma conta "variável secreta" — só para movê-la às secretas do projeto (nunca para a resposta). */
+  secretEnv(projectId: string, id: string): { name: string; value: string } | undefined {
+    const account = this.repository.get(projectId, id)
+    if (account?.kind !== 'secret-env' || !account.public.envName) return undefined
+    const value = this.repository.secret(projectId, id)
+    return value ? { name: account.public.envName, value } : undefined
+  }
+
   removeProject(projectId: string): void {
     this.repository.deleteProject(projectId)
   }

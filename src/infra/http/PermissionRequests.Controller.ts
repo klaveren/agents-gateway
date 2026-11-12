@@ -50,7 +50,7 @@ const localToolsSchema = z.object({ allowedTools: z.array(z.string().min(1).max(
 const approveSchema = z.object({ confirm: z.array(z.string().max(1000)).max(500).optional(), value: z.string().max(SECRET_LIMITS.value).optional() })
 const secretSchema = z.object({ value: z.string().max(SECRET_LIMITS.value).optional(), description: z.string().max(SECRET_LIMITS.description).optional() }).strict()
 const secretRequestSchema = z.object({
-  scope: z.enum(SECRET_SCOPES as [TSecretScope, ...TSecretScope[]]),
+  scope: z.enum(SECRET_SCOPES as ['agent', 'skill', 'command']),
   scopeId: z.string().min(1).max(64),
   /** Skill ou command compartilhado: o projeto cujos valores o pedido preenche (ausente = o do agente que pede, se recebeu; senão a origem). */
   project: z.string().min(1).max(64).optional(),

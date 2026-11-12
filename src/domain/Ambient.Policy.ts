@@ -29,6 +29,8 @@ export interface IAmbient {
 /** Os NOMES das variáveis secretas: as do agente e as de cada skill ou command que ele pode carregar. */
 export interface IAmbientSecrets {
   agent: string[]
+  /** As secretas do projeto da conversa (valem para todo agente dele, por baixo das suas). */
+  project?: string[]
   resources: Array<{ kind: 'skill' | 'command'; id: string; names: string[] }>
 }
 
@@ -88,6 +90,7 @@ function secretsSection(secrets: IAmbientSecrets): string {
     'Estão no ambiente dos seus comandos: use `$NOME` (ex.: `curl -H "Authorization: Bearer $NOME"`). Nunca as imprima, copie para arquivo nem as passe ao modelo; o valor não está aqui de propósito. Falta uma? Peça com `request_secret`.',
   ]
   if (secrets.agent.length) lines.push(`- Suas: ${secrets.agent.map((name) => `\`${name}\``).join(', ')}.`)
+  if (secrets.project?.length) lines.push(`- Do projeto: ${secrets.project.map((name) => `\`${name}\``).join(', ')}.`)
   for (const resource of secrets.resources)
     lines.push(`- ${resource.kind === 'skill' ? 'Skill' : 'Command'} ${resource.id} (valem depois de carregá-la): ${resource.names.map((name) => `\`${name}\``).join(', ')}.`)
   return lines.join('\n')

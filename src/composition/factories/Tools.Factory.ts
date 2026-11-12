@@ -1,3 +1,4 @@
+import { projectFixedEnv } from './ProjectVariables.Factory'
 import { realAgentFolder } from '@infra/workspace/Resource.Files'
 import { McpOAuth } from '@infra/mcp/Mcp.OAuth'
 import { agentFolderAccess } from '@domain/Capability.Catalog'
@@ -128,7 +129,12 @@ export function makeTools(): ITools {
             agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
             agentFolder: (agentId, conversationProject) => agentFolderOf(agentId, conversationProject),
             sharedFolders: sharedFoldersOf,
-            agentEnv: (agentId) => makeAgents().get(agentId)?.env,
+            // As fixas do projeto da conversa por baixo, as do agente por cima.
+            agentEnv: (agentId, project) => {
+              const own = makeAgents().get(agentId)?.env
+              const fixed = projectFixedEnv(project)
+              return fixed && Object.keys(fixed).length ? { ...fixed, ...own } : own
+            },
             mask: makeSecretMasker(),
             secrets: {
               envFor: (agentId, sessionId, project) => makeResourceSecrets().envFor(agentId, sessionId, project),

@@ -164,7 +164,7 @@ describe('Catalog.Files — documento → arquivos', () => {
     assert.strictEqual(files['projects/alfa/agents/agente-alfa/soul.md'], 'Calmo.\n')
     assert.strictEqual(files['projects/alfa/agents/agente-alfa/prompt.md'], '# Prompt\n---\n')
     assert.ok(files['global/mcps/mcp-g.json'].startsWith('{\n  "auth": "header",\n'))
-    assert.deepStrictEqual(JSON.parse(files['global/mcps/mcp-g.json']).secrets, ['env:API_TOKEN', 'header'])
+    assert.deepStrictEqual(JSON.parse(files['global/mcps/mcp-g.json']).secrets, ['header'])
     assert.deepStrictEqual(JSON.parse(files['projects/alfa/project.json']), { description: 'O projeto', id: 'alfa', initialContext: ['spec-alfa'], name: 'Alfa' })
     assert.ok(files['projects/alfa/permissions.json'].endsWith('}\n'))
   })

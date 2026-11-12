@@ -260,7 +260,6 @@ describe('CatalogHistoryService — a gravação nos serviços', () => {
     const header = 'Bearer s3gr3d0-do-header'
     mcps.create({ id: 'crm', name: 'CRM', url: 'https://a.exemplo.com/mcp', auth: 'header', headerName: 'Authorization', secret: header }, 'ana')
     mcps.create({ id: 'pw', name: 'Playwright', kind: 'container', container: { image: 'mcr.microsoft.com/playwright', env: ['API_TOKEN'] } }, 'ana')
-    mcps.saveEnv('pw', 'API_TOKEN', 'tok-valor-secreto', 'ana')
     mcps.saveSecret('crm', 'Bearer outro-segredo', 'bia')
 
     assert.strictEqual(secrets.get('mcp:crm'), 'Bearer outro-segredo')
@@ -271,7 +270,7 @@ describe('CatalogHistoryService — a gravação nos serviços', () => {
       for (const secret of [header, 'Bearer outro-segredo', 'tok-valor-secreto', 's3gr3d0']) assert.ok(!revision.document!.includes(secret), `vazou ${secret}`)
     }
     assert.match(revisions('mcp', 'crm')[0].document!, /"header"/)
-    assert.match(revisions('mcp', 'pw')[0].document!, /"env:API_TOKEN"/)
+    assert.match(revisions('mcp', 'pw')[0].document!, /"API_TOKEN"/)
   })
 })
 

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { IProjectCaller, ProjectsService } from '@application/Projects.Service'
-import { IProject, PROJECT_ROLES, TProjectRole } from '@domain/models/Project.Model'
+import { IProject, PROJECT_ENV_LIMITS, PROJECT_ROLES, TProjectRole } from '@domain/models/Project.Model'
 import { resolveCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
@@ -24,7 +24,17 @@ export interface IProjectsControllerDeps {
 }
 
 const createSchema = z.object({ id: z.string().max(64), name: z.string().max(200), description: z.string().max(4000).optional() })
-const updateSchema = z.object({ name: z.string().max(200).optional(), description: z.string().max(4000).optional() })
+const updateSchema = z.object({
+  name: z.string().max(200).optional(),
+  description: z.string().max(4000).optional(),
+  /** As variáveis fixas, a lista inteira (ver `IProject.env`). */
+  env: z.record(z.string().max(64), z.string().max(PROJECT_ENV_LIMITS.value)).optional(),
+  /** Os valores visíveis dos MCPs, a lista inteira (ver `IProject.mcpEnv`). */
+  mcpEnv: z
+    .array(z.object({ server: z.string().max(64), name: z.string().max(64), value: z.string().max(PROJECT_ENV_LIMITS.value) }))
+    .max(PROJECT_ENV_LIMITS.mcp)
+    .optional(),
+})
 /** A lista inteira de membros, com o papel (`members`); `userIds` (sem papel) segue aceito: cada um fica com o que tinha. */
 const membersSchema = z
   .object({
@@ -207,6 +217,8 @@ export class ProjectsController {
       ...(role ? { role } : {}),
       ...(project.description ? { description: project.description } : {}),
       ...(admin ? { folder: this.deps.projects.folderOf(project.id), members: this.deps.projects.members(project.id).length } : {}),
+      // As fixas e os valores visíveis dos MCPs são configuração de quem administra: o membro não lê.
+      ...(admin ? { env: project.env ?? {}, mcpEnv: project.mcpEnv ?? [] } : {}),
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
       ...(admin && project.updatedBy ? { updatedBy: project.updatedBy } : {}),
