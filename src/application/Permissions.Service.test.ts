@@ -58,4 +58,20 @@ describe('PermissionsService', () => {
     service.removeProject('xpto')
     assert.deepStrictEqual([service.projectRules('xpto').rules, service.decisions('xpto')], [[], []])
   })
+
+  it('⛔ o registro guarda o comando já mascarado (a decisão é sobre o texto cru; o segredo não vai ao banco nem à tela)', () => {
+    const seen: Array<string | undefined> = []
+    const service = new PermissionsService(
+      new SqlitePermissionRepository(),
+      () => undefined,
+      () => [],
+      undefined,
+      (text, sessionId) => (seen.push(sessionId), text.replace(/tok-\w+/g, '[segredo]')),
+    )
+    service.saveProjectRules('xpto', [{ category: 'terminal', pattern: 'curl *', decision: 'allow' }], 'ana')
+    const verdict = service.check({ projectId: 'xpto', sessionId: 's9' }, { category: 'terminal', value: 'curl -H "Authorization: Bearer tok-abc123" https://x' }, { log: true })
+    assert.strictEqual(verdict.allowed, true)
+    assert.deepStrictEqual(seen, ['s9'])
+    assert.strictEqual(service.decisions('xpto')[0].subject, 'curl -H "Authorization: Bearer [segredo]" https://x')
+  })
 })

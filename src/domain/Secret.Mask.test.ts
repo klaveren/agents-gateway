@@ -46,6 +46,35 @@ describe('Secret.Mask (a máscara de segredos)', () => {
     assert.match(maskText('DB_PASSWORD_HINT=Zx81kLmnQ2pRt5vWy7f', [], { extraSafeNames: ['_HINT'] }), /Zx81kLmnQ2pRt5vWy7f/)
   })
 
+  it('⛔ chave privada: milhares de BEGIN sem END não param o gateway; dois blocos, cada um com o seu fim', () => {
+    const hostile = '-----BEGIN PRIVATE KEY-----\n'.repeat(40_000)
+    const started = Date.now()
+    assert.strictEqual(maskText(hostile, []), hostile)
+    assert.ok(Date.now() - started < 1000, `levou ${Date.now() - started} ms`)
+    const two =
+      'a -----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY----- meio -----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY----- fim -----BEGIN PRIVATE KEY-----\nresto'
+    const hits: number[] = []
+    const out = maskText(two, [], { onHit: (hit) => hits.push(hit.length) })
+    assert.strictEqual(out, 'a [segredo:chave privada] meio [segredo:chave privada] fim -----BEGIN PRIVATE KEY-----\nresto')
+    assert.strictEqual(hits.length, 2)
+  })
+
+  it('o valor conhecido dentro de um JSON em texto (aspas e barras escapadas) também some', () => {
+    const forms = knownForms([{ value: 'se"nha\\com\nquebra', label: 'DB_PASS' }])
+    const out = maskText(JSON.stringify({ banco: { senha: 'se"nha\\com\nquebra' } }), forms)
+    assert.ok(out.includes('[segredo:DB_PASS]'), out)
+    assert.ok(!out.includes('quebra'), out)
+  })
+
+  it('⛔ JWT: uma sequência longa de `eyJ…-` sem os três pedaços não para o gateway', () => {
+    const hostile = 'eyJaaaaaaaaaaa-'.repeat(40_000)
+    const started = Date.now()
+    assert.strictEqual(maskText(hostile, []), hostile)
+    assert.ok(Date.now() - started < 1000, `levou ${Date.now() - started} ms`)
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlLWZha2U'
+    for (const around of [`Bearer ${jwt}`, `token=${jwt};`, `"${jwt}"`, `x.${jwt}`]) assert.ok(!maskText(around, []).includes('eyJ'), around)
+  })
+
   it('formato de token conhecido, venha de onde vier; e o JSON estruturado de um MCP', () => {
     const out = maskText(
       `ghp_${'a'.repeat(36)} sk-ant-${'b'.repeat(30)} AKIAABCDEFGHIJKLMNOP ya29.${'c'.repeat(30)} eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlLWZha2U\n-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----`,

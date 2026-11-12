@@ -192,6 +192,29 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
     return mine(receiving) && (resource.sharedWith ?? []).includes(receiving) ? undefined : outside(resource.projectId)
   }
 
+  /**
+   * ⛔ Quem é membro (e quem é admin) decide quem APROVA os pedidos do agente: numa conversa de projeto, o agente só tira
+   * gente ou rebaixa. Pôr uma conta nova ou fazer um admin é ampliar — a pessoa faz na tela. Sem isto, a injeção punha a
+   * conta do atacante como admin e ela aprovava o resto.
+   */
+  const widensMembers = async (projectId: string, body: unknown): Promise<ISelfReply | undefined> => {
+    const current = await api('GET', `/projects/${encodeURIComponent(projectId)}/members`)
+    if (!current.ok) return current
+    const roles = new Map((Array.isArray(current.result) ? (current.result as Array<{ userId?: string; role?: string }>) : []).map((member) => [member.userId, member.role]))
+    const asked = isObject(body) ? body : {}
+    const wanted: Array<{ userId?: unknown; role?: unknown }> = Array.isArray(asked.members)
+      ? asked.members.filter(isObject)
+      : Array.isArray(asked.userIds)
+        ? asked.userIds.map((userId: unknown) => ({ userId }))
+        : []
+    const widened = wanted.some((member) => typeof member.userId !== 'string' || !roles.has(member.userId) || (member.role === 'admin' && roles.get(member.userId) !== 'admin'))
+    return widened
+      ? refuse(
+          'An agent conversation cannot add a member or make someone an administrator of the project (it can only remove or lower): the person does that on the Projects screen',
+        )
+      : undefined
+  }
+
   const check = async (method: string, path: string, body: unknown): Promise<ISelfReply | undefined> => {
     const clean = path.split('?')[0]
     const [root] = clean.split('/').filter(Boolean)
@@ -216,7 +239,9 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         return secretTarget(body)
       case 'projects': {
         if (clean === '/projects') return scope.unrestricted ? undefined : refuse('Only an administrator in a conversation outside any project creates projects')
-        return inScope(id)
+        const denied = inScope(id)
+        if (denied || scope.unrestricted || !/^\/projects\/[^/]+\/members\/?$/.test(clean)) return denied
+        return widensMembers(id, body)
       }
       case 'agents': {
         // Pedidos de regra (o que amplia, a pessoa aprova na tela): do agente da conversa ou de um agente do projeto dela.

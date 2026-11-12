@@ -7,8 +7,9 @@ import { classifyAddress } from '@domain/Address.Policy'
 
 /**
  * Devolve o MOTIVO da recusa, ou nada se o endereço serve. Decide sobre o endereço JÁ RESOLVIDO (não sobre o nome).
+ * `hop.fromPublic`: este salto é um redirecionamento, e algum salto anterior foi respondido por um endereço público.
  */
-export type TGuardPolicy = (url: URL, address: string) => string | undefined
+export type TGuardPolicy = (url: URL, address: string, hop?: { fromPublic: boolean }) => string | undefined
 
 /** Quantos redirecionamentos seguimos (cada salto é conferido de novo, como se fosse uma URL nova). */
 const MAX_REDIRECTS = 5
@@ -18,17 +19,20 @@ const MAX_REDIRECTS = 5
  * - `linklocal` (metadado da nuvem incluso) e `unspecified`: nunca, nem na lista;
  * - `loopback` e `private` (LAN, CGNAT, ULA…): se `allowPrivate` (o endereço de um MCP cadastrado) ou se a lista
  *   (`listed`) citar o host ou o endereço;
- * - público: sempre.
+ * - público: sempre;
+ * - ⛔ quem respondeu de um endereço público não manda a requisição para dentro: depois dele, `allowPrivate` e
+ *   `allowLan` não valem para o redirecionamento (só a lista, que cita o destino de propósito).
  */
 /** `allowLan`: a rede local (10.x, 192.168.x…) passa, o loopback não — o endereço que alguém CADASTROU de propósito (o aviso do turno). */
 export function egressPolicy(options: { allowPrivate: boolean; allowLan?: boolean; listed: (url: URL, address: string) => boolean }): TGuardPolicy {
-  return (url, address) => {
+  return (url, address, hop) => {
     const kind = classifyAddress(address)
     if (kind === 'public') return undefined
     const host = url.hostname.replace(/^\[|\]$/g, '')
     if (kind === 'linklocal' || kind === 'unspecified') return `${host} aponta para ${address} (link-local/metadado): sempre negado`
     if (kind === 'invalid') return `${host} não resolveu para um endereço válido`
     if (options.listed(url, address)) return undefined
+    if (hop?.fromPublic) return `${host} aponta para ${address}: um endereço público não redireciona para o loopback nem para a rede local`
     if (options.allowPrivate || (options.allowLan && kind === 'private')) return undefined
     return kind === 'loopback'
       ? `${host} aponta para ${address} (loopback): só se estiver listado na variável de ambiente do recurso`
@@ -82,7 +86,7 @@ export function listFromEnv(value: string | undefined): string[] {
  * cada salto passa pela mesma conferência, e saltar para OUTRA origem tira as credenciais da requisição.
  * `redirect: 'error'`/`'manual'` valem como no `fetch`.
  */
-export function guardedFetch(policy: TGuardPolicy): typeof fetch {
+export function guardedFetch(policy: TGuardPolicy, kindOf: (address: string) => string = classifyAddress): typeof fetch {
   // ⛔ Agente PRÓPRIO desta política: socket reaproveitado do agente global pularia a conferência de outra política.
   const agents = { 'http:': new HttpAgent({ keepAlive: true }), 'https:': new HttpsAgent({ keepAlive: true }) }
   return async (input, init) => {
@@ -94,8 +98,11 @@ export function guardedFetch(policy: TGuardPolicy): typeof fetch {
     const signal = init?.signal ?? source?.signal ?? undefined
     const redirect = init?.redirect ?? source?.redirect ?? 'follow'
 
+    let fromPublic = false
     for (let hop = 0; ; hop += 1) {
-      const response = await once(url, method, headers, body, signal, policy, agents)
+      const sticky = fromPublic
+      const { response, address } = await once(url, method, headers, body, signal, hop ? (to, at) => policy(to, at, { fromPublic: sticky }) : policy, agents)
+      if (address && kindOf(address) === 'public') fromPublic = true
       const location = response.headers.get('location')
       if (response.status < 300 || response.status >= 400 || !location || ![301, 302, 303, 307, 308].includes(response.status) || redirect === 'manual') return response
       await response.body?.cancel().catch(() => undefined)
@@ -132,8 +139,8 @@ function once(
   signal: AbortSignal | undefined,
   policy: TGuardPolicy,
   agents: { 'http:': HttpAgent; 'https:': HttpsAgent },
-): Promise<Response> {
-  return new Promise<Response>((resolve, reject) => {
+): Promise<{ response: Response; address?: string }> {
+  return new Promise<{ response: Response; address?: string }>((resolve, reject) => {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return reject(new TypeError(`protocolo não suportado: ${url.protocol}`))
     const literal = url.hostname.replace(/^\[|\]$/g, '')
     if (isIP(literal)) {
@@ -176,7 +183,10 @@ function once(
         const status = answer.statusCode ?? 502
         const empty = method === 'HEAD' || status === 204 || status === 205 || status === 304
         if (empty) answer.resume()
-        resolve(new Response(empty ? null : (Readable.toWeb(answer) as ReadableStream<Uint8Array>), { status, statusText: answer.statusMessage ?? '', headers: reply }))
+        resolve({
+          response: new Response(empty ? null : (Readable.toWeb(answer) as ReadableStream<Uint8Array>), { status, statusText: answer.statusMessage ?? '', headers: reply }),
+          address: answer.socket.remoteAddress,
+        })
       },
     )
     request.on('error', (error) => reject(error))

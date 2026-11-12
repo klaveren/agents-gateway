@@ -99,6 +99,17 @@ import { makeResourceFiles } from './ResourceFiles.Factory'
 /** O último controller de agentes montado: as regras do cadastro de agente moram nele (o rollback as usa). */
 let agentController: AgentController | undefined
 
+/**
+ * O que sai junto com o agente, por QUALQUER caminho de remoção (a tela, a API, a escrita do catálogo).
+ * ⛔ Os segredos também: um agente recriado com o mesmo id não herda os do anterior.
+ */
+function agentRemoved(agentId: string): void {
+  makeHooks().removeAgent(agentId)
+  makeGuidance().removeAgent(agentId)
+  makeSchedules().removeAgent(agentId)
+  makeResourceSecrets().removeScope('agent', agentId)
+}
+
 export function makeController(): AgentController {
   const usecases = makeUsecases()
   const { catalog } = makeTools()
@@ -140,12 +151,7 @@ export function makeController(): AgentController {
     getSession: usecases.getSessionUseCase,
     listSessions: usecases.listSessionsUseCase,
     resumeSession: usecases.resumeSessionUseCase,
-    agentRemoved: (agentId) => {
-      makeHooks().removeAgent(agentId)
-      makeGuidance().removeAgent(agentId)
-      makeSchedules().removeAgent(agentId)
-      makeResourceSecrets().removeScope('agent', agentId)
-    },
+    agentRemoved,
     projects: makeProjects(),
     sandbox: projectSandbox(),
     docker: () => dockerStatus(),
@@ -432,11 +438,7 @@ function makeCatalogWriter(): CatalogWriter {
       rules: () => agents().agentRules(),
       issues: (agent) => agents().projectIssues(agent),
       defaultAgentId: async () => (await makeSettings().read()).agentId,
-      removed: (agentId) => {
-        makeHooks().removeAgent(agentId)
-        makeGuidance().removeAgent(agentId)
-        makeSchedules().removeAgent(agentId)
-      },
+      removed: agentRemoved,
     },
     mcpChanged: async (server) => {
       if (isLaunchedMcp(server)) await mcp.closeInstances({ serverId: mcpServerKey(server) })
@@ -551,6 +553,7 @@ export function makeConnectController(): ConnectController {
       const agent = makeAgents().get(agentId)
       return agent ? (agent.projectId ?? null) : undefined
     },
+    agentAdminOnly: (agentId) => makeAgents().get(agentId)?.adminOnly === true,
   })
   const tokens = makeAuth().accessTokens
   return new ConnectController({

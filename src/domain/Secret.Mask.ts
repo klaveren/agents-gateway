@@ -44,7 +44,6 @@ const OPAQUE = /^[A-Za-z0-9+/=_\-.~]{16,}$/
 
 /** Os formatos de token que se reconhecem sozinhos. */
 const FORMATS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
-  { label: 'chave privada', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
   { label: 'token do GitHub', pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b/g },
   { label: 'token do GitLab', pattern: /\bglpat-[A-Za-z0-9_-]{20,}\b/g },
   { label: 'chave de API', pattern: /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}\b/g },
@@ -52,10 +51,40 @@ const FORMATS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
   { label: 'chave do Google', pattern: /\bAIza[A-Za-z0-9_-]{35}\b/g },
   { label: 'chave da AWS', pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
   { label: 'token do Slack', pattern: /\bxox[abposr]-[A-Za-z0-9-]{10,}\b/g },
-  { label: 'JWT', pattern: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
+  // ⛔ Começa só no INÍCIO de uma sequência do alfabeto (não em `\b`, que existe depois de cada `-`): com `\b`, um texto
+  // `eyJaaaa-eyJaaaa-…` fazia cada `eyJ` varrer a sequência inteira de novo (300 KB = 6 s com o gateway parado).
+  { label: 'JWT', pattern: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
 ]
 
 const tag = (label: string) => `[segredo:${label}]`
+
+const PRIVATE_KEY = 'chave privada'
+
+/**
+ * O bloco de chave privada, do `BEGIN` ao primeiro `END` depois dele. ⛔ Busca linear, não uma regex só: com
+ * `BEGIN…[\s\S]*?…END`, um texto com milhares de `BEGIN` e nenhum `END` (o resultado de um MCP hostil) custava o
+ * quadrado do tamanho e parava o gateway inteiro. Sem `END` adiante, não há mais bloco: para de procurar.
+ */
+function maskPrivateKeys(text: string, options: IMaskOptions): string {
+  if (!text.includes('PRIVATE KEY-----')) return text
+  const begin = /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----/g
+  const end = /-----END [A-Z ]{0,40}PRIVATE KEY-----/g
+  let out = ''
+  let from = 0
+  for (;;) {
+    begin.lastIndex = from
+    const start = begin.exec(text)
+    if (!start) break
+    end.lastIndex = start.index + start[0].length
+    const stop = end.exec(text)
+    if (!stop) break
+    const close = stop.index + stop[0].length
+    options.onHit?.({ layer: 'format', label: PRIVATE_KEY, length: close - start.index })
+    out += text.slice(from, start.index) + tag(PRIVATE_KEY)
+    from = close
+  }
+  return from ? out + text.slice(from) : text
+}
 
 /** As formas em que um valor conhecido aparece: ele, o base64 dele e a senha de dentro de uma URI. */
 export function knownForms(secrets: readonly IKnownSecret[]): IKnownSecret[] {
@@ -70,6 +99,9 @@ export function knownForms(secrets: readonly IKnownSecret[]): IKnownSecret[] {
     forms.push({ value: Buffer.from(value).toString('hex'), label: secret.label })
     const encoded = encodeURIComponent(value)
     if (encoded !== value) forms.push({ value: encoded, label: secret.label })
+    // Dentro de um JSON em texto (`cat config.json`): aspas, barra e quebra de linha aparecem escapadas.
+    const escaped = JSON.stringify(value).slice(1, -1)
+    if (escaped !== value) forms.push({ value: escaped, label: secret.label })
     const password = /:\/\/[^:/@\s]+:([^@/\s]+)@/.exec(value)?.[1]
     if (password && password.length >= MIN_LENGTH) forms.push({ value: password, label: secret.label })
   }
@@ -90,7 +122,7 @@ export function maskText(text: string, known: readonly IKnownSecret[], options: 
       out = out.split(secret.value).join(tag(secret.label))
       options.onHit?.({ layer: 'value', label: secret.label, length: secret.value.length })
     }
-    out = maskShape(out, options)
+    out = maskPrivateKeys(maskShape(out, options), options)
     for (const format of FORMATS) {
       out = out.replace(format.pattern, (match) => {
         options.onHit?.({ layer: 'format', label: format.label, length: match.length })

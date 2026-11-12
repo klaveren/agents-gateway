@@ -18,6 +18,15 @@ function fakeApi() {
     if (agent) return agents[agent[1]] ? { ok: true, status: 200, result: { id: agent[1], ...agents[agent[1]] } } : { ok: false, status: 404 }
     const list = /^\/(rules|docs|resources)$/.exec(path)
     if (list) return { ok: true, status: 200, result: items[`${list[1]}?${options?.query?.project}`] ?? [] }
+    if (/^\/projects\/[^/]+\/members$/.test(path))
+      return {
+        ok: true,
+        status: 200,
+        result: [
+          { userId: 'ana', role: 'admin' },
+          { userId: 'bia', role: 'member' },
+        ],
+      }
     return { ok: true, status: 200, result: [] }
   }
   return { api, written }
@@ -63,6 +72,54 @@ describe('SelfMcp.Guard', () => {
     assert.strictEqual((await guarded('POST', '/sessions', { body: { agentId: 'atlas', projectId: 'P' } })).ok, true, 'agente global, conversa do projeto')
     assert.strictEqual((await guarded('PATCH', '/agents/a-p', { body: { patch: {}, reason: 'x' } })).ok, true, 'pedido que a pessoa aprova na tela')
     assert.strictEqual(written.length, 9, 'o save_agent de agente grava o mínimo e pede o resto (POST + PATCH, PUT → PATCH)')
+  })
+
+  it('⛔ membros do projeto: o agente tira ou rebaixa; conta nova ou admin novo é da pessoa, na tela (quem é admin aprova os pedidos)', async () => {
+    const { api, written } = fakeApi()
+    const guarded = scopedWrites(api, { projectId: 'P', unrestricted: false })
+    const put = (body: Record<string, unknown>) => guarded('PUT', '/projects/P/members', { body })
+
+    assert.ok(
+      refused(
+        await put({
+          members: [
+            { userId: 'ana', role: 'admin' },
+            { userId: 'eva', role: 'member' },
+          ],
+        }),
+      ),
+      'conta nova',
+    )
+    assert.ok(
+      refused(
+        await put({
+          members: [
+            { userId: 'ana', role: 'admin' },
+            { userId: 'bia', role: 'admin' },
+          ],
+        }),
+      ),
+      'membro que vira admin',
+    )
+    assert.ok(refused(await put({ userIds: ['ana', 'eva'] })), 'conta nova, pela forma sem papel')
+    assert.ok(refused(await put({ members: [{ role: 'member' }] })), 'sem conta: recusado')
+    assert.deepStrictEqual(written, [])
+    assert.strictEqual((await put({ members: [{ userId: 'ana', role: 'admin' }] })).ok, true, 'tirar a bia')
+    assert.strictEqual(
+      (
+        await put({
+          members: [
+            { userId: 'ana', role: 'member' },
+            { userId: 'bia', role: 'member' },
+          ],
+        })
+      ).ok,
+      true,
+      'rebaixar',
+    )
+    assert.strictEqual((await put({ userIds: ['ana', 'bia'] })).ok, true)
+    // Fora de projeto (o agente do administrador do gateway) segue como era.
+    assert.strictEqual((await scopedWrites(api, { unrestricted: true })('PUT', '/projects/P/members', { body: { members: [{ userId: 'eva', role: 'admin' }] } })).ok, true)
   })
 
   it('⛔ o agente não compartilha (mexe em OUTRO projeto): PUT .../shares é recusado mesmo no projeto da conversa e para o Atlas', async () => {

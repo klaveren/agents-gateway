@@ -246,6 +246,7 @@ export class PermissionRequestsService {
     const items: IRuleChange[] = split.widenings.length
       ? [...split.pending.add.map((rule) => ({ add: [rule], remove: [] })), ...split.pending.remove.map((rule) => ({ add: [], remove: [rule] }))]
       : []
+    this.room(items.length, target.agentId, target.projectId)
     const { ids, batch } = this.batch(items.length)
     const pending = items.length
       ? items.map((item, index) =>
@@ -303,6 +304,7 @@ export class PermissionRequestsService {
       this.deps.agents.save(split.agent, { rules: validation.rules, by: label(requester), creating: false, change: { source: 'agent', note: `patch do agente: ${reason}` } })
 
     // ⚖️ UM PEDIDO POR ITEM: um campo, ou uma entrada acrescentada a uma lista (`agent:ana`, `cap:terminal`).
+    this.room(split.items.length, agentId, split.agent.projectId)
     const { ids, batch } = this.batch(split.items.length)
     const pending = split.items.length
       ? split.items.map((item, index) =>
@@ -403,6 +405,7 @@ export class PermissionRequestsService {
     }
     const agentId = input.scope === 'agent' ? input.scopeId : requester.agentId
     const agent = agentId ? this.deps.agents.entry(agentId)?.agent : undefined
+    this.room(1, agentId, agent?.projectId)
     return this.store(this.newId(), {
       kind: 'secret',
       ...(agentId ? { agentId } : {}),
@@ -525,6 +528,25 @@ export class PermissionRequestsService {
     return this.view(request)
   }
 
+  /**
+   * ⛔ Teto de pedidos ABERTOS por alvo (o agente; sem ele, o projeto): o agente em laço não enche a fila de quem aprova nem
+   * o banco. Conferido ANTES de gravar o lote — ou entra inteiro, ou nada.
+   */
+  private room(incoming: number, agentId?: string, projectId?: string): void {
+    if (!incoming || (!agentId && !projectId)) return
+    // O vencido não conta (vencer é calculado na leitura): pedido esquecido não tranca o agente para sempre.
+    const open = this.deps.repository
+      .list({ ...(agentId ? { agentId } : { projectId }), open: true, limit: MAX_OPEN_REQUESTS + 1 })
+      .filter((request) => requestStatus(request, this.now(), this.ttlDays) === 'pending').length
+    if (open + incoming > MAX_OPEN_REQUESTS)
+      throw new InvalidPermissionsError([
+        {
+          field: 'reason',
+          message: `too many open requests for this ${agentId ? 'agent' : 'project'} (${open}, limit ${MAX_OPEN_REQUESTS}): wait for a decision before asking again`,
+        },
+      ])
+  }
+
   /** Os ids dos itens de uma chamada e o lote deles (o id do primeiro): só com mais de um — um item só não precisa de grupo. */
   private batch(items: number): { ids: string[]; batch: { batchId?: string } } {
     const ids = Array.from({ length: items }, () => this.newId())
@@ -639,6 +661,9 @@ function gate(widenings: readonly IWidening[], confirm: readonly string[] | unde
   const mismatch = widenings.length ? !confirm || !confirmsWidenings(confirm, widenings) : !!confirm?.length
   if (mismatch) throw new CatalogWideningConfirmationError(refs(widenings))
 }
+
+/** Pedidos abertos por alvo (ver `room`): bem acima do uso real, abaixo do que afoga a tela de quem aprova. */
+const MAX_OPEN_REQUESTS = 100
 
 const refs = (widenings: readonly IWidening[]): IPermissionWidening[] => widenings.map(({ key, description }) => ({ key, description }))
 

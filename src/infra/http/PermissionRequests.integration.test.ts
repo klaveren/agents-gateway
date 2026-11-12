@@ -30,6 +30,8 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
   let admin = ''
   let jar = ''
   let accessToken = ''
+  /** A conversa viva do admin (o rótulo do pedido): a de outra pessoa, ou uma que não existe, não fica no pedido. */
+  let conversation = ''
 
   const raw = (path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}) =>
     fetch(`${base}${path}`, {
@@ -50,7 +52,7 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
   /** O cliente MCP como o gateway o usa: a conta de quem conversa e a identidade do agente (rótulo). */
   const connect = async (token: string) => {
     const client = new Client({ name: 'teste', version: '1.0.0' })
-    const headers = { ...bearer(token), 'x-gateway-agent': 'theo', 'x-gateway-conversation': 'c-42' }
+    const headers = { ...bearer(token), 'x-gateway-agent': 'theo', 'x-gateway-conversation': conversation }
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers } }))
     return client
   }
@@ -99,6 +101,17 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
     await call('/providers/claude/models', { method: 'POST', headers: bearer(admin), body: { modelId: 'claude-sonnet-5' } })
     await call('/providers/claude/models', { method: 'PUT', headers: bearer(admin), body: { modelId: 'claude-sonnet-5', enabled: true } })
     accessToken = (await call('/auth/tokens', { method: 'POST', headers: bearer(admin), body: { name: 'ci', expiresInDays: 30 } })).body.result.token
+    const me = (await call('/auth/me', { headers: bearer(admin) })).body.result
+    conversation = makeSessionStore().create({
+      agentId: 'theo',
+      provider: 'claude',
+      protocol: EProvider.CLAUDE,
+      mode: EMode.AGENT,
+      model: 'claude-sonnet-5',
+      tools: true,
+      systemPrompt: 'x',
+      metadata: { owner: { id: me.id, email: 'root@x.test' } },
+    }).id
     makeAgents().save(
       {
         id: 'theo',
@@ -145,7 +158,7 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
     assert.match(notice, /permite terminal "npm test"/)
     const parsed = JSON.parse(json)
     assert.strictEqual(parsed.pending[0].requestedBy.agentId, 'theo')
-    assert.strictEqual(parsed.pending[0].requestedBy.conversationId, 'c-42')
+    assert.strictEqual(parsed.pending[0].requestedBy.conversationId, conversation)
     requestId = parsed.pending[0].id
     keys = parsed.pending[0].widenings.map((item: { key: string }) => item.key)
     assert.deepStrictEqual(keys, ['agent/theo#permissions+allow:terminal:npm test'])
@@ -403,5 +416,17 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
     const byAdmin = await as(admin, 'theo', 'c-42')
     assert.strictEqual((await byAdmin({ scope: 'agent', id: 'nina' })).body.agentId, 'nina')
     assert.strictEqual((await byAdmin({ scope: 'agent' })).body.agentId, 'theo')
+
+    // ⛔ O rótulo com a conversa de OUTRA pessoa (ou uma que não existe) não fica no pedido: o aviso da decisão não entra nela.
+    for (const label of [theoSession, 'nao-existe']) {
+      const asked = await call('/agents/theo/permission-rules', {
+        method: 'POST',
+        headers: { ...bearer(admin), 'x-gateway-agent': 'theo', 'x-gateway-conversation': label },
+        body: { add: [{ category: 'terminal', pattern: `echo ${label}`, decision: 'allow' }], reason: 'rótulo alheio' },
+      })
+      assert.strictEqual(asked.status, 200, JSON.stringify(asked.body))
+      assert.strictEqual(asked.body.result.pending[0].requestedBy.agentId, 'theo')
+      assert.strictEqual(asked.body.result.pending[0].requestedBy.conversationId, undefined)
+    }
   })
 })

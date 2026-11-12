@@ -9,6 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/client/auth.js'
 import { IMcpServerConfig, mcpOAuthTokenKey, mcpSecretKey } from '@domain/models/McpServer.Model'
 import { ICredentialStore } from '@domain/ports/CredentialStore.Port'
+import { egressPolicy, guardedFetch } from '@infra/net/Guarded.Fetch'
 
 /** O login começado e não terminado vale isto: depois, o `state` não serve mais. */
 const PENDING_MS = 10 * 60_000
@@ -51,7 +52,9 @@ export class McpOAuth {
     private readonly servers: { get(key: string): IMcpServerConfig | undefined },
     private readonly credentials: ICredentialStore,
     private readonly now: () => number = Date.now,
-    private readonly fetchFn?: typeof fetch,
+    // ⛔ A descoberta, a troca e a renovação saem pela mesma política do cliente MCP: o endereço é o que foi
+    // cadastrado (loopback e rede local passam), link-local e metadado da nuvem nunca, e cada salto é conferido.
+    private readonly fetchFn: typeof fetch = guardedFetch(egressPolicy({ allowPrivate: true, listed: () => false })),
   ) {}
 
   /** O endereço para onde mandar a pessoa entrar. */
@@ -91,7 +94,7 @@ export class McpOAuth {
       codeVerifier: pending.verifier,
       redirectUri: pending.redirectUri,
       ...(info.resourceMetadata?.resource ? { resource: new URL(info.resourceMetadata.resource) } : {}),
-      ...(this.fetchFn ? { fetchFn: this.fetchFn } : {}),
+      fetchFn: this.fetchFn,
     })
     this.store(pending.serverKey, pending.userId, {
       accessToken: tokens.access_token,
@@ -132,7 +135,7 @@ export class McpOAuth {
         clientInformation: this.client(serverKey, config),
         refreshToken: stored.refreshToken!,
         ...(info.resourceMetadata?.resource ? { resource: new URL(info.resourceMetadata.resource) } : {}),
-        ...(this.fetchFn ? { fetchFn: this.fetchFn } : {}),
+        fetchFn: this.fetchFn,
       })
       const next: IStoredToken = {
         accessToken: tokens.access_token,
@@ -163,7 +166,7 @@ export class McpOAuth {
   private async discover(serverKey: string, config: IMcpServerConfig): Promise<OAuthServerInfo> {
     const cached = this.discovered.get(serverKey)
     if (cached && this.now() - cached.at < DISCOVERY_MS) return cached.info
-    const fetchFn = this.fetchFn ? { fetchFn: this.fetchFn } : {}
+    const fetchFn = { fetchFn: this.fetchFn }
     let info: OAuthServerInfo
     if (config.oauth?.authorizationServer) {
       const metadata = await discoverAuthorizationServerMetadata(config.oauth.authorizationServer, fetchFn)

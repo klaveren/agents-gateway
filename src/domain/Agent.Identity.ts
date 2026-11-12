@@ -46,3 +46,27 @@ export function terminalEnv<T extends Record<string, string | undefined>>(
   // ⚖️ As variáveis secretas do turno por cima do que o gateway monta: o nome já recusa os reservados (`secretNameIssue`).
   return { ...agentEnv, ...gateway, ...context?.secretEnv, ...identityEnv(context) } as T & Record<string, string>
 }
+
+/**
+ * ⛔ Nomes que dizem AONDE o CLI do provedor conecta e em quem ele confia: o endpoint, o proxy, a CA, a pasta de
+ * configuração, a troca de provedor. Quem os fixasse levaria a credencial do provedor (a chave do sistema ou o login
+ * da assinatura) a outro servidor.
+ */
+export const CLI_CONNECTION_ENV =
+  /^(ANTHROPIC|CLAUDE|OPENAI|CODEX|GEMINI|GOOGLE|ANTIGRAVITY)_\w*(URL|BASE|HOST|ENDPOINT|CONFIG_DIR|HOME|USE_)\w*$|PROXY$|^(NODE_EXTRA_CA_CERTS|NODE_TLS_REJECT_UNAUTHORIZED|SSL_CERT_FILE|SSL_CERT_DIR|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE)$/i
+
+/**
+ * O ambiente do PROCESSO do CLI de um provedor (Claude, Codex, Antigravity): o mesmo `terminalEnv`, com duas travas a mais.
+ *
+ * ⛔ É este processo que guarda a credencial do provedor. As variáveis do agente e as secretas do turno não fixam a
+ * conexão dele (`CLI_CONNECTION_ENV` fica de fora), e o que o gateway monta vence as duas: aqui ninguém troca a
+ * chave, o endpoint nem a pasta de configuração que o gateway pôs.
+ */
+export function cliTerminalEnv<T extends Record<string, string | undefined>>(
+  agentEnv: Readonly<Record<string, string>> | undefined,
+  gateway: T,
+  context: IExecutionContext | undefined,
+): T & Record<string, string> {
+  const own = (env: Readonly<Record<string, string>> | undefined) => Object.fromEntries(Object.entries(env ?? {}).filter(([name]) => !CLI_CONNECTION_ENV.test(name)))
+  return { ...own(agentEnv), ...own(context?.secretEnv), ...gateway, ...identityEnv(context) } as T & Record<string, string>
+}

@@ -17,7 +17,7 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { CLAUDE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
-import { CLAUDE_TOOL_NAMES, ClaudeAgentAdapter, cliEnv, windowOf } from './ClaudeAgent.Adapter'
+import { CLAUDE_TOOL_NAMES, ClaudeAgentAdapter, cliEnv, preToolUse, windowOf } from './ClaudeAgent.Adapter'
 import { SessionStore } from '@infra/session/Session.Store'
 
 type TQuery = typeof query
@@ -862,3 +862,35 @@ async function promptText(prompt: unknown): Promise<string> {
   }
   return ''
 }
+
+describe('preToolUse — o portão no hook', () => {
+  type THookInput = Parameters<ReturnType<typeof preToolUse>>[0]
+  const input = { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/etc/passwd' }, tool_use_id: 't1' } as unknown as THookInput
+  const run = (gate: Parameters<typeof preToolUse>[0]) => preToolUse(gate)(input, 't1', { signal: new AbortController().signal })
+  const decisionOf = (output: Awaited<ReturnType<typeof run>>) =>
+    (output as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } }).hookSpecificOutput
+
+  it('o que o portão libera passa; o que ele nega volta com o motivo', async () => {
+    assert.strictEqual(decisionOf(await run(async () => ({ behavior: 'allow', updatedInput: {} })))?.permissionDecision, 'allow')
+    const denied = decisionOf(await run(async () => ({ behavior: 'deny', message: 'fora da regra' })))
+    assert.deepStrictEqual([denied?.permissionDecision, denied?.permissionDecisionReason], ['deny', 'fora da regra'])
+  })
+
+  it('⛔ o portão que lança (ou rejeita) NEGA: o erro do hook não vira "sem decisão"', async () => {
+    const original = console.error
+    console.error = () => undefined
+    try {
+      const rejected = decisionOf(await run(async () => Promise.reject(new Error('banco fora'))))
+      assert.strictEqual(rejected?.permissionDecision, 'deny')
+      assert.doesNotMatch(rejected?.permissionDecisionReason ?? '', /banco fora/)
+      const thrown = decisionOf(
+        await run(() => {
+          throw new Error('síncrono')
+        }),
+      )
+      assert.strictEqual(thrown?.permissionDecision, 'deny')
+    } finally {
+      console.error = original
+    }
+  })
+})

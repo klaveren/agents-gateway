@@ -99,8 +99,9 @@ export class AgentLocalLayerService {
    * por aqui, e os modelos novos não ganham sandbox mais solto nem rede. O que a camada tinha LIGADO a mais sai dela
    * quando é pedido. `ignored` = o que o agente não tem para desligar.
    */
-  async adjust(projectId: string, agentId: string, change: IAgentLocalLayerAdjust, by: string): Promise<IAgentLocalLayerView & { ignored: string[] }> {
+  async adjust(projectId: string, agentId: string, change: IAgentLocalLayerAdjust, by: string, attempt = 0): Promise<IAgentLocalLayerView & { ignored: string[] }> {
     const agent = this.agent(projectId, agentId)
+    const read = JSON.stringify(this.deps.repository.get(agentId) ?? null)
     const current = inputOf(this.deps.repository.get(agentId))
     const asked = new Set(change.disabledTools ?? [])
     const providers = change.providers === undefined ? current.providers : (change.providers ?? undefined)
@@ -117,6 +118,12 @@ export class AgentLocalLayerService {
       disabledTools: [...new Set([...(current.disabledTools ?? []), ...asked])],
       permissions: current.permissions,
     })
+    // ⛔ A conferência espera (`await`): se a camada mudou no meio (a tela, uma aprovação), refaz sobre a de agora — gravar
+    // a lista lida antes desfaria o que a pessoa acabou de tirar ou de aprovar.
+    if (JSON.stringify(this.deps.repository.get(agentId) ?? null) !== read) {
+      if (attempt >= 3) throw new InvalidAgentError([{ field: 'localLayer', message: 'a camada local mudou durante o ajuste: tente de novo' }])
+      return this.adjust(projectId, agentId, change, by, attempt + 1)
+    }
     this.store(agentId, layer, by)
     const ignored = [...asked].filter((tool) => !layer.disabledTools?.includes(tool) && !current.allowedTools.includes(tool))
     return { ...this.view(agent, this.deps.repository.get(agentId)), ignored }
