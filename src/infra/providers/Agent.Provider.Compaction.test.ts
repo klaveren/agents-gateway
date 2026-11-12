@@ -12,7 +12,7 @@ import { adapterKey, AgentProvider } from './Agent.Provider'
 
 /** A compactação do contexto (ver `Compaction.Policy`), com um adapter falso que informa o contexto em uso. */
 describe('AgentProvider — compactação do contexto', () => {
-  function setup(options: { context: number; summary?: 'ok' | 'tool'; compactsItself?: boolean; failAfter?: boolean }) {
+  function setup(options: { context: number; summary?: 'ok' | 'tool'; compactsItself?: boolean; failAfter?: boolean; window?: number }) {
     const agent: IAgent = {
       id: 'longo',
       name: 'Longo',
@@ -23,6 +23,7 @@ describe('AgentProvider — compactação do contexto', () => {
     }
     const store = new SessionStore()
     const seen: Array<{ text: string; native: unknown; context?: string }> = []
+    const learned: Array<[string, string, number]> = []
     let failing = false
     const adapter: IAgentAdapter = {
       ...(options.compactsItself ? { compactsItself: true } : {}),
@@ -58,7 +59,12 @@ describe('AgentProvider — compactação do contexto', () => {
           return
         }
         yield { type: 'text.delta', sessionId, timestamp: new Date(), payload: { text: `resposta a ${input.text.slice(-12)}` } }
-        yield { type: 'usage', sessionId, timestamp: new Date(), payload: { inputTokens: options.context, outputTokens: 10, contextTokens: options.context } }
+        yield {
+          type: 'usage',
+          sessionId,
+          timestamp: new Date(),
+          payload: { inputTokens: options.context, outputTokens: 10, contextTokens: options.context, ...(options.window ? { contextWindow: options.window } : {}) },
+        }
         yield { type: 'message.completed', sessionId, timestamp: new Date() }
       },
       async cancel() {},
@@ -74,8 +80,11 @@ describe('AgentProvider — compactação do contexto', () => {
       undefined,
       undefined,
       () => 1_000,
+      undefined,
+      undefined,
+      (providerId, model, window) => learned.push([providerId, model, window]),
     )
-    return { provider, seen, store, fail: () => (failing = true) }
+    return { provider, seen, store, learned, fail: () => (failing = true) }
   }
 
   const run = async (stream: AsyncIterable<IAgentEvent>) => {
@@ -84,6 +93,14 @@ describe('AgentProvider — compactação do contexto', () => {
     return events
   }
   const warnings = (events: IAgentEvent[]) => events.flatMap((event) => (event.type === 'warning' ? [event.payload.message] : []))
+
+  it('a janela que o runtime informa no consumo vai ao catálogo de modelos, e não entra na conta da sessão', async () => {
+    const { provider, learned, store } = setup({ context: 100, window: 200_000 })
+    const session = await provider.createSession({ agentId: 'longo' })
+    await run(provider.sendMessage(session.id, { text: 'oi' }))
+    assert.deepStrictEqual(learned, [['claude', 'claude-sonnet-5', 200_000]])
+    assert.strictEqual('contextWindow' in store.get(session.id)!.usage, false)
+  })
 
   it('passou do gatilho: o turno seguinte começa com o resumo, num SDK zerado, e o resumo não sai como texto', async () => {
     const { provider, seen } = setup({ context: 850, summary: 'ok' })

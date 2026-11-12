@@ -17,7 +17,7 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { CLAUDE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
-import { CLAUDE_TOOL_NAMES, ClaudeAgentAdapter, cliEnv } from './ClaudeAgent.Adapter'
+import { CLAUDE_TOOL_NAMES, ClaudeAgentAdapter, cliEnv, windowOf } from './ClaudeAgent.Adapter'
 import { SessionStore } from '@infra/session/Session.Store'
 
 type TQuery = typeof query
@@ -463,6 +463,15 @@ describe('ClaudeAgentAdapter', () => {
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(events.find((e) => e.type === 'usage')?.payload, { inputTokens: 1000, cacheReadTokens: 800, cacheWriteTokens: 190, outputTokens: 7 })
+  })
+
+  it('a janela do modelo da conversa vem do `modelUsage` do runtime; a de um subagente não serve', () => {
+    const usage = { 'claude-haiku-5-5': { contextWindow: 200_000 }, 'claude-opus-5-5[1m]': { contextWindow: 1_000_000 } }
+    assert.deepStrictEqual(windowOf(usage, 'claude-opus-5-5'), { contextWindow: 1_000_000 })
+    assert.deepStrictEqual(windowOf({ 'claude-opus-5-5-20261001': { contextWindow: 500_000 } }, 'claude-opus-5-5'), { contextWindow: 500_000 })
+    assert.deepStrictEqual(windowOf(usage, 'claude-fable-5-1'), {})
+    assert.deepStrictEqual(windowOf({ 'claude-opus-5-5': { contextWindow: 0 } }, 'claude-opus-5-5'), {})
+    assert.deepStrictEqual(windowOf(undefined, 'claude-opus-5-5'), {})
   })
 
   it('⚖️ o contexto em uso é a entrada da ÚLTIMA chamada do turno, não a soma que o `result` traz', async () => {

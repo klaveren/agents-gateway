@@ -113,6 +113,7 @@ export function makeOrchestrator(): AgentProvider {
       const projects = makeProjects()
       return projects.exists(projectId) ? projects.get(projectId).name : undefined
     },
+    (provider, model, window) => models.learnContext(provider, model, window),
   )
   provider.useAgentFiles((agent) => makeAgents().filesDir(agent))
   // O painel da conversa: lido do banco das conversas (quem grava é a ferramenta, ver `Tools.Factory`).
