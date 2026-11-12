@@ -10,6 +10,8 @@ import type { TProviderFailure } from '@domain/Provider.Failure'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
 import type { IAgent } from '@domain/models/Agent.Model'
 import { isEmptyLayer, mergeLocalLayer, TAgentLocalLayerInput } from '@domain/models/AgentLocalLayer.Model'
+import { PEOPLE_ONLY_GATEWAY_TOOLS } from '@domain/models/Delegation.Model'
+import { SELF_MCP_SERVER_ID } from '@application/McpServers.Service'
 import { ISelfReply, selfApi, selfBase, TSelfApi } from './Self.Api'
 import { agentScopeOf, scopedWrites } from './SelfMcp.Guard'
 
@@ -633,7 +635,9 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
         : []
       const listOf = async (entry: (typeof enabled)[number]) => {
         const listed = await api('GET', `/mcp-servers/${encodeURIComponent(entry.key ?? entry.id)}/tools`)
-        const found = listed.ok ? ((listed.result as Array<{ name: string; description: string }>) ?? []) : []
+        const all = listed.ok ? ((listed.result as Array<{ name: string; description: string }>) ?? []) : []
+        // ⛔ As de conversa do próprio gateway não vão para agente (ver `PEOPLE_ONLY_GATEWAY_TOOLS`): listar fazia o admin achar que ligava.
+        const found = entry.id === SELF_MCP_SERVER_ID ? all.filter((tool) => !PEOPLE_ONLY_GATEWAY_TOOLS.includes(tool.name)) : all
         // `projectId`: o servidor só serve a agente daquele projeto (ausente = global).
         return { head: { server: entry.id, ...(entry.projectId ? { projectId: entry.projectId } : {}), name: entry.name, all: `mcp:${entry.id}/*` }, found }
       }

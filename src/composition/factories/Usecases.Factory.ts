@@ -66,6 +66,17 @@ export function makeUsecases() {
         }
         void agentProvider.dispose(sessionId).catch(() => undefined)
       },
+      // A conversa da PESSOA com o agente (não filha): volta pelo histórico se o serviço aceitar a gravada.
+      async (sessionId, accept, via) => {
+        const stored = await conversations.findSession(sessionId)
+        if (!stored) return `conversation ${sessionId} was deleted or does not exist`
+        const issue = accept(stored)
+        if (issue) return issue
+        if (stored.archivedAt) return `conversation ${sessionId} is archived; the person unarchives it on the screen to continue`
+        const [turns, native] = await Promise.all([conversations.listTurns(sessionId), conversations.findNative?.(sessionId)])
+        await agentProvider.resume?.({ session: stored, turns, adminVia: via, ...(native ? { native } : {}) })
+        return undefined
+      },
     ),
   )
   // Os MCPs em contêiner leem a conversa (agente e `metadata`) para os domínios `{meta:…}` e para o proxy.

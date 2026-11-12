@@ -26,6 +26,11 @@ export interface IResumeInput {
    * dela (o admin herdado da mãe, nunca mais do que ela).
    */
   delegatedBy?: string
+  /**
+   * ⚖️ A conversa de um agente que retoma, pela delegação, uma conversa da MESMA pessoa com outro agente (não uma filha):
+   * o admin vem dela, como na filha — só se ela é admin no escopo do agente retomado, nunca mais do que ela.
+   */
+  adminVia?: string
 }
 
 export interface IAgentProvider {

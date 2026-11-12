@@ -114,6 +114,19 @@ export function mcpServersFor<T extends { projectId?: string }>(servers: readonl
 }
 
 /**
+ * ⛔ As ferramentas de conversa do MCP do próprio gateway são de pessoa, nunca de agente: o servidor não as entrega a agente
+ * nenhum (`PEOPLE_ONLY_GATEWAY_TOOLS`), e oferecê-las aqui fazia o admin achar que ligava. Agente fala com agente pela
+ * guia Delegação.
+ */
+export const PEOPLE_ONLY_GATEWAY_TOOLS: readonly string[] = ['start_conversation', 'send_message', 'get_turn']
+export const SELF_MCP_SERVER_ID = 'gateway'
+
+/** O que a tela do agente oferece de um servidor MCP: do gateway, sem as de conversa. */
+export function agentFacingTools<T extends { name: string }>(serverId: string, tools: readonly T[]): T[] {
+  return serverId === SELF_MCP_SERVER_ID ? tools.filter((tool) => !PEOPLE_ONLY_GATEWAY_TOOLS.includes(tool.name)) : [...tools]
+}
+
+/**
  * O agente aberto pelo endereço (um link, o histórico) pode ser de OUTRO projeto: devolve o projeto dele quando a tela
  * deve trocar para lá. O global e o compartilhado com o projeto atual (já está na lista dele) ficam onde estão; projeto
  * que quem abriu não vê, também.

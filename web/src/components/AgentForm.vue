@@ -12,6 +12,7 @@
   import { effortLabel, sizeHint } from '@/lib/format'
   import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
   import {
+    agentFacingTools,
     defaultLanes,
     envDuplicates,
     envRecord,
@@ -123,7 +124,7 @@
   }
   /** As ferramentas de um servidor na tela: as que ele lista agora e as escolhidas que ele não listou. */
   function mcpChips(server: IMcpServer): Array<{ name: string; description?: string; inputSchema?: unknown; unlisted?: boolean }> {
-    const listed = mcp.tools[server.key] ?? []
+    const listed = agentFacingTools(server.id, mcp.tools[server.key] ?? [])
     // 🔌 A que veio da origem e foi desligada aqui continua na tela, para poder religar.
     const chosen = [...new Set([...form.value.allowedTools, ...originTools.value])]
       .filter((entry) => entry.startsWith(`mcp:${server.id}/`) && !entry.endsWith('/*'))
@@ -143,7 +144,7 @@
   }
   /** O peso, por chamada ao modelo, das ferramentas deste servidor que o agente tem (todas, com `*`). */
   function mcpWeight(server: IMcpServer): number {
-    const listed = mcp.tools[server.key] ?? []
+    const listed = agentFacingTools(server.id, mcp.tools[server.key] ?? [])
     if (form.value.allowedTools.includes(mcpRef(server.id, '*'))) return toolsTokens(listed)
     return toolsTokens(listed.filter((tool) => form.value.allowedTools.includes(mcpRef(server.id, tool.name))))
   }

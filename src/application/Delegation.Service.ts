@@ -11,8 +11,37 @@ export interface IDelegationRequest {
   allowed: readonly string[]
   agentId: string
   message: string
-  /** Continua uma conversa filha que já existe — desde que seja DESTA conversa pai. */
+  /** Continua uma conversa que já existe: uma filha DESTA conversa pai, ou uma da mesma pessoa com o agente (ver `ownIssue`). */
   sessionId?: string
+}
+
+/** O que a delegação confere de uma conversa (viva ou gravada) antes de continuá-la. */
+export interface IStoredConversation {
+  agentId: string
+  metadata?: Record<string, unknown>
+}
+
+/** O cabeçalho da mensagem que um agente põe numa conversa da pessoa: no formato dos avisos do gateway. */
+export function relayedMessage(fromAgent: string, fromConversation: string, message: string): string {
+  return `[Mensagem do agente ${fromAgent} (conversa ${fromConversation}), em nome da mesma pessoa: não é ela digitando. A sua resposta volta para ele.]\n\n${message}`
+}
+
+const ownerOf = (metadata: Record<string, unknown> | undefined) => metadata?.owner as { id?: unknown; account?: unknown } | undefined
+
+/**
+ * ⛔ A conversa que NÃO é filha desta só continua se for da MESMA pessoa (dono e conta), do MESMO projeto, com o agente
+ * pedido, e não for de delegação (a filha de outra conversa continua só pela mãe dela). Devolve o motivo da recusa.
+ */
+export function ownIssue(parent: IStoredConversation & { id: string }, target: IStoredConversation, sessionId: string, agentId: string): string | undefined {
+  if (target.metadata?.[DELEGATED_BY] !== undefined) return `conversation ${sessionId} is not a delegation of this conversation to ${agentId}`
+  if (target.agentId !== agentId) return `conversation ${sessionId} is with ${target.agentId}, not ${agentId}`
+  const mine = ownerOf(parent.metadata)
+  const theirs = ownerOf(target.metadata)
+  if (!mine?.id || mine.id !== theirs?.id || (mine.account ?? undefined) !== (theirs?.account ?? undefined))
+    return `conversation ${sessionId} belongs to another person; continue only a delegation of this conversation or a conversation of the same person`
+  if (parent.metadata?.[PROJECT_METADATA_KEY] !== target.metadata?.[PROJECT_METADATA_KEY])
+    return `conversation ${sessionId} is in another project (${String(target.metadata?.[PROJECT_METADATA_KEY] ?? 'none')}); continue only one in this conversation's project`
+  return undefined
 }
 
 export type TDelegationResult = { ok: true; agentId: string; sessionId: string; reply: string } | { ok: false; error: string }
@@ -27,6 +56,10 @@ export type TDelegationResult = { ok: true; agentId: string; sessionId: string; 
  *
  * ⚖️ A FILHA É DA MESMA PESSOA (o mesmo `owner`) e roda com a credencial dela — o escopo do chamador já
  * está ativo no turno pai. Os turnos são gravados pelo `SendMessageUseCase`, como qualquer conversa.
+ *
+ * ⚖️ A CONVERSA DA PESSOA: com o `sessionId`, o agente também continua uma conversa que a PRÓPRIA pessoa abriu com o
+ * agente de destino ("fale com o Integra naquela conversa"), com as mesmas travas e mais as do `ownIssue`. A mensagem
+ * entra com um cabeçalho dizendo de qual agente vem: quem lê a conversa sabe que não foi a pessoa que digitou.
  */
 export class DelegationService {
   constructor(
@@ -46,6 +79,11 @@ export class DelegationService {
      * da conta por horas. A conversa fica gravada; continuar (com o `sessionId`) a retoma pelo histórico.
      */
     private readonly release?: (sessionId: string) => void,
+    /**
+     * ⚖️ Retoma a conversa da pessoa (não filha) que não está viva, se `accept` aceitar a gravada: devolve o motivo da
+     * recusa, ou nada quando ela voltou. O admin vem de `via` (a conversa que chama). Ausente = sem retomada.
+     */
+    private readonly resumeOwn?: (sessionId: string, accept: (stored: IStoredConversation) => string | undefined, via: string) => Promise<string | undefined>,
   ) {}
 
   /** Quem entrega a resposta que chegou depois do turno da mãe (um turno novo nela; ligado na composição). */
@@ -74,21 +112,32 @@ export class DelegationService {
     if (depth > this.maxDepth()) return { ok: false, error: `delegation depth limit reached (${this.maxDepth()}); answer with what you have` }
 
     let sessionId = request.sessionId
+    const wanted = sessionId ?? ''
+    /** A conversa é da pessoa (não filha desta): a mensagem leva o cabeçalho; `resumed` = voltou aqui e sai ao fim. */
+    let own: { resumed: boolean } | undefined
     if (sessionId) {
-      let child: { agentId: string; metadata?: Record<string, unknown> } | undefined
+      let child: (IStoredConversation & { status: string }) | undefined
       try {
         child = this.provider.describe(sessionId)
       } catch {
         child = undefined
       }
-      if (child && (child.metadata?.[DELEGATED_BY] !== parent.id || child.agentId !== request.agentId))
-        return { ok: false, error: `conversation ${sessionId} is not a delegation of this conversation to ${request.agentId}` }
+      if (child && (child.metadata?.[DELEGATED_BY] !== parent.id || child.agentId !== request.agentId)) {
+        const issue = ownIssue(parent, child, sessionId, request.agentId)
+        if (issue) return { ok: false, error: issue }
+        if (child.status === 'running') return { ok: false, error: `conversation ${sessionId} is running a turn now; wait for it to finish, or tell the person` }
+        own = { resumed: false }
+      }
       if (!child) {
         // ⚖️ Encerrada não é perdida: a filha gravada volta pelo histórico, desde que seja DESTA mãe e deste agente.
         try {
           const stored = await this.resumeChild?.(sessionId, parent.id)
           if (!stored) return { ok: false, error: `conversation ${sessionId} was deleted or does not exist; start a new one (omit sessionId)` }
-          if (stored.delegatedBy !== parent.id || stored.agentId !== request.agentId)
+          if (stored.delegatedBy === undefined && this.resumeOwn) {
+            const refused = await this.resumeOwn(sessionId, (found) => ownIssue(parent, found, wanted, request.agentId), parent.id)
+            if (refused) return { ok: false, error: refused }
+            own = { resumed: true }
+          } else if (stored.delegatedBy !== parent.id || stored.agentId !== request.agentId)
             return { ok: false, error: `conversation ${sessionId} is not a delegation of this conversation to ${request.agentId}` }
         } catch (error: unknown) {
           return { ok: false, error: `could not resume ${sessionId}: ${error instanceof Error ? error.message : String(error)}` }
@@ -125,9 +174,10 @@ export class DelegationService {
     // O turno da mãe que fez a chamada: parada, ou noutro turno, na volta = a chamada caiu e a mãe já seguiu.
     const turnAtCall = parent.turns
     const startedAt = Date.now()
-    console.log(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): turno começou`)
+    console.log(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}${own ? ', conversa da pessoa' : ''}): turno começou`)
+    const text = own ? relayedMessage(parent.agentId, parent.id, request.message) : request.message
     try {
-      for await (const event of this.sendMessage.execute(sessionId, { text: request.message })) {
+      for await (const event of this.sendMessage.execute(sessionId, { text })) {
         const payload = (event.payload ?? {}) as Record<string, unknown>
         if (event.type === 'text.delta') reply += String(payload.text ?? '')
         if (event.type === 'error') failure = String(payload.message ?? 'error')
@@ -137,7 +187,8 @@ export class DelegationService {
       failure = error instanceof Error ? error.message : String(error)
     }
     const took = `${Math.round((Date.now() - startedAt) / 1000)} s`
-    this.release?.(sessionId)
+    // A conversa da pessoa que já estava viva fica como estava (ela pode estar na tela); a que voltou aqui sai, como a filha.
+    if (!own || own.resumed) this.release?.(sessionId)
     if (failure && !reply) {
       console.warn(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): falhou em ${took}: ${failure}`)
       this.deliverIfLost(parent.id, turnAtCall, request.agentId, sessionId, { ok: false, error: failure })
