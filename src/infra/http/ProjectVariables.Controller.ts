@@ -7,7 +7,7 @@ import { viaAccessToken } from './Auth.Controller'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
-import { refuseConnected, requireProjectAdmin } from './Project.Access'
+import { requireProjectAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
 import { viaSessionCookie } from './Session.Cookie'
 
@@ -96,10 +96,12 @@ export class ProjectVariablesController {
     })
   }
 
-  /** ⛔ A secreta só pela tela; a visível do MCP de um projeto conectado vem da origem (só leitura aqui). */
+  /**
+   * ⛔ A secreta só pela tela. A visível vale também pela API; no projeto conectado ela é DESTA MÁQUINA (o serviço a grava
+   * na conexão, por cima da que veio da origem — ver `IProjectConnection.localMcpEnv`).
+   */
   private guardKind(res: Response, projectId: string, server: string, name: string): void {
     if (this.service().kindOf(projectId, server, name).secret) this.screenOnly(res, 'grava uma variável secreta')
-    else refuseConnected(projectId)
   }
 
   private screenOnly(res: Response, what: string): void {
