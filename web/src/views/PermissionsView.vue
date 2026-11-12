@@ -163,7 +163,8 @@ watch(decisionAgent, () => void loadDecisions())
           <p v-if="notice" class="text-xs text-emerald-300">{{ notice }}</p>
           <p v-else-if="meta.updatedBy" class="text-xs text-zinc-500">Alterado por {{ meta.updatedBy }} em {{ fullTime(meta.updatedAt) }}</p>
 
-          <section class="rounded-xl border border-zinc-800">
+          <!-- As regras do sistema valem para todas as categorias: aparecem uma vez, na primeira guia. -->
+          <section v-if="section === PERMISSION_SECTIONS[0]!.category" class="rounded-xl border border-zinc-800" data-test="system-rules">
             <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-300" @click="showSystem = !showSystem">
               Regras do sistema <span class="text-xs text-zinc-500">{{ system.length }} · valem sempre, sem exceção</span>
               <span class="ml-auto text-xs text-zinc-500">{{ showSystem ? '▴' : '▾' }}</span>
