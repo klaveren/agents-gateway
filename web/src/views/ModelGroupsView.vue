@@ -7,6 +7,7 @@ import { computed, onMounted, ref, watch } from 'vue'
   import Icon from '@/components/Icon.vue'
   import MasterDetail from '@/components/MasterDetail.vue'
   import { ApiError } from '@/lib/api'
+  import { sortByName } from '@/lib/listFilter'
   import { DEFAULT_COOLDOWN_MINUTES, DEFAULT_SWITCH_ON, MODEL_GROUP_ID, NO_MODEL_GROUP, stepServes, SWITCH_OPTIONS } from '@/lib/modelGroups'
   import type { IFallbackStep, IModelGroup, IProviderStatus, TSwitchFailure } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
@@ -29,6 +30,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 
   const adding = computed(() => route.name === 'model-group-new')
   const groups = computed(() => settings.current?.modelGroups ?? [])
+  /** A lista, pelo nome (a ordem gravada não muda). */
+  const listedGroups = computed(() => sortByName(groups.value, (group) => group.name))
   const defaultId = computed(() => settings.current?.defaultModelGroup)
   const selected = computed(() => (props.id ? groups.value.find((group) => group.id === props.id) : undefined))
 
@@ -159,6 +162,7 @@ import { computed, onMounted, ref, watch } from 'vue'
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">Troca automática de modelo</h1>
+        <span class="text-sm text-zinc-500" data-test="list-count">{{ groups.length }}</span>
         <RouterLink to="/model-groups/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Nova sequência">
           <Icon name="plus" class="h-5 w-5" />
         </RouterLink>
@@ -170,7 +174,7 @@ import { computed, onMounted, ref, watch } from 'vue'
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <p v-else-if="settings.current && !groups.length" class="px-4 text-sm text-zinc-500">Nenhuma sequência ainda. Sem sequência, o agente não troca de modelo quando um falha.</p>
       <RouterLink
-        v-for="group in groups"
+        v-for="group in listedGroups"
         :key="group.id"
         :to="`/model-groups/${group.id}`"
         class="mx-2 flex items-center gap-3 rounded-xl px-3 py-2"

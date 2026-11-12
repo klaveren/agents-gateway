@@ -11,7 +11,7 @@ import { computed, onMounted, ref, watch } from 'vue'
   import ListFilter from '@/components/ListFilter.vue'
   import TagChips from '@/components/TagChips.vue'
   import TagsInput from '@/components/TagsInput.vue'
-  import { filterList, sameTags, tagNames } from '@/lib/listFilter'
+  import { countLabel, filterList, sameTags, sortByName, tagNames } from '@/lib/listFilter'
   import MasterDetail from '@/components/MasterDetail.vue'
   import McpContainerFields from '@/components/McpContainerFields.vue'
   import McpProjectReadOnly from '@/components/McpProjectReadOnly.vue'
@@ -84,7 +84,12 @@ import { computed, onMounted, ref, watch } from 'vue'
   const tag = ref('')
   /** As tags que os MCPs já usam (as sugestões do campo). */
   const knownTags = computed(() => tagNames(mcp.list))
-  const listed = computed(() => filterList(inScope.value, { query: query.value, tag: tag.value }, (server) => [server.id, server.name]))
+  const listed = computed(() =>
+    sortByName(
+      filterList(inScope.value, { query: query.value, tag: tag.value }, (server) => [server.id, server.name]),
+      (server) => server.name,
+    ),
+  )
   /** O escopo escolhido na edição (`''` = global): vai com o Salvar do rodapé; muda a chave e quem pode usar. */
   const moveTo = ref('')
   const moveDirty = computed(() => !!selected.value && moveTo.value !== (selected.value.projectId ?? ''))
@@ -459,6 +464,7 @@ import { computed, onMounted, ref, watch } from 'vue'
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">MCPs</h1>
+        <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(listed.length, inScope.length) }}</span>
         <RouterLink to="/mcp/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar MCP">
           <Icon name="plus" class="h-5 w-5" />
         </RouterLink>

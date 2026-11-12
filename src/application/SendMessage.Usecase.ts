@@ -122,7 +122,8 @@ export class SendMessageUseCase {
     const finished = () => (ticket !== undefined ? this.live?.finish(sessionId, ticket) : undefined)
     // ⚖️ O PRIMEIRO TURNO JÁ APARECE: o cabeçalho vai ao banco agora, não só no fim. Sem isso a conversa que roda pela
     // primeira vez — a delegada, sobretudo, que ninguém abriu na tela — não estava na lista nem no MCP até acabar.
-    if (index === 0) void this.saveHeader(sessionId, titleFrom(recorded.recordAs ?? recorded.text)).catch(() => undefined)
+    // ⚖️ E TODO TURNO SOBE A CONVERSA NA LISTA AO COMEÇAR (`updatedAt`), não só ao acabar: a ordem é a da última interação.
+    void this.saveHeader(sessionId, index === 0 ? titleFrom(recorded.recordAs ?? recorded.text) : undefined).catch(() => undefined)
 
     try {
       for await (const event of this.agentProvider.sendMessage(sessionId, sent)) {

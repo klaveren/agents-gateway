@@ -6,6 +6,7 @@
   import MasterDetail from '@/components/MasterDetail.vue'
   import { useResource } from '@/composables/useResource'
   import { initials, redactUrl } from '@/lib/format'
+  import { sortByName } from '@/lib/listFilter'
   import type { TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
   import { useMcpStore } from '@/stores/mcp'
   import { useProjectsStore } from '@/stores/projects'
@@ -33,7 +34,7 @@
 
   // A lista do projeto atual, da store (por projeto): trocar de projeto mostra a do novo — a de antes não aparece nele.
   const current = useResource(mcp.byProject, () => projects.current)
-  const list = computed(() => current.data.value ?? [])
+  const list = computed(() => sortByName(current.data.value ?? [], (server) => server.name))
   const loadError = computed(() => {
     const error = current.error.value
     return error === undefined ? undefined : error instanceof Error ? error.message : String(error)
@@ -70,8 +71,9 @@
 
   <MasterDetail v-else :open="!!id" back-to="/mcp" back-label="MCPs" :title="selected?.name">
     <template #list>
-      <header class="px-4 pt-4 pb-1">
+      <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">MCPs</h1>
+        <span class="text-sm text-zinc-500" data-test="list-count">{{ list.length }}</span>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">
         Os servidores de ferramentas do projeto {{ projects.currentProject?.name ?? projects.current }}. Só leitura: quem administra cadastra e edita.

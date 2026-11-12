@@ -29,6 +29,14 @@ export function filterList<T extends object>(items: readonly T[], filter: { quer
   return items.filter((item) => (!filter.tag || tagsOf(item).includes(filter.tag)) && matchesSearch(filter.query, [...fieldsOf(item), ...tagsOf(item)]))
 }
 
+/** A ordem das listas de cadastro: pelo nome, sem acento nem maiúscula, e número como número ("a2" antes de "a10"). */
+export function sortByName<T>(items: readonly T[], nameOf: (item: T) => string | undefined): T[] {
+  return [...items].sort((a, b) => (nameOf(a) ?? '').localeCompare(nameOf(b) ?? '', 'pt-BR', { sensitivity: 'base', numeric: true }))
+}
+
+/** O total ao lado do título da lista: com busca ou tag, quantos aparecem do total ("3 de 12"). */
+export const countLabel = (shown: number, total: number): string => (shown === total ? String(total) : `${shown} de ${total}`)
+
 /** Uma tag como o servidor a grava: sem acento, minúscula, `a-z0-9` e hífen, até 32. Vazia depois de limpar = `undefined`. */
 export function normalizeTag(raw: string): string | undefined {
   const slug = fold(raw)

@@ -14,7 +14,7 @@ export interface IConversationFilters {
 
 export type TConversationEvent = { type: 'conversation.updated'; session: IConversation } | { type: 'conversation.deleted'; sessionId: string }
 /** Um turno começou ou acabou numa conversa (venha da tela, da API ou de um agendamento). */
-export type TRunningEvent = { type: 'conversation.running'; sessionId: string } | { type: 'conversation.idle'; sessionId: string }
+export type TRunningEvent = { type: 'conversation.running'; sessionId: string; at?: string } | { type: 'conversation.idle'; sessionId: string }
 /** O turno ao vivo da conversa acompanhada (ver `follow`), no mesmo stream. `turn.idle`: nada rodando ao começar. */
 export type TTurnFrame =
   | { type: 'turn.started'; sessionId: string; turn: { request: string; events: IAgentEvent[] } }
@@ -58,6 +58,20 @@ export function applyEvent(items: IConversation[], event: TConversationEvent, fi
   next.splice(at === -1 ? next.length : at, 0, event.session)
 
   return { items: next, added: !existed, removed: false }
+}
+
+/**
+ * Um turno começou: a conversa SOBE na hora (a ordem é a da última interação), sem esperar a resposta acabar.
+ *
+ * ⚖️ Pura. `at` é quando o turno começou; quem já está mais recente que isso (ou não está na lista) fica onde está.
+ */
+export function raise(items: IConversation[], id: string, at: string): IConversation[] {
+  const found = items.find((item) => item.id === id)
+  if (!found || found.updatedAt >= at) return items
+  const rest = items.filter((item) => item.id !== id)
+  const index = rest.findIndex((item) => item.updatedAt < at)
+  rest.splice(index === -1 ? rest.length : index, 0, { ...found, updatedAt: at })
+  return rest
 }
 
 /**
@@ -275,7 +289,10 @@ export const useConversationsStore = defineStore('conversations', () => {
     const run = async (first: boolean) => {
       while (!controller.signal.aborted) {
         try {
-          const body = await openStream('/conversations/events', { signal: controller.signal, query: { ...(admin && !everyone.value ? { mine: 1 } : {}), ...useProjectsStore().query } })
+          const body = await openStream('/conversations/events', {
+            signal: controller.signal,
+            query: { ...(admin && !everyone.value ? { mine: 1 } : {}), ...useProjectsStore().query },
+          })
           live.value = true
           running.value = new Set()
           if (!first) {
@@ -294,7 +311,8 @@ export const useConversationsStore = defineStore('conversations', () => {
               const turn = event as TTurnFrame
               if (turn.sessionId === followed) for (const listener of turnListeners) listener(turn)
             } else if (event.type === 'catalog.changed') catalogChanged(event.changes)
-            else if (event.type === 'conversation.running' || event.type === 'conversation.idle') markRunning(event.sessionId, event.type === 'conversation.running')
+            else if (event.type === 'conversation.running' || event.type === 'conversation.idle')
+              markRunning(event.sessionId, event.type === 'conversation.running', event.type === 'conversation.running' ? event.at : undefined)
             else apply(event as TConversationEvent)
           }
         } catch {
@@ -309,7 +327,11 @@ export const useConversationsStore = defineStore('conversations', () => {
     void run(true)
   }
 
-  function markRunning(id: string, on: boolean): void {
+  function markRunning(id: string, on: boolean, at?: string): void {
+    if (on && at) {
+      all = raise(all, id, at)
+      items.value = raise(items.value, id, at)
+    }
     if (running.value.has(id) === on) return
     const next = new Set(running.value)
     if (on) next.add(id)

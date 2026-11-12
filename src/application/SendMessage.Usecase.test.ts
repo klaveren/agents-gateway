@@ -175,6 +175,8 @@ describe('SendMessageUseCase', () => {
         ['conversation.idle', { owner: { id: 'u1' } }],
       ],
     )
+    // O aviso de início leva a hora: é com ela que a lista sobe a conversa antes de a resposta acabar.
+    assert.ok(inbox[0].type === 'conversation.running' && inbox[0].at instanceof Date)
   })
 
   it('o fim atrasado de um turno não encerra o seguinte', () => {
@@ -183,7 +185,10 @@ describe('SendMessageUseCase', () => {
     live.start('s', 'dois')
     live.finish('s', first)
     assert.strictEqual(live.snapshot('s')?.request, 'dois')
-    assert.deepStrictEqual(live.running(), [{ sessionId: 's' }])
+    assert.deepStrictEqual(
+      live.running().map((turn) => [turn.sessionId, turn.startedAt instanceof Date]),
+      [['s', true]],
+    )
   })
 
   it('passes the stream through in order, keyed only by session id', async () => {
@@ -400,10 +405,10 @@ describe('SendMessageUseCase', () => {
     for await (const _event of build(1).execute('s', { text: 'segunda pergunta' })) void _event
     await done
 
-    // O primeiro turno grava o cabeçalho ao COMEÇAR (a conversa já aparece na lista) e de novo ao acabar; o título é dele.
+    // Todo turno grava o cabeçalho ao COMEÇAR (a conversa sobe na lista na hora) e de novo ao acabar; o título é do primeiro.
     assert.deepStrictEqual(
       repository.sessions.map((item) => item.title),
-      ['primeira pergunta', 'primeira pergunta', undefined],
+      ['primeira pergunta', 'primeira pergunta', undefined, undefined],
     )
   })
 

@@ -10,8 +10,8 @@ import { IConversationSession } from '@domain/models/Conversation.Model'
 export type TConversationEvent =
   | { type: 'conversation.updated'; session: IConversationSession }
   | { type: 'conversation.deleted'; sessionId: string; metadata?: Record<string, unknown> }
-  /** Um turno começou ou acabou (ver `Turn.Live`): a lista mostra quem está rodando. */
-  | { type: 'conversation.running' | 'conversation.idle'; sessionId: string; metadata?: Record<string, unknown> }
+  /** Um turno começou ou acabou (ver `Turn.Live`): a lista mostra quem está rodando. `at` (só no `running`) é quando o turno começou: a conversa sobe na lista já aí. */
+  | { type: 'conversation.running' | 'conversation.idle'; sessionId: string; metadata?: Record<string, unknown>; at?: Date }
 
 /**
  * Por onde as mudanças passam. Em processo: um gateway, um barramento.

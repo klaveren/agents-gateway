@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterList, matchesSearch, normalizeTag, tagCounts, tagNames } from './listFilter'
+import { countLabel, filterList, matchesSearch, normalizeTag, sortByName, tagCounts, tagNames } from './listFilter'
 
 describe('listFilter', () => {
   it('a busca ignora acento e maiúscula, e cada palavra tem de aparecer em algum campo', () => {
@@ -32,5 +32,17 @@ describe('listFilter', () => {
 
   it('tagNames: as tags distintas, em ordem', () => {
     expect(tagNames([{ tags: ['b', 'a'] }, { tags: ['a'] }, {}])).toEqual(['a', 'b'])
+  })
+
+  it('sortByName: pelo nome, sem acento nem maiúscula, número como número; não mexe na lista de origem', () => {
+    const items = [{ name: 'zeus' }, { name: 'Ártemis' }, { name: 'agente 10' }, { name: 'agente 2' }, { name: 'Maya' }]
+    expect(sortByName(items, (item) => item.name).map((item) => item.name)).toEqual(['agente 2', 'agente 10', 'Ártemis', 'Maya', 'zeus'])
+    expect(items[0].name).toBe('zeus')
+  })
+
+  it('countLabel: o total; com filtro, quantos aparecem do total', () => {
+    expect(countLabel(12, 12)).toBe('12')
+    expect(countLabel(3, 12)).toBe('3 de 12')
+    expect(countLabel(0, 0)).toBe('0')
   })
 })

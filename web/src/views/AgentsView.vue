@@ -13,7 +13,7 @@ import Icon from '@/components/Icon.vue'
 import SharedBadge from '@/components/SharedBadge.vue'
 import ListFilter from '@/components/ListFilter.vue'
 import TagChips from '@/components/TagChips.vue'
-import { filterList } from '@/lib/listFilter'
+import { filterList, sortByName } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
 import { homeProjectOf } from '@/lib/agentForm'
 import { pendingDraft } from '@/lib/builder'
@@ -99,7 +99,12 @@ const creating = computed(() => route.name === 'agent-new')
 /** A busca e a tag do topo da lista. */
 const query = ref('')
 const tag = ref('')
-const visible = computed(() => filterList(agents.list, { query: query.value, tag: tag.value }, (agent) => [agent.id, agent.name]))
+const visible = computed(() =>
+  sortByName(
+    filterList(agents.list, { query: query.value, tag: tag.value }, (agent) => [agent.id, agent.name]),
+    (agent) => agent.name,
+  ),
+)
 const created = computed(() => visible.value.filter((agent) => agent.role !== 'subagent'))
 const subagents = computed(() => visible.value.filter((agent) => agent.role === 'subagent'))
 
@@ -184,7 +189,7 @@ watch(creating, (value) => {
       <ListFilter v-model:query="query" v-model:tag="tag" placeholder="Buscar agente…" :items="agents.list" />
       <p v-if="agents.list.length && !visible.length" class="px-4 py-2 text-sm text-zinc-500">Nenhum agente com essa busca.</p>
       <template v-for="group in [{ label: 'Agentes', items: created }, { label: 'Subagentes', items: subagents }]" :key="group.label">
-        <h2 v-if="group.items.length" class="px-4 pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{{ group.label }}</h2>
+        <h2 v-if="group.items.length" class="px-4 pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{{ group.label }} <span class="font-normal text-zinc-600" data-test="list-count">{{ group.items.length }}</span></h2>
         <RouterLink
           v-for="agent in group.items"
           :key="agent.id"

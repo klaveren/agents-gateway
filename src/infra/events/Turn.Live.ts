@@ -29,7 +29,7 @@ export class TurnLive implements ITurnLive {
     const turn: IRunning = { ticket, request, startedAt: new Date(), events: [], ...(metadata ? { metadata } : {}) }
     this.turns.set(sessionId, turn)
     this.signal(sessionId, { type: 'turn.started', turn: this.view(turn) })
-    this.conversations?.publish({ type: 'conversation.running', sessionId, ...(metadata ? { metadata } : {}) })
+    this.conversations?.publish({ type: 'conversation.running', sessionId, at: turn.startedAt, ...(metadata ? { metadata } : {}) })
     return ticket
   }
 
@@ -61,8 +61,8 @@ export class TurnLive implements ITurnLive {
     return () => this.emitter.off(sessionId, listener)
   }
 
-  running(): Array<{ sessionId: string; metadata?: Record<string, unknown> }> {
-    return [...this.turns].map(([sessionId, turn]) => ({ sessionId, ...(turn.metadata ? { metadata: turn.metadata } : {}) }))
+  running(): Array<{ sessionId: string; startedAt: Date; metadata?: Record<string, unknown> }> {
+    return [...this.turns].map(([sessionId, turn]) => ({ sessionId, startedAt: turn.startedAt, ...(turn.metadata ? { metadata: turn.metadata } : {}) }))
   }
 
   private view(turn: IRunning): ILiveTurnSnapshot {
