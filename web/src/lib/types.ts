@@ -743,6 +743,8 @@ export interface IResource {
   importIssues?: IImportIssue[]
   /** Os triggers da skill ou do command: o procedimento de uma situação, carregado sob demanda (`<id>/<trigger>`). */
   triggers?: IAgentTrigger[]
+  /** As variáveis fixas (texto comum, valor visível): carregado o recurso, vão ao terminal, por baixo das secretas. */
+  env?: Record<string, string>
   /** Os projetos que recebem este recurso só para leitura (o dono é `projectId`). */
   sharedWith?: string[]
   /** Só nas listas de um projeto: veio de outro projeto (o id dele) e aqui é só leitura. */

@@ -14,7 +14,8 @@
    * As VARIÁVEIS do projeto: as **Fixas** (valor visível) e as **Secretas** (o valor só entra) chegam ao terminal de todo
    * agente nas conversas do projeto, por baixo das do agente (a dele vence a de mesmo nome). Os **MCPs** que pedem valor ao
    * projeto aparecem embaixo: esse valor vai só para o processo do MCP, nunca para o terminal do agente.
-   * 🔌 Projeto conectado: as fixas e os valores visíveis vêm da origem (só leitura); as secretas são desta máquina.
+   * 🔌 Projeto conectado: as fixas e os valores visíveis vêm da origem (só leitura); as secretas e as **fixas desta
+   * máquina** (por cima das da origem, nunca vão para lá) são daqui.
    * ⚖️ As fixas vão com o Salvar do rodapé; cada secreta e cada valor de MCP é gravado na hora, como no agente.
    */
   const props = defineProps<{ projectId: string; active?: boolean }>()
@@ -32,6 +33,19 @@
     () => project.value?.env,
     (env) => {
       if (!fixedDirty.value) fixed.value = envRows(env)
+    },
+  )
+
+  // 🔌 As fixas desta máquina (projeto conectado): por cima das da origem, com o mesmo Salvar.
+  const connection = computed(() => connections.list.find((item) => item.projectId === props.projectId))
+  const local = ref<IEnvRow[]>(envRows(connection.value?.localEnv))
+  const savedLocal = computed(() => JSON.stringify(envRecord(envRows(connection.value?.localEnv))))
+  const localDirty = computed(() => JSON.stringify(envRecord(local.value)) !== savedLocal.value)
+  const localRepeated = computed(() => envDuplicates(local.value))
+  watch(
+    () => connection.value?.localEnv,
+    (env) => {
+      if (!localDirty.value) local.value = envRows(env)
     },
   )
 
@@ -56,6 +70,22 @@
       await projects.update(props.projectId, { env: envRecord(fixed.value) ?? {} })
       fixed.value = envRows(project.value?.env)
       note.value = 'Variáveis fixas salvas. Valem nos próximos comandos dos agentes do projeto.'
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 422) fixedIssues.value = [describe(error)]
+      else failure.value = describe(error)
+    } finally {
+      busy.value = false
+    }
+  }
+
+  async function saveLocal() {
+    busy.value = true
+    note.value = failure.value = undefined
+    fixedIssues.value = []
+    try {
+      await connections.setLocalEnv(props.projectId, envRecord(local.value) ?? {})
+      local.value = envRows(connection.value?.localEnv)
+      note.value = 'Variáveis desta máquina salvas. Valem nos próximos comandos dos agentes do projeto.'
     } catch (error) {
       if (error instanceof ApiError && error.status === 422) fixedIssues.value = [describe(error)]
       else failure.value = describe(error)
@@ -124,12 +154,12 @@
 <template>
   <div class="flex flex-col gap-3" data-test="project-variables">
     <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
-    <p v-if="connectedOrigin" class="text-xs text-zinc-500">As secretas e os valores secretos dos MCPs são desta máquina: nunca vão para a origem.</p>
+    <p v-if="connectedOrigin" class="text-xs text-zinc-500">As fixas desta máquina, as secretas e os valores secretos dos MCPs são daqui: nunca vão para a origem.</p>
 
     <section class="tool-card">
       <header>
-        <h3>Fixas</h3>
-        <span class="count">{{ fixed.length || 'nenhuma' }} · salvas com o botão Salvar</span>
+        <h3>{{ connectedOrigin ? 'Fixas da origem' : 'Fixas' }}</h3>
+        <span class="count">{{ fixed.length || 'nenhuma' }} · {{ connectedOrigin ? 'só leitura aqui' : 'salvas com o botão Salvar' }}</span>
       </header>
       <fieldset :disabled="!!connectedOrigin" class="flex flex-col gap-2 p-3">
         <p class="hint">
@@ -139,12 +169,33 @@
         <div v-for="(row, index) in fixed" :key="index" class="flex flex-wrap items-center gap-2" data-test="project-fixed-row">
           <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="API_BASE_URL" :aria-label="`Nome da variável ${index + 1}`" @keydown.enter.prevent />
           <input v-model="row.value" class="input min-w-0 flex-1 font-mono text-xs" placeholder="valor" :aria-label="`Valor da variável ${index + 1}`" @keydown.enter.prevent />
-          <button type="button" class="btn btn-sm btn-danger" @click="fixed.splice(index, 1)">Remover</button>
+          <button v-if="!connectedOrigin" type="button" class="btn btn-sm btn-danger" @click="fixed.splice(index, 1)">Remover</button>
         </div>
-        <button type="button" class="btn btn-sm btn-ghost self-start" data-test="project-fixed-add" @click="fixed.push({ name: '', value: '' })">+ Variável</button>
+        <button v-if="!connectedOrigin" type="button" class="btn btn-sm btn-ghost self-start" data-test="project-fixed-add" @click="fixed.push({ name: '', value: '' })">+ Variável</button>
         <small v-for="name in repeated" :key="`dup-${name}`" class="error">{{ name }} aparece mais de uma vez</small>
-        <small v-for="message in fixedIssues" :key="message" class="error" data-test="project-fixed-error">{{ message }}</small>
+        <small v-for="message in connectedOrigin ? [] : fixedIssues" :key="message" class="error" data-test="project-fixed-error">{{ message }}</small>
       </fieldset>
+    </section>
+
+    <section v-if="connectedOrigin" class="tool-card" data-test="project-local-fixed">
+      <header>
+        <h3>Fixas desta máquina</h3>
+        <span class="count">{{ local.length || 'nenhuma' }} · salvas com o botão Salvar · nunca vão para a origem</span>
+      </header>
+      <div class="flex flex-col gap-2 p-3">
+        <p class="hint">
+          Texto comum, só neste gateway: o endereço de um serviço daqui, a porta local. Valem por cima das fixas da origem (a de mesmo nome vence) e por baixo das do
+          agente. Ao desconectar, passam para o projeto. Segredo não mora aqui: vai em Secretas.
+        </p>
+        <div v-for="(row, index) in local" :key="index" class="flex flex-wrap items-center gap-2" data-test="project-local-row">
+          <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="API_BASE_URL" :aria-label="`Nome da variável desta máquina ${index + 1}`" @keydown.enter.prevent />
+          <input v-model="row.value" class="input min-w-0 flex-1 font-mono text-xs" placeholder="valor" :aria-label="`Valor da variável desta máquina ${index + 1}`" @keydown.enter.prevent />
+          <button type="button" class="btn btn-sm btn-danger" @click="local.splice(index, 1)">Remover</button>
+        </div>
+        <button type="button" class="btn btn-sm btn-ghost self-start" data-test="project-local-add" @click="local.push({ name: '', value: '' })">+ Variável</button>
+        <small v-for="name in localRepeated" :key="`dup-${name}`" class="error">{{ name }} aparece mais de uma vez</small>
+        <small v-for="message in fixedIssues" :key="message" class="error" data-test="project-local-error">{{ message }}</small>
+      </div>
     </section>
 
     <section class="tool-card">
@@ -228,7 +279,16 @@
 
     <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
     <p v-if="failure" class="text-sm text-rose-300">{{ failure }}</p>
-    <SaveFooter v-show="active !== false && !connectedOrigin" label="Salvar variáveis fixas" :busy="busy" :disabled="!fixedDirty || !!repeated.length" :pending="fixedDirty" @save="saveFixed" />
+    <SaveFooter v-if="!connectedOrigin" v-show="active !== false" label="Salvar variáveis fixas" :busy="busy" :disabled="!fixedDirty || !!repeated.length" :pending="fixedDirty" @save="saveFixed" />
+    <SaveFooter
+      v-else
+      v-show="active !== false"
+      label="Salvar variáveis desta máquina"
+      :busy="busy"
+      :disabled="!localDirty || !!localRepeated.length"
+      :pending="localDirty"
+      @save="saveLocal"
+    />
 
     <ConfirmDialog
       :open="!!removing"
