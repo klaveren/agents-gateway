@@ -13,7 +13,7 @@ import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { useProjectAccess } from './Project.Access'
 import { ProjectVariablesController } from './ProjectVariables.Controller'
 
-/** ⛔ As variáveis do projeto: só o admin dele, a secreta só pela tela, e o valor visível de MCP de projeto conectado vem da origem. */
+/** ⛔ As variáveis do projeto: só o admin dele, a secreta só pela tela; no projeto conectado, o valor visível de MCP é desta máquina. */
 describe('ProjectVariablesController', () => {
   const tokens = new HmacTokenIssuer(randomBytes(32).toString('hex'))
   const token = (id: string) => tokens.issue({ sub: id, email: `${id}@x.test`, role: 'member', ver: 0 }).token
@@ -48,6 +48,8 @@ describe('ProjectVariablesController', () => {
   }
   const projects = new Map<string, IProject>(Object.keys(members).map((id) => [id, { id, name: id, createdAt: at, updatedAt: at }]))
   const secrets = new ResourceSecretsService({ store: new SqliteResourceSecretRepository(new SecretBox(randomBytes(32))), exists: () => true })
+  /** Os valores visíveis desta máquina do projeto conectado (a conexão). */
+  const local = { list: [] as IProjectMcpVar[] }
   const controller = new ProjectVariablesController({
     proof,
     variables: new ProjectVariablesService({
@@ -57,6 +59,7 @@ describe('ProjectVariablesController', () => {
       },
       secrets,
       mcps: () => [n8n],
+      connected: { read: (id) => (id === 'conectado' ? [...local.list] : undefined), write: (_id, list) => void (local.list = list) },
     }),
   })
 
@@ -109,10 +112,12 @@ describe('ProjectVariablesController', () => {
     assert.deepStrictEqual(secrets.mcpEnv('n8n', 'alfa'), { N8N_API_KEY: 'chave' })
   })
 
-  it('🔌 projeto conectado: a secreta é desta máquina (grava); a visível vem da origem (409)', async () => {
+  it('🔌 projeto conectado: a secreta e a visível são desta máquina (gravam; a visível na conexão, não no projeto)', async () => {
     assert.strictEqual((await call(ANA, 'saveMcpVariable', { project: 'conectado', params: { server: 'n8n', name: 'N8N_API_KEY' }, body: { value: 'local' } })).status, 200)
     const visible = await call(ANA, 'saveMcpVariable', { project: 'conectado', params: { server: 'n8n', name: 'N8N_URL' }, body: { value: 'https://x' } })
-    assert.deepStrictEqual([visible.status, visible.body?.ok], [409, false])
+    assert.deepStrictEqual([visible.status, visible.body?.ok], [200, true])
+    assert.deepStrictEqual(local.list, [{ server: 'n8n', name: 'N8N_URL', value: 'https://x' }])
+    assert.strictEqual(projects.get('conectado')!.mcpEnv, undefined, 'o projeto (o espelho da origem) não muda')
     assert.strictEqual((await call(ANA, 'saveSecret', { project: 'conectado', params: { name: 'LOCAL_TOKEN' }, body: { value: 'x' } })).status, 200)
   })
 })
