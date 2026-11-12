@@ -27,8 +27,7 @@ async function mount(reply?: (path: string, init?: TInit) => unknown) {
     const custom = reply?.(path, init)
     if (custom !== undefined) return custom
     if (path === '/projects') return [{ id: 'p1', name: 'Projeto 1', role: 'admin' }]
-    if (path === '/projects/p1/permissions')
-      return { projectId: 'p1', rules: [], system: [{ category: 'read', pattern: '**/.env', decision: 'deny', note: 'segredo' }] }
+    if (path === '/projects/p1/permissions') return { projectId: 'p1', rules: [], system: [{ category: 'read', pattern: '**/.env', decision: 'deny', note: 'segredo' }] }
     return []
   })
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/permissions', component: PermissionsView }] })

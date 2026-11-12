@@ -62,8 +62,19 @@ export const useConnectionsStore = defineStore('connections', () => {
     return connection ? originLabel(connection.url) : undefined
   }
 
+  /** Muda a cada `reset`: a leitura que estava no ar quando a conta saiu não escreve na lista de quem entrou. */
+  let epoch = 0
+
   async function refresh(): Promise<void> {
-    list.value = await api<IProjectConnection[]>('/connections')
+    const asked = epoch
+    const read = await api<IProjectConnection[]>('/connections')
+    if (asked === epoch) list.value = read
+  }
+
+  /** ⛔ Na saída ou na troca de conta: as conexões (endereço da origem, avisos) são de quem estava logado. */
+  function reset(): void {
+    epoch += 1
+    list.value = []
   }
 
   function follow(): void {
@@ -116,5 +127,5 @@ export const useConnectionsStore = defineStore('connections', () => {
     return api<IAgentLocalLayerView>(localPath(projectId, agentId), { method: 'DELETE' })
   }
 
-  return { list, byProject, attention, originOf, refresh, follow, connect, check, sync, replaceToken, disconnect, readLocal, saveLocal, removeLocal }
+  return { list, byProject, attention, originOf, refresh, reset, follow, connect, check, sync, replaceToken, disconnect, readLocal, saveLocal, removeLocal }
 })

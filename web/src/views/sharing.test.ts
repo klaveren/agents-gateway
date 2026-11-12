@@ -26,8 +26,28 @@ const PROJECTS = [
   { id: 'delta', name: 'Delta', role: 'admin' },
 ].map((project) => ({ ...project, createdAt: '', updatedAt: '' }))
 
-const skill = (overrides: Partial<IResource> = {}): IResource => ({ id: 'deploy', kind: 'skill', projectId: 'alfa', description: 'Deploy', body: 'b', docIds: [], createdAt: '', updatedAt: '', ...overrides })
-const doc = (overrides: Partial<IProjectDoc> = {}): IProjectDoc => ({ id: 'spec-api', kind: 'spec', projectId: 'alfa', title: 'API', summary: 's', body: 'b', createdAt: '', updatedAt: '', ...overrides })
+const skill = (overrides: Partial<IResource> = {}): IResource => ({
+  id: 'deploy',
+  kind: 'skill',
+  projectId: 'alfa',
+  description: 'Deploy',
+  body: 'b',
+  docIds: [],
+  createdAt: '',
+  updatedAt: '',
+  ...overrides,
+})
+const doc = (overrides: Partial<IProjectDoc> = {}): IProjectDoc => ({
+  id: 'spec-api',
+  kind: 'spec',
+  projectId: 'alfa',
+  title: 'API',
+  summary: 's',
+  body: 'b',
+  createdAt: '',
+  updatedAt: '',
+  ...overrides,
+})
 
 /** `current`: o projeto escolhido no topo; `data`: o que o servidor responde por caminho (a lista, o item). */
 async function mount(component: Component, props: Record<string, unknown>, current: string, data: Record<string, unknown>) {
@@ -132,7 +152,9 @@ describe('item compartilhado: só leitura', () => {
   })
 
   it('o selo aparece na lista de skills e de specs', async () => {
-    const skills = await mount(ResourcesView, { kind: 'skill' }, 'beta', { '/resources?project=beta': [skill({ sharedFrom: 'alfa' }), skill({ id: 'propria', projectId: 'beta' })] })
+    const skills = await mount(ResourcesView, { kind: 'skill' }, 'beta', {
+      '/resources?project=beta': [skill({ sharedFrom: 'alfa' }), skill({ id: 'propria', projectId: 'beta' })],
+    })
     const badges = [...skills.querySelectorAll('[data-test="shared-badge"]')]
     expect(badges.map((badge) => badge.textContent?.trim())).toEqual(['compartilhado por Alfa'])
     app?.unmount()
@@ -144,7 +166,10 @@ describe('item compartilhado: só leitura', () => {
 
 describe('aba Variáveis', () => {
   it('na skill compartilhada, lê e grava com ?project= do projeto atual', async () => {
-    const host = await mount(ResourcesView, { kind: 'skill', id: 'deploy' }, 'beta', { '/resources/deploy': skill({ sharedWith: ['beta'] }), '/resources/deploy/secrets?project=beta': [] })
+    const host = await mount(ResourcesView, { kind: 'skill', id: 'deploy' }, 'beta', {
+      '/resources/deploy': skill({ sharedWith: ['beta'] }),
+      '/resources/deploy/secrets?project=beta': [],
+    })
     await click(q(host, 'tab-variables'))
     expect(host.textContent).toContain('Valores deste projeto (não vêm do projeto de origem)')
     expect(api).toHaveBeenCalledWith('/resources/deploy/secrets?project=beta')

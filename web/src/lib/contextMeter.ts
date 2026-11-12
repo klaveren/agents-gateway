@@ -13,7 +13,6 @@ export interface IContextMeter {
 
 export const CONTEXT_WARN_PERCENT = 80
 
-
 /**
  * O medidor do contexto da conversa: quanto da janela do modelo a última chamada usou. `undefined` quando o
  * provider não informa o uso (Codex, Antigravity) — sem número não há o que mostrar.

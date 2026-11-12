@@ -35,7 +35,10 @@ export interface IRevisionSummary {
 export function sharingLabels(sharing: IRevisionSummary['sharing'], nameOf: (id: string) => string | undefined): string[] {
   if (!sharing) return []
   const names = (ids: readonly string[]) => ids.map((id) => nameOf(id) ?? id).join(', ')
-  return [...(sharing.added.length ? [`compartilhado com ${names(sharing.added)}`] : []), ...(sharing.removed.length ? [`parou de compartilhar com ${names(sharing.removed)}`] : [])]
+  return [
+    ...(sharing.added.length ? [`compartilhado com ${names(sharing.added)}`] : []),
+    ...(sharing.removed.length ? [`parou de compartilhar com ${names(sharing.removed)}`] : []),
+  ]
 }
 
 export interface IRevisionPage {

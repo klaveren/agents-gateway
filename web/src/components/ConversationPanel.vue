@@ -2,7 +2,7 @@
   import { computed, ref, watch } from 'vue'
   import { api, authHeaders, url } from '@/lib/api'
   import { fullTime } from '@/lib/format'
-  import { linkKind, openCount, type IConversationPanel, type IPanelItem, type TPanelOp, type TPanelStatus } from '@/lib/conversationPanel'
+  import { linkHost, linkKind, openCount, type IConversationPanel, type IPanelItem, type TPanelOp, type TPanelStatus } from '@/lib/conversationPanel'
   import { useAgentsStore } from '@/stores/agents'
   import Icon from './Icon.vue'
 
@@ -203,6 +203,8 @@
                   <template v-for="(link, index) in item.links ?? []" :key="index">
                     <a v-if="linkKind(link.href) === 'external'" :href="link.href" target="_blank" rel="noopener noreferrer" class="text-emerald-300 hover:underline">
                       {{ link.label }} ↗
+                      <!-- ⛔ O texto é do agente: o host de destino aparece sempre que o texto não for o próprio endereço. -->
+                      <span v-if="linkHost(link)" data-link-host class="text-[0.7rem] text-zinc-500">{{ linkHost(link) }}</span>
                     </a>
                     <RouterLink v-else-if="linkKind(link.href) === 'conversation'" :to="`/c/${link.href}`" class="text-emerald-300 hover:underline">{{ link.label }}</RouterLink>
                     <span v-else class="font-mono text-zinc-300">{{ link.href ?? link.label }}</span>
