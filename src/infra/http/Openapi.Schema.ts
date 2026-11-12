@@ -1539,12 +1539,16 @@ export const OPENAPI_DOCUMENT = {
     '/health/drain': {
       post: {
         summary:
-          'Drain mode for a deploy: turns off NEW turns (503 `draining`, `Retry-After: 30`) and lets the running ones finish. Only from the server itself (loopback, no proxy headers); 404 from anywhere else. Memory only: a restart clears it',
+          'Drain mode for a deploy: turns off NEW turns (503 `draining`, `Retry-After: 30`) and lets the running ones finish. Only from the server itself (loopback, no proxy headers, no browser headers such as `Origin`); 404 from anywhere else. Memory only: a restart clears it',
         security: [],
-        requestBody: { required: false, ...json({ type: 'object', properties: { on: { type: 'boolean', default: true, description: '`false` turns drain mode off' } } }) },
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', required: ['on'], properties: { on: { type: 'boolean', description: '`true` turns drain mode on, `false` turns it off' } } }),
+        },
         responses: {
           '200': { description: 'The new state', ...json(envelope({ type: 'object', properties: { draining: { type: 'boolean' } } })) },
           '404': failures['404'],
+          '422': failures['422'],
         },
       },
     },

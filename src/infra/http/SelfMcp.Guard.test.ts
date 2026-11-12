@@ -223,28 +223,219 @@ describe('SelfMcp.Guard', () => {
     assert.strictEqual((await guarded('GET', '/agents/a-q')).ok, true)
   })
 
+  describe('⛔ pedidos (regras e variáveis): do agente da conversa, ou do que é do projeto dela', () => {
+    /** O que existe: agentes e skills, com o projeto de cada um e com quem são compartilhados. */
+    function world() {
+      const written: string[] = []
+      const agents: Record<string, { projectId?: string; sharedWith?: string[] }> = {
+        'a-p': { projectId: 'P' },
+        'b-p': { projectId: 'P' },
+        'a-q': { projectId: 'Q' },
+        'q-em-p': { projectId: 'Q', sharedWith: ['P'] },
+        atlas: {},
+        zeus: {},
+      }
+      const resources: Record<string, { projectId?: string; sharedWith?: string[] }> = {
+        's-p': { projectId: 'P' },
+        's-q': { projectId: 'Q' },
+        's-global': {},
+        's-r-em-p': { projectId: 'R', sharedWith: ['P'] },
+        's-r-em-q': { projectId: 'R', sharedWith: ['Q'] },
+      }
+      const api: TSelfApi = async (method, path) => {
+        if (method !== 'GET') {
+          written.push(`${method} ${path}`)
+          return { ok: true, status: 200, result: {} }
+        }
+        const [, collection, id] = /^\/(agents|resources)\/([^/]+)$/.exec(path) ?? []
+        const found = collection === 'agents' ? agents[id] : collection === 'resources' ? resources[id] : undefined
+        return found ? { ok: true, status: 200, result: { id, ...found } } : { ok: false, status: 404, code: 'not_found' }
+      }
+      return { api, written }
+    }
+    const DENY = { add: [{ category: 'terminal', pattern: 'git push *', decision: 'deny' }], reason: 'x' }
+    const rules = (guarded: TSelfApi, agentId: string) => guarded('POST', `/agents/${agentId}/permission-rules`, { body: DENY })
+    const secret = (guarded: TSelfApi, scope: string, scopeId: string, project?: string) =>
+      guarded('POST', '/secret-requests', { body: { scope, scopeId, ...(project ? { project } : {}), name: 'API_KEY', reason: 'x' } })
+
+    it('⛔ regras: injeção numa conversa de P não muda (nem pede) regra de agente de Q, global ou só compartilhado com P', async () => {
+      const { api, written } = world()
+      const guarded = scopedWrites(api, { projectId: 'P', agentId: 'a-p', unrestricted: false })
+      assert.ok(refused(await rules(guarded, 'a-q')), 'agente de Q: o `deny` gravaria NA HORA')
+      assert.ok(refused(await rules(guarded, 'zeus')), 'outro agente global')
+      assert.ok(refused(await rules(guarded, 'q-em-p')), 'compartilhado com P continua sendo de Q')
+      assert.strictEqual((await rules(guarded, 'nao-existe')).status, 404, 'o que não se lê não passa')
+      assert.ok(refused(await guarded('POST', '/projects/Q/permission-rules', { body: DENY })))
+      assert.deepStrictEqual(written, [])
+    })
+
+    it('regras: o agente da conversa pede para si (do projeto, global ou compartilhado) e para os agentes do projeto dela', async () => {
+      const own = world()
+      const guarded = scopedWrites(own.api, { projectId: 'P', agentId: 'a-p', unrestricted: false })
+      assert.strictEqual((await rules(guarded, 'a-p')).ok, true, 'ele mesmo')
+      assert.strictEqual((await rules(guarded, 'b-p')).ok, true, 'outro agente do projeto da conversa')
+      assert.strictEqual((await guarded('POST', '/projects/P/permission-rules', { body: DENY })).ok, true)
+      assert.deepStrictEqual(own.written, ['POST /agents/a-p/permission-rules', 'POST /agents/b-p/permission-rules', 'POST /projects/P/permission-rules'])
+
+      // O Atlas (global) numa conversa do projeto P: pede para si, não para outro global.
+      const global = world()
+      const atlas = scopedWrites(global.api, { projectId: 'P', agentId: 'atlas', unrestricted: false })
+      assert.strictEqual((await rules(atlas, 'atlas')).ok, true)
+      assert.ok(refused(await rules(atlas, 'zeus')))
+      assert.strictEqual((await rules(atlas, 'a-p')).ok, true)
+
+      // O agente de Q compartilhado com P, numa conversa de P: pede para si, não para os outros de Q.
+      const shared = world()
+      const visitor = scopedWrites(shared.api, { projectId: 'P', agentId: 'q-em-p', unrestricted: false })
+      assert.strictEqual((await rules(visitor, 'q-em-p')).ok, true)
+      assert.ok(refused(await rules(visitor, 'a-q')))
+
+      // Sem saber quem é o agente (escopo antigo), vale só o projeto.
+      const anonymous = world()
+      const unnamed = scopedWrites(anonymous.api, { projectId: 'P', unrestricted: false })
+      assert.strictEqual((await rules(unnamed, 'a-p')).ok, true)
+      assert.ok(refused(await rules(unnamed, 'atlas')))
+    })
+
+    it('⛔ variável de agente: só a do agente da conversa ou de agente do projeto dela; o projeto que recebe é o dela', async () => {
+      const { api, written } = world()
+      const guarded = scopedWrites(api, { projectId: 'P', agentId: 'a-p', unrestricted: false })
+      assert.ok(refused(await secret(guarded, 'agent', 'a-q')), 'agente de Q')
+      assert.ok(refused(await secret(guarded, 'agent', 'zeus')), 'outro agente global')
+      assert.ok(refused(await secret(guarded, 'agent', 'a-p', 'Q')), 'o próprio agente, mas com Q recebendo')
+      assert.ok(refused(await secret(guarded, 'agent', 'q-em-p')), 'compartilhado com P, sem dizer o projeto: cairia na fila de Q')
+      assert.strictEqual((await secret(guarded, 'agent', 'nao-existe')).status, 404)
+      assert.ok(refused(await secret(guarded, 'outro', 'a-p')), 'escopo desconhecido')
+      assert.ok(refused(await guarded('POST', '/secret-requests', { body: { scope: 'skill', name: 'API_KEY', reason: 'x' } })), 'sem alvo')
+      assert.deepStrictEqual(written, [])
+
+      assert.strictEqual((await secret(guarded, 'agent', 'a-p')).ok, true, 'ele mesmo')
+      assert.strictEqual((await secret(guarded, 'agent', 'a-p', 'P')).ok, true)
+      assert.strictEqual((await secret(guarded, 'agent', 'b-p')).ok, true, 'outro agente do projeto')
+      assert.strictEqual((await secret(guarded, 'agent', 'q-em-p', 'P')).ok, true, 'compartilhado com P: P preenche o valor dele')
+      assert.strictEqual(written.length, 4)
+    })
+
+    it('variável do agente compartilhado, numa conversa do projeto que o recebeu: para si, no projeto da conversa ou no de casa', async () => {
+      const { api, written } = world()
+      const guarded = scopedWrites(api, { projectId: 'P', agentId: 'q-em-p', unrestricted: false })
+      assert.strictEqual((await secret(guarded, 'agent', 'q-em-p')).ok, true)
+      assert.strictEqual((await secret(guarded, 'agent', 'q-em-p', 'P')).ok, true)
+      assert.strictEqual((await secret(guarded, 'agent', 'q-em-p', 'Q')).ok, true)
+      assert.ok(refused(await secret(guarded, 'agent', 'q-em-p', 'R')))
+      assert.strictEqual(written.length, 3)
+    })
+
+    it('⛔ variável de skill/command: do projeto, global, ou compartilhada COM o projeto (que recebe o valor); a de outro projeto não', async () => {
+      const { api, written } = world()
+      const guarded = scopedWrites(api, { projectId: 'P', agentId: 'a-p', unrestricted: false })
+      assert.ok(refused(await secret(guarded, 'skill', 's-q')), 'skill de Q')
+      assert.ok(refused(await secret(guarded, 'command', 's-q', 'P')), 'de Q e não compartilhada com P')
+      assert.ok(refused(await secret(guarded, 'skill', 's-p', 'Q')), 'a de P, mas com Q recebendo')
+      assert.ok(refused(await secret(guarded, 'skill', 's-r-em-q')), 'de R, compartilhada com Q')
+      assert.ok(refused(await secret(guarded, 'skill', 's-r-em-q', 'P')))
+      assert.ok(refused(await secret(guarded, 'skill', 's-r-em-q', 'Q')))
+      assert.ok(refused(await secret(guarded, 'skill', 's-r-em-p', 'R')), 'compartilhada com P, mas pedindo na origem')
+      assert.strictEqual((await secret(guarded, 'skill', 'nao-existe')).status, 404)
+      assert.deepStrictEqual(written, [])
+
+      assert.strictEqual((await secret(guarded, 'skill', 's-p')).ok, true)
+      assert.strictEqual((await secret(guarded, 'command', 's-p', 'P')).ok, true)
+      assert.strictEqual((await secret(guarded, 'skill', 's-global')).ok, true, 'global: o pedido fica com quem administra o gateway')
+      assert.strictEqual((await secret(guarded, 'skill', 's-r-em-p')).ok, true, 'sem dizer o projeto, quem recebe é o do agente (P)')
+      assert.strictEqual((await secret(guarded, 'skill', 's-r-em-p', 'P')).ok, true)
+      assert.strictEqual(written.length, 5)
+    })
+
+    it('⛔ agente GLOBAL numa conversa de P: a skill compartilhada com P só com P recebendo (sem dizer, cairia na origem)', async () => {
+      const { api, written } = world()
+      const guarded = scopedWrites(api, { projectId: 'P', agentId: 'atlas', unrestricted: false })
+      assert.ok(refused(await secret(guarded, 'skill', 's-r-em-p')))
+      assert.deepStrictEqual(written, [])
+      assert.strictEqual((await secret(guarded, 'skill', 's-r-em-p', 'P')).ok, true)
+      assert.strictEqual((await secret(guarded, 'agent', 'atlas')).ok, true, 'ele mesmo')
+      assert.strictEqual((await secret(guarded, 'skill', 's-global')).ok, true)
+    })
+
+    it('o agente de Q compartilhado com P usa as skills de Q: pede as de casa, não as de um terceiro', async () => {
+      const { api, written } = world()
+      const guarded = scopedWrites(api, { projectId: 'P', agentId: 'q-em-p', unrestricted: false })
+      assert.strictEqual((await secret(guarded, 'skill', 's-q')).ok, true, 'skill do projeto de casa')
+      assert.strictEqual((await secret(guarded, 'skill', 's-r-em-q')).ok, true, 'compartilhada com o projeto de casa')
+      assert.strictEqual((await secret(guarded, 'skill', 's-p')).ok, true, 'a do projeto da conversa')
+      assert.strictEqual(written.length, 3)
+    })
+
+    it('administrador do gateway numa conversa sem projeto pede onde a conta dele pede', async () => {
+      const { api, written } = world()
+      const guarded = scopedWrites(api, { agentId: 'atlas', unrestricted: true })
+      assert.strictEqual((await rules(guarded, 'a-q')).ok, true)
+      assert.strictEqual((await rules(guarded, 'zeus')).ok, true)
+      assert.strictEqual((await secret(guarded, 'agent', 'a-q')).ok, true)
+      assert.strictEqual((await secret(guarded, 'skill', 's-q')).ok, true)
+      assert.strictEqual((await secret(guarded, 'skill', 's-r-em-q', 'Q')).ok, true)
+      assert.strictEqual(written.length, 5)
+    })
+
+    it('sem projeto e sem ser administrador do gateway: só para o próprio agente', async () => {
+      const { api, written } = world()
+      const guarded = scopedWrites(api, { agentId: 'atlas', unrestricted: false })
+      assert.ok(refused(await rules(guarded, 'a-p')))
+      assert.ok(refused(await secret(guarded, 'agent', 'a-p')))
+      assert.ok(refused(await secret(guarded, 'skill', 's-p')))
+      assert.deepStrictEqual(written, [])
+      assert.strictEqual((await rules(guarded, 'atlas')).ok, true)
+      assert.strictEqual((await secret(guarded, 'agent', 'atlas')).ok, true)
+    })
+  })
+
   describe('quem é agente', () => {
     const res = (grant?: object) => ({ locals: grant ? { [TURN_GRANT_LOCAL]: grant } : {} })
 
     it('a concessão do turno manda: o projeto vem do contexto do servidor, não do cabeçalho', () => {
       const scope = agentScopeOf({ headers: { 'x-gateway-project': 'Q' } }, res({ conversationProjectId: 'P', agentId: 'a' }), true)
-      assert.deepStrictEqual(scope, { projectId: 'P', unrestricted: false })
-      assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas' }), true), { unrestricted: true })
-      assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas' }), false), { unrestricted: false })
+      assert.deepStrictEqual(scope, { projectId: 'P', agentId: 'a', unrestricted: false })
+      assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas' }), true), { agentId: 'atlas', unrestricted: true })
+      assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas' }), false), { agentId: 'atlas', unrestricted: false })
+    })
+
+    it('⛔ o agente da conversa também vem da concessão: o do cabeçalho não vale junto', () => {
+      assert.deepStrictEqual(agentScopeOf({ headers: { 'x-gateway-agent': 'outro' } }, res({ conversationProjectId: 'P', agentId: 'a' }), false), {
+        projectId: 'P',
+        agentId: 'a',
+        unrestricted: false,
+      })
+      assert.deepStrictEqual(agentScopeOf({ headers: { 'x-gateway-agent': 'outro' } }, res({ conversationProjectId: 'P' }), false), { projectId: 'P', unrestricted: false })
     })
 
     it('sem concessão, os cabeçalhos de identidade do gateway marcam o agente; sem nenhum, é uma pessoa (conta inteira)', () => {
-      assert.deepStrictEqual(agentScopeOf({ headers: { 'x-gateway-agent': 'a', 'x-gateway-project': 'P' } }, res(), true), { projectId: 'P', unrestricted: false })
+      assert.deepStrictEqual(agentScopeOf({ headers: { 'x-gateway-agent': 'a', 'x-gateway-project': 'P' } }, res(), true), { projectId: 'P', agentId: 'a', unrestricted: false })
       // Na lite, o projeto padrão vale como "sem projeto" para o administrador do gateway (só ele, e só o padrão).
       process.env.GATEWAY_EDITION = 'lite'
       try {
-        assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'geral' }), true), { projectId: 'geral', unrestricted: true })
-        assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'geral' }), false), { projectId: 'geral', unrestricted: false })
-        assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'outro' }), true), { projectId: 'outro', unrestricted: false })
+        assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'geral' }), true), {
+          projectId: 'geral',
+          agentId: 'atlas',
+          unrestricted: true,
+        })
+        assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'geral' }), false), {
+          projectId: 'geral',
+          agentId: 'atlas',
+          unrestricted: false,
+        })
+        assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'outro' }), true), {
+          projectId: 'outro',
+          agentId: 'atlas',
+          unrestricted: false,
+        })
       } finally {
         delete process.env.GATEWAY_EDITION
       }
-      assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'geral' }), true), { projectId: 'geral', unrestricted: false })
+      assert.deepStrictEqual(agentScopeOf({ headers: {} }, res({ agentId: 'atlas', conversationProjectId: 'geral' }), true), {
+        projectId: 'geral',
+        agentId: 'atlas',
+        unrestricted: false,
+      })
       assert.deepStrictEqual(agentScopeOf({ headers: { 'x-gateway-conversation': 'c' } }, res(), true), { unrestricted: true })
       assert.strictEqual(agentScopeOf({ headers: {} }, res(), true), undefined)
     })

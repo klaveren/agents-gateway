@@ -199,6 +199,19 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       assert.deepStrictEqual(ids((await call(ALICE, (res) => controller.listConversations(request({ query: { "a') = 'x' OR ('1": '1' } }), res))).body), ['a1', 'a2'])
     })
 
+    it('`?archived=1` traz só as arquivadas dele — o parâmetro é o recorte, não um rótulo do metadata', async () => {
+      const { controller, conversations } = await setup()
+      await conversations.setArchived('a1', true, 'alice')
+      await conversations.setArchived('b1', true, 'bob')
+
+      for (const archived of ['1', 'true']) {
+        assert.deepStrictEqual(ids((await call(ALICE, (res) => controller.listConversations(request({ query: { archived } }), res))).body), ['a1'], archived)
+      }
+      assert.deepStrictEqual(ids((await call(ALICE, (res) => controller.listConversations(request(), res))).body), ['a2'])
+      // Com outro rótulo junto, o rótulo continua filtrando.
+      assert.deepStrictEqual(ids((await call(ALICE, (res) => controller.listConversations(request({ query: { archived: '1', app: 'mobile' } }), res))).body), [])
+    })
+
     it('⛔ sem custo nem rótulo para o dono — nem quando o dono é administrador', async () => {
       const { controller, conversations } = await setup()
       await conversations.saveSession({

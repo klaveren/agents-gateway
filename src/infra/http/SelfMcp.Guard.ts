@@ -14,9 +14,12 @@ import { AGENT_PATCH_FIELDS } from '@domain/AgentPatch.Policy'
  * ⚖️ NA LITE, o projeto padrão (`geral`) vale como "sem projeto" para o administrador do gateway: lá tudo nasce e vive
  * nele, e não há conversa fora de projeto — a trava só barrava o administrador (preços, modelos) sem proteger nada.
  * O membro comum continua preso ao projeto, e a PRO não muda.
+ * `agentId` = o agente que conversa: o que ele PEDE para si (regras, variáveis) vale em qualquer projeto — o Atlas, global,
+ * numa conversa do projeto P continua pedindo o que é dele.
  */
 export interface IAgentWriteScope {
   projectId?: string
+  agentId?: string
   unrestricted: boolean
 }
 
@@ -29,7 +32,7 @@ export function agentScopeOf(req: Pick<Request, 'headers'>, res: Pick<Response, 
   const grant = res.locals[TURN_GRANT_LOCAL] as IExecutionContext | undefined
   if (grant) {
     const projectId = grant.conversationProjectId ?? grant.projectId
-    return { ...(projectId ? { projectId } : {}), unrestricted: gateway && openProject(projectId) }
+    return { ...(projectId ? { projectId } : {}), ...(grant.agentId ? { agentId: grant.agentId } : {}), unrestricted: gateway && openProject(projectId) }
   }
   const header = (name: string) => {
     const value = req.headers[name]
@@ -37,7 +40,8 @@ export function agentScopeOf(req: Pick<Request, 'headers'>, res: Pick<Response, 
   }
   if (!header(IDENTITY_HEADERS.agent) && !header(IDENTITY_HEADERS.conversation) && !header(IDENTITY_HEADERS.project)) return undefined
   const projectId = header(IDENTITY_HEADERS.project)
-  return { ...(projectId ? { projectId } : {}), unrestricted: gateway && openProject(projectId) }
+  const agentId = header(IDENTITY_HEADERS.agent)
+  return { ...(projectId ? { projectId } : {}), ...(agentId ? { agentId } : {}), unrestricted: gateway && openProject(projectId) }
 }
 
 /** Sem projeto; ou, na lite, o projeto padrão (ver acima). */
@@ -138,13 +142,63 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
     return { projectId: detail?.projectId ?? null, sharedWith: detail?.sharedWith ?? [] }
   }
 
+  /**
+   * ⛔ O alvo de um PEDIDO de regras: o agente da própria conversa (em qualquer projeto) ou um agente do projeto dela. O que
+   * restringe (`deny` novo, `allow` tirado) grava NA HORA: sem isto, a injeção em P mudava as regras de um agente de Q.
+   */
+  const ownOrInScope = async (agentId: string): Promise<ISelfReply | undefined> => {
+    if (scope.unrestricted || (!!scope.agentId && agentId === scope.agentId)) return undefined
+    const owner = await agentProject(agentId)
+    if (owner.reply) return owner.reply
+    return inScope(owner.projectId)
+  }
+
+  /** O projeto de casa do agente da conversa. O global não tem; o que não se consegue ler conta como não ter. */
+  const homeProject = async () => (scope.agentId ? ((await agentProject(scope.agentId)).projectId ?? undefined) : undefined)
+
+  /**
+   * ⛔ O alvo de um PEDIDO de variável (`request_secret`): o pedido cai nas notificações de QUEM RECEBE o valor, com o motivo
+   * que o agente escreveu — sem isto, a injeção em P enchia a fila de Q. Vale o que o agente da conversa usa:
+   *  - ele mesmo, ou um agente do projeto da conversa;
+   *  - skill/command global, do projeto da conversa ou do projeto de casa dele;
+   *  - o compartilhado COM um desses projetos, com esse projeto recebendo o valor (cada projeto preenche o seu).
+   */
+  const secretTarget = async (body: unknown): Promise<ISelfReply | undefined> => {
+    if (scope.unrestricted) return undefined
+    const asked = isObject(body) ? body : {}
+    const kind = asked.scope
+    const scopeId = typeof asked.scopeId === 'string' ? asked.scopeId : ''
+    if (!scopeId || (kind !== 'agent' && kind !== 'skill' && kind !== 'command')) return refuse('A secret request names an agent, a skill or a command')
+    const receiver = typeof asked.project === 'string' && asked.project ? asked.project : undefined
+    const home = await homeProject()
+    const mine = (project: string | null | undefined): project is string => !!project && (project === scope.projectId || project === home)
+    if (receiver && !mine(receiver)) return outside(receiver)
+
+    if (kind === 'agent') {
+      if (scopeId === scope.agentId) return undefined
+      const owner = await agentProject(scopeId)
+      if (owner.reply) return owner.reply
+      // De outro projeto, só o compartilhado com o projeto que recebe.
+      if (receiver && owner.sharedWith.includes(receiver)) return undefined
+      return inScope(owner.projectId)
+    }
+    const found = await api('GET', `/resources/${encodeURIComponent(scopeId)}`)
+    if (!found.ok) return found
+    const resource = (found.result ?? {}) as { projectId?: string; sharedWith?: string[] }
+    // Global: o pedido fica com quem administra o gateway (a rota confere).
+    if (!resource.projectId || mine(resource.projectId)) return undefined
+    // Sem dizer o projeto, quem recebe é o de casa do agente (`receiverOf`, na rota).
+    const receiving = receiver ?? home
+    return mine(receiving) && (resource.sharedWith ?? []).includes(receiving) ? undefined : outside(resource.projectId)
+  }
+
   const check = async (method: string, path: string, body: unknown): Promise<ISelfReply | undefined> => {
     const clean = path.split('?')[0]
     const [root] = clean.split('/').filter(Boolean)
     const id = segment(clean, 1)
 
     switch (root) {
-      // Conversas e pedidos da própria conversa: a dona é conferida pela rota.
+      // Conversas: a dona é conferida pela rota; abrir uma, só no projeto desta.
       case 'sessions': {
         if (method !== 'POST' || clean !== '/sessions') return undefined
         const project = bodyProject(body)
@@ -159,14 +213,14 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         return undefined
       }
       case 'secret-requests':
-        return undefined
+        return secretTarget(body)
       case 'projects': {
         if (clean === '/projects') return scope.unrestricted ? undefined : refuse('Only an administrator in a conversation outside any project creates projects')
         return inScope(id)
       }
       case 'agents': {
-        // Pedidos de regra (a pessoa aprova na tela): valem para o agente da conversa e seguem como estavam.
-        if (clean.endsWith('/permission-rules')) return undefined
+        // Pedidos de regra (o que amplia, a pessoa aprova na tela): do agente da conversa ou de um agente do projeto dela.
+        if (/^\/agents\/[^/]+\/permission-rules\/?$/.test(clean)) return ownOrInScope(id)
         // ⛔ O `PATCH` (patch_agent, e o save_agent de agente) grava NA HORA o que não amplia: o agente alvo tem de ser do
         // projeto da conversa, como no PUT.
         if (clean === '/agents') return inScope(bodyProject(body))

@@ -19,6 +19,7 @@ import { GetSessionUseCase } from '@application/GetSession.Usecase'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { aggregateTurn } from '@application/Turn.Aggregator'
+import { AsyncResource } from 'node:async_hooks'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
@@ -207,6 +208,26 @@ function streamsPerOwner(): number {
   return liveLimit('streamsPerOwner') ?? (Number(process.env.STREAMS_PER_OWNER) || 20)
 }
 
+/** De quanto em quanto tempo um stream aberto confere de novo a credencial e o acesso de quem o abriu. */
+export const STREAM_RECHECK_MS = 30_000
+
+/**
+ * ⛔ Quem pediu o stream já desistiu (a conexão fechou enquanto a credencial era conferida)? O `close` do `res` já
+ * passou e não dispara de novo: abrir o stream agora prenderia a vaga da conta, as inscrições e o relógio do
+ * heartbeat até o processo reiniciar.
+ */
+function gaveUp(res: Response): boolean {
+  return res.destroyed === true
+}
+
+/** Um stream aberto da caixa de entrada: de quem é, como escrever nele e a conversa que ele acompanha ao vivo (`followTurn`). */
+interface IInboxStream {
+  owner: string
+  emit: (type: string, data: object) => void
+  following?: string
+  unfollow?: () => void
+}
+
 /** Um turno assíncrono rodando: o que já saiu, para o `GET` do estado. */
 interface ILiveTurn {
   turn: number
@@ -308,7 +329,7 @@ export class AgentController {
   /** Streams de eventos abertos por conta (ver `conversationEvents`). */
   private readonly openStreams = new Map<string, number>()
   /** Os streams da caixa de entrada abertos agora, pelo id que cada um recebeu ao conectar (ver `followTurn`). */
-  private readonly inboxStreams = new Map<string, { owner: string; emit: (type: string, data: object) => void; unfollow?: () => void }>()
+  private readonly inboxStreams = new Map<string, IInboxStream>()
 
   /** O repositório das conversas — o mesmo do `SendMessageUseCase`; o uso (`UsageController`) lê dele. */
   get conversations(): IConversationRepository {
@@ -324,7 +345,7 @@ export class AgentController {
     await this.respond(res, async () => {
       // ⚖️ Do PRÓPRIO servidor (o deploy, antes de reiniciar): quantos turnos estão rodando. O deploy espera zerar — uma
       // conversa nunca é cortada por um reinício.
-      if (sameHost(req)) {
+      if (fromThisHostDirectly(req)) {
         const running = (await this.usecases.listSessions.execute()).filter((session) => session.status === 'running').length
         if (req.query.turns !== undefined) return { status: 'ok', running, draining: drain.active() }
       }
@@ -352,14 +373,16 @@ export class AgentController {
   }
 
   /**
-   * ⚖️ O DRENO do deploy (`POST /health/drain`; o corpo `{ "on": false }` desliga, o padrão liga): com ele ligado, turno
-   * novo é 503 `draining` e os em andamento seguem. ⛔ Só do PRÓPRIO servidor, sem proxy no meio (`fromThisHostDirectly`),
-   * e sem credencial nova: quem fala com a porta a partir da máquina já é dono dela. De outro lugar: 404.
+   * ⚖️ O DRENO do deploy (`POST /health/drain`; o corpo `{ "on": true }` liga e `{ "on": false }` desliga): com ele ligado,
+   * turno novo é 503 `draining` e os em andamento seguem. ⛔ Só do PRÓPRIO servidor, sem proxy nem navegador no meio
+   * (`fromThisHostDirectly`), e sem credencial nova: quem fala com a porta a partir da máquina já é dono dela. De outro
+   * lugar: 404. ⛔ O `on` é obrigatório: um POST vazio (o único que um formulário ou um `no-cors` consegue mandar) não liga nada.
    */
   async drain(req: Request, res: Response) {
     if (!fromThisHostDirectly(req)) return void res.status(404).json(fail('Not found', 'not_found'))
-    const body = (req.body ?? {}) as { on?: unknown }
-    drain.set(body.on !== false)
+    const on = (req.body as { on?: unknown } | undefined)?.on
+    if (typeof on !== 'boolean') return void res.status(422).json(fail('Request body is invalid', 'validation_error', [{ field: 'on', message: 'true or false' }]))
+    drain.set(on)
     res.json(ok({ draining: drain.active() }))
   }
 
@@ -1299,7 +1322,8 @@ export class AgentController {
         const owner = identity?.id ? { id: identity.id, account: identity.account } : null
         const sessions = await this.usecases.conversations.listSessions({
           limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
-          filter: metadataFilter(query),
+          // `archived` é o recorte acima (a coluna `archived_at`), não um rótulo: como filtro do metadata, nunca casaria.
+          filter: metadataFilter(query, ['archived']),
           // Sem identidade (anônimo) = só as SEM dono; com identidade = só as dela.
           owner,
           archived,
@@ -1371,8 +1395,9 @@ export class AgentController {
    * As mudanças nas conversas gravadas, ao vivo (SSE) — o que mantém a caixa de entrada em dia.
    *
    * ⛔ A MESMA REGRA DA LISTAGEM, aplicada evento a evento: administrador vê todas; os demais, só as
-   * suas (`ownsSession`). O veredito é tomado ao conectar — quem perde o papel de admin continua
-   * recebendo até reconectar, como continuaria com a lista já aberta na tela.
+   * suas (`ownsSession`). O veredito é tomado ao conectar e CONFERIDO DE NOVO a cada `STREAM_RECHECK_MS`
+   * (`guardStream`): quem saiu, foi desativado ou teve a sessão encerrada perde o stream; quem perdeu um
+   * papel ou um projeto deixa de receber o que era dele.
    *
    * ⚠️ `conversation.updated` sai na projeção de quem LÊ (`toConversationDto`): o não administrador
    * não recebe rótulo nem custo por aqui, do mesmo jeito que não recebe pela listagem.
@@ -1389,6 +1414,7 @@ export class AgentController {
     } catch (error: unknown) {
       return this.sendFailure(res, error, '[AgentController.conversationEvents]')
     }
+    if (gaveUp(res)) return
 
     const key = ownerOf(resolved)?.id ?? ''
     if (!this.holdStream(key)) return this.sendFailure(res, new HttpError(429, 'rate_limited', 'Too many open event streams'), '[AgentController.conversationEvents]')
@@ -1397,7 +1423,7 @@ export class AgentController {
     stream.open()
     // O id deste stream: é por ele que a tela pede o turno ao vivo da conversa aberta (`followTurn`), sem outra conexão.
     const streamId = randomUUID()
-    const inbox: { owner: string; emit: (type: string, data: object) => void; unfollow?: () => void } = { owner: key, emit: (type, data) => stream.emit(type, data) }
+    const inbox: IInboxStream = { owner: key, emit: (type, data) => stream.emit(type, data) }
     this.inboxStreams.set(streamId, inbox)
     stream.emit('stream.ready', { streamId })
 
@@ -1446,15 +1472,33 @@ export class AgentController {
     for (const running of this.usecases.live?.running() ?? [])
       if (visible(running.metadata)) stream.emit('conversation.running', { sessionId: running.sessionId, at: running.startedAt })
 
-    // Em `res`, não em `req` — ver `sendMessageAsStream`: o `close` do request dispara cedo demais.
-    res.on('close', () => {
-      unsubscribe()
-      unsubscribeCatalog()
-      inbox.unfollow?.()
-      this.inboxStreams.delete(streamId)
-      stream.close()
-      this.releaseStream(key)
-    })
+    this.guardStream(
+      res,
+      stream,
+      async () => {
+        await this.requireCaller()
+        const view = await adminView(this.usecases.proof)
+        if (project) this.requireProject(this.callerOf(resolved), project)
+        adminOf = view
+        // A pertença aos projetos é lida de novo no próximo aviso do catálogo.
+        member.clear()
+        const followed = inbox.following
+        if (!followed) return
+        try {
+          await this.requireLiveAccess(followed)
+        } catch {
+          // A conversa acompanhada deixou de ser dele: para de acompanhar; o stream segue.
+          if (inbox.following === followed) this.unfollow(inbox)
+        }
+      },
+      () => {
+        unsubscribe()
+        unsubscribeCatalog()
+        this.unfollow(inbox)
+        this.inboxStreams.delete(streamId)
+        this.releaseStream(key)
+      },
+    )
   }
 
   /**
@@ -1470,13 +1514,18 @@ export class AgentController {
   async followTurn(req: Request, res: Response) {
     await this.respond(res, async () => {
       const resolved = await this.requireCaller()
-      const inbox = this.inboxStreams.get(String(req.params.streamId ?? ''))
+      const streamId = String(req.params.streamId ?? '')
+      const inbox = this.inboxStreams.get(streamId)
       if (!inbox || inbox.owner !== (ownerOf(resolved)?.id ?? '')) throw new HttpError(404, 'not_found', 'Stream not found')
       const { sessionId } = parseBody(followTurnSchema, req.body)
-      inbox.unfollow?.()
-      inbox.unfollow = undefined
+      this.unfollow(inbox)
       if (!sessionId) return { following: null }
       await this.requireLiveAccess(sessionId)
+      // ⛔ A conferência acima espera, e nesse meio o stream pode ter fechado (ninguém cancelaria a assinatura feita
+      // aqui) e outro pedido pode ter começado a acompanhar (a assinatura dele ficaria órfã): vale o último que chega.
+      if (this.inboxStreams.get(streamId) !== inbox) throw new HttpError(404, 'not_found', 'Stream not found')
+      this.unfollow(inbox)
+      inbox.following = sessionId
       inbox.unfollow = this.watchTurn(sessionId, (type, data) => inbox.emit(type, { sessionId, ...data }), true)
       return { following: sessionId }
     })
@@ -1497,6 +1546,7 @@ export class AgentController {
     } catch (error: unknown) {
       return this.sendFailure(res, error, '[AgentController.sessionLive]')
     }
+    if (gaveUp(res)) return
     if (!this.holdStream(key)) return this.sendFailure(res, new HttpError(429, 'rate_limited', 'Too many open event streams'), '[AgentController.sessionLive]')
 
     const stream = new SseStream(res)
@@ -1504,11 +1554,53 @@ export class AgentController {
     stream.comment('ready')
     const unwatch = this.watchTurn(sessionId, (type, data) => stream.emit(type, data), false)
 
-    res.on('close', () => {
-      unwatch()
+    this.guardStream(
+      res,
+      stream,
+      async () => void (await this.requireLiveAccess(sessionId)),
+      () => {
+        unwatch()
+        this.releaseStream(key)
+      },
+    )
+  }
+
+  /** Para de acompanhar o turno ao vivo no stream da caixa de entrada. */
+  private unfollow(inbox: IInboxStream): void {
+    inbox.unfollow?.()
+    inbox.unfollow = undefined
+    inbox.following = undefined
+  }
+
+  /**
+   * O fim de um stream de eventos, UMA vez só: quando a conexão fecha, ou quando a conferência periódica falha.
+   *
+   * ⛔ O stream fica aberto por horas, e a credencial que o abriu pode deixar de valer no meio (a pessoa saiu, a conta
+   * foi desativada, a sessão venceu, o acesso foi tirado). A cada `STREAM_RECHECK_MS` o `recheck` refaz a conferência
+   * da abertura; se ela falha, o stream FECHA — quem reconecta recebe a resposta de quem é agora.
+   */
+  private guardStream(res: Response, stream: SseStream, recheck: () => Promise<void>, release: () => void): void {
+    let open = true
+    let busy = false
+    // No contexto de quem abriu o stream (a credencial e a rota dele), dispare o relógio de onde disparar.
+    const check = AsyncResource.bind(recheck)
+    const close = () => {
+      if (!open) return
+      open = false
+      clearInterval(timer)
+      release()
       stream.close()
-      this.releaseStream(key)
-    })
+    }
+    const timer = setInterval(() => {
+      if (busy) return
+      busy = true
+      check()
+        .catch(close)
+        .finally(() => (busy = false))
+    }, STREAM_RECHECK_MS)
+    timer.unref?.()
+    // Em `res`, não em `req` — ver `sendMessageAsStream`: o `close` do request dispara cedo demais.
+    res.on('close', close)
   }
 
   /** Dono da conversa ou admin DO PROJETO dela (sem projeto, o do gateway), ou 404. A sessão viva primeiro: a conversa nova só chega ao banco no fim do primeiro turno. */
@@ -2465,11 +2557,4 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
 
 function unauthorized(): HttpError {
   return new HttpError(401, 'unauthorized', 'Missing or unverifiable caller credential')
-}
-
-/** A requisição veio do próprio servidor (loopback, ou o mesmo endereço em que ele escuta). */
-function sameHost(req: Request): boolean {
-  const remote = req.socket?.remoteAddress?.replace(/^::ffff:/, '')
-  const local = req.socket?.localAddress?.replace(/^::ffff:/, '')
-  return !!remote && (remote === '127.0.0.1' || remote === '::1' || remote === local)
 }

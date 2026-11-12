@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
+import { isIP } from 'node:net'
 import cors, { CorsOptions } from 'cors'
 import { NextFunction, Request, RequestHandler, Response } from 'express'
 import { tokenFromHeader } from '@infra/mcp/Caller.Identity'
@@ -124,10 +125,19 @@ export class WindowCounter {
 
 /** Os nomes de faixa que o `proxy-addr` (o `trust proxy` do Express) entende. */
 const PROXY_NAMES = ['loopback', 'linklocal', 'uniquelocal']
-const IPV4_CIDR = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/
-const IPV6_CIDR = /^[0-9a-f:]+(\/\d{1,3})?$/i
-/** Confiar nestes = confiar em qualquer um: o `X-Forwarded-For` voltaria a ser escrito pelo atacante. */
-const TRUST_EVERYONE = ['0.0.0.0/0', '::/0', '::/1', '0.0.0.0/1']
+/**
+ * O prefixo mais curto que ainda é uma rede de proxies: `10.0.0.0/8` e `fc00::/7`. Mais largo que isso é confiar em
+ * qualquer um — o `X-Forwarded-For` voltaria a ser escrito pelo atacante.
+ */
+const WIDEST_PREFIX = { 4: 8, 6: 7 }
+const ADDRESS_BITS = { 4: 32, 6: 128 }
+
+/** `4` ou `6`; `0` no que não é endereço. O IPv4 escrito como IPv6 (`::ffff:10.0.0.0`) fica de fora: o prefixo dele engana. */
+function proxyFamily(address: string): 0 | 4 | 6 {
+  const family = isIP(address)
+  if (family === 4) return 4
+  return family === 6 && !address.includes('.') ? 6 : 0
+}
 
 /**
  * ⛔ Em QUEM o gateway confia para dizer o IP real (`X-Forwarded-For`) e o protocolo (`X-Forwarded-Proto`):
@@ -139,8 +149,14 @@ export function trustProxyIssue(raw: string | undefined): string | undefined {
   if (!value) return undefined
   if (/^(true|\*|\d+)$/i.test(value)) return `TRUST_PROXY=${value} would trust any client: list the proxy addresses or CIDRs (e.g. 10.42.0.0/16)`
   for (const entry of value.split(',').map((part) => part.trim())) {
-    if (TRUST_EVERYONE.includes(entry)) return `TRUST_PROXY entry ${entry} trusts the whole internet`
-    if (!PROXY_NAMES.includes(entry) && !IPV4_CIDR.test(entry) && !IPV6_CIDR.test(entry)) return `TRUST_PROXY entry is not an IP, CIDR or ${PROXY_NAMES.join('/')}: ${entry}`
+    if (PROXY_NAMES.includes(entry)) continue
+    const [address, prefix, ...rest] = entry.split('/')
+    const family = proxyFamily(address)
+    if (!family || rest.length) return `TRUST_PROXY entry is not an IP, CIDR or ${PROXY_NAMES.join('/')}: ${entry}`
+    if (prefix === undefined) continue
+    const bits = /^\d{1,3}$/.test(prefix) ? Number(prefix) : NaN
+    if (!(bits <= ADDRESS_BITS[family])) return `TRUST_PROXY entry has an invalid prefix: ${entry}`
+    if (bits < WIDEST_PREFIX[family]) return `TRUST_PROXY entry ${entry} is too wide to be a proxy network: it would trust clients (at most /${WIDEST_PREFIX[family]} here)`
   }
   return undefined
 }

@@ -1,8 +1,14 @@
 import assert from 'node:assert'
+import { createHmac, randomBytes } from 'node:crypto'
+import { createServer } from 'node:http'
+import { AddressInfo } from 'node:net'
 import { describe, it } from 'node:test'
 import { Request, Response } from 'express'
 import { AgentHooksService } from '@application/AgentHooks.Service'
 import { HOOK_DEFAULTS, IAgentHook } from '@domain/models/AgentHook.Model'
+import { SqliteAgentHookRepository } from '@infra/persistence/Sqlite.AgentHookRepository'
+import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
+import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { drain } from './Drain.State'
 import { eventMessage, HooksController } from './Hooks.Controller'
 
@@ -117,5 +123,101 @@ describe('HooksController.receive — a cota depois de conferir a chave', () => 
     assert.strictEqual((await fire('2.2.2.2', 'deploy', 'whk_certa')).status, 409)
     assert.strictEqual((await fire('2.2.2.2', 'deploy', 'whk_certa')).status, 409)
     assert.strictEqual((await fire('2.2.2.2', 'deploy', 'whk_certa')).status, 429)
+  })
+})
+
+describe('HooksController.receive — HMAC com `X-Timestamp`: a assinatura só é gasta quando o evento entra', () => {
+  const START = 1_800_000_000_000
+  const MINUTE = 60_000
+
+  /** O serviço de verdade (SQLite em memória): a validade da assinatura gasta é a dele. `api` = a porta de uma API de mentira. */
+  const build = (options: { limit?: number; api?: number } = {}) => {
+    const hooks = new AgentHooksService(new SqliteAgentHookRepository(':memory:'), new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:'), () => true)
+    const { secret } = hooks.create('a', { name: 'carimbado', prompt: 'p', verify: 'hmac' }, { userId: 'u', label: 'u' })
+    const clock = { at: START }
+    process.env.HOOK_RATE_LIMIT = String(options.limit ?? 5)
+    const controller = new HooksController({ hooks, sessionFor: () => (options.api ? { token: 't' } : undefined), now: () => clock.at })
+    delete process.env.HOOK_RATE_LIMIT
+    /** O MESMO evento = o mesmo corpo com o mesmo carimbo: a assinatura é a mesma. */
+    const fire = (body: string, signedAt = START) => {
+      const stamp = String(Math.floor(signedAt / 1000))
+      const reply = { status: 0, code: '' }
+      const res = {
+        status: (code: number) => ((reply.status = code), res),
+        json: (sent: { code?: string }) => ((reply.code = sent.code ?? ''), res),
+        setHeader: () => res,
+      } as unknown as Response
+      const req = {
+        params: { agentId: 'a', hookName: 'carimbado' },
+        headers: { 'x-timestamp': stamp, 'x-hub-signature-256': `sha256=${createHmac('sha256', secret).update(`${stamp}.${body}`).digest('hex')}` },
+        body: Buffer.from(body),
+        ip: '5.5.5.5',
+        query: {},
+        socket: { localAddress: '127.0.0.1', localPort: options.api },
+      } as unknown as Request
+      return controller.receive(req, res).then(() => reply)
+    }
+    return { fire, clock, hooks }
+  }
+  const REPLAY = { status: 401, code: 'hook_unauthorized' }
+
+  it('⚖️ drenando, o evento assinado recebe 503 e a assinatura NÃO é gasta: reenviado, o mesmo evento entra — uma vez', async () => {
+    const { fire } = build()
+    drain.set(true)
+    try {
+      assert.deepStrictEqual(await fire('{"n":1}'), { status: 503, code: 'draining' })
+    } finally {
+      drain.set(false)
+    }
+    assert.strictEqual((await fire('{"n":1}')).status, 409, 'o reenvio passa da assinatura (e para na conta, que aqui não existe)')
+    assert.deepStrictEqual(await fire('{"n":1}'), REPLAY)
+  })
+
+  it('⛔ fora da cota (429) a assinatura também não é gasta; e o replay conta para o IP, não para a cota do hook', async () => {
+    const { fire, clock } = build({ limit: 2 })
+    assert.strictEqual((await fire('{"n":1}')).status, 409)
+    assert.deepStrictEqual(await fire('{"n":1}'), REPLAY)
+    assert.strictEqual((await fire('{"n":2}')).status, 409, 'o replay não entrou na cota de sucesso: o segundo evento ainda cabe')
+    assert.strictEqual((await fire('{"n":3}')).status, 429)
+    clock.at += MINUTE + 1000
+    assert.strictEqual((await fire('{"n":3}')).status, 409, 'depois do `Retry-After`, o mesmo evento assinado entra')
+  })
+
+  it('⛔ a assinatura fica gasta enquanto o carimbo valer — o relógio adiantado de quem envia não reabre a janela', async () => {
+    const { fire, clock } = build()
+    const ahead = START + 4 * MINUTE
+    assert.strictEqual((await fire('{"n":1}', ahead)).status, 409)
+    // 5 min depois do primeiro uso o carimbo (4 min à frente) ainda está na janela: tem de seguir gasta.
+    clock.at = START + 5 * MINUTE + 1000
+    assert.deepStrictEqual(await fire('{"n":1}', ahead), REPLAY)
+    clock.at = ahead + 5 * MINUTE - 1
+    assert.deepStrictEqual(await fire('{"n":1}', ahead), REPLAY, 'no último instante da janela')
+    clock.at = ahead + 5 * MINUTE
+    assert.deepStrictEqual(await fire('{"n":1}', ahead), REPLAY, 'fora da janela, é o carimbo que recusa')
+  })
+
+  it('a conversa não abriu (a API recusou): a assinatura volta, e o reenvio do mesmo evento não é um replay', async () => {
+    let refuse = true
+    const api = createServer((_req, res) => {
+      res.writeHead(refuse ? 503 : 201, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(refuse ? { ok: false, code: 'draining', message: 'restarting' } : { ok: true, result: { id: 'c1' } }))
+    })
+    await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', resolve))
+    try {
+      const { fire, hooks } = build({ api: (api.address() as AddressInfo).port })
+      assert.deepStrictEqual(await fire('{"n":1}'), { status: 503, code: 'draining' })
+      refuse = false
+      assert.strictEqual((await fire('{"n":1}')).status, 202)
+      assert.deepStrictEqual(await fire('{"n":1}'), REPLAY, 'aceito uma vez: agora é replay')
+      // O turno do evento aceito roda solto: espera ele fechar a entrega antes de derrubar a API.
+      for (let tries = 0; tries < 100 && hooks.deliveries('a', 'carimbado')[0]?.status !== 'ok'; tries += 1) await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.deepStrictEqual(
+        hooks.deliveries('a', 'carimbado').map((delivery) => delivery.status),
+        ['ok', 'error'],
+      )
+    } finally {
+      api.closeAllConnections()
+      await new Promise((resolve) => api.close(resolve))
+    }
   })
 })

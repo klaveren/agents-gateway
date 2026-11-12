@@ -26,6 +26,10 @@ export interface IHooksControllerDeps {
 export const HOOK_PATH = '/hook/:agentId/:hookName'
 /** ⛔ Com `X-Timestamp` (segundos), a assinatura HMAC cobre `<timestamp>.<corpo>` e vale por esta janela, uma vez só. */
 const TIMESTAMP_WINDOW_MS = 5 * 60_000
+/** A prova de quem chamou. Com `X-Timestamp`, traz a assinatura a gastar e até quando o carimbo dela ainda seria aceito. */
+interface IHookProof {
+  spend?: { signature: string; until: number }
+}
 /** O corpo do evento que vai na mensagem do turno: o resto é cortado, com aviso. */
 const BODY_IN_PROMPT = 100_000
 /** Headers que nunca vão para o agente: credenciais e o que o proxy põe. */
@@ -84,21 +88,29 @@ export class HooksController {
 
     // ⛔ 401 UNIFORME: hook que não existe, desligado, chave errada e assinatura errada respondem igual (nada de enumerar
     // agentes e hooks), e a falha conta para o IP — não para o hook, que o anônimo não pode esgotar.
-    const hook = this.deps.hooks.active(agentId, name)
-    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
-    const secret = hook ? this.deps.hooks.secretOf(agentId, name) : undefined
-    if (!hook || !secret || !this.verifiedFresh(hook, secret, req, raw)) {
+    const unauthorized = () => {
       this.rejected.hit(ip)
       return void deny(401, 'hook_unauthorized', 'Missing or wrong hook credentials')
     }
+    const now = this.deps.now?.() ?? Date.now()
+    const hook = this.deps.hooks.active(agentId, name)
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+    const secret = hook ? this.deps.hooks.secretOf(agentId, name) : undefined
+    const proof = hook && secret ? this.proofOf(hook, secret, req, raw, now) : undefined
+    if (!hook || !proof) return unauthorized()
     // ⚖️ Gateway drenando para um deploy: quem chamou (já autenticado) reenvia depois do `Retry-After`. Nada é aceito nem gravado.
     if (drain.active()) {
       res.setHeader('Retry-After', String(DRAIN_RETRY_SECONDS))
       return void deny(503, 'draining', 'The gateway is restarting for an update; resend this event shortly')
     }
-    const exhausted = this.accepted.over(`${agentId}/${name}`)
+    const key = `${agentId}/${name}`
+    const exhausted = this.accepted.over(key)
     if (exhausted) return tooMany(exhausted)
-    this.accepted.hit(`${agentId}/${name}`)
+    // ⛔ SÓ AQUI A ASSINATURA É GASTA: o 503 e o 429 acima mandam reenviar, e o reenvio é este mesmo evento, com esta mesma
+    // assinatura. A que já foi gasta é replay: falha do IP, sem entrar na cota de sucesso do hook.
+    const spend = proof.spend
+    if (spend && !this.deps.hooks.claimSignature(agentId, name, spend.signature, spend.until, now)) return unauthorized()
+    this.accepted.hit(key)
 
     const session = this.deps.sessionFor(hook.runAs)
     if (!session) return void deny(409, 'hook_owner_inactive', 'The account this hook runs as is disabled or gone; recreate the hook')
@@ -108,7 +120,6 @@ export class HooksController {
     const api = selfApi(base, credentials)
     const delivery = this.deps.hooks.recordDelivery(hook)
     const message = eventMessage(hook, req, raw)
-    const key = `${agentId}/${name}`
 
     try {
       const conversationId = hook.session === 'continuous' ? await this.continuousSession(hook, api) : await openConversation(api, hook)
@@ -130,25 +141,29 @@ export class HooksController {
     } catch (error: unknown) {
       const failure = error instanceof SelfCallError ? error : undefined
       this.deps.hooks.finishDelivery(delivery.id, { status: 'error', error: failure?.message ?? String(error) })
+      // A conversa não abriu: o evento não entrou, e quem reenviar manda esta mesma assinatura.
+      if (spend) this.deps.hooks.releaseSignature(agentId, name, spend.signature)
       if (failure?.code === 'draining') res.setHeader('Retry-After', String(DRAIN_RETRY_SECONDS))
       res.status(failure?.status ?? 500).json(fail(failure?.message ?? 'Could not open the conversation', (failure?.code as never) ?? 'internal_error'))
     }
   }
 
   /**
-   * A chave/assinatura confere? Com `X-Timestamp` (HMAC), o carimbo entra na assinatura, tem de estar na janela e a mesma
-   * assinatura não vale duas vezes (as já vistas ficam no SQLite: o restart não reabre a janela). Sem ele, vale como sempre
-   * (quem não manda não quebra), salvo no hook com `requireTimestamp`: aí sem carimbo é 401.
+   * A chave/assinatura confere? `undefined` = não (401). Com `X-Timestamp` (HMAC), o carimbo entra na assinatura e tem de
+   * estar na janela, e a prova traz a assinatura a gastar: ela vale UMA vez, e quem a gasta é o `receive`, só quando o evento
+   * vai entrar (as gastas ficam no SQLite: o restart não reabre a janela). Sem carimbo, vale como sempre (quem não manda não
+   * quebra), salvo no hook com `requireTimestamp`: aí sem carimbo é 401.
+   *
+   * ⛔ Gasta ATÉ O CARIMBO VENCER (`until`), não por uma janela a contar de agora: o carimbo adiantado (o relógio de quem
+   * envia à frente) continua aceito depois disso, e a assinatura voltaria a valer.
    */
-  private verifiedFresh(hook: IAgentHook, secret: string, req: Request, raw: Buffer): boolean {
+  private proofOf(hook: IAgentHook, secret: string, req: Request, raw: Buffer, now: number): IHookProof | undefined {
     const stamp = hook.verify === 'hmac' ? headerOf(req, 'x-timestamp') : undefined
-    if (stamp === undefined) return !(hook.verify === 'hmac' && hook.requireTimestamp) && verified(hook, secret, req, raw)
-    const now = this.deps.now?.() ?? Date.now()
+    if (stamp === undefined) return !(hook.verify === 'hmac' && hook.requireTimestamp) && verified(hook, secret, req, raw) ? {} : undefined
     const sentAt = /^\d{1,13}$/.test(stamp.trim()) ? Number(stamp.trim()) * 1000 : NaN
-    if (!Number.isFinite(sentAt) || Math.abs(now - sentAt) > TIMESTAMP_WINDOW_MS) return false
-    if (!verified(hook, secret, req, Buffer.concat([Buffer.from(`${stamp.trim()}.`), raw]))) return false
-    const signature = headerOf(req, hook.signatureHeader.toLowerCase())!.trim()
-    return this.deps.hooks.claimSignature(hook.agentId, hook.name, signature, now, TIMESTAMP_WINDOW_MS)
+    if (!Number.isFinite(sentAt) || Math.abs(now - sentAt) >= TIMESTAMP_WINDOW_MS) return undefined
+    if (!verified(hook, secret, req, Buffer.concat([Buffer.from(`${stamp.trim()}.`), raw]))) return undefined
+    return { spend: { signature: headerOf(req, hook.signatureHeader.toLowerCase())!.trim(), until: sentAt + TIMESTAMP_WINDOW_MS } }
   }
 
   /** A conversa de um hook contínuo: a gravada, se ainda existe; senão uma nova, gravada no hook. */

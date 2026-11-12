@@ -42,12 +42,18 @@ describe('AgentHooksService — assinaturas já vistas', () => {
     const build = () => new AgentHooksService(new SqliteAgentHookRepository(path), new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:'), () => true)
     try {
       const first = build()
-      assert.strictEqual(first.claimSignature('a', 'h', 'sig', 1_000, 300_000), true)
-      assert.strictEqual(first.claimSignature('a', 'h', 'sig', 2_000, 300_000), false)
-      assert.strictEqual(first.claimSignature('a', 'outro', 'sig', 2_000, 300_000), true, 'por hook')
+      assert.strictEqual(first.claimSignature('a', 'h', 'sig', 301_000, 1_000), true)
+      assert.strictEqual(first.claimSignature('a', 'h', 'sig', 302_000, 2_000), false)
+      assert.strictEqual(first.claimSignature('a', 'outro', 'sig', 302_000, 2_000), true, 'por hook')
       // Restart: um serviço novo sobre o mesmo arquivo ainda recusa o reenvio.
-      assert.strictEqual(build().claimSignature('a', 'h', 'sig', 3_000, 300_000), false)
-      assert.strictEqual(build().claimSignature('a', 'h', 'sig', 400_000, 300_000), true, 'vencida (TTL de 5 min)')
+      assert.strictEqual(build().claimSignature('a', 'h', 'sig', 303_000, 3_000), false)
+      assert.strictEqual(build().claimSignature('a', 'h', 'sig', 300_999, 300_999), false, 'até o último instante')
+      assert.strictEqual(build().claimSignature('a', 'h', 'sig', 700_000, 400_000), true, 'vencida (passou do `until`)')
+      // Devolvida (o evento não entrou): o reenvio passa de novo, e só a dela volta.
+      assert.strictEqual(first.claimSignature('a', 'outro', 'sig', 700_000, 400_000), true)
+      first.releaseSignature('a', 'h', 'sig')
+      assert.strictEqual(first.claimSignature('a', 'h', 'sig', 700_000, 400_000), true)
+      assert.strictEqual(first.claimSignature('a', 'outro', 'sig', 700_000, 400_000), false)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

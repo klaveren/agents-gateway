@@ -61,6 +61,9 @@ function bridgeGoogleApiKey(): void {
   console.log('[config] GOOGLE_GENAI_API_KEY ausente; usando GOOGLE_API_KEY para o @google/adk.')
 }
 
+/** A porta já abriu: daqui em diante uma falha do boot é só log — o servidor está no ar e atendendo. */
+let listening = false
+
 async function bootstrap() {
   const issues = bootIssues()
   if (issues.length) {
@@ -126,10 +129,16 @@ async function bootstrap() {
     makeProjectConnectionsController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
+  listening = true
   // O relógio dos agendamentos: depois de o servidor subir — ele executa pela API deste processo.
   makeScheduleRunner().start()
   // 🔌 O vigia dos projetos conectados: o aviso de atualização (a conexão sai daqui; a origem não nos alcança).
   makeProjectConnections().start()
 }
 
-bootstrap().catch(console.error)
+bootstrap().catch((error: unknown) => {
+  console.error('[boot] falhou:', error)
+  // ⛔ Antes de a porta abrir não há servidor: sair com erro, para o systemd/launchd (e o deploy) verem a falha — nunca um
+  // processo vivo que não atende.
+  if (!listening) process.exit(1)
+})

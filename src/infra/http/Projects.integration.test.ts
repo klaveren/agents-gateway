@@ -578,4 +578,25 @@ describe('Projetos (integração)', () => {
     assert.strictEqual((await call(BIA, 'DELETE', '/projects/repos/repositories/..%2Fnotas')).status, 422)
     assert.ok(existsSync(join(folders, 'repos', 'repositories', 'rascunho')))
   })
+
+  it('⛔ repositórios: o admin do gateway que não é do projeto não cria nem remove (para entrar, põe-se nos membros)', async () => {
+    assert.strictEqual((await call(ADMIN, 'POST', '/projects', { id: 'alheio', name: 'Alheio' })).status, 201)
+    assert.strictEqual((await call(ADMIN, 'PUT', '/projects/alheio/members', { members: [{ userId: 'u_bia', role: 'admin' }] })).status, 200)
+    assert.strictEqual((await call(BIA, 'POST', '/projects/alheio/repositories', { name: 'da-bia' })).status, 201)
+    const folder = join(folders, 'alheio', 'repositories')
+
+    assert.strictEqual((await call(ADMIN, 'POST', '/projects/alheio/repositories', { name: 'do-root' })).status, 404)
+    assert.ok(!existsSync(join(folder, 'do-root')))
+    assert.strictEqual((await call(ADMIN, 'DELETE', '/projects/alheio/repositories/da-bia')).status, 404)
+    assert.ok(existsSync(join(folder, 'da-bia')))
+
+    // O resgate continua: ele lê e troca os membros, e como membro admin passa a mexer.
+    assert.strictEqual((await call(ADMIN, 'GET', '/projects/alheio/members')).status, 200)
+    const members = [
+      { userId: 'u_bia', role: 'admin' },
+      { userId: 'u_root', role: 'admin' },
+    ]
+    assert.strictEqual((await call(ADMIN, 'PUT', '/projects/alheio/members', { members })).status, 200)
+    assert.strictEqual((await call(ADMIN, 'DELETE', '/projects/alheio/repositories/da-bia')).status, 200)
+  })
 })
