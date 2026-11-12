@@ -21,6 +21,9 @@ AGY_SHA_MAC_ARM64=64204e14975e632ae7f26912bed48d49ffe17bb2719093ca38c00276b1f134
 # O build: a versão + o commit. Muda a cada build, e é por ela que o app sabe que precisa reiniciar o servidor.
 BUILD="$VERSION+$(git -C "$ROOT" rev-parse --short HEAD)"
 
+# ⛔ Todo build sai com a versão incrementada: dois instaladores com a mesma versão não se distinguem no "Sobre".
+[ ! -e "$OUT/Agents-Gateway-$VERSION.dmg" ] || { echo "a versão $VERSION já tem instalador: suba a versão (npm version prerelease --no-git-tag-version), commit, e rode de novo" >&2; exit 1 }
+
 echo "▶ montagem limpa do HEAD ($(git -C "$ROOT" rev-parse --short HEAD))"
 rm -rf "$OUT"
 mkdir -p "$STAGE"

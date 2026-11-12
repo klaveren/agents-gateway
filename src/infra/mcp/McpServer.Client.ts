@@ -7,9 +7,10 @@ import { TMcpAuth, TMcpTransport } from '@domain/models/McpServer.Model'
 import { IToolDefinition, IToolResult, IToolSchema } from '@infra/tools/Tool.Types'
 import { CallerTokenScope } from './Caller.TokenScope'
 import { identityHeaders } from '@domain/Agent.Identity'
+import { packageVersion } from '@infra/http/Gateway.About'
 import { egressPolicy, guardedFetch } from '@infra/net/Guarded.Fetch'
 
-const CLIENT_INFO = { name: 'agents-gateway', version: '1.0.0-alpha' }
+const CLIENT_INFO = { name: 'agents-gateway', version: packageVersion() }
 
 export const BASE_RETRY_MS = 1_000
 export const MAX_RETRY_MS = 60_000
