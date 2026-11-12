@@ -136,21 +136,67 @@ export function currentBranch(place: IGitPlace): string | undefined {
   return safeGitSync(place, ['rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 5000 })?.trim() || undefined
 }
 
-/** Os repositórios do projeto e as worktrees de cada um, para a tela. */
-export function listRepositories(projectDir: string): Array<{ name: string; worktrees: Array<{ name: string; branch?: string; path: string }> }> {
-  const root = join(real(projectDir), REPOSITORIES_DIR)
+/**
+ * As pastas das worktrees de um repositório que ficam no projeto e são DELE — o `.git` de cada uma conferido
+ * (`worktreeGit`): o que se apaga junto com o repositório.
+ */
+export function worktreeFolders(projectDir: string, repository: string): string[] {
+  const project = real(projectDir)
+  const repositoryDir = real(join(project, REPOSITORIES_DIR, repository))
+  const gitCommonDir = repositoryGit(repositoryDir)
+  if (!gitCommonDir) return []
+  return listWorktrees(repositoryDir)
+    .map((entry) => real(entry.path))
+    .filter((dir) => dir !== project && inside(project, dir) && worktreeGit(dir, gitCommonDir) !== undefined)
+}
+
+/** A origem (`remote.origin.url`) para a tela: sem usuário nem senha, caso a URL os traga. Ausente = repositório local. */
+function originOf(place: IGitPlace): string | undefined {
+  const raw = safeGitSync(place, ['config', '--get', 'remote.origin.url'], { timeout: 5000 })?.trim()
+  if (!raw) return undefined
+  try {
+    const url = new URL(raw)
+    return `${url.protocol}//${url.host}${url.pathname}`.slice(0, 300)
+  } catch {
+    // `git@servidor:grupo/app.git` não é URL: vai como está.
+    return raw.slice(0, 300)
+  }
+}
+
+export interface IRepositoryEntry {
+  name: string
+  /** A branch da pasta principal. */
+  branch?: string
+  /** De onde veio; ausente = local, sem remoto. */
+  origin?: string
+  worktrees: Array<{ name: string; branch?: string; path: string }>
+}
+
+/** Os repositórios do projeto (a pasta com o `.git` dela) e as worktrees de cada um, para a tela. */
+export function listRepositories(projectDir: string): IRepositoryEntry[] {
+  const project = real(projectDir)
+  const root = join(project, REPOSITORIES_DIR)
   if (!existsSync(root)) return []
-  return readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && REPOSITORY_NAME.test(entry.name) && existsSync(join(root, entry.name, '.git')))
-    .map((entry) => {
-      const repositoryDir = join(root, entry.name)
-      return {
-        name: entry.name,
-        worktrees: listWorktrees(repositoryDir)
-          .filter((item) => inside(real(projectDir), real(item.path)))
-          .map((item) => ({ name: item.name, ...(item.branch ? { branch: item.branch } : {}), path: relative(real(projectDir), real(item.path)).split(sep).join('/') })),
-      }
+  const entries: IRepositoryEntry[] = []
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !REPOSITORY_NAME.test(entry.name)) continue
+    const repositoryDir = join(root, entry.name)
+    // A worktree criada ao lado (`repositories/EP-1`, com o `.git` em arquivo) não é repositório.
+    const gitCommonDir = repositoryGit(repositoryDir)
+    if (!gitCommonDir) continue
+    const place = { dir: repositoryDir, gitCommonDir }
+    const branch = currentBranch(place)
+    const origin = originOf(place)
+    entries.push({
+      name: entry.name,
+      ...(branch && branch !== 'HEAD' ? { branch } : {}),
+      ...(origin ? { origin } : {}),
+      worktrees: listWorktrees(repositoryDir)
+        .filter((item) => inside(project, real(item.path)))
+        .map((item) => ({ name: item.name, ...(item.branch ? { branch: item.branch } : {}), path: relative(project, real(item.path)).split(sep).join('/') })),
     })
+  }
+  return entries
 }
 
 /**

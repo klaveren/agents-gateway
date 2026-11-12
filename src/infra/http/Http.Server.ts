@@ -467,6 +467,8 @@ function buildRoutes(
     { method: 'delete', path: '/projects/:id', handler: projects.remove },
     { method: 'get', path: '/projects/:id/members', handler: projects.members },
     { method: 'get', path: '/projects/:id/repositories', handler: projects.repositories },
+    { method: 'post', path: '/projects/:id/repositories', handler: projects.addRepository },
+    { method: 'delete', path: '/projects/:id/repositories/:name', handler: projects.removeRepository },
     { method: 'post', path: '/projects/:id/import/scan', handler: importer.scan },
     { method: 'post', path: '/projects/:id/import/plan', handler: importer.plan },
     { method: 'get', path: '/projects/:id/import/ignore', handler: importer.getIgnore },

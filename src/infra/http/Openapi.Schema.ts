@@ -568,6 +568,20 @@ const mcpServerSchema = {
   },
 }
 
+const repositorySchema = {
+  type: 'object',
+  properties: {
+    name: { type: 'string' },
+    branch: { type: 'string', description: 'The branch checked out in the main folder' },
+    origin: { type: 'string', description: 'The remote it was cloned from, without credentials; absent on a local repository' },
+    cloning: { type: 'boolean', description: 'Still being cloned: not usable yet' },
+    worktrees: {
+      type: 'array',
+      items: { type: 'object', properties: { name: { type: 'string' }, branch: { type: 'string' }, path: { type: 'string' } } },
+    },
+  },
+}
+
 const projectSchema = {
   type: 'object',
   properties: {
@@ -1993,20 +2007,53 @@ export const OPENAPI_DOCUMENT = {
             ...json(
               envelope({
                 type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    name: { type: 'string' },
-                    worktrees: {
-                      type: 'array',
-                      items: { type: 'object', properties: { name: { type: 'string' }, branch: { type: 'string' }, path: { type: 'string' } } },
-                    },
-                  },
-                },
+                items: repositorySchema,
               }),
             ),
           },
           '404': failures['404'],
+        },
+      },
+      post: {
+        summary:
+          'Add a repository to the project. With `url` (https only), clones it: `account` is a git Account of the project (GitHub or git over https) whose credential the clone uses; the address is checked before the clone (loopback and metadata never; a private network only for the host of the chosen account). Without `url`, creates a local git repository with no remote (`name` required; the branch is `branch`, else the base branch of this installation, else `main`). The response waits for the clone; meanwhile the list shows it with `cloning`. Project administrators (404 for the others)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: {
+              url: { type: 'string', description: 'https URL to clone, without user or token in it' },
+              name: { type: 'string', description: 'Folder name; default: the last segment of the URL' },
+              account: { type: 'string', description: 'Id of a git Account of the project (clone only)' },
+              branch: { type: 'string', description: 'Branch to check out (clone) or to start with (local)' },
+            },
+          }),
+        },
+        responses: {
+          '201': { description: 'Created', ...json(envelope(repositorySchema)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: '`repository_busy`: this name is being prepared right now', ...json(failureEnvelope) },
+          '422': failures['422'],
+          '502': { description: '`upstream_error`: git failed (credentials masked)', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/projects/{id}/repositories/{name}': {
+      delete: {
+        summary:
+          'Delete a repository of the project: its folder and its worktrees inside `repositories/`. A worktree elsewhere in the project (or one that holds a worktree of another repository) stays on disk and comes back in `kept`. Project administrators (404 for the others)',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Deleted', ...json(envelope({ type: 'object', properties: { kept: { type: 'array', items: { type: 'string' } } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: '`repository_busy`: a conversation is answering a turn in it, or it is still being prepared', ...json(failureEnvelope) },
+          '422': failures['422'],
         },
       },
     },

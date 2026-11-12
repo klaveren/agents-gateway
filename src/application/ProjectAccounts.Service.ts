@@ -27,6 +27,10 @@ export interface IAccountSshIdentity {
   knownHosts: string
 }
 
+/** As contas que dão credencial ao `git clone` por https. */
+const GIT_ACCOUNT_KINDS: ReadonlySet<string> = new Set(['github-app', 'github-token', 'git-https'])
+const GIT_ENV_KEY = /^(GATEWAY_GH_\d+|GATEWAY_GIT_\d+|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+)$/
+
 export class AccountValidationError extends Error {
   constructor(readonly issues: string[]) {
     super(`Conta inválida: ${issues.join('; ')}`)
@@ -232,6 +236,24 @@ export class ProjectAccountsService {
       })
     }
     return { env, problems, ssh }
+  }
+
+  /**
+   * As variáveis do git para UMA conta, quando o próprio gateway clona um repositório do projeto (fora do cerco): só o
+   * helper de credencial da URL dela e o token. `undefined` = a conta não existe ou não é do git (`GIT_ACCOUNT_KINDS`).
+   *
+   * ⛔ Sem `GH_TOKEN` nem nada das outras contas. `host` é o servidor da conta "Git HTTPS" (`host[:porta]`).
+   */
+  async gitEnv(projectId: string, id: string): Promise<{ env: Record<string, string>; host?: string } | undefined> {
+    const account = this.repository.get(projectId, id)
+    if (!account || !GIT_ACCOUNT_KINDS.has(account.kind)) return undefined
+    const { env, problems } = await this.commandEnv(projectId, (candidate) => candidate === id)
+    if (problems.length) throw new Error(problems.join('; '))
+    const base = account.kind === 'git-https' ? gitBaseUrl(account.public.baseUrl) : undefined
+    return {
+      env: Object.fromEntries(Object.entries(env).filter(([key]) => GIT_ENV_KEY.test(key))),
+      ...(base && 'url' in base ? { host: new URL(base.url).host } : {}),
+    }
   }
 
   /**

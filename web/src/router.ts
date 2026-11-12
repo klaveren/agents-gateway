@@ -24,6 +24,7 @@ import PermissionsView from './views/PermissionsView.vue'
 import AccountsView from './views/AccountsView.vue'
 import ModelGroupsView from './views/ModelGroupsView.vue'
 import ProvidersView from './views/ProvidersView.vue'
+import RepositoriesView from './views/RepositoriesView.vue'
 import SettingsView from './views/SettingsView.vue'
 import SecretsView from './views/SecretsView.vue'
 import SecurityView from './views/SecurityView.vue'
@@ -78,6 +79,7 @@ export const router = createRouter({
     { path: '/notifications', name: 'notifications', component: NotificationsView },
     { path: '/permissions', name: 'permissions', component: PermissionsView },
     { path: '/accounts', name: 'accounts', component: AccountsView },
+    { path: '/repositories', name: 'repositories', component: RepositoriesView },
     { path: '/import', name: 'import', component: ImportView },
     { path: '/catalog/history', name: 'catalog-history', component: CatalogHistoryView },
     { path: '/specs', name: 'specs', component: DocsView, props: { kind: 'spec' } },

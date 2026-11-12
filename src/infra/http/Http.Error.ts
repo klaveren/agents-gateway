@@ -87,6 +87,7 @@ export type TErrorCode =
   | 'draining'
   | 'queue_full'
   | 'package_busy'
+  | 'repository_busy'
   | 'hook_unauthorized'
   | 'hook_owner_inactive'
   | 'mode_not_supported'
