@@ -44,6 +44,12 @@ const KINDS: Array<{ kind: TAccountKind; label: string; hint: string }> = [
   },
 ]
 
+/**
+ * ⚖️ "Variável secreta" não nasce mais aqui: é variável do projeto (Ambiente → Variáveis). A que já existe continua
+ * editável e ganha o "Mover para Variáveis".
+ */
+const kindOptions = computed(() => KINDS.filter((item) => item.kind !== 'secret-env' || editing.value))
+
 const projects = useProjectsStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
 
@@ -151,6 +157,25 @@ async function remove() {
   if (!account || !project.value) return
   actionError.value = undefined
   await store.remove(project.value.id, account.id).catch((failure) => (actionError.value = String(failure)))
+}
+
+/** A conta "variável secreta" que espera a confirmação de virar secreta do projeto. */
+const moving = ref<IProjectAccount>()
+
+async function move() {
+  const account = moving.value
+  if (!account || !project.value) return
+  busy.value = true
+  actionError.value = notice.value = undefined
+  try {
+    await store.moveToVariables(project.value.id, account.id)
+    notice.value = `${account.public.envName ?? account.id} agora está em Ambiente → Variáveis, para todo agente do projeto.`
+  } catch (failure) {
+    actionError.value = failure instanceof Error ? failure.message : String(failure)
+  } finally {
+    busy.value = false
+    moving.value = undefined
+  }
 }
 
 async function test(account: IProjectAccount) {
@@ -267,7 +292,7 @@ watch(
             <label class="field">
               Tipo
               <select v-model="form.kind" class="input" :disabled="!!editing">
-                <option v-for="item in KINDS" :key="item.kind" :value="item.kind">{{ item.label }}</option>
+                <option v-for="item in kindOptions" :key="item.kind" :value="item.kind">{{ item.label }}</option>
               </select>
             </label>
             <label class="field">
@@ -340,6 +365,7 @@ watch(
               <span class="rounded-full border border-zinc-700 px-2 text-[11px] text-zinc-400">{{ kindLabel(account.kind) }}</span>
               <span v-if="account.exposesSecret" class="rounded-full border border-amber-500/40 px-2 text-[11px] text-amber-200" title="O comando recebe o próprio segredo">o agente vê o segredo</span>
               <span class="ml-auto flex gap-1">
+                <button v-if="account.kind === 'secret-env'" type="button" class="btn btn-ghost btn-sm" data-test="account-move" @click="moving = account">Mover para Variáveis</button>
                 <button type="button" class="btn btn-ghost btn-sm" @click="test(account)">Testar</button>
                 <button type="button" class="btn btn-ghost btn-sm" @click="startEdit(account)">Editar</button>
                 <button type="button" class="btn btn-ghost btn-sm text-rose-300" @click="removing = account">Apagar</button>
@@ -376,6 +402,16 @@ watch(
       </template>
     </section>
 
+    <ConfirmDialog
+      :open="!!moving"
+      :title="`Mover ${moving?.public.envName ?? moving?.id} para Variáveis?`"
+      message="Vira variável secreta do projeto (Ambiente → Variáveis) e passa a valer para TODO agente do projeto, não só para quem tinha a permissão desta conta. A conta sai."
+      action="Mover"
+      :busy="busy"
+      busy-label="Movendo…"
+      @confirm="move"
+      @cancel="moving = undefined"
+    />
     <ConfirmDialog
       :open="!!removing"
       :title="`Apagar a conta ${removing?.id}?`"

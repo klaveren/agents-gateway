@@ -13,7 +13,8 @@
    * Enter, e nenhum input tem validação nativa (`pattern`, `required`) — ela barraria o Salvar de quem está em volta.
    * Quem valida é o servidor (422 vira mensagem no campo); a dica do nome é só aviso.
    */
-  const props = defineProps<{ basePath: string; scopeLabel: string; project?: string }>()
+  /** `loadNote: false`: sem a linha de skill/command (as do projeto valem sempre). */
+  const props = defineProps<{ basePath: string; scopeLabel: string; project?: string; loadNote?: boolean }>()
   const secrets = useResourceSecretsStore()
   /** `project`: os valores são DESTE projeto (skill/command): vai como `?project=` em todas as rotas. */
   const key = computed(() => (props.project ? `${props.basePath}?project=${encodeURIComponent(props.project)}` : props.basePath))
@@ -117,7 +118,7 @@
         <strong class="text-zinc-300">nunca é mostrado de novo</strong>
         , nem aqui. Para trocar, digite o valor novo.
       </p>
-      <p>Numa skill ou command, a variável só vale depois que ele é carregado na conversa. Comando que imprime o valor é recusado, e a saída que o contém sai mascarada.</p>
+      <p v-if="loadNote !== false">Numa skill ou command, a variável só vale depois que ele é carregado na conversa. Comando que imprime o valor é recusado, e a saída que o contém sai mascarada.</p>
     </div>
     <p v-if="listError" class="text-sm text-rose-300">{{ describe(listError) }}</p>
     <p v-if="error" class="text-sm text-rose-300" data-test="secret-error">{{ error }}</p>

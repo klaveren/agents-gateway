@@ -1,6 +1,8 @@
 <script setup lang="ts">
   import { computed } from 'vue'
   import type { IMcpProcess } from '@/lib/types'
+  import type { TMcpVars } from '@/lib/mcpVars'
+  import McpVariablesFields from './McpVariablesFields.vue'
 
   /**
    * Os campos de um MCP que roda como processo do gateway. ⚠️ Sem trava nenhuma: o processo tem o usuário,
@@ -20,16 +22,9 @@
           .filter(Boolean),
       }),
   })
-  const env = computed({
-    get: () => model.value.env.join(', '),
-    set: (text: string) =>
-      (model.value = {
-        ...model.value,
-        env: text
-          .split(/[,\s]+/)
-          .map((name) => name.trim().toUpperCase())
-          .filter(Boolean),
-      }),
+  const vars = computed<TMcpVars>({
+    get: () => ({ vars: model.value.vars, projectVars: model.value.projectVars, env: model.value.env }),
+    set: (next) => (model.value = { ...model.value, ...next }),
   })
 
   /** O chromium da imagem do gateway (`/usr/bin/chromium`); sem `--no-sandbox` ele não sobe sem root no pod. */
@@ -66,13 +61,8 @@
       <small class="hint">No Mac ou Windows, remova a linha <code>--executable-path=/usr/bin/chromium</code> para usar o Chrome instalado.</small>
       <small v-for="m in issues?.args" :key="m" class="error">{{ m }}</small>
     </label>
+    <McpVariablesFields v-model="vars" :issues="issues?.env" />
     <div class="grid gap-3 sm:grid-cols-2">
-      <label class="field">
-        Variáveis secretas
-        <input v-model="env" class="input font-mono text-xs" placeholder="API_TOKEN" />
-        <small class="hint">Só os nomes: os valores você coloca depois de salvar.</small>
-        <small v-for="m in issues?.env" :key="m" class="error">{{ m }}</small>
-      </label>
       <div class="field">
         Execução
         <div class="flex flex-wrap gap-1.5">
@@ -83,7 +73,7 @@
           {{
             model.scope === 'conversation'
               ? 'Cada conversa tem a sua, separada.'
-              : 'Uma só para todas: o que uma faz aparece para as outras.'
+              : 'Uma só para todas: o que uma faz aparece para as outras. Se pede valor ao projeto, uma por projeto.'
           }}
         </small>
       </div>

@@ -565,6 +565,11 @@ export interface IMcpContainer {
   cpus: number
   network: 'none' | 'allowlist'
   allowedHosts: string[]
+  /** As fixas do MCP: o valor é visível e igual em todo projeto. */
+  vars?: Record<string, string>
+  /** As que CADA projeto preenche com valor visível (Ambiente → Variáveis). */
+  projectVars?: string[]
+  /** As SECRETAS que cada projeto preenche (⛔ o MCP não guarda segredo). */
   env: string[]
 }
 
@@ -573,6 +578,11 @@ export interface IMcpProcess {
   package?: string
   command?: string
   args: string[]
+  /** As fixas do MCP: o valor é visível e igual em todo projeto. */
+  vars?: Record<string, string>
+  /** As que CADA projeto preenche com valor visível (Ambiente → Variáveis). */
+  projectVars?: string[]
+  /** As SECRETAS que cada projeto preenche (⛔ o MCP não guarda segredo). */
   env: string[]
   scope: 'conversation' | 'shared'
 }
@@ -592,8 +602,6 @@ export interface IMcpServer {
   kind: TMcpKind
   container?: IMcpContainer
   process?: IMcpProcess
-  /** Só em contêiner e processo: as variáveis secretas declaradas e se têm valor (⛔ nunca o valor). */
-  env?: Array<{ name: string; configured: boolean }>
   /** Só em processo: o que está instalado e se ainda é o pacote do cadastro. */
   install?: { installed: boolean; version?: string; spec?: string; installedAt?: string; stale?: boolean }
   url: string
@@ -764,9 +772,30 @@ export interface IProject {
   role?: TProjectRole
   folder?: string
   members?: number
+  /** Só admin: as variáveis FIXAS do projeto (valor visível; para todo agente dele, por baixo das do agente). */
+  env?: Record<string, string>
+  /** Só admin: os valores VISÍVEIS que o projeto dá às variáveis que cada MCP pede. */
+  mcpEnv?: IProjectMcpVar[]
   createdAt: string
   updatedAt: string
   updatedBy?: string
+}
+
+/** Um valor visível que o projeto dá a uma variável de um MCP (`server` = o id do MCP). */
+export interface IProjectMcpVar {
+  server: string
+  name: string
+  value: string
+}
+
+/** Um MCP que pede valor ao projeto, com o que pede (`GET /projects/:id/mcp-variables`). ⛔ A secreta nunca traz o valor. */
+export interface IMcpProjectVariables {
+  key: string
+  id: string
+  name: string
+  enabled: boolean
+  fixed: string[]
+  variables: Array<{ name: string; secret: boolean; configured: boolean; value?: string }>
 }
 
 /** O papel no projeto: o administrador cuida de tudo dele; o membro conversa com os agentes. */

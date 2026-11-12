@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { IMcpContainer } from '@/lib/types'
+import type { TMcpVars } from '@/lib/mcpVars'
+import McpVariablesFields from './McpVariablesFields.vue'
 
 /**
  * Os campos de um MCP em contêiner isolado. ⛔ As travas (disco só leitura, sem privilégios, sem volumes,
@@ -17,9 +19,9 @@ const lines = (key: 'args' | 'writable' | 'allowedHosts') =>
 const args = lines('args')
 const writable = lines('writable')
 const hosts = lines('allowedHosts')
-const env = computed({
-  get: () => model.value.env.join(', '),
-  set: (text: string) => (model.value = { ...model.value, env: text.split(/[,\s]+/).map((name) => name.trim().toUpperCase()).filter(Boolean) }),
+const vars = computed<TMcpVars>({
+  get: () => ({ vars: model.value.vars, projectVars: model.value.projectVars, env: model.value.env }),
+  set: (next) => (model.value = { ...model.value, ...next }),
 })
 
 function playwright() {
@@ -61,12 +63,12 @@ function playwright() {
       <textarea v-model="hosts" rows="3" class="input font-mono text-xs" placeholder="{meta:siteDomain}" />
       <small v-for="m in issues?.allowedHosts" :key="m" class="error">{{ m }}</small>
     </label>
-    <div class="grid gap-3 sm:grid-cols-3">
-      <label class="field">Variáveis secretas <span class="hint">só os nomes — os valores você coloca depois de salvar</span><input v-model="env" class="input font-mono text-xs" placeholder="API_TOKEN" /></label>
+    <McpVariablesFields v-model="vars" :issues="issues?.env" />
+    <div class="grid gap-3 sm:grid-cols-2">
       <label class="field">Memória (MB)<input v-model.number="model.memoryMb" type="number" min="128" max="4096" class="input" /></label>
       <label class="field">CPUs<input v-model.number="model.cpus" type="number" min="0.25" max="4" step="0.25" class="input" /></label>
     </div>
-    <small v-for="m in [...(issues?.memoryMb ?? []), ...(issues?.cpus ?? []), ...(issues?.env ?? []), ...(issues?.args ?? [])]" :key="m" class="error">{{ m }}</small>
+    <small v-for="m in [...(issues?.memoryMb ?? []), ...(issues?.cpus ?? []), ...(issues?.args ?? [])]" :key="m" class="error">{{ m }}</small>
   </div>
 </template>
 

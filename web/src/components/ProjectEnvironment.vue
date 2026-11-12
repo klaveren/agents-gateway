@@ -5,6 +5,7 @@ import { computed, ref } from 'vue'
 import InitialContextEditor from './InitialContextEditor.vue'
 import SaveFooter from './SaveFooter.vue'
 import RulesEditor from './RulesEditor.vue'
+import ProjectVariables from './ProjectVariables.vue'
 
 /**
  * O AMBIENTE do projeto: tudo o que TODA conversa dele recebe antes de qualquer coisa do agente — as rules (as globais,
@@ -17,7 +18,7 @@ const props = defineProps<{ projectId: string }>()
 const connections = useConnectionsStore()
 const connectedOrigin = computed(() => connections.originOf(props.projectId))
 
-type TTab = 'regras' | 'contexto'
+type TTab = 'regras' | 'contexto' | 'variaveis'
 const tab = ref<TTab>('regras')
 
 /** O contexto inicial é o que se grava aqui (as regras só se leem): pelo rodapé, como em toda tela. */
@@ -40,6 +41,7 @@ async function saveContext() {
 const tabs: { id: TTab; label: string }[] = [
   { id: 'regras', label: 'Regras' },
   { id: 'contexto', label: 'Contexto inicial' },
+  { id: 'variaveis', label: 'Variáveis' },
 ]
 
 const rulesWeight = ref(0)
@@ -98,6 +100,11 @@ const format = (value: number) => value.toLocaleString('pt-BR')
         </p>
       </InitialContextEditor>
       </fieldset>
+    </div>
+
+    <!-- Montada sempre (v-show), como as outras: trocar de guia não perde a fixa ainda não salva. -->
+    <div v-show="tab === 'variaveis'" role="tabpanel">
+      <ProjectVariables :project-id="projectId" :active="tab === 'variaveis'" />
     </div>
 
     <p class="rounded-xl bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400">Cada agente soma o que tem de próprio; veja o total na guia Tamanho do agente.</p>

@@ -21,6 +21,27 @@ export interface IMcpProxyDeps {
   session: (sessionId: string) => Pick<ISession, 'agentId' | 'metadata'> | undefined
   /** O agente como RODA aqui (com a camada local): as escolhas (`allowedTools`) e o projeto dele (ausente = global). */
   agent: (agentId: string) => { allowedTools: readonly string[]; projectId?: string } | undefined
+  /**
+   * ⛔ A máscara da conversa (ver `Secret.Mask`): o resultado da ferramenta sai com os segredos dela trocados — inclusive
+   * o valor secreto que o PROJETO deu ao MCP, que o modelo não precisa ver. Ausente = sem máscara.
+   */
+  mask?: (text: string, sessionId: string) => string
+}
+
+/** O resultado do `tools/call` com a máscara: o texto de cada parte e o `structuredContent`. Imagem e recurso passam. */
+export function maskToolResult(result: Record<string, unknown>, mask: (text: string) => string): Record<string, unknown> {
+  const content = Array.isArray(result.content)
+    ? result.content.map((part: Record<string, unknown>) => (part?.type === 'text' && typeof part.text === 'string' ? { ...part, text: mask(part.text) } : part))
+    : result.content
+  let structured = result.structuredContent
+  if (structured !== undefined) {
+    try {
+      structured = JSON.parse(mask(JSON.stringify(structured))) as unknown
+    } catch {
+      structured = undefined
+    }
+  }
+  return { ...result, ...(content !== undefined ? { content } : {}), ...(structured !== undefined ? { structuredContent: structured } : {}) }
 }
 
 /**
@@ -84,7 +105,9 @@ export class McpProxyController {
       try {
         const client = await this.deps.registry.clientFor(serverId, sessionId)
         if (!client) return { content: [{ type: 'text', text: `MCP server unavailable: ${serverId}` }], isError: true }
-        return (await client.callToolRaw(request.params.name, request.params.arguments ?? {}, context)) as never
+        const result = (await client.callToolRaw(request.params.name, request.params.arguments ?? {}, context)) as Record<string, unknown>
+        const mask = this.deps.mask
+        return (mask ? maskToolResult(result, (text) => mask(text, sessionId)) : result) as never
       } catch (error: unknown) {
         return { content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }], isError: true }
       }

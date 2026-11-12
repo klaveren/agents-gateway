@@ -128,7 +128,6 @@ import { computed, onMounted, ref, watch } from 'vue'
   const processDraft = ref<IMcpProcess>(blankProcess())
   const installResult = ref<{ ok: boolean; version?: string; log: string }>()
   const installing = ref(false)
-  const envValues = ref<Record<string, string>>({})
   const form = ref<INewMcpServer>(blank())
   // 🔌 A conexão pode chegar depois da tela: o formulário ainda em branco passa para o projeto conectado.
   watch(localHere, (here) => {
@@ -214,7 +213,6 @@ import { computed, onMounted, ref, watch } from 'vue'
         toolsError.value = undefined
         // ⛔ Segredo digitado é de UM servidor: não pode aparecer no formulário de outro.
         secret.value = ''
-        envValues.value = {}
         mcp.ensureTools(server.key).catch((error) => (toolsError.value = describe(error)))
         moveTo.value = server.projectId ?? ''
       }
@@ -419,11 +417,8 @@ import { computed, onMounted, ref, watch } from 'vue'
         installing.value = false
       }
     })
-  const saveEnv = (name: string) =>
-    run(async () => {
-      await mcp.saveEnv(selected.value!.key, name, envValues.value[name] ?? '')
-      envValues.value = { ...envValues.value, [name]: '' }
-    })
+  /** O MCP pede valor ao projeto (do projeto ou secreta do projeto)? Os valores ficam em Ambiente → Variáveis. */
+  const asksProject = (server: IMcpServer) => !!(server.container ?? server.process)?.projectVars?.length || !!(server.container ?? server.process)?.env.length
   const stopAll = () =>
     run(async () => {
       await mcp.stop(selected.value!.key)
@@ -436,7 +431,7 @@ import { computed, onMounted, ref, watch } from 'vue'
   const clearSecret = () => run(async () => mcp.clearSecret(selected.value!.key))
   const test = () =>
     run(async () => {
-      testResult.value = await mcp.test(selected.value!.key)
+      testResult.value = await mcp.test(selected.value!.key, projects.current)
     })
 
   async function confirmRemove() {
@@ -693,20 +688,10 @@ import { computed, onMounted, ref, watch } from 'vue'
             </label>
             <TagsInput v-model="edit.tags" label="Tags" :suggestions="knownTags" :issues="editIssues.tags" />
             <McpContainerFields v-model="containerDraft" />
-            <div v-if="selected.env?.length" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
-              <h3 class="text-sm font-medium text-zinc-200">Variáveis secretas</h3>
-              <form v-for="variable in selected.env" :key="variable.name" class="flex flex-wrap items-center gap-2" @submit.prevent="saveEnv(variable.name)">
-                <code class="w-40 shrink-0 text-xs text-zinc-300">{{ variable.name }}</code>
-                <input
-                  v-model="envValues[variable.name]"
-                  type="password"
-                  autocomplete="off"
-                  :placeholder="variable.configured ? 'preenchida — colar para trocar' : 'sem valor'"
-                  class="input min-w-0 flex-1 font-mono text-sm"
-                />
-                <button type="submit" :disabled="busy || !envValues[variable.name]" class="btn btn-sm btn-secondary">Gravar valor</button>
-              </form>
-            </div>
+            <p v-if="asksProject(selected)" class="rounded-xl bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400" data-test="mcp-project-values">
+              Os valores das variáveis do projeto ficam em cada projeto:
+              <RouterLink to="/environment" class="text-emerald-400 underline underline-offset-2">Ambiente → Variáveis</RouterLink>. O MCP não guarda segredo.
+            </p>
           </template>
 
           <template v-if="selected.kind === 'process'">
@@ -745,20 +730,10 @@ import { computed, onMounted, ref, watch } from 'vue'
                 class="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-2 text-[11px] whitespace-pre-wrap text-zinc-400"
                 >{{ installResult.log }}</pre>
             </div>
-            <div v-if="selected.env?.length" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
-              <h3 class="text-sm font-medium text-zinc-200">Variáveis secretas</h3>
-              <form v-for="variable in selected.env" :key="variable.name" class="flex flex-wrap items-center gap-2" @submit.prevent="saveEnv(variable.name)">
-                <code class="w-40 shrink-0 text-xs text-zinc-300">{{ variable.name }}</code>
-                <input
-                  v-model="envValues[variable.name]"
-                  type="password"
-                  autocomplete="off"
-                  :placeholder="variable.configured ? 'preenchida — colar para trocar' : 'sem valor'"
-                  class="input min-w-0 flex-1 font-mono text-sm"
-                />
-                <button type="submit" :disabled="busy || !envValues[variable.name]" class="btn btn-sm btn-secondary">Gravar valor</button>
-              </form>
-            </div>
+            <p v-if="asksProject(selected)" class="rounded-xl bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400" data-test="mcp-project-values">
+              Os valores das variáveis do projeto ficam em cada projeto:
+              <RouterLink to="/environment" class="text-emerald-400 underline underline-offset-2">Ambiente → Variáveis</RouterLink>. O MCP não guarda segredo.
+            </p>
           </template>
 
           <form v-if="selected.kind === 'remote'" class="flex flex-col gap-3" @submit.prevent="saveMcp">

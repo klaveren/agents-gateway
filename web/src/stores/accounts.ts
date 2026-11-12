@@ -65,5 +65,14 @@ export const useAccountsStore = defineStore('accounts', () => {
     return api<{ ok: boolean; detail: string }>(`${base(projectId)}/${encodeURIComponent(id)}/test`, { method: 'POST' })
   }
 
-  return { lists, save, remove, test }
+  /**
+   * A conta "variável secreta" vira secreta do projeto (Ambiente → Variáveis): o valor vai junto, a conta sai. ⛔ Só pela
+   * sessão da tela; nome que o projeto já tem é 409.
+   */
+  async function moveToVariables(projectId: string, id: string): Promise<void> {
+    await api(`${base(projectId)}/${encodeURIComponent(id)}/move-to-variables`, { method: 'POST' })
+    lists.update(projectId, (list) => list.filter((item) => item.id !== id))
+  }
+
+  return { lists, save, remove, test, moveToVariables }
 })
