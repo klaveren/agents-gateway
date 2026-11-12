@@ -91,7 +91,7 @@ import { makeSettings } from './Settings.Factory'
 import { makeUsecases } from './Usecases.Factory'
 import { makeImportBuild, makeImportRuns, readImportSource, useImportOpener, useImportTurns } from './ImportBuild.Factory'
 import { BUILDER_METADATA_KEY } from '@domain/Builder.Agents'
-import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
+import { PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY } from '@domain/Session.Metadata'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { makeResourceFiles } from './ResourceFiles.Factory'
 
@@ -306,7 +306,20 @@ export function makeHooksController(): HooksController {
 }
 
 export function makeProjectsController(): ProjectsController {
-  return new ProjectsController({ projects: makeProjects(), proof: makeAuth().proof })
+  return new ProjectsController({
+    projects: makeProjects(),
+    proof: makeAuth().proof,
+    gitCredentials: (projectId, accountId) => makeProjectAccounts().gitEnv(projectId, accountId),
+    busy: (projectId, repository) =>
+      makeSessionStore()
+        .list()
+        .some((session) => session.status === 'running' && session.metadata?.[PROJECT_METADATA_KEY] === projectId && session.metadata?.[REPOSITORY_METADATA_KEY] === repository),
+    // ⚠️ Lida do banco na hora: a cópia viva (`installationSettings`) ainda está vazia no primeiro pedido depois de subir.
+    installation: async () => {
+      const current = await makeSettings().read()
+      return { ...(current?.baseBranch ? { baseBranch: current.baseBranch } : {}), ...(current?.installationName ? { name: current.installationName } : {}) }
+    },
+  })
 }
 
 export function makeGuidanceController(): GuidanceController {

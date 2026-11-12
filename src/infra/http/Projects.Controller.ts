@@ -9,11 +9,18 @@ import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { requireProjectAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
-import { listRepositories } from '@infra/workspace/Work.Folder'
+import { IRepositoryEntry, listRepositories } from '@infra/workspace/Work.Folder'
+import { cloneRepository, initRepository, removeRepository, repositoriesInSetup, RepositorySetupError } from '@infra/workspace/Repository.Setup'
 
 export interface IProjectsControllerDeps {
   projects: ProjectsService
   proof?: ICallerProof
+  /** ⛔ A credencial de UMA conta do projeto para o `git clone` (só o ambiente; nunca vai à resposta). `undefined` = não é conta de git. */
+  gitCredentials?: (projectId: string, accountId: string) => Promise<{ env: Record<string, string>; host?: string } | undefined>
+  /** Há conversa em turno neste repositório? Remover no meio do turno é 409. */
+  busy?: (projectId: string, repository: string) => boolean
+  /** A branch base e o nome desta instalação (Configurações), para o git local. */
+  installation?: () => Promise<{ baseBranch?: string; name?: string }>
 }
 
 const createSchema = z.object({ id: z.string().max(64), name: z.string().max(200), description: z.string().max(4000).optional() })
@@ -28,6 +35,27 @@ const membersSchema = z
     userIds: z.array(z.string().max(64)).max(1000).optional(),
   })
   .refine((body) => body.members || body.userIds, { message: 'members (or userIds) is required' })
+/** Com `url`, clona (a `account` dá a credencial); sem ela, cria um git local, sem remoto (`name` obrigatório). */
+const repositorySchema = z.object({
+  url: z.string().max(2000).optional(),
+  name: z.string().max(100).optional(),
+  account: z.string().max(64).optional(),
+  branch: z.string().max(200).optional(),
+})
+
+type TRepositoryDto = IRepositoryEntry & { cloning?: boolean }
+
+const invalid = (field: string, message: string) => new HttpError(422, 'validation_error', 'Request body is invalid', [{ field, message }])
+
+/** O erro de preparar o repositório, como a resposta o conta: o campo no 422, o conflito no 409, a falha do git no 502. */
+function setupFailure(error: unknown): unknown {
+  if (!(error instanceof RepositorySetupError)) return error
+  if (error.code === 'invalid') return invalid(error.field ?? '_', error.message)
+  if (error.code === 'exists') return invalid('name', error.message)
+  if (error.code === 'busy') return new HttpError(409, 'repository_busy', error.message)
+  if (error.code === 'not_found') return new HttpError(404, 'not_found', error.message)
+  return new HttpError(502, 'upstream_error', error.message)
+}
 
 /**
  * Os projetos: a lista é dos projetos de que a pessoa é membro (o administrador do gateway também), com o papel dela.
@@ -36,7 +64,8 @@ const membersSchema = z
  */
 export class ProjectsController {
   constructor(private readonly deps: IProjectsControllerDeps) {
-    for (const name of ['list', 'create', 'update', 'remove', 'members', 'setMembers', 'repositories'] as const) this[name] = this[name].bind(this)
+    for (const name of ['list', 'create', 'update', 'remove', 'members', 'setMembers', 'repositories', 'addRepository', 'removeRepository'] as const)
+      this[name] = this[name].bind(this)
   }
 
   /**
@@ -48,8 +77,70 @@ export class ProjectsController {
       const id = req.params.id as string
       const caller = await this.caller()
       if (!this.deps.projects.exists(id) || !this.deps.projects.canUse(caller, id)) throw new HttpError(404, 'not_found', `Project not found: ${id}`)
-      return listRepositories(this.deps.projects.folderOf(id))
+      return this.repositoriesOf(id)
     })
+  }
+
+  /**
+   * `POST /projects/:id/repositories` — um repositório novo em `repositories/<nome>`: clonado de uma URL https (com a
+   * credencial de uma Conta do projeto, se o servidor pedir) ou criado aqui, só local, sem remoto. Do administrador do
+   * projeto. ⚖️ A resposta espera o clone acabar; enquanto isso a lista o mostra com `cloning`.
+   */
+  async addRepository(req: Request, res: Response): Promise<void> {
+    await this.respond(
+      res,
+      async () => {
+        const id = req.params.id as string
+        await this.requireProjectAdmin(id, 'addRepository')
+        if (!this.deps.projects.exists(id)) throw new HttpError(404, 'not_found', `Project not found: ${id}`)
+        const body = parseBody(repositorySchema, req.body)
+        const folder = this.deps.projects.folderOf(id)
+        const url = body.url?.trim()
+        const name = body.name?.trim()
+        const branch = body.branch?.trim()
+        let created: string
+        if (url) {
+          const credentials = body.account ? await this.gitCredentials(id, body.account) : undefined
+          created = await cloneRepository(folder, {
+            source: url,
+            ...(name ? { name } : {}),
+            ...(branch ? { branch } : {}),
+            ...(credentials ? { env: credentials.env } : {}),
+            ...(credentials?.host ? { privateHost: credentials.host } : {}),
+          }).catch((error: unknown) => Promise.reject(setupFailure(error)))
+        } else {
+          if (body.account) throw invalid('account', 'account: a conta só entra no clone por URL')
+          if (!name) throw invalid('name', 'name: o git local precisa de um nome')
+          const installation = (await this.deps.installation?.()) ?? {}
+          const base = branch || installation.baseBranch
+          created = await initRepository(folder, { name, ...(base ? { branch: base } : {}), ...(installation.name ? { author: installation.name } : {}) }).catch((error: unknown) =>
+            Promise.reject(setupFailure(error)),
+          )
+        }
+        return this.repositoriesOf(id).find((item) => item.name === created) ?? { name: created, worktrees: [] }
+      },
+      { status: 201, message: 'Repository created' },
+    )
+  }
+
+  /**
+   * `DELETE /projects/:id/repositories/:name` — apaga a pasta do repositório e as worktrees dele dentro de
+   * `repositories/`. Do administrador do projeto. ⛔ Com conversa em turno nele, 409; a worktree fora de `repositories/`
+   * (ou que guarda a de outro repositório) fica no disco e volta em `kept`.
+   */
+  async removeRepository(req: Request, res: Response): Promise<void> {
+    await this.respond(
+      res,
+      async () => {
+        const id = req.params.id as string
+        const name = req.params.name as string
+        await this.requireProjectAdmin(id, 'removeRepository')
+        if (!this.deps.projects.exists(id)) throw new HttpError(404, 'not_found', `Project not found: ${id}`)
+        if (this.deps.busy?.(id, name)) throw new HttpError(409, 'repository_busy', `Há conversa em andamento em ${name}: espere o turno acabar ou pare a conversa`)
+        return removeRepository(this.deps.projects.folderOf(id), name).catch((error: unknown) => Promise.reject(setupFailure(error)))
+      },
+      { message: 'Repository removed' },
+    )
   }
 
   async list(_req: Request, res: Response): Promise<void> {
@@ -119,6 +210,26 @@ export class ProjectsController {
       updatedAt: project.updatedAt,
       ...(admin && project.updatedBy ? { updatedBy: project.updatedBy } : {}),
     }
+  }
+
+  /** A lista como a tela a lê: o que está sendo clonado entra com `cloning` (a pasta ainda não é um repositório inteiro). */
+  private repositoriesOf(projectId: string): TRepositoryDto[] {
+    const folder = this.deps.projects.folderOf(projectId)
+    const setup = repositoriesInSetup(folder)
+    const ready: TRepositoryDto[] = listRepositories(folder).filter((item) => !setup.includes(item.name))
+    return [...ready, ...setup.map((name) => ({ name, cloning: true, worktrees: [] }))].sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /** ⛔ A conta tem de ser deste projeto e do git; o problema dela (segredo ausente) sai no campo, sem o segredo. */
+  private async gitCredentials(projectId: string, accountId: string): Promise<{ env: Record<string, string>; host?: string }> {
+    let credentials: { env: Record<string, string>; host?: string } | undefined
+    try {
+      credentials = await this.deps.gitCredentials?.(projectId, accountId)
+    } catch (error: unknown) {
+      throw invalid('account', `account: ${error instanceof Error ? error.message : 'a conta não pôde ser usada'}`)
+    }
+    if (!credentials) throw invalid('account', 'account: escolha uma conta de git deste projeto (GitHub ou Git por https)')
+    return credentials
   }
 
   private async caller(): Promise<IProjectCaller> {

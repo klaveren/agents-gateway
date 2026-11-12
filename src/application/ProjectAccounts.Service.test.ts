@@ -45,6 +45,44 @@ describe('ProjectAccountsService', () => {
     assert.match(config['2:credential.https://github.com/empresa1.helper'], /password=\$GATEWAY_GH_0/)
   })
 
+  it('⛔ o clone do gateway recebe só o helper e o token da conta escolhida (sem GH_TOKEN); conta que não é do git, nada', async () => {
+    const { accounts } = service()
+    await accounts.save('p1', 'gh-1', { kind: 'github-token', label: '1', public: { owner: 'empresa1' }, secret: 'ghp_1' }, 'admin')
+    await accounts.save('p1', 'gh-2', { kind: 'github-token', label: '2', public: { owner: 'empresa2' }, secret: 'ghp_2' }, 'admin')
+    await accounts.save(
+      'p1',
+      'interno',
+      { kind: 'git-https', label: 'Interno', public: { baseUrl: 'https://Git.Empresa.Test:8443/grupo', username: 'robo' }, secret: 'tok-int' },
+      'admin',
+    )
+    await accounts.save('p1', 'gitlab', { kind: 'secret-env', label: 'GitLab', public: { envName: 'GITLAB_TOKEN' }, secret: 'glpat-x' }, 'admin')
+
+    const github = await accounts.gitEnv('p1', 'gh-2')
+    assert.deepStrictEqual(Object.keys(github!.env).sort(), [
+      'GATEWAY_GH_0',
+      'GIT_CONFIG_COUNT',
+      'GIT_CONFIG_KEY_0',
+      'GIT_CONFIG_KEY_1',
+      'GIT_CONFIG_KEY_2',
+      'GIT_CONFIG_VALUE_0',
+      'GIT_CONFIG_VALUE_1',
+      'GIT_CONFIG_VALUE_2',
+    ])
+    assert.strictEqual(github!.env.GATEWAY_GH_0, 'ghp_2')
+    assert.strictEqual(github!.env.GIT_CONFIG_KEY_2, 'credential.https://github.com/empresa2.helper')
+    assert.strictEqual(github!.host, undefined)
+    assert.ok(!JSON.stringify(github).includes('ghp_1'))
+
+    const own = await accounts.gitEnv('p1', 'interno')
+    assert.strictEqual(own!.host, 'git.empresa.test:8443')
+    assert.strictEqual(own!.env.GATEWAY_GIT_0, 'tok-int')
+    assert.strictEqual(own!.env.GIT_CONFIG_KEY_1, 'credential.https://git.empresa.test:8443/grupo.helper')
+
+    assert.strictEqual(await accounts.gitEnv('p1', 'gitlab'), undefined)
+    assert.strictEqual(await accounts.gitEnv('p1', 'nao-existe'), undefined)
+    assert.strictEqual(await accounts.gitEnv('p2', 'gh-1'), undefined, 'a conta é do projeto dela')
+  })
+
   it('duas contas GitHub: cada dono com a sua, e sem GH_TOKEN (o `gh` não saberia qual)', async () => {
     const { accounts } = service()
     await accounts.save('p1', 'gh-1', { kind: 'github-token', label: '1', public: { owner: 'empresa1' }, secret: 'ghp_1' }, 'admin')

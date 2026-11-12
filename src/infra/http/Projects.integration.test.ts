@@ -1,4 +1,5 @@
 import assert from 'node:assert'
+import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -131,6 +132,8 @@ describe('Projetos (integração)', () => {
       return agent ? { id: agent.id, ...(agent.projectId ? { projectId: agent.projectId } : {}) } : undefined
     },
   )
+  /** `projeto/repositório` com conversa em turno (o que o `busy` do controller responde). */
+  const inTurn = new Set<string>()
   let base = ''
   let stop = () => undefined as void
 
@@ -181,7 +184,16 @@ describe('Projetos (integração)', () => {
       undefined,
       undefined,
       undefined,
-      new ProjectsController({ projects, proof }),
+      new ProjectsController({
+        projects,
+        proof,
+        busy: (projectId, repository) => inTurn.has(`${projectId}/${repository}`),
+        installation: async () => ({ baseBranch: 'develop', name: 'gateway de teste' }),
+        gitCredentials: async (_projectId, accountId) => {
+          if (accountId === 'sem-segredo') throw new Error('conta sem-segredo: o segredo não abre; cadastre de novo')
+          return undefined
+        },
+      }),
       new GuidanceController({ guidance, proof }),
     ).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
@@ -508,5 +520,62 @@ describe('Projetos (integração)', () => {
 
     assert.strictEqual((await call(ADMIN, 'DELETE', '/mcp-servers/beta.n8n')).status, 200)
     assert.deepStrictEqual(await keys(ADMIN), ['alfa.n8n', 'pw'])
+  })
+
+  it('🌿 repositórios: o admin do projeto cria o git local e remove; o clone é só https e fora da rede interna; o membro só lê', async () => {
+    assert.strictEqual((await call(ADMIN, 'POST', '/projects', { id: 'repos', name: 'Repos' })).status, 201)
+    const members = [
+      { userId: 'u_root', role: 'admin' },
+      { userId: 'u_bia', role: 'admin' },
+      { userId: 'u_ana', role: 'member' },
+    ]
+    assert.strictEqual((await call(ADMIN, 'PUT', '/projects/repos/members', { members })).status, 200)
+    const add = (as: string, body: object) => call(as, 'POST', '/projects/repos/repositories', body)
+    const issue = (response: { status: number; body: { details?: Array<{ field: string }> } }) => [response.status, response.body.details?.[0]?.field]
+
+    // Git local: sem remoto. A branch é a base desta instalação; o primeiro commit leva o nome dela.
+    const local = await add(BIA, { name: 'notas' })
+    assert.deepStrictEqual([local.status, local.body.result], [201, { name: 'notas', branch: 'develop', worktrees: [] }])
+    const folder = join(folders, 'repos', 'repositories', 'notas')
+    assert.strictEqual(execFileSync('git', ['-C', folder, 'log', '-1', '--format=%an'], { encoding: 'utf8' }).trim(), 'gateway de teste')
+    assert.strictEqual(execFileSync('git', ['-C', folder, 'remote'], { encoding: 'utf8' }).trim(), '')
+    assert.strictEqual((await add(BIA, { name: 'rascunho', branch: 'trunk' })).body.result.branch, 'trunk')
+    assert.deepStrictEqual(issue(await add(BIA, {})), [422, 'name'], 'o git local precisa de nome')
+    assert.deepStrictEqual(issue(await add(BIA, { name: 'notas' })), [422, 'name'], 'já existe')
+    assert.deepStrictEqual(issue(await add(BIA, { name: '_worktrees' })), [422, 'name'], 'reservado')
+    assert.deepStrictEqual(issue(await add(BIA, { name: 'x', account: 'gh' })), [422, 'account'], 'a conta é só do clone')
+
+    // ⛔ O clone: só https, nunca a própria máquina, e a conta tem de ser do git deste projeto. Nada disso chega à rede.
+    assert.deepStrictEqual(issue(await add(BIA, { url: 'http://github.com/a/b.git' })), [422, 'url'])
+    assert.deepStrictEqual(issue(await add(BIA, { url: 'https://token@github.com/a/b.git' })), [422, 'url'])
+    assert.deepStrictEqual(issue(await add(BIA, { url: 'https://127.0.0.1/a/b.git' })), [422, 'url'])
+    assert.deepStrictEqual(issue(await add(BIA, { url: 'https://169.254.169.254/a/b.git' })), [422, 'url'])
+    assert.deepStrictEqual(issue(await add(BIA, { url: 'https://github.com/a/b.git', account: 'nao-existe' })), [422, 'account'])
+    const broken = await add(BIA, { url: 'https://github.com/a/b.git', account: 'sem-segredo' })
+    assert.deepStrictEqual(issue(broken), [422, 'account'])
+    assert.match(JSON.stringify(broken.body.details), /o segredo não abre/)
+
+    // O membro abre conversa neles (lê a lista); criar e remover são de quem administra o projeto.
+    const listed = await call(ANA, 'GET', '/projects/repos/repositories')
+    assert.deepStrictEqual(
+      (listed.body.result as Array<{ name: string }>).map((item) => item.name),
+      ['notas', 'rascunho'],
+    )
+    assert.strictEqual((await add(ANA, { name: 'da-ana' })).status, 404)
+    assert.strictEqual((await call(ANA, 'DELETE', '/projects/repos/repositories/notas')).status, 404)
+    assert.strictEqual((await call(BIA, 'POST', '/projects/fantasma/repositories', { name: 'x' })).status, 404)
+
+    // ⛔ Remover: nunca no meio de um turno; depois a pasta some. O nome é só o da pasta.
+    inTurn.add('repos/notas')
+    const busy = await call(BIA, 'DELETE', '/projects/repos/repositories/notas')
+    assert.deepStrictEqual([busy.status, busy.body.code], [409, 'repository_busy'])
+    assert.ok(existsSync(folder))
+    inTurn.clear()
+    const removed = await call(BIA, 'DELETE', '/projects/repos/repositories/notas')
+    assert.deepStrictEqual([removed.status, removed.body.result], [200, { kept: [] }])
+    assert.ok(!existsSync(folder))
+    assert.strictEqual((await call(BIA, 'DELETE', '/projects/repos/repositories/notas')).status, 404)
+    assert.strictEqual((await call(BIA, 'DELETE', '/projects/repos/repositories/..%2Fnotas')).status, 422)
+    assert.ok(existsSync(join(folders, 'repos', 'repositories', 'rascunho')))
   })
 })

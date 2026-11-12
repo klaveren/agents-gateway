@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { changesOf } from './Git.Changes'
-import { currentBranch, listRepositories, listWorktrees, projectAliases, resolveWorkFolder, WorkFolderError } from './Work.Folder'
+import { currentBranch, listRepositories, listWorktrees, projectAliases, resolveWorkFolder, WorkFolderError, worktreeFolders } from './Work.Folder'
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', ['-C', cwd, ...args], {
@@ -79,7 +79,27 @@ describe('Work.Folder (a pasta de trabalho da conversa)', () => {
   })
 
   it('a lista para a tela: os repositórios git e só as worktrees dentro do projeto', () => {
-    assert.deepStrictEqual(listRepositories(project), [{ name: 'abc', worktrees: [{ name: 'EP-1', branch: 'epic-EP-1', path: 'repositories/abc/_worktrees/EP-1' }] }])
+    assert.deepStrictEqual(listRepositories(project), [
+      { name: 'abc', branch: 'main', worktrees: [{ name: 'EP-1', branch: 'epic-EP-1', path: 'repositories/abc/_worktrees/EP-1' }] },
+    ])
+  })
+
+  it('a origem na lista sai sem usuário nem token; a worktree ao lado (.git em arquivo) não é repositório', () => {
+    git(repo, 'remote', 'add', 'origin', 'https://fulano:segredo123@git.exemplo.test/grupo/abc.git')
+    git(repo, 'worktree', 'add', '-q', '-b', 'ao-lado', join(project, 'repositories', 'ao-lado'))
+    try {
+      const list = listRepositories(project)
+      assert.deepStrictEqual(
+        list.map((item) => item.name),
+        ['abc'],
+      )
+      assert.strictEqual(list[0].origin, 'https://git.exemplo.test/grupo/abc.git')
+      assert.ok(!JSON.stringify(list).includes('segredo123'))
+      assert.deepStrictEqual(worktreeFolders(project, 'abc').sort(), [join(repo, '_worktrees', 'EP-1'), join(project, 'repositories', 'ao-lado')].sort())
+    } finally {
+      git(repo, 'worktree', 'remove', '--force', join(project, 'repositories', 'ao-lado'))
+      git(repo, 'remote', 'remove', 'origin')
+    }
   })
 })
 

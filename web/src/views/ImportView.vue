@@ -84,7 +84,7 @@ const imports = useImportsStore()
 const projectId = computed(() => (projects.manages ? project.value?.id : undefined))
 
 const { data: repositoryList, error: repositoryError } = useResource(useRepositoriesStore().lists, projectId)
-const repositories = computed(() => (repositoryList.value ?? []).map((item) => item.name))
+const repositories = computed(() => (repositoryList.value ?? []).filter((item) => !item.cloning).map((item) => item.name))
 const repository = ref('')
 const busy = ref(false)
 const actionError = ref<string>()

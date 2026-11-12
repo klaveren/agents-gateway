@@ -27,7 +27,7 @@ const projects = useProjectsStore()
 
 /** Os repositórios do projeto atual (`repositories/<nome>`) e as worktrees de cada um: onde a conversa pode abrir. */
 const { data: repositoryList, error: repositoryError } = useResource(useRepositoriesStore().lists, () => projects.current || undefined)
-const repositories = computed(() => repositoryList.value ?? [])
+const repositories = computed(() => (repositoryList.value ?? []).filter((item) => !item.cloning))
 // O repositório do rascunho que o projeto não tem mais sai (a leitura que falhou conta como lista vazia).
 watch([repositoryList, repositoryError], () => {
   if (!repositoryList.value && !repositoryError.value && projects.current) return
