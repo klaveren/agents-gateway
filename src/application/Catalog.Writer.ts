@@ -207,6 +207,8 @@ export class CatalogWriter implements ICatalogWriter {
       // Idem: sem a lista, nenhum trigger nem tag.
       triggers: triggersOf(body.triggers),
       tags: list(body.tags),
+      // As fixas: sem elas no documento, nenhuma.
+      env: envOf(body.env),
     }
     // ⛔ Com quem o item é compartilhado (ver `Share.Policy`): as regras do serviço, antes de gravar.
     const shares = this.sharesOf(target, kind)
@@ -387,6 +389,12 @@ function sameShares(current: readonly string[] | undefined, next: readonly strin
 /** A lista de arquivos de um corpo do catálogo (o que não tiver a forma, a regra do recurso recusa). */
 function filesOf(value: unknown): IResourceFile[] {
   return Array.isArray(value) ? (value as IResourceFile[]) : []
+}
+
+/** As variáveis fixas do documento de uma skill ou command (`{ NOME: valor }`); o que não for texto fica de fora. */
+export function envOf(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
 }
 
 /** Os triggers do documento de uma skill ou command (a forma quem confere é a validação do serviço). */

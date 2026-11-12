@@ -194,6 +194,8 @@ export const RESOURCE_SHAPE: TShape<IResource> = {
   tags: 'set',
   // Com quem o dono compartilha (ver `Share.Policy`): vai no histórico, que registra compartilhar e parar.
   sharedWith: 'set',
+  // As fixas (ver `IResource.env`): nomes e valores, como as do agente — nunca segredo.
+  env: 'record',
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },

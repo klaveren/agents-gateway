@@ -37,7 +37,7 @@ import { diffText } from '@domain/Text.Diff'
 import { attachIssuesIn, docIssues, grantIssuesIn, IGuidanceLookup, resourceIssuesIn, ruleIssues, specIssuesIn } from './Guidance.Service'
 import { mcpScopeIssue, mcpServerIssues, McpServersService, SELF_MCP_SERVER_ID } from './McpServers.Service'
 import { projectIssues } from './Projects.Service'
-import { triggersOf } from './Catalog.Writer'
+import { envOf, triggersOf } from './Catalog.Writer'
 
 export { parsePackage }
 export type { ICatalogImportPlan, IImportPlanItem, IPackageInput }
@@ -539,6 +539,7 @@ export class CatalogImportPlanner {
             docIds: list(body.docIds),
             docRefs: list(body.docRefs),
             triggers: triggersOf(body.triggers),
+            env: envOf(body.env),
           }),
         )
         projectIssue()

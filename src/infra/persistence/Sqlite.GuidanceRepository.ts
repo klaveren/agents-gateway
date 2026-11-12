@@ -119,6 +119,8 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; definition: 
   // O status e a substituição do documento (ver `TDocStatus`); sem status = aceito.
   { table: 'project_docs', column: 'status', definition: 'TEXT' },
   { table: 'project_docs', column: 'supersedes', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  // As variáveis fixas da skill e do command (ver `IResource.env`).
+  { table: 'resources', column: 'env', definition: "TEXT NOT NULL DEFAULT '{}'" },
 ]
 
 type TRow = Record<string, unknown>
@@ -376,10 +378,10 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   saveResource(resource: IResource): void {
     this.db
       .prepare(
-        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, import_issues, triggers, tags, shared_with, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, import_issues, triggers, tags, shared_with, env, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, project_id = excluded.project_id, description = excluded.description, body = excluded.body,
            doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, files = excluded.files, import_issues = excluded.import_issues, triggers = excluded.triggers, tags = excluded.tags, shared_with = excluded.shared_with,
-           updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+           env = excluded.env, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       )
       .run(
         resource.id,
@@ -394,6 +396,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         JSON.stringify(resource.triggers ?? []),
         JSON.stringify(resource.tags ?? []),
         JSON.stringify(resource.sharedWith ?? []),
+        JSON.stringify(resource.env ?? {}),
         resource.createdAt.toISOString(),
         resource.updatedAt.toISOString(),
         resource.updatedBy ?? null,
@@ -561,6 +564,7 @@ function toResource(row: TRow): IResource {
   const importIssues = problemsOf(row.import_issues)
   const triggers = triggerList(row.triggers)
   const tags = idList(row.tags)
+  const env = envRecord(row.env)
   return {
     id: row.id as string,
     kind: row.kind as TResourceKind,
@@ -574,9 +578,21 @@ function toResource(row: TRow): IResource {
     ...(triggers.length ? { triggers } : {}),
     ...(tags.length ? { tags } : {}),
     ...(idList(row.shared_with).length ? { sharedWith: idList(row.shared_with) } : {}),
+    ...(Object.keys(env).length ? { env } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
+  }
+}
+
+/** As variáveis fixas gravadas em JSON (`{ NOME: valor }`); o que não for texto fica de fora. */
+function envRecord(raw: unknown): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(typeof raw === 'string' ? raw : '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+  } catch {
+    return {}
   }
 }
 

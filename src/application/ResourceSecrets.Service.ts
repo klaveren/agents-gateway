@@ -37,6 +37,8 @@ export interface IResourceSecretsDeps {
   agentProject?(agentId: string): string | null | undefined
   /** O projeto dono da skill ou do command (`null` = global; `undefined` = não existe). Ausente: tudo vale como origem. */
   resourceProject?(id: string): string | null | undefined
+  /** As variáveis FIXAS da skill ou do command (ver `IResource.env`). Ausente: nenhuma. */
+  resourceEnv?(kind: 'skill' | 'command', id: string): Readonly<Record<string, string>> | undefined
   mask?: { register(sessionId: string, secrets: readonly IKnownSecret[]): void }
   now?: () => Date
 }
@@ -192,21 +194,26 @@ export class ResourceSecretsService {
   }
 
   /**
-   * ⛔ O AMBIENTE SECRETO de um processo: os valores das variáveis que valem agora. O que sai daqui entra na máscara da
-   * conversa ANTES de chegar ao processo — a saída dele já nasce mascarada.
+   * ⛔ O AMBIENTE de um processo vindo do que a conversa carregou e dos cofres: os valores das variáveis secretas que valem
+   * agora — o que sai daqui entra na máscara da conversa ANTES de chegar ao processo, e a saída dele já nasce mascarada.
+   * ⚖️ Por baixo delas, as FIXAS das skills e commands carregados (`IResource.env`): texto comum, fora da máscara (trocar
+   * "us-east-1" em toda a conversa só a estragaria). Ficam fora de `sources`, que são as secretas.
    */
   envFor(agentId: string | undefined, sessionId: string | undefined, conversationProject?: string): ISecretEnv {
     const sources = this.sources(agentId, sessionId, conversationProject)
     const env: Record<string, string> = {}
+    for (const item of sessionId ? (this.loaded.get(sessionId) ?? []) : []) Object.assign(env, this.deps.resourceEnv?.(item.kind, item.id))
+    const secret = new Set<string>()
     const known: IKnownSecret[] = []
     for (const source of sources) {
       const value = this.deps.store.value(source.scope, source.scopeId, source.name, source.project ?? ORIGIN_PROJECT)
       if (value === undefined) continue
       env[source.name] = value
+      secret.add(source.name)
       known.push({ value, label: source.name })
     }
     if (sessionId && known.length) this.deps.mask?.register(sessionId, known)
-    return { env, sources: sources.filter((source) => source.name in env) }
+    return { env, sources: sources.filter((source) => secret.has(source.name)) }
   }
 
   /**

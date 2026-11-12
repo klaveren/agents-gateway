@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { builderKindOf, PROTOCOLS } from '@domain/Builder.Agents'
 import { estimateTokens } from '@domain/Token.Estimate'
-import { triggerIssues } from '@domain/Agent.Policy'
+import { AGENT_ENV_NAME, fixedEnvIssues, triggerIssues } from '@domain/Agent.Policy'
+import { RESERVED_ENV } from '@domain/models/ProjectAccount.Model'
 import { normalizeShares, SHAREABLE_DOC_KINDS, SHAREABLE_RESOURCE_KINDS, shareIssues, sharedInto, visibleIn } from '@domain/Share.Policy'
 import { normalizeTags, tagIssues } from '@domain/Tag.Policy'
 import type { IAgentTrigger } from '@domain/models/Agent.Model'
@@ -27,6 +28,7 @@ import {
   NO_RESOURCES,
   IResource,
   RESOURCE_DESCRIPTION_MAX,
+  RESOURCE_ENV_LIMITS,
   RESOURCE_ID_PATTERN,
   RESOURCE_KINDS,
   TResourceKind,
@@ -115,6 +117,8 @@ export interface IResourceInput {
   triggers?: IAgentTrigger[]
   /** As tags (ver `Tag.Policy`). Ausente na edição = mantém; `[]` tira todas. */
   tags?: string[]
+  /** As variáveis fixas (ver `IResource.env`). Ausente na edição = mantém; `{}` tira todas. */
+  env?: Record<string, string>
 }
 
 /**
@@ -893,6 +897,7 @@ export class GuidanceService {
       ...(input.importIssues?.length ? { importIssues: input.importIssues } : {}),
       ...(input.triggers?.length ? { triggers: cleanTriggers(input.triggers) } : {}),
       ...(normalizeTags(input.tags).length ? { tags: normalizeTags(input.tags) } : {}),
+      ...(input.env && Object.keys(input.env).length ? { env: input.env } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
@@ -921,10 +926,12 @@ export class GuidanceService {
       ...(input.importIssues !== undefined ? { importIssues: input.importIssues } : {}),
       ...(input.triggers !== undefined ? { triggers: cleanTriggers(input.triggers) } : {}),
       ...(input.tags !== undefined ? { tags: normalizeTags(input.tags) } : {}),
+      ...(input.env !== undefined ? { env: input.env } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     }
     if (!next.files?.length) delete next.files
+    if (!next.env || !Object.keys(next.env).length) delete next.env
     if (!next.tags?.length) delete next.tags
     if (!next.importIssues?.length) delete next.importIssues
     if (!next.triggers?.length) delete next.triggers
@@ -1067,7 +1074,7 @@ export class GuidanceService {
     }
     const resource = this.usableResources(kind, agentId).find((item) => item.id === id)
     return resource
-      ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set(), 2, this.projectOfAgent(agentId))}${this.filesOf(resource)}${importIssuesNote(resource.importIssues)}`
+      ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${triggerIndexNote(resource)}${envNote(resource)}${this.attachments(resource, new Set(), 2, this.projectOfAgent(agentId))}${this.filesOf(resource)}${importIssuesNote(resource.importIssues)}`
       : undefined
   }
 
@@ -1127,12 +1134,12 @@ export class GuidanceService {
     if (!resource) throw new InvalidGuidanceError([{ field: 'message', message: `${existing.kind} /${id} is not enabled for this agent` }])
     const args = (rawArgs ?? '').trim()
     if (resource.kind === 'skill') {
-      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set(), 2, this.projectOfAgent(agentId))}${this.filesOf(resource)}`
+      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${triggerIndexNote(resource)}${envNote(resource)}${this.attachments(resource, new Set(), 2, this.projectOfAgent(agentId))}${this.filesOf(resource)}`
       return { text: `${skill}\n\n# Pedido\n\n${args || '(sem texto: aplique a skill ao que estamos fazendo)'}`, label: text.trim(), command: id }
     }
     const body = resource.body.includes('$ARGUMENTS') ? resource.body.replace(/\$ARGUMENTS/g, args) : `${resource.body.trim()}${args ? `\n\nArgumentos: ${args}` : ''}`
     return {
-      text: `${body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set(), 2, this.projectOfAgent(agentId))}${this.filesOf(resource)}`,
+      text: `${body.trim()}${triggerIndexNote(resource)}${envNote(resource)}${this.attachments(resource, new Set(), 2, this.projectOfAgent(agentId))}${this.filesOf(resource)}`,
       label: text.trim(),
       command: id,
     }
@@ -1462,6 +1469,14 @@ export function attachIssuesIn(lookup: IGuidanceLookup, doc: Pick<IProjectDoc, '
  * A lista dos triggers do recurso carregado: só id e "quando" — o corpo de cada um entra quando a situação acontece.
  * Vazia sem triggers.
  */
+/** As variáveis fixas do recurso carregado (ver `IResource.env`): nome e valor, que já estão no terminal. */
+export function envNote(resource: Pick<IResource, 'kind' | 'env'>): string {
+  const entries = Object.entries(resource.env ?? {})
+  if (!entries.length) return ''
+  const what = resource.kind === 'skill' ? 'desta skill' : 'deste command'
+  return ['', '', `## Variáveis ${what}`, 'Já estão no terminal: use `$NOME` nos comandos.', ...entries.map(([name, value]) => `- ${name} = ${value}`)].join('\n')
+}
+
 export function triggerIndexNote(resource: Pick<IResource, 'id' | 'kind' | 'triggers'>): string {
   if (!resource.triggers?.length) return ''
   const what = resource.kind === 'skill' ? 'desta skill' : 'deste command'
@@ -1480,8 +1495,14 @@ function cleanTriggers(triggers: readonly IAgentTrigger[]): IAgentTrigger[] {
 }
 
 /** Os problemas de uma skill ou command (sem o id, que tem regra própria na criação). */
-export function resourceIssuesIn(lookup: IGuidanceLookup, resource: Pick<IResource, 'kind' | 'projectId' | 'description' | 'body' | 'docIds' | 'docRefs' | 'triggers'>): TIssues {
-  const issues: TIssues = [...triggerIssues(resource.triggers)]
+export function resourceIssuesIn(
+  lookup: IGuidanceLookup,
+  resource: Pick<IResource, 'kind' | 'projectId' | 'description' | 'body' | 'docIds' | 'docRefs' | 'triggers' | 'env'>,
+): TIssues {
+  const issues: TIssues = [...triggerIssues(resource.triggers), ...(resource.env ? fixedEnvIssues(resource.env, RESOURCE_ENV_LIMITS) : [])]
+  // ⛔ A fixa da skill entra no terminal onde entram as secretas (por cima do que o gateway monta): os mesmos nomes proibidos.
+  for (const name of Object.keys(resource.env ?? {}))
+    if (AGENT_ENV_NAME.test(name) && RESERVED_ENV.test(name)) issues.push({ field: 'env', message: `${name}: reserved by the gateway` })
   if (!RESOURCE_KINDS.includes(resource.kind)) issues.push({ field: 'kind', message: `one of ${RESOURCE_KINDS.join(', ')}` })
   if (!resource.description) issues.push({ field: 'description', message: 'required: it is what the agent reads to know when to use it' })
   else if (resource.description.length > RESOURCE_DESCRIPTION_MAX) issues.push({ field: 'description', message: `at most ${RESOURCE_DESCRIPTION_MAX} characters` })

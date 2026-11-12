@@ -57,6 +57,8 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
     this.db.exec(SCHEMA)
     const columns = this.db.prepare('PRAGMA table_info(project_connections)').all() as TRow[]
     if (!columns.some((column) => column.name === 'usage_sent_at')) this.db.exec('ALTER TABLE project_connections ADD COLUMN usage_sent_at TEXT')
+    // As fixas desta máquina (ver `IProjectConnection.localEnv`).
+    if (!columns.some((column) => column.name === 'local_env')) this.db.exec("ALTER TABLE project_connections ADD COLUMN local_env TEXT NOT NULL DEFAULT '{}'")
   }
 
   insert(connection: IProjectConnection, tokenSealed: string): void {
@@ -103,6 +105,7 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
     set('skipped', patch.skipped && JSON.stringify(patch.skipped))
     set('secrets', patch.secrets && JSON.stringify(patch.secrets))
     set('model_map', patch.modelMap && JSON.stringify(patch.modelMap))
+    set('local_env', patch.localEnv && JSON.stringify(patch.localEnv))
     set('last_checked_at', patch.lastCheckedAt?.toISOString())
     set('last_synced_at', patch.lastSyncedAt?.toISOString())
     set('usage_sent_at', patch.usageSentAt?.toISOString())
@@ -173,6 +176,7 @@ function toConnection(row: TRow): IProjectConnection {
   const lastCheckedAt = date(row.last_checked_at)
   const lastSyncedAt = date(row.last_synced_at)
   const usageSentAt = date(row.usage_sent_at)
+  const localEnv = json<Record<string, string>>(row.local_env, {})
   return {
     projectId: String(row.project_id),
     url: String(row.url),
@@ -186,6 +190,7 @@ function toConnection(row: TRow): IProjectConnection {
     skipped: json(row.skipped, []),
     secrets: json(row.secrets, []),
     modelMap: json(row.model_map, {}),
+    ...(localEnv && typeof localEnv === 'object' && Object.keys(localEnv).length ? { localEnv } : {}),
     createdAt: new Date(String(row.created_at)),
     createdBy: String(row.created_by),
     ...(lastCheckedAt ? { lastCheckedAt } : {}),

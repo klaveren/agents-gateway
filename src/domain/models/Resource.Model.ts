@@ -43,6 +43,13 @@ export interface IResource {
   /** As tags (ver `Tag.Policy`): para agrupar e filtrar nas listas. Ausente = nenhuma. */
   tags?: string[]
   /**
+   * As variáveis FIXAS (valor visível, texto comum: endereço de um serviço, região): carregado o recurso na conversa, vão ao
+   * terminal do agente, por cima das do agente e do projeto e por baixo das secretas. Vão junto nas versões, na exportação e
+   * no espelho do projeto conectado. ⛔ Segredo não mora aqui: vai nas secretas do recurso (`ResourceSecret.Model`).
+   * Ausente = nenhuma.
+   */
+  env?: Record<string, string>
+  /**
    * ⛔ Os projetos com que o dono COMPARTILHA o item (ver `Share.Policy`): eles o usam só para leitura; a manutenção é do
    * projeto de origem. Só item de projeto (o global já vale para todos). Ausente = nenhum.
    */
@@ -63,6 +70,8 @@ export interface IAgentResources {
 }
 
 export const RESOURCE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/
+/** Os tetos das variáveis fixas de uma skill ou command: quantas e o tamanho do valor. */
+export const RESOURCE_ENV_LIMITS = { fixed: 50, value: 4096 } as const
 export const RESOURCE_DESCRIPTION_MAX = 300
 export const ALL_RESOURCES = '*'
 /** A marca gravada de "nenhum, de propósito" — sem ela, a lista vazia seria o padrão (todos). */

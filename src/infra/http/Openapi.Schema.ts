@@ -1147,6 +1147,12 @@ const resourceSchema = {
         required: ['id', 'when', 'body'],
       },
     },
+    env: {
+      type: 'object',
+      additionalProperties: { type: 'string' },
+      description:
+        'Fixed variables { NAME: value } (plain text, never a secret: a service URL, a region). Once the resource is loaded in a conversation they go to the agent terminal, over those of the agent and the project and under the secret ones (GET/PUT …/secrets). Absent on update = keep; {} removes all.',
+    },
     importIssues: { ...importIssuesSchema, readOnly: true },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
@@ -5354,6 +5360,7 @@ export const OPENAPI_DOCUMENT = {
                   skipped: { type: 'array', items: { type: 'object', properties: { ref: { type: 'string' }, message: { type: 'string' } } } },
                   secrets: { type: 'array', items: { type: 'object' }, description: 'The variable names the project needs (values are set here)' },
                   modelMap: { type: 'object', additionalProperties: { type: 'string' } },
+                  localEnv: { type: 'object', additionalProperties: { type: 'string' }, description: 'The fixed variables of THIS machine, over those from the origin' },
                   createdAt: { type: 'string', format: 'date-time' },
                   createdBy: { type: 'string' },
                   lastCheckedAt: { type: 'string', format: 'date-time' },
@@ -5364,6 +5371,20 @@ export const OPENAPI_DOCUMENT = {
           },
           '401': failures['401'],
           '404': failures['404'],
+        },
+      },
+    },
+    '/connections/{projectId}/env': {
+      put: {
+        summary:
+          'The fixed variables of THIS machine for a connected project ({ NAME: value }, plain text, never a secret): the whole list, over the fixed ones from the origin (read-only here). They never travel to the origin; on disconnect they move into the project. Same rules as the project fixed variables',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { env: { type: 'object', additionalProperties: { type: 'string' } } }, required: ['env'] }) },
+        responses: {
+          '200': { description: 'The connection, with `localEnv`', ...json(envelope({ type: 'object' })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
         },
       },
     },

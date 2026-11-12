@@ -21,6 +21,8 @@ export interface IProjectConnectionsControllerDeps {
 const connectSchema = z.object({ url: z.string().min(1).max(500), projectId: z.string().min(1).max(64), token: z.string().min(1).max(200) })
 const tokenSchema = z.object({ token: z.string().min(1).max(200) })
 const modelsSchema = z.object({ map: z.record(z.string().max(300), z.string().max(300)) })
+/** As fixas desta máquina (`{ NOME: valor }`): a lista inteira. As regras de nome e tamanho são as do projeto. */
+const envSchema = z.object({ env: z.record(z.string().max(80), z.string().max(5_000)) })
 // A forma, só: o que cada item pode ser quem diz é a regra do agente (`AgentLocalLayer.Service`).
 /** A camada inteira (a local de um projeto conectado e a do projeto de um agente global têm a mesma forma). */
 export const localSchema = z.object({
@@ -74,7 +76,21 @@ const localAdjustSchema = z
  */
 export class ProjectConnectionsController {
   constructor(private readonly deps: IProjectConnectionsControllerDeps) {
-    for (const name of ['list', 'connect', 'get', 'check', 'sync', 'replaceToken', 'setModels', 'disconnect', 'getLocal', 'saveLocal', 'adjustLocal', 'removeLocal'] as const)
+    for (const name of [
+      'list',
+      'connect',
+      'get',
+      'check',
+      'sync',
+      'replaceToken',
+      'setModels',
+      'setEnv',
+      'disconnect',
+      'getLocal',
+      'saveLocal',
+      'adjustLocal',
+      'removeLocal',
+    ] as const)
       this[name] = this[name].bind(this)
   }
 
@@ -138,6 +154,17 @@ export class ProjectConnectionsController {
     await this.respond(res, async () => {
       const { projectId } = await this.owned(req, 'setConnectionModels')
       return toDto(this.service().setModelMap(projectId, parseBody(modelsSchema, req.body).map))
+    })
+  }
+
+  /**
+   * `PUT /connections/:projectId/env` — as variáveis fixas DESTA MÁQUINA, por cima das que vêm da origem (só leitura aqui).
+   * Nunca vão para a origem.
+   */
+  async setEnv(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { projectId } = await this.owned(req, 'setConnectionEnv')
+      return toDto(this.service().setLocalEnv(projectId, parseBody(envSchema, req.body).env))
     })
   }
 

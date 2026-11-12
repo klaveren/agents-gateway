@@ -8,12 +8,13 @@ import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { ResourceSecretsService } from './ResourceSecrets.Service'
 
 describe('ResourceSecretsService', () => {
-  function setup() {
+  function setup(fixed: Record<string, Record<string, string>> = {}) {
     const masked: Array<{ sessionId: string; secrets: readonly IKnownSecret[] }> = []
     const exists = new Set(['agent:theo', 'skill:gitlab', 'command:deploy'])
     const service = new ResourceSecretsService({
       store: new SqliteResourceSecretRepository(new SecretBox(randomBytes(32))),
       exists: (scope, id) => exists.has(`${scope}:${id}`),
+      resourceEnv: (kind, id) => fixed[`${kind}:${id}`],
       mask: { register: (sessionId, secrets) => masked.push({ sessionId, secrets }) },
     })
     return { service, masked }
@@ -49,6 +50,20 @@ describe('ResourceSecretsService', () => {
 
     // ⛔ O que foi entregue entra na máscara da conversa, com o nome como rótulo.
     assert.ok(masked.some((entry) => entry.sessionId === 'c1' && entry.secrets.some((secret) => secret.label === 'GITLAB_TOKEN' && secret.value === 'glpat-do-command')))
+  })
+
+  it('⚖️ as FIXAS da skill carregada entram por baixo das secretas, fora da máscara e fora dos nomes de secretas', () => {
+    const { service, masked } = setup({ 'skill:gitlab': { GITLAB_URL: 'https://gitlab.interno', GITLAB_TOKEN: 'fixa-perde' } })
+    service.save('skill', 'gitlab', { name: 'GITLAB_TOKEN', value: 'glpat-da-skill' }, 'root')
+    assert.deepStrictEqual(service.envFor('theo', 'c1').env, {})
+    service.markLoaded('c1', 'skill', 'gitlab')
+    const loaded = service.envFor('theo', 'c1')
+    assert.deepStrictEqual(loaded.env, { GITLAB_URL: 'https://gitlab.interno', GITLAB_TOKEN: 'glpat-da-skill' })
+    assert.deepStrictEqual(
+      loaded.sources.map((source) => source.name),
+      ['GITLAB_TOKEN'],
+    )
+    assert.ok(!masked.some((entry) => entry.secrets.some((secret) => secret.value === 'https://gitlab.interno')), 'a fixa não vai para a máscara')
   })
 
   it('o prompt recebe só os nomes: os do agente e os dos recursos que ele pode carregar', () => {

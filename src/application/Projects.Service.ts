@@ -3,7 +3,7 @@ import { IAgenticScope, normalizeScope, scopeIssues } from '@domain/Import.Scope
 import { InvalidProjectError, ProjectInUseError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { DEFAULT_PROJECT_ID, IProject, IProjectMcpVar, IProjectMember, PROJECT_ENV_LIMITS, PROJECT_ID_PATTERN, PROJECT_ROLES, TProjectRole } from '@domain/models/Project.Model'
-import { AGENT_ENV_NAME, envIssues } from '@domain/Agent.Policy'
+import { AGENT_ENV_NAME, fixedEnvIssues } from '@domain/Agent.Policy'
 import { MCP_SERVER_ID_PATTERN } from '@domain/models/McpServer.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
@@ -223,11 +223,7 @@ export class ProjectsService {
  * com o teto do projeto.
  */
 export function projectEnvIssues(env: Readonly<Record<string, string>>): Array<{ field: string; message: string }> {
-  const issues = envIssues(env)
-  if (Object.keys(env).length > PROJECT_ENV_LIMITS.fixed) issues.push({ field: 'env', message: `at most ${PROJECT_ENV_LIMITS.fixed} variables` })
-  for (const [name, value] of Object.entries(env))
-    if (typeof value === 'string' && value.length > PROJECT_ENV_LIMITS.value) issues.push({ field: 'env', message: `${name}: at most ${PROJECT_ENV_LIMITS.value} characters` })
-  return issues
+  return fixedEnvIssues(env, PROJECT_ENV_LIMITS)
 }
 
 /** Os valores visíveis dos MCPs: o id do MCP, o nome da variável, o valor (texto, sem NUL) e um por par. */

@@ -372,6 +372,28 @@ describe('GuidanceService', () => {
       assert.match(service.loadResource('command', 'resumir', 'dev')!, /# Command: resumir\n\nResuma \$ARGUMENTS em 3 linhas\./)
     })
 
+    it('⚖️ variáveis fixas da skill: gravadas, mostradas ao carregar; a edição sem elas mantém, `{}` tira; ⛔ nome reservado ou com cara de segredo é recusado', () => {
+      const service = seeded()
+      service.updateResource('tabela', { env: { GRAFANA_URL: 'https://grafana.interno', REGIAO: 'sa-east-1' } }, 'root')
+      assert.deepStrictEqual(service.resource('tabela').env, { GRAFANA_URL: 'https://grafana.interno', REGIAO: 'sa-east-1' })
+      assert.match(
+        service.loadResource('skill', 'tabela', 'dev')!,
+        /## Variáveis desta skill\nJá estão no terminal[^\n]+\n- GRAFANA_URL = https:\/\/grafana\.interno\n- REGIAO = sa-east-1/,
+      )
+      assert.match(service.expandCommand('/tabela x', 'dev')!.text, /- REGIAO = sa-east-1/)
+      service.updateResource('tabela', { description: 'Outra' }, 'root')
+      assert.deepStrictEqual(service.resource('tabela').env, { GRAFANA_URL: 'https://grafana.interno', REGIAO: 'sa-east-1' })
+      for (const env of [{ minusculo: 'x' }, { API_TOKEN: 'x' }, { HTTP_PROXY: 'http://x' }, { NO_PROXY: '*' }, { PATH: '/tmp' }, { GIT_CONFIG_COUNT: '1' }] as Array<
+        Record<string, string>
+      >)
+        assert.throws(() => service.updateResource('tabela', { env }, 'root'), InvalidGuidanceError, JSON.stringify(env))
+      service.updateResource('tabela', { env: {} }, 'root')
+      assert.strictEqual(service.resource('tabela').env, undefined)
+      assert.ok(!service.loadResource('skill', 'tabela', 'dev')!.includes('## Variáveis'))
+      const criada = service.createResource({ id: 'com-env', kind: 'command', description: 'd', body: 'b', env: { BASE: 'x' } }, 'root')
+      assert.deepStrictEqual(criada.env, { BASE: 'x' })
+    })
+
     it('⚖️ triggers da skill e do command: a lista (id e quando) vai no carregado, o corpo só pelo trigger; ⛔ só do recurso liberado', () => {
       const service = seeded()
       const deploy = { id: 'deploy-falhou', when: 'quando o deploy falhar', body: 'Leia o log e reverta.' }

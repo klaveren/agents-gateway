@@ -255,6 +255,18 @@ export function envIssues(env: Readonly<Record<string, string>> | undefined): IA
   return issues
 }
 
+/**
+ * As variáveis FIXAS fora do agente (projeto, skill, command): as mesmas regras das do agente (`envIssues`), com o teto de
+ * quem as guarda.
+ */
+export function fixedEnvIssues(env: Readonly<Record<string, string>>, limits: { fixed: number; value: number }): IAgentIssue[] {
+  const issues = envIssues(env)
+  if (Object.keys(env).length > limits.fixed) issues.push({ field: 'env', message: `at most ${limits.fixed} variables` })
+  for (const [name, value] of Object.entries(env))
+    if (typeof value === 'string' && value.length > limits.value) issues.push({ field: 'env', message: `${name}: at most ${limits.value} characters` })
+  return issues
+}
+
 /** O provider e o modelo de uma sessão. */
 export interface IAgentChoice {
   provider: string

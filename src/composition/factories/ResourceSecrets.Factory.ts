@@ -32,6 +32,7 @@ export function makeResourceSecrets(): ResourceSecretsService {
       return agent ? (agent.projectId ?? null) : undefined
     },
     resourceProject: (id) => (makeGuidance().resourceKindOf(id) ? (makeGuidance().resource(id).projectId ?? null) : undefined),
+    resourceEnv: (kind, id) => (makeGuidance().resourceKindOf(id) === kind ? makeGuidance().resource(id).env : undefined),
     mask: makeSecretMasker(),
   })
   return instance
