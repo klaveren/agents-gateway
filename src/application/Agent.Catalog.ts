@@ -92,6 +92,13 @@ export class AgentCatalog implements IAgentDirectory {
 
   private layerOf?: (agent: IAgent) => TAgentLocalLayerInput | undefined
 
+  /** A camada do projeto dos agentes globais (ver `AgentProjectLayer.Service`): entra só no `getIn`. */
+  useProjectLayers(apply: (agent: IAgent, projectId: string) => IAgent): void {
+    this.projectLayer = apply
+  }
+
+  private projectLayer?: (agent: IAgent, projectId: string) => IAgent
+
   /**
    * ⛔ A PASTA PRIVADA do agente: existe para todo agente (vazia, até alguém pôr algo), e só ele a alcança. Lê com Ler
    * arquivos ou Terminal; grava com Escrever arquivos (ver `agentFolderAccess`). Nada sem o depósito.
@@ -122,6 +129,17 @@ export class AgentCatalog implements IAgentDirectory {
 
   get(id: string): IAgent | undefined {
     return this.list().find((agent) => agent.id === id) ?? this.core().find((agent) => agent.id === id)
+  }
+
+  /**
+   * ⚖️ O agente como RODA no projeto: o global ganha a camada daquele projeto (ver `IAgentProjectLayer`); o de projeto e a
+   * conversa sem projeto ficam como `get`.
+   */
+  getIn(id: string, projectId: string | undefined): IAgent | undefined {
+    if (!projectId || !this.projectLayer) return this.get(id)
+    const stored = this.entry(id)?.agent
+    if (!stored || stored.projectId) return this.get(id)
+    return this.effective(this.projectLayer(stored, projectId))
   }
 
   /** Os modelos declarados que estão DESLIGADOS no catálogo — a tela de edição os mostra marcados. */

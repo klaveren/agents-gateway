@@ -8,6 +8,19 @@
  * contexto o agente carrega sob demanda (`ledger_read`).
  */
 
+/**
+ * ⚖️ O LEDGER DO AGENTE GLOBAL NUM PROJETO: o dono é `<agente>@<projeto>` (o `@` não cabe em id de agente nem de projeto).
+ * O ledger do agente sem projeto (o de antes) é a BASE: aparece em todo projeto, só para leitura; escrever num tema dela
+ * copia o tema para o projeto, que muda lá. O que ele aprende no projeto fica no projeto.
+ */
+export const LEDGER_PROJECT_SEPARATOR = '@'
+export const ledgerOwnerKey = (agentId: string, projectId: string) => `${agentId}${LEDGER_PROJECT_SEPARATOR}${projectId}`
+/** O agente do dono (`atlas@bh` → `atlas`) e o projeto (ausente = a base). */
+export function parseLedgerOwner(owner: string): { agentId: string; projectId?: string } {
+  const at = owner.indexOf(LEDGER_PROJECT_SEPARATOR)
+  return at === -1 ? { agentId: owner } : { agentId: owner.slice(0, at), projectId: owner.slice(at + 1) }
+}
+
 export const LEDGER_READ_TOOL = 'ledger_read'
 export const LEDGER_WRITE_TOOL = 'ledger_write'
 export const LEDGER_TOOLS: readonly string[] = [LEDGER_READ_TOOL, LEDGER_WRITE_TOOL]

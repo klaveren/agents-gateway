@@ -2019,6 +2019,41 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{projectId}/agents/{agentId}/layer': {
+      get: {
+        summary:
+          'The project layer of a GLOBAL agent: the base (`origin`: providers, allowedTools, permissions) and what this project adds or turns off (`layer`). It applies only in conversations of the project. Project administrators only',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      put: {
+        summary:
+          'Save the whole project layer of a global agent (empty = remove): `providers` replace the base models in this project, `allowedTools` add tools, MCPs (of this project or global) and delegations, `disabledTools` turn off what the base has, `permissions` add rules. Checked as the agent running in the project. On the screen only (never with an access token or by an agent)',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: { required: true, ...json({ type: 'object' }) },
+        responses: {
+          '200': { description: 'Saved', ...json(envelope({ type: 'object' })) },
+          '401': failures['401'],
+          '403': failures['403'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+      delete: {
+        summary: 'Remove the project layer: in this project the agent runs as the base again (on the screen only)',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Removed', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '403': failures['403'], '404': failures['404'] },
+      },
+    },
     '/projects/{projectId}/secrets': {
       get: {
         summary:

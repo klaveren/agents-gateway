@@ -20,7 +20,7 @@ export interface IMcpProxyDeps {
   /** A sessão viva (do provider). `undefined` = não existe mais. */
   session: (sessionId: string) => Pick<ISession, 'agentId' | 'metadata'> | undefined
   /** O agente como RODA aqui (com a camada local): as escolhas (`allowedTools`) e o projeto dele (ausente = global). */
-  agent: (agentId: string) => { allowedTools: readonly string[]; projectId?: string } | undefined
+  agent: (agentId: string, projectId?: string) => { allowedTools: readonly string[]; projectId?: string } | undefined
   /**
    * ⛔ A máscara da conversa (ver `Secret.Mask`): o resultado da ferramenta sai com os segredos dela trocados — inclusive
    * o valor secreto que o PROJETO deu ao MCP, que o modelo não precisa ver. Ausente = sem máscara.
@@ -80,11 +80,12 @@ export class McpProxyController {
     const session = this.deps.session(sessionId)
     if (!resolved || !session || !ownsSession(resolved, session.metadata)) return void deny(404, 'Not found')
 
-    const agent = this.deps.agent(session.agentId)
     const config = this.deps.registry.get(serverId)
     // ⛔ Agente compartilhado numa conversa de outro projeto: os servidores são os globais (e os da conversa), nunca os da origem.
     const conversationProject = typeof session?.metadata?.[PROJECT_METADATA_KEY] === 'string' ? (session.metadata[PROJECT_METADATA_KEY] as string) : undefined
-    const scope = agent ? runsUnder(agent, conversationProject) : undefined
+    // O agente como roda no projeto da conversa: o global com a camada dele, e os MCPs daquele projeto.
+    const agent = this.deps.agent(session.agentId, conversationProject)
+    const scope = agent ? (agent.projectId ? runsUnder(agent, conversationProject) : conversationProject) : undefined
     if (!agent || !config || !mcpServesProject(config, scope)) return void deny(404, 'Not found')
     const choice = mcpSelection(agent.allowedTools).get(config.id)
     if (!choice) return void deny(404, 'Not found')

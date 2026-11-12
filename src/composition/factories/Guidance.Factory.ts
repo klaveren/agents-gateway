@@ -30,7 +30,7 @@ export function makeGuidance(): GuidanceService {
   // ⛔ Toda troca do `sharedWith` (rota, restaurar, import, mudar de dono) apaga os valores secretos de quem saiu.
   instance.useSharesChanged((id, projects) => makeResourceSecrets().keepProjects(id, projects))
   // O índice do ledger de cada agente no prompt (pedido na hora: o ledger lê os agentes).
-  instance.useLedger((agentId) => connectedLedgerPrompt(makeLedger(), (id) => makeAgents().get(id)?.projectId, agentId))
+  instance.useLedger((agentId, projectId) => connectedLedgerPrompt(makeLedger(), (id) => makeAgents().get(id)?.projectId, makeLedger().owner(agentId, projectId)))
   return instance
 }
 

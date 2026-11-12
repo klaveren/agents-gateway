@@ -29,7 +29,8 @@ export class PermissionsService implements IPermissionChecker {
 
   constructor(
     private readonly repository: IPermissionRepository,
-    private readonly agentRules: (agentId: string) => readonly IPermissionRule[] | undefined,
+    /** As regras do agente no projeto do pedido (o global soma as da camada daquele projeto). */
+    private readonly agentRules: (agentId: string, projectId?: string) => readonly IPermissionRule[] | undefined,
     /** Regras de sistema da instalação (a pasta de dados do gateway, em caminho absoluto). */
     private readonly system: () => readonly IPermissionRule[] = () => [],
     private readonly now: () => Date = () => new Date(),
@@ -71,7 +72,7 @@ export class PermissionsService implements IPermissionChecker {
   }
 
   layers(asker: IPermissionAsker): IPermissionLayers & { system: readonly IPermissionRule[] } {
-    const agent = asker.agentId ? this.agentRules(asker.agentId) : undefined
+    const agent = asker.agentId ? this.agentRules(asker.agentId, asker.projectId) : undefined
     const project = asker.projectId ? this.repository.projectRules(asker.projectId).rules : undefined
     return { ...(agent ? { agent } : {}), ...(project ? { project } : {}), system: this.system() }
   }

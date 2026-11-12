@@ -307,8 +307,12 @@ export class PermissionRequestsController {
    */
   private async secretAdmin(scope: TSecretScope | 'resource', scopeId: string, operation: string, asked?: string): Promise<{ by: string; project: string }> {
     if (scope === 'agent') {
-      const home = agentProjectOf(scopeId) ?? null
+      const found = agentProjectOf(scopeId)
+      const home = found ?? null
       if (!asked || asked === home) return { by: await requireAgentAdmin(this.deps.proof, scopeId, operation), project: ORIGIN_PROJECT }
+      // ⚖️ Agente GLOBAL: cada projeto tem os seus valores (os da base valem onde o projeto não definiu), e quem mexe
+      // neles é o admin do projeto.
+      if (found === null) return { by: await requireProjectAdmin(this.deps.proof, asked, operation), project: asked }
       // ⛔ Agente compartilhado: o projeto que o recebeu configura os valores DELE (o segredo da origem não vai junto), e quem
       // mexe é o admin dele. Projeto que não recebeu o agente, e agente global, são 404.
       const by = await requireProjectAdmin(this.deps.proof, asked, operation)

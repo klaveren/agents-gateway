@@ -30,6 +30,11 @@ export interface IExecutionContext {
    */
   conversationProjectId?: string
   /**
+   * ⚖️ O escopo dos MCPs do agente GLOBAL: o projeto da conversa. É o que deixa a camada do projeto (`IAgentProjectLayer`)
+   * dar ao agente global um MCP daquele projeto. Ausente = o do agente (`projectId`).
+   */
+  mcpProjectId?: string
+  /**
    * ⛔ A PASTA DE TRABALHO da conversa, já resolvida no servidor (ver `Work.Folder`): o repositório ou a worktree em que
    * ela foi aberta. Presente, vale em todo lugar que antes era a pasta do projeto: o `cwd`, as ferramentas de arquivo e
    * a raiz do cerco.

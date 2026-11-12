@@ -217,3 +217,59 @@ describe('LedgerService — leitura', () => {
     assert.deepStrictEqual(Object.keys(files).sort(), ['theo-ledger/contextos/build-oom.md', 'theo-ledger/index.md'])
   })
 })
+
+describe('LedgerService — o agente global num projeto', () => {
+  const line = { type: 'APRENDIZADO' as const, trigger: 'deploy na .4', learning: 'nunca drenar o turno' }
+
+  it('⚖️ o dono no projeto: o que ele aprende no bh fica no bh; a base aparece em todo projeto, marcada', () => {
+    const ledger = service()
+    create(ledger, 'deploy')
+    ledger.write('theo', { action: 'linha_nova', topic: 'deploy', line }, THEO)
+    const bh = ledger.owner('theo', 'bh')
+    assert.strictEqual(bh, 'theo@bh')
+    // Agente de projeto: o dono é ele mesmo, em qualquer conversa.
+    assert.strictEqual(ledger.owner('ana', 'bh'), 'ana')
+    assert.strictEqual(ledger.owner('theo', undefined), 'theo')
+
+    ledger.write(bh, { action: 'criar', topic: 'crm-bh', trigger: 'quando mexer no CRM do BH' }, THEO)
+    assert.deepStrictEqual(
+      ledger.index(bh).contexts.map((context) => [context.topic, !!context.base]),
+      [
+        ['crm-bh', false],
+        ['deploy', true],
+      ],
+    )
+    assert.deepStrictEqual(
+      ledger.index(ledger.owner('theo', 'xpto')).contexts.map((context) => context.topic),
+      ['deploy'],
+    )
+    assert.deepStrictEqual(
+      ledger.index('theo').contexts.map((context) => context.topic),
+      ['deploy'],
+    )
+    assert.strictEqual(ledger.context(bh, 'deploy').base, true)
+    assert.match(ledger.promptSection(bh) ?? '', /crm-bh/)
+    assert.ok(!(ledger.promptSection('theo') ?? '').includes('crm-bh'))
+  })
+
+  it('⚖️ escrever num tema da base copia para o projeto (o id da linha lida segue valendo); a base não muda; apagar a base daqui, não', () => {
+    const ledger = service()
+    create(ledger, 'deploy')
+    const baseLine = ledger.write('theo', { action: 'linha_nova', topic: 'deploy', line }, THEO).context!.lines[0].id
+    const bh = ledger.owner('theo', 'bh')
+    ledger.write(bh, { action: 'linha_editar', topic: 'deploy', lineId: baseLine, line: { learning: 'no BH, drenar com aviso' } }, THEO)
+    assert.strictEqual(ledger.context(bh, 'deploy').base, undefined)
+    assert.deepStrictEqual(
+      ledger.context(bh, 'deploy').lines.map((item) => item.learning),
+      ['no BH, drenar com aviso'],
+    )
+    assert.deepStrictEqual(
+      ledger.context('theo', 'deploy').lines.map((item) => item.learning),
+      ['nunca drenar o turno'],
+    )
+    assert.throws(() => ledger.write(ledger.owner('theo', 'xpto'), { action: 'excluir', topic: 'deploy' }, THEO), InvalidLedgerError)
+    assert.throws(() => ledger.write(ledger.owner('theo', 'xpto'), { action: 'criar', topic: 'deploy', trigger: 'de novo, outra vez' }, THEO), InvalidLedgerError)
+    // ⛔ Agente de projeto não tem dono por projeto.
+    assert.throws(() => ledger.requireAgent('ana@bh'), LedgerNotFoundError)
+  })
+})

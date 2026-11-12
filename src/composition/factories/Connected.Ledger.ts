@@ -20,6 +20,7 @@ export function connectedLedgerDesk(local: LedgerService, projectOf: (agentId: s
   }
   return {
     requireAgent: (agentId) => local.requireAgent(agentId),
+    owner: (agentId, projectId) => local.owner(agentId, projectId),
     canRead: (reader, target) => local.canRead(reader, target),
     index: async (agentId) => {
       const via = remote(agentId)

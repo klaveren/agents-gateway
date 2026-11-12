@@ -24,6 +24,15 @@ export interface IAgentLocalLayer {
   updatedBy: string
 }
 
+/**
+ * ⚖️ A CAMADA DO PROJETO de um agente GLOBAL: o que um projeto acrescenta ou desliga no agente que é de todos — os
+ * mesmos campos da camada local, guardados por agente E projeto. A base (o cadastro do agente) é uma só; cada projeto tem
+ * a sua camada, e ela só vale nas conversas dele. ⛔ Só agente global: o de projeto já é de um projeto só.
+ */
+export interface IAgentProjectLayer extends IAgentLocalLayer {
+  projectId: string
+}
+
 export type TAgentLocalLayerInput = Pick<IAgentLocalLayer, 'providers' | 'allowedTools' | 'disabledTools' | 'permissions'>
 
 /** A camada não muda nada? (Sem modelos próprios, sem ferramenta a mais ou desligada e sem regra.) */

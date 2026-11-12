@@ -662,7 +662,8 @@ export class GuidanceService {
       ].join('\n')
     }
     // O índice do ledger do agente: o que ele já aprendeu, para conferir antes de diagnosticar ou operar.
-    const ledger = agentId ? this.ledgerSection?.(agentId) : undefined
+    // O global num projeto: o índice do ledger dele naquele projeto (com a base por baixo).
+    const ledger = agentId ? this.ledgerSection?.(agentId, projectId ?? undefined) : undefined
     if (ledger) parts.ledger = ledger
     const building = builderKindOf(agentId)
     if (building) Object.assign(parts, this.builderParts(building, projectId))
@@ -773,7 +774,7 @@ export class GuidanceService {
    * O ledger dos agentes (ver `Ledger.Service`): a seção do índice no prompt e, ligado, as ferramentas `ledger_read` e
    * `ledger_write` em toda conversa (`hasLedger`). Ligado na composição; sem ele, nada disso.
    */
-  useLedger(section: (agentId: string) => string | undefined): void {
+  useLedger(section: (agentId: string, projectId?: string) => string | undefined): void {
     this.ledgerSection = section
   }
 
@@ -782,7 +783,7 @@ export class GuidanceService {
     return !!this.ledgerSection
   }
 
-  private ledgerSection?: (agentId: string) => string | undefined
+  private ledgerSection?: (agentId: string, projectId?: string) => string | undefined
 
   private agentChecker?: TAgentChecker
   private skillFilter?: (agentId: string | undefined, projectId: string | undefined, skillId: string) => boolean

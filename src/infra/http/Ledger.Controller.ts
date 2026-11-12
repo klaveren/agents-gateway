@@ -8,7 +8,8 @@ import { tarGz } from '@infra/catalog/Tar.Archive'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
-import { requireAgentAdmin } from './Project.Access'
+import { requireAgentAdmin, requireProjectAdmin } from './Project.Access'
+import { ledgerOwnerKey } from '@domain/models/Ledger.Model'
 import { parseBody } from './Request.Parser'
 
 export interface ILedgerControllerDeps {
@@ -187,9 +188,12 @@ export class LedgerController {
 
   /** ⛔ Só o admin do projeto do agente (o agente global, o do gateway); o agente da rota tem de existir. O autor das revisões é o admin. */
   private async admin(req: Request, operation: string): Promise<{ service: LedgerService; agentId: string; by: TLedgerAuthor }> {
-    const agentId = req.params.agentId as string
-    const email = await requireAgentAdmin(this.deps.proof, agentId, operation)
+    const id = req.params.agentId as string
+    // ⚖️ `?project=`: o ledger do agente GLOBAL naquele projeto (quem mexe é o admin do projeto); sem ele, a base.
+    const project = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+    const email = project ? await requireProjectAdmin(this.deps.proof, project, operation) : await requireAgentAdmin(this.deps.proof, id, operation)
     if (!this.deps.service) throw new HttpError(404, 'not_found', 'Not found')
+    const agentId = project ? ledgerOwnerKey(id, project) : id
     this.deps.service.requireAgent(agentId)
     return { service: this.deps.service, agentId, by: { kind: 'admin', email } }
   }
