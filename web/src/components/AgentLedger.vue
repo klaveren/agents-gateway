@@ -238,7 +238,10 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
       <li v-for="item in contextPage.items.value" :key="item.topic">
         <button type="button" class="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-800/40" @click="openContext(item.topic)">
           <span class="min-w-0 flex-1">
-            <span class="block truncate font-mono text-[13px] text-zinc-200">{{ item.topic }}</span>
+            <span class="block truncate font-mono text-[13px] text-zinc-200">
+              {{ item.topic }}
+              <span v-if="item.base" class="ml-1 font-sans text-[10px] text-sky-300" title="Da base do agente: mudar aqui copia o tema para este projeto">base</span>
+            </span>
             <span class="block truncate text-xs text-zinc-400">{{ item.trigger }}</span>
             <span class="block truncate text-xs text-zinc-500">
               {{ item.lineCount }} linha(s)<template v-if="item.hasPlaybook"> · playbook</template> · alterado {{ shortTime(item.updatedAt) }} por {{ authorLabel(item.updatedBy) }}

@@ -42,10 +42,10 @@ const agent = (overrides: Partial<IAgentDetail> = {}): IAgentDetail => ({
 })
 
 /** `data`: o que o servidor responde por caminho (com `?project=` quando a chamada leva o projeto). */
-async function mount(component: Component, props: Record<string, unknown>, current: string, data: Record<string, unknown> = {}) {
+async function mount(component: Component, props: Record<string, unknown>, current: string, data: Record<string, unknown> = {}, admin = false) {
   const pinia = createPinia()
   setActivePinia(pinia)
-  useAuthStore().isAdmin = false
+  useAuthStore().isAdmin = admin
   vi.mocked(api).mockImplementation((async (path: string, init?: { method?: string; body?: unknown; query?: Record<string, string> }) => {
     if (path === '/projects') return PROJECTS
     if (path.endsWith('/initial-context')) return { docs: [], available: [], docIds: [], totalTokens: 0 }
@@ -161,5 +161,38 @@ describe('selo do agente compartilhado', () => {
   it('no seletor de agente da conversa nova', async () => {
     const host = await mount(NewConversation, {}, 'beta', { '/agents?project=beta': [shared, own] })
     expect([...host.querySelectorAll('[data-test="shared-badge"]')].map((badge) => badge.textContent?.trim())).toEqual(['compartilhado por Alfa'])
+  })
+})
+
+describe('agente global: a camada do projeto', () => {
+  const ATLAS = agent({ id: 'atlas', name: 'Atlas', projectId: undefined, allowedTools: ['agent:construtor'] })
+  const LAYER = {
+    agentId: 'atlas',
+    projectId: 'alfa',
+    origin: { providers: [], allowedTools: ['agent:construtor'], permissions: [] },
+    layer: { allowedTools: [], disabledTools: [], permissions: [] },
+  }
+
+  it('quem administra o projeto edita a camada dele: o aviso diz o projeto, e a Memória e as Variáveis são deste projeto', async () => {
+    const host = await mount(AgentForm, { agent: ATLAS, creating: false }, 'alfa', {
+      '/projects/alfa/agents/atlas/layer': LAYER,
+      '/agents/atlas/ledger?project=alfa': { agentId: 'atlas@alfa', contexts: [], lineCount: 0, warnings: [] },
+    })
+    expect(q(host, 'project-layer')?.textContent).toContain('Camada de Alfa')
+    expect(q(host, 'layer-scope-base')).toBeNull()
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/projects/alfa/agents/atlas/layer')
+    await click(q(host, 'agent-tab-memoria'))
+    expect(vi.mocked(api).mock.calls.some(([path]) => String(path).startsWith('/agents/atlas/ledger?project=alfa'))).toBe(true)
+    await click(q(host, 'agent-tab-variaveis'))
+    expect(q(host, 'project-layer-secrets')?.textContent).toContain('vale o da base')
+  })
+
+  it('o admin do gateway escolhe: a base (como sempre) ou a camada do projeto', async () => {
+    const host = await mount(AgentForm, { agent: ATLAS, creating: false }, 'alfa', { '/projects/alfa/agents/atlas/layer': LAYER }, true)
+    expect(q(host, 'project-layer')?.textContent).toContain('Editando a base')
+    expect(vi.mocked(api)).not.toHaveBeenCalledWith('/projects/alfa/agents/atlas/layer')
+    await click(q(host, 'layer-scope-project'))
+    expect(q(host, 'project-layer')?.textContent).toContain('Camada de Alfa')
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/projects/alfa/agents/atlas/layer')
   })
 })
