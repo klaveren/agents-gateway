@@ -141,7 +141,7 @@ const CONNECTED_WRITABLE: readonly RegExp[] = [
   /^\/(agents\/:agentId|resources\/:resourceId)\/secrets\//,
   /^\/agents\/:agentId\/(hooks|schedules)(\/|$)/,
   /^\/mcp-servers\/:id\/(env|secret|oauth|test|install|stop)(\/|$)/,
-  // O MCP "desta máquina" (cadastrado aqui) é configuração do ambiente; o que veio da origem a rota recusa.
+  // Os MCPs do projeto conectado são desta máquina (endereços e chaves do ambiente): chegam uma vez e mudam por aqui.
   /^\/mcp-servers(\/:id)?$/,
   /^\/projects\/:id\/members$/,
   /^\/projects\/:projectId\/(accounts|permissions\/test)(\/|$)/,

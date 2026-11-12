@@ -11,7 +11,7 @@ import { resolveCaller } from './Caller.Access'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
-import { administers, adminView, IAdminView, isConnectedProject, refuseConnected, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
+import { administers, adminView, IAdminView, isConnectedProject, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
 
 export interface IMcpServersControllerDeps {
@@ -91,8 +91,9 @@ const envSchema = z.object({ value: z.string().max(8000) })
  * membro dele vê os MCPs daquele projeto (como vê os agentes dele) — nunca os globais, nunca os de outro projeto.
  * ⛔ O segredo nunca sai — só se está configurado e os quatro últimos caracteres.
  *
- * 🔌 NO PROJETO CONECTADO, o servidor que veio da origem é só leitura (409); o cadastrado AQUI nasce "desta máquina"
- * (`local`) e segue livre: é configuração do ambiente, que a atualização não toca e o catálogo não exporta.
+ * 🔌 NO PROJETO CONECTADO os servidores são desta máquina: os que vieram da origem (na primeira atualização) e os
+ * cadastrados aqui (`local`) mudam e saem por aqui — cada ambiente tem os seus endereços e as suas chaves. A atualização
+ * não os toca; `local` só diz de onde o servidor veio.
  */
 export class McpServersController {
   constructor(private readonly deps: IMcpServersControllerDeps) {
@@ -238,8 +239,6 @@ export class McpServersController {
           ],
           'updateMcpServer',
         )
-        // ⛔ O que veio da origem não muda aqui, nem sai do projeto conectado.
-        if (!before.local) refuseConnected(current)
         // Trocou de escopo: é "desta máquina" quem entra num projeto conectado, e deixa de ser quem sai dele.
         const moving = body.projectId !== undefined && (body.projectId ?? null) !== current
         const updated = this.deps.service.update(id, { ...body, ...(moving ? { local: isConnectedProject(body.projectId) } : {}) }, by)
@@ -263,8 +262,7 @@ export class McpServersController {
       async () => {
         const id = this.idOf(req)
         const by = await this.requireAdmin('deleteMcpServer', id)
-        const { kind, local } = this.deps.service.get(id)
-        if (!local) refuseConnected(scopeOf(id))
+        const { kind } = this.deps.service.get(id)
         this.deps.service.remove(id, by)
         this.deps.registry.forget(id)
         await this.deps.registry.closeInstances({ serverId: id })

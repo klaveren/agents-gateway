@@ -19,8 +19,11 @@ const ORIGIN = [
   doc('agent', 'sre', 'logiccus', { allowedTools: ['mcp:agents-mcp/tickets', 'mcp:gateway/list_agents'] }),
 ]
 
-/** O aplicador falso: grava na ordem e PARA no item de `failOn` (como o de verdade); o plano não bloqueia nada. */
-function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[] = [], localMcps: string[] = []) {
+/**
+ * O aplicador falso: grava na ordem e PARA no item de `failOn` (como o de verdade); o plano não bloqueia nada.
+ * `synced` = a conexão já terminou uma atualização (a primeira é a que traz os MCPs).
+ */
+function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[] = [], synced = false) {
   const exporter = new CatalogExportUseCase({
     reader: { list: () => ORIGIN, read: () => ORIGIN[0] } as never,
     mask: { scan: (value: string) => ({ text: value, hits: [] }) } as never,
@@ -58,7 +61,7 @@ function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[
     reader: { list: (scope) => (scope.kind === 'global' ? localGlobals : localProject) },
     remove: async (current) => void steps.push(`remove ${current.kind}/${current.id}`),
     layers: { applyAll: (projectId) => void steps.push(`apply ${projectId}`), forget: (agentId) => void steps.push(`forget ${agentId}`) },
-    localMcps: { ids: () => localMcps, release: (projectId) => void steps.push(`release ${projectId}`) },
+    localMcps: { release: (projectId) => void steps.push(`release ${projectId}`) },
     models: async () => ({ enabled: () => true }),
   })
   repository.insert(
@@ -78,6 +81,7 @@ function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[
     },
     'agc_x',
   )
+  if (synced) repository.update('logiccus', { lastSyncedAt: new Date() })
   return { service, planned, written, steps, repository }
 }
 
@@ -109,20 +113,25 @@ describe('projeto conectado: a cópia', () => {
     assert.deepEqual(result.removed, ['agent/antigo'])
   })
 
-  it('🔌 o MCP desta máquina: a origem não o remove; o que ela tirou e não é daqui, sai', async () => {
+  it('🔌 os MCPs são desta máquina: depois da primeira atualização a origem não traz, não troca e não remove nenhum', async () => {
     const here = [
-      ...ORIGIN,
-      doc('mcp', 'meu', 'logiccus', { url: 'http://localhost:9000/mcp', enabled: true }),
+      doc('mcp', 'gateway', 'logiccus', { url: 'http://localhost:9000/mcp', enabled: false }),
       doc('mcp', 'velho', 'logiccus', { url: 'https://velho/mcp', enabled: true }),
+      doc('agent', 'sre', 'logiccus', { allowedTools: [] }),
     ]
-    const { service, steps } = build([], here, ['meu'])
+    const { service, planned, written, steps } = build([], here, true)
     const result = await service.sync('logiccus', 'dev')
-    assert.deepEqual(steps, ['remove mcp/velho'])
-    assert.deepEqual(result.removed, ['mcp/velho'])
+    // Nem o que mudou lá (`gateway`), nem o que foi removido aqui (`agents-mcp`), nem o que a origem tirou (`velho`).
+    assert.ok(!planned[0].some((ref) => ref.startsWith('mcp/')), planned[0].join(', '))
+    assert.deepEqual(steps, [])
+    assert.deepEqual(result.removed, [])
+    assert.ok(!result.skipped.some((item) => item.ref.startsWith('mcp/')))
+    // O agente que cita o MCP que não está mais aqui continua atualizando.
+    assert.ok(written.includes('agent/sre'), written.join(', '))
   })
 
-  it('🔌 o MCP desta máquina com o id de um da origem: vale o daqui, e não aparece como "não aplicado"', async () => {
-    const { service, planned, steps } = build([], [...ORIGIN, doc('mcp', 'agents-mcp', 'logiccus', { url: 'http://localhost:9000/mcp', enabled: true })], ['agents-mcp'])
+  it('🔌 a primeira atualização refeita só traz o MCP que ainda não está aqui', async () => {
+    const { service, planned, steps } = build([], [doc('mcp', 'agents-mcp', 'logiccus', { url: 'http://localhost:9000/mcp', enabled: true })])
     const result = await service.sync('logiccus', 'dev')
     assert.ok(!planned[0].includes('mcp/logiccus.agents-mcp'))
     assert.ok(planned[0].includes('mcp/logiccus.gateway'))

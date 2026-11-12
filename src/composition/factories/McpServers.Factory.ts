@@ -1,6 +1,7 @@
 import { McpServersService } from '@application/McpServers.Service'
 import { mcpServerKey } from '@domain/models/McpServer.Model'
 import { removeInstall } from '@infra/mcp/Mcp.Install'
+import { makeAgentLocalLayers } from './AgentLocalLayers.Factory'
 import { makeAgents } from './Agents.Factory'
 import { makeCatalogHistory } from './CatalogHistory.Factory'
 import { makeCredentials } from './Credentials.Factory'
@@ -23,6 +24,7 @@ export function makeMcpServers(): McpServersService {
     (projectId) => makeProjects().exists(projectId),
   )
   instance.history.use(() => makeCatalogHistory())
+  instance.useLocalExtras((agent) => makeAgentLocalLayers().extras(agent))
   return instance
 }
 

@@ -161,7 +161,7 @@ export class CatalogImportApplier {
     for (const [index, step] of plan.order.entries()) {
       const item = items.get(step.ref)!
       try {
-        const applied = await this.step(step, item, targets.get(step.ref)!, expected, { by: caller.by, batchId: batch.id })
+        const applied = await this.step(step, item, targets.get(step.ref)!, expected, { by: caller.by, batchId: batch.id, mirror: !!request.mirror })
         result.applied.push(applied.step)
         if (applied.missingSecrets.length) result.missingSecrets.push({ ref: step.ref, secrets: applied.missingSecrets })
       } catch (error: unknown) {
@@ -202,11 +202,11 @@ export class CatalogImportApplier {
     item: IImportPlanItem,
     full: ICatalogDocument,
     expected: Map<string, string | undefined>,
-    who: { by: string; batchId: string },
+    who: { by: string; batchId: string; mirror?: boolean },
   ): Promise<{ step: IAppliedStep; missingSecrets: string[] }> {
     const current = this.fresh(step, expected)
     const target = step.part === 'record' ? recordPart(full, current) : full
-    const prepared: IPreparedWrite = await this.deps.writer.prepare(target, current)
+    const prepared: IPreparedWrite = await this.deps.writer.prepare(target, current, who.mirror ? { mirror: true } : {})
     // A preparação esperou (as regras do momento): confere de novo, já sem nada assíncrono até gravar.
     this.fresh(step, expected)
     const last = step.part !== 'record'

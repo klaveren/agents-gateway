@@ -12,14 +12,18 @@ export interface ILocalProvider {
   network?: boolean
 }
 
-/** O que a camada local guarda: os modelos desta máquina (substituem), e as ferramentas e regras a mais (somam). */
+/**
+ * O que a camada local guarda: os modelos desta máquina (substituem), as ferramentas e regras a mais (somam) e o que
+ * veio da origem e não vale aqui (`disabledTools`: a entrada de lá, ou o nome da automática).
+ */
 export interface IAgentLocalLayerInput {
   providers?: ILocalProvider[]
   allowedTools: string[]
+  disabledTools?: string[]
   permissions: IPermissionRule[]
 }
 
-/** 🔌 A camada local de um agente de projeto conectado: a origem (travada) e o que esta máquina acrescentou. */
+/** 🔌 A camada local de um agente de projeto conectado: a origem e o que esta máquina acrescentou ou desligou. */
 export interface IAgentLocalLayerView {
   agentId: string
   projectId: string
@@ -33,12 +37,14 @@ const offMark = (tool: string) => `${AUTO_TOOL_OFF}${tool}`
 
 /**
  * O `allowedTools` que o formulário mostra: o da origem com o da camada por cima. A automática que a origem desligou
- * e a camada religou perde a marca `off:` (aparece ligada).
+ * e a camada religou perde a marca `off:` (aparece ligada); o que a camada desligou sai (a automática ganha a marca).
  */
-export function shownTools(origin: readonly string[], layer: readonly string[]): string[] {
+export function shownTools(origin: readonly string[], layer: readonly string[], disabled: readonly string[] = []): string[] {
   const back = new Set(layer.filter((tool) => AUTO_TOOLS.includes(tool)).map(offMark))
-  const kept = origin.filter((tool) => !back.has(tool))
-  return [...kept, ...layer.filter((tool) => !AUTO_TOOLS.includes(tool) && !tool.startsWith(AUTO_TOOL_OFF) && !kept.includes(tool))]
+  const kept = origin.filter((tool) => !back.has(tool) && !disabled.includes(tool))
+  const extras = layer.filter((tool) => !AUTO_TOOLS.includes(tool) && !tool.startsWith(AUTO_TOOL_OFF) && !kept.includes(tool))
+  const off = disabled.filter((tool) => AUTO_TOOLS.includes(tool) && !back.has(offMark(tool))).map(offMark)
+  return [...new Set([...kept, ...extras, ...off])]
 }
 
 /**
@@ -52,9 +58,16 @@ export function layerTools(origin: readonly string[], form: readonly string[]): 
 }
 
 /**
- * ⛔ O que veio da origem não muda aqui: a entrada que ela tem fica travada. A automática é travada LIGADA (a camada
- * não desliga nada); só a que a origem desligou pode ser religada.
+ * O que a origem tem e o formulário não: é o que esta máquina desligou. A entrada de lá vai como está; a automática
+ * que ganhou a marca `off:` aqui vai pelo nome.
  */
-export function originLocksTool(origin: readonly string[], tool: string): boolean {
+export function disabledTools(origin: readonly string[], form: readonly string[]): string[] {
+  const gone = origin.filter((tool) => !tool.startsWith(AUTO_TOOL_OFF) && !form.includes(tool))
+  const off = form.filter((tool) => tool.startsWith(AUTO_TOOL_OFF) && !origin.includes(tool)).map((tool) => tool.slice(AUTO_TOOL_OFF.length))
+  return [...new Set([...gone, ...off.filter((tool) => AUTO_TOOLS.includes(tool))])]
+}
+
+/** A ferramenta veio LIGADA da origem? (A entrada que ela tem; a automática, se ela não a desligou.) */
+export function originHasTool(origin: readonly string[], tool: string): boolean {
   return AUTO_TOOLS.includes(tool) ? !origin.includes(offMark(tool)) : origin.includes(tool)
 }

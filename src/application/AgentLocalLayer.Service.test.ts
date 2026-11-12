@@ -9,7 +9,7 @@ import { AgentLocalLayerService } from './AgentLocalLayer.Service'
 
 const SUB = [{ provider: EProvider.CLAUDE_SUB, models: ['claude-sonnet-5'] }]
 
-function build(modes: EMode[]) {
+function build(modes: EMode[], allowedTools: string[] = [], connected = true) {
   const agent = {
     id: 'sre',
     name: 'SRE',
@@ -17,14 +17,14 @@ function build(modes: EMode[]) {
     providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
     systemPrompt: 'faça',
     modes,
-    allowedTools: [],
+    allowedTools,
   } as IAgent
   const service = new AgentLocalLayerService({
     repository: new SqliteAgentLocalLayerRepository(':memory:'),
     agents: { entry: () => ({ agent }), rawEntries: () => [{ agent }], applyLocalLayer: () => undefined } as never,
-    connected: () => true,
+    connected: () => connected,
   })
-  service.useAgentValidation(async () => ({ rules: { knownTools: [], modelEnabled: () => true }, issues: () => [] }))
+  service.useAgentValidation(async () => ({ rules: { knownTools: [], modelEnabled: () => true, mcpServerExists: () => true }, issues: () => [] }))
   return service
 }
 
@@ -38,5 +38,37 @@ describe('camada local: os modelos desta máquina e as lanes da origem', () => {
     await assert.rejects(build([EMode.CHAT]).save('logiccus', 'sre', { providers: SUB, allowedTools: [], permissions: [] }, 'dev'), (error: InvalidAgentError) =>
       error.issues.some((issue) => issue.field === 'providers' && /agent lane/.test(issue.message)),
     )
+  })
+})
+
+describe('camada local: o que veio da origem e não vale aqui', () => {
+  const ORIGIN = ['mcp:tickets/*', 'agent:atlas', 'run_bash']
+
+  it('desliga o que a origem tem; o que ela não tem não fica guardado', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    const view = await service.save('logiccus', 'sre', { allowedTools: [], disabledTools: ['mcp:tickets/*', 'agent:fantasma'], permissions: [] }, 'dev')
+    assert.deepEqual(view.layer.disabledTools, ['mcp:tickets/*'])
+    assert.deepEqual(view.origin.allowedTools, ORIGIN)
+    // Religar tudo esvazia a camada.
+    assert.deepEqual((await service.save('logiccus', 'sre', { allowedTools: [], disabledTools: [], permissions: [] }, 'dev')).layer.disabledTools, [])
+    assert.equal(service.of({ id: 'sre', projectId: 'logiccus' } as IAgent), undefined)
+  })
+
+  it('o pedido de permissão aprovado não religa o que está desligado; o agente que saiu some da lista', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    await service.save('logiccus', 'sre', { allowedTools: [], disabledTools: ['agent:atlas', 'run_bash'], permissions: [] }, 'dev')
+    service.localRules({ id: 'sre', projectId: 'logiccus' })!.save([{ category: 'terminal', pattern: 'npm test', decision: 'allow' }], 'dev')
+    assert.deepEqual(service.get('logiccus', 'sre').layer.disabledTools, ['agent:atlas', 'run_bash'])
+    service.forget('atlas')
+    assert.deepEqual(service.get('logiccus', 'sre').layer.disabledTools, ['run_bash'])
+  })
+
+  it('o que a camada ACRESCENTA (para quem pergunta quem usa um MCP): só no projeto conectado', async () => {
+    const service = build([EMode.AGENT], ORIGIN)
+    assert.deepEqual(service.extras({ id: 'sre', projectId: 'logiccus' }), [])
+    await service.save('logiccus', 'sre', { allowedTools: ['mcp:local/*'], disabledTools: ['mcp:tickets/*'], permissions: [] }, 'dev')
+    assert.deepEqual(service.extras({ id: 'sre', projectId: 'logiccus' }), ['mcp:local/*'])
+    assert.equal(service.extras({ id: 'solto' }), undefined)
+    assert.equal(build([EMode.AGENT], ORIGIN, false).extras({ id: 'sre', projectId: 'logiccus' }), undefined)
   })
 })

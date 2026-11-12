@@ -35,6 +35,7 @@ const localSchema = z.object({
     .max(50)
     .optional(),
   allowedTools: z.array(z.string().min(1).max(300)).max(500).default([]),
+  disabledTools: z.array(z.string().min(1).max(300)).max(500).optional(),
   permissions: z
     .array(
       z.object({
@@ -137,8 +138,8 @@ export class ProjectConnectionsController {
   }
 
   /**
-   * `GET /connections/:projectId/agents/:agentId/local` — a camada local do agente: o que veio da origem (travado) e o
-   * que esta máquina acrescentou em modelos, ferramentas, MCPs, delegação e permissões.
+   * `GET /connections/:projectId/agents/:agentId/local` — a camada local do agente: o que veio da origem e o que esta
+   * máquina acrescentou (modelos, ferramentas, MCPs, delegação e permissões) ou desligou (ferramentas, MCPs e delegação).
    */
   async getLocal(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {

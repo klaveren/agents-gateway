@@ -251,7 +251,7 @@ export class CatalogImportPlanner {
     const rules = this.deps.agentRules ? await this.deps.agentRules() : undefined
     for (const draft of drafts.filter(writing)) {
       draft.refs = referencesOf(draft.target!)
-      const issues = this.validate(draft.target!, draft.current, view, rules)
+      const issues = this.validate(draft.target!, draft.current, view, rules, !!options.mirror)
       if (issues.length) {
         draft.op = 'error'
         draft.issues.push(...issues)
@@ -497,7 +497,13 @@ export class CatalogImportPlanner {
 
   // --- As regras do cadastro, com o catálogo-como-ficaria ----------------------------------------------------------
 
-  private validate(document: ICatalogDocument, current: ICatalogDocument | undefined, view: CatalogView, rules: Omit<IAgentRules, 'takenIds'> | undefined): TIssues {
+  private validate(
+    document: ICatalogDocument,
+    current: ICatalogDocument | undefined,
+    view: CatalogView,
+    rules: Omit<IAgentRules, 'takenIds'> | undefined,
+    mirror = false,
+  ): TIssues {
     const { kind, id, projectId, body } = document
     const issues: TIssues = []
     const projectIssue = () => {
@@ -505,7 +511,7 @@ export class CatalogImportPlanner {
     }
     switch (kind) {
       case 'agent':
-        return this.agentIssues(document, current, view, rules)
+        return this.agentIssues(document, current, view, rules, mirror)
       case 'skill':
       case 'command':
         if (!RESOURCE_ID_PATTERN.test(id)) issues.push({ field: 'id', message: 'use 2–48 lowercase letters, digits or hyphens' })
@@ -560,7 +566,13 @@ export class CatalogImportPlanner {
     }
   }
 
-  private agentIssues(document: ICatalogDocument, current: ICatalogDocument | undefined, view: CatalogView, rules: Omit<IAgentRules, 'takenIds'> | undefined): TIssues {
+  private agentIssues(
+    document: ICatalogDocument,
+    current: ICatalogDocument | undefined,
+    view: CatalogView,
+    rules: Omit<IAgentRules, 'takenIds'> | undefined,
+    mirror = false,
+  ): TIssues {
     if (!rules) return [{ field: 'agent', message: 'agents cannot be checked here (the agent rules are not wired)' }]
     const { resources, initialContext, ...fields } = document.body
     const agent = { name: '', providers: [], systemPrompt: '', modes: [], allowedTools: [], ...fields } as unknown as IAgent
@@ -584,7 +596,9 @@ export class CatalogImportPlanner {
         // ⛔ Criar com o id de um agente do core é recusado, como no cadastro; atualizar não toma id.
         takenIds: current ? [] : CORE_AGENT_IDS,
         // O MCP e o agente que vêm no pacote contam; o MCP, só ligado (como no cadastro).
-        mcpServerExists: (server, scope) => view.mcp(server, scope)?.document.body.enabled === true,
+        // 🔌 Na cópia do projeto conectado o MCP é desta máquina (pode estar desligado, ou nem estar aqui): o agente
+        // entra como está na origem, e a ferramenta que aponta para ele fica sem efeito até o MCP existir aqui.
+        mcpServerExists: (server, scope) => mirror || view.mcp(server, scope)?.document.body.enabled === true,
         agentExists: (target) => {
           const found = view.find('agent', target)
           return found?.source === 'incoming' || (!!found && !!rules.agentExists?.(target))

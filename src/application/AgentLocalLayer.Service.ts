@@ -23,7 +23,7 @@ export interface IAgentLayerValidation {
   issues(agent: IAgent): TIssue[]
 }
 
-/** O que a tela mostra: a origem (travada) e o que esta máquina acrescentou. */
+/** O que a tela mostra: a origem e o que esta máquina acrescentou ou desligou. */
 export interface IAgentLocalLayerView {
   agentId: string
   projectId: string
@@ -35,7 +35,8 @@ export interface IAgentLocalLayerView {
 
 /**
  * 🔌 A camada local dos agentes de projeto conectado (ver `AgentLocalLayer.Model`): modelos, ferramentas, MCPs,
- * delegação e permissões que só valem nesta máquina. O que veio da origem não muda aqui.
+ * delegação e permissões que só valem nesta máquina. O que veio da origem não muda aqui: a camada soma, e desliga pelo
+ * nome o que não serve neste ambiente.
  */
 export class AgentLocalLayerService {
   private readonly now: () => Date
@@ -53,6 +54,12 @@ export class AgentLocalLayerService {
   of(agent: Pick<IAgent, 'id' | 'projectId'>): IAgentLocalLayer | undefined {
     const layer = this.deps.repository.get(agent.id)
     return layer && agent.projectId && this.deps.connected(agent.projectId) ? layer : undefined
+  }
+
+  /** O que a camada ACRESCENTA a um agente de projeto conectado (`undefined` = o agente não é de projeto conectado). */
+  extras(agent: Pick<IAgent, 'id' | 'projectId'>): readonly string[] | undefined {
+    if (!agent.projectId || !this.deps.connected(agent.projectId)) return undefined
+    return this.deps.repository.get(agent.id)?.allowedTools ?? []
   }
 
   get(projectId: string, agentId: string): IAgentLocalLayerView {
@@ -84,7 +91,12 @@ export class AgentLocalLayerService {
         const issues = permissionIssues(rules)
         if (issues.length) throw new InvalidAgentError(issues)
         const current = this.deps.repository.get(agent.id)
-        const layer = { ...(current?.providers ? { providers: current.providers } : {}), allowedTools: current?.allowedTools ?? [], permissions: cleanRules(rules) }
+        const layer = {
+          ...(current?.providers ? { providers: current.providers } : {}),
+          allowedTools: current?.allowedTools ?? [],
+          ...(current?.disabledTools?.length ? { disabledTools: current.disabledTools } : {}),
+          permissions: cleanRules(rules),
+        }
         if (isEmptyLayer(layer)) this.deps.repository.remove(agent.id)
         else this.deps.repository.save({ agentId: agent.id, ...layer, updatedAt: this.now(), updatedBy: by })
         return layer.permissions
@@ -106,8 +118,10 @@ export class AgentLocalLayerService {
   forget(agentId: string): void {
     this.deps.repository.remove(agentId)
     const ref = `agent:${agentId}`
-    for (const layer of this.deps.repository.list().filter((item) => item.allowedTools.includes(ref))) {
-      const next = { ...layer, allowedTools: layer.allowedTools.filter((tool) => tool !== ref) }
+    for (const layer of this.deps.repository.list().filter((item) => item.allowedTools.includes(ref) || item.disabledTools?.includes(ref))) {
+      const disabledTools = (layer.disabledTools ?? []).filter((tool) => tool !== ref)
+      const { disabledTools: _before, ...rest } = layer
+      const next = { ...rest, allowedTools: layer.allowedTools.filter((tool) => tool !== ref), ...(disabledTools.length ? { disabledTools } : {}) }
       if (isEmptyLayer(next)) this.deps.repository.remove(layer.agentId)
       else this.deps.repository.save(next)
     }
@@ -127,7 +141,8 @@ export class AgentLocalLayerService {
    */
   private async checked(agent: IAgent, input: TAgentLocalLayerInput): Promise<TAgentLocalLayerInput> {
     const issues: TIssue[] = [...permissionIssues(input.permissions)]
-    for (const tool of input.allowedTools.filter(isAutoToolOff)) issues.push({ field: 'allowedTools', message: `a local layer cannot turn off a tool: ${tool}` })
+    for (const tool of input.allowedTools.filter(isAutoToolOff))
+      issues.push({ field: 'allowedTools', message: `allowedTools cannot turn off a tool (${tool}): list its name in disabledTools` })
     if (issues.length) throw new InvalidAgentError(issues)
 
     const layer = trimLocalLayer(agent, { ...input, permissions: cleanRules(input.permissions) })
@@ -158,7 +173,12 @@ export class AgentLocalLayerService {
       agentId: agent.id,
       projectId: agent.projectId!,
       origin: { providers: agent.providers, allowedTools: agent.allowedTools, permissions: agent.permissions ?? [] },
-      layer: { ...(layer?.providers ? { providers: layer.providers } : {}), allowedTools: layer?.allowedTools ?? [], permissions: layer?.permissions ?? [] },
+      layer: {
+        ...(layer?.providers ? { providers: layer.providers } : {}),
+        allowedTools: layer?.allowedTools ?? [],
+        disabledTools: layer?.disabledTools ?? [],
+        permissions: layer?.permissions ?? [],
+      },
       ...(layer ? { updatedAt: layer.updatedAt, updatedBy: layer.updatedBy } : {}),
     }
   }

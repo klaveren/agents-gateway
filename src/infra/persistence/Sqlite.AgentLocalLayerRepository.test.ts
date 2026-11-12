@@ -23,7 +23,7 @@ describe('camadas locais (sqlite)', () => {
       const path = join(dir, 'gateway.db')
       const repository = new SqliteAgentLocalLayerRepository(path)
       repository.save(layer('sre'))
-      repository.save(layer('sre', { providers: [{ provider: EProvider.CLAUDE, models: ['claude-haiku-5'] }], allowedTools: ['agent:ajudante'] }))
+      repository.save(layer('sre', { providers: [{ provider: EProvider.CLAUDE, models: ['claude-haiku-5'] }], allowedTools: ['agent:ajudante'], disabledTools: ['mcp:tickets/*'] }))
       repository.save(layer('theo'))
       repository.remove('theo')
       assert.equal(repository.get('theo'), undefined)
@@ -33,15 +33,19 @@ describe('camadas locais (sqlite)', () => {
         reopened.list().map((item) => item.agentId),
         ['sre'],
       )
-      assert.deepEqual(reopened.get('sre'), layer('sre', { providers: [{ provider: EProvider.CLAUDE, models: ['claude-haiku-5'] }], allowedTools: ['agent:ajudante'] }))
+      assert.deepEqual(
+        reopened.get('sre'),
+        layer('sre', { providers: [{ provider: EProvider.CLAUDE, models: ['claude-haiku-5'] }], allowedTools: ['agent:ajudante'], disabledTools: ['mcp:tickets/*'] }),
+      )
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
   })
 
-  it('sem modelos locais, o campo nem existe', () => {
+  it('sem modelos locais e sem nada desligado, os campos nem existem', () => {
     const repository = new SqliteAgentLocalLayerRepository()
     repository.save(layer('sre'))
     assert.ok(!('providers' in repository.get('sre')!))
+    assert.ok(!('disabledTools' in repository.get('sre')!))
   })
 })

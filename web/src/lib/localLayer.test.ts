@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { layerTools, originLocksTool, shownTools } from './localLayer'
+import { disabledTools, layerTools, originHasTool, shownTools } from './localLayer'
 
 const ORIGIN = ['run_bash', 'mcp:agents/tickets', 'off:read_doc', 'off:deliver_file']
 
@@ -17,20 +17,37 @@ describe('camada local: as ferramentas', () => {
     expect(layerTools(ORIGIN, form)).toEqual(['agent:ajudante', 'mcp:local/*', 'read_doc'])
   })
 
-  it('⛔ o que a origem tem não sai, e a camada não desliga automática', () => {
-    // Tirou `run_bash` e desligou `ledger_read` no formulário: nada disso vai para a camada.
-    expect(layerTools(ORIGIN, ['off:read_doc', 'off:deliver_file', 'off:ledger_read'])).toEqual([])
+  it('o que saiu do formulário e veio da origem é o que esta máquina desligou; a automática vai pelo nome', () => {
+    // Tirou `run_bash` e o MCP, e desligou `ledger_read`: nada disso é "a mais", tudo é "desligado aqui".
+    const form = ['off:read_doc', 'off:deliver_file', 'off:ledger_read']
+    expect(layerTools(ORIGIN, form)).toEqual([])
+    expect(disabledTools(ORIGIN, form)).toEqual(['run_bash', 'mcp:agents/tickets', 'ledger_read'])
+    // O que a origem já desligou não entra, e o que é só daqui também não.
+    expect(disabledTools(ORIGIN, [...ORIGIN, 'agent:ajudante'])).toEqual([])
+  })
+
+  it('mostra sem o que foi desligado aqui; a automática desligada ganha a marca', () => {
+    expect(shownTools(ORIGIN, ['agent:ajudante'], ['mcp:agents/tickets', 'ledger_read'])).toEqual([
+      'run_bash',
+      'off:read_doc',
+      'off:deliver_file',
+      'agent:ajudante',
+      'off:ledger_read',
+    ])
   })
 
   it('ida e volta: o que a camada grava é o que o formulário mostra', () => {
     const layer = ['agent:ajudante', 'read_doc']
-    expect(layerTools(ORIGIN, shownTools(ORIGIN, layer))).toEqual(layer)
+    const disabled = ['run_bash', 'ledger_read']
+    const form = shownTools(ORIGIN, layer, disabled)
+    expect(layerTools(ORIGIN, form)).toEqual(layer)
+    expect(disabledTools(ORIGIN, form)).toEqual(disabled)
   })
 
-  it('trava o que é da origem: a entrada dela e a automática ligada; a desligada por ela pode ser religada', () => {
-    expect(originLocksTool(ORIGIN, 'run_bash')).toBe(true)
-    expect(originLocksTool(ORIGIN, 'search_web')).toBe(false)
-    expect(originLocksTool(ORIGIN, 'ledger_read')).toBe(true)
-    expect(originLocksTool(ORIGIN, 'read_doc')).toBe(false)
+  it('o que veio ligado da origem: a entrada dela e a automática que ela não desligou', () => {
+    expect(originHasTool(ORIGIN, 'run_bash')).toBe(true)
+    expect(originHasTool(ORIGIN, 'search_web')).toBe(false)
+    expect(originHasTool(ORIGIN, 'ledger_read')).toBe(true)
+    expect(originHasTool(ORIGIN, 'read_doc')).toBe(false)
   })
 })

@@ -1,6 +1,5 @@
 <script setup lang="ts">
   import SaveFooter from '@/components/SaveFooter.vue'
-  import ConnectedReadOnly from '@/components/ConnectedReadOnly.vue'
   import { useConnectionsStore } from '@/stores/connections'
 import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
@@ -62,12 +61,15 @@ import { computed, onMounted, ref, watch } from 'vue'
 
   /** Mexe nos MCPs: o admin do gateway (os globais) ou o admin do projeto atual (os dele). */
   const canManage = computed(() => auth.isAdmin || projects.manages)
-  /** O MCP aberto é só leitura: global é do admin do gateway; o de projeto, de quem administra o projeto. */
-  /** 🔌 MCP de projeto conectado: só leitura (vem da origem). O cadastrado aqui (`local`) é desta máquina, e segue editável. */
-  const connectedOrigin = computed(() => (selected.value?.local ? undefined : connections.originOf(selected.value?.projectId)))
+  /**
+   * 🔌 MCP de projeto conectado que veio da origem, na primeira atualização. Depois disso é desta máquina: liga, desliga,
+   * edita e remove como o cadastrado aqui (`local`), e a atualização não o altera nem o traz de volta.
+   */
+  const cameFromOrigin = computed(() => (selected.value?.local ? undefined : connections.originOf(selected.value?.projectId)))
   /** 🔌 O projeto do topo é conectado e quem está na tela o administra: o MCP novo nasce nele, como "desta máquina". */
   const localHere = computed(() => !!connections.originOf(projects.current) && projects.manages)
-  const locked = computed(() => !!selected.value && (!!connectedOrigin.value || (selected.value.projectId ? !projects.manages : !auth.isAdmin)))
+  /** O MCP aberto é só leitura: global é do admin do gateway; o de projeto, de quem administra o projeto. */
+  const locked = computed(() => !!selected.value && (selected.value.projectId ? !projects.manages : !auth.isAdmin))
   const adding = computed(() => route.name === 'mcp-new')
   /** ⚖️ A rota leva a CHAVE (`n8n`, `cliente-a.n8n`): o mesmo id pode estar em dois projetos. */
   const selected = computed(() => (props.id ? mcp.list.find((server) => server.key === props.id) : undefined))
@@ -484,6 +486,7 @@ import { computed, onMounted, ref, watch } from 'vue'
           <span class="block truncate text-xs text-zinc-500">
             {{ scopeLabel(server.projectId) }} ·
             <template v-if="server.local">desta máquina ·</template>
+            <template v-else-if="connections.originOf(server.projectId)">veio da origem ·</template>
             {{
               !server.enabled
                 ? 'desligado'
@@ -644,7 +647,7 @@ import { computed, onMounted, ref, watch } from 'vue'
           <span class="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-violet-500/20 text-base font-semibold text-violet-200">{{ initials(selected.name) }}</span>
           <div class="min-w-0">
             <h2 class="truncate text-lg font-semibold">{{ selected.name }}</h2>
-            <p class="truncate font-mono text-xs text-zinc-500">mcp:{{ selected.id }}/… · {{ scopeLabel(selected.projectId) }}{{ selected.local ? ' · desta máquina' : '' }}</p>
+            <p class="truncate font-mono text-xs text-zinc-500">mcp:{{ selected.id }}/… · {{ scopeLabel(selected.projectId) }}{{ selected.local ? ' · desta máquina' : cameFromOrigin ? ' · veio da origem' : '' }}</p>
           </div>
           <label class="ml-auto flex shrink-0 items-center gap-2 text-xs text-zinc-400">
             Ligado
@@ -655,7 +658,10 @@ import { computed, onMounted, ref, watch } from 'vue'
         <HistoryTabs v-model="tab" edit-label="Configuração" />
         <HistoryPanel v-if="tab === 'history'" kind="mcp" :id="selected.key" :readonly="locked" @restored="restored" />
         <template v-else>
-          <ConnectedReadOnly v-if="connectedOrigin" :origin="connectedOrigin" />
+          <p v-if="cameFromOrigin" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="origin-mcp">
+            Veio da origem quando o projeto foi conectado. Agora o controle é desta máquina: ligar, desligar, editar e remover valem só aqui, e a atualização não o altera nem o traz de volta.
+            Desligado, ele sai de todos os agentes desta máquina.
+          </p>
           <p v-else-if="selected.local" class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200" data-test="local-mcp">
             MCP desta máquina: a origem do projeto não o conhece, e a atualização não o altera. Aqui ele é seu para editar e remover.
           </p>

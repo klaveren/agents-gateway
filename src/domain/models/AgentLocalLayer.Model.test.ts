@@ -37,11 +37,21 @@ describe('camada local do agente conectado', () => {
     assert.deepEqual(merged.allowedTools, ['mcp:tickets/*', 'agent:atlas', `off:${AUTO}`, 'mcp:local/*', 'agent:ajudante'])
   })
 
-  it('a ferramenta automática que a origem desligou volta quando a camada a pede; a camada não desliga nenhuma', () => {
+  it('a ferramenta automática que a origem desligou volta quando a camada a pede; `off:` na lista do que soma não desliga nada', () => {
     const back = mergeLocalLayer(origin, { allowedTools: [AUTO], permissions: [] })
     assert.ok(!back.allowedTools.includes(`off:${AUTO}`) && !back.allowedTools.includes(AUTO))
     const off = mergeLocalLayer(origin, { allowedTools: [`off:${AUTO_TOOLS[1]}`], permissions: [] })
     assert.deepEqual(off.allowedTools, origin.allowedTools)
+  })
+
+  it('o que a camada desliga sai da origem pelo nome; a automática desligada aqui ganha a marca `off:`', () => {
+    const merged = mergeLocalLayer(origin, { allowedTools: ['mcp:local/*'], disabledTools: ['mcp:tickets/*', 'agent:atlas', AUTO_TOOLS[1]], permissions: [] })
+    assert.deepEqual(merged.allowedTools, [`off:${AUTO}`, 'mcp:local/*', `off:${AUTO_TOOLS[1]}`])
+    // O que a origem deixou de ter não faz falta: desligar o que não está lá não muda nada.
+    const gone = mergeLocalLayer({ ...origin, allowedTools: ['mcp:tickets/*'] }, { allowedTools: [], disabledTools: ['agent:atlas'], permissions: [] })
+    assert.deepEqual(gone.allowedTools, ['mcp:tickets/*'])
+    // ⛔ As regras de permissão da origem não saem por aqui.
+    assert.deepEqual(merged.permissions, origin.permissions)
   })
 
   it('⛔ a negação da origem vence a liberação local; o local libera o que a origem não negou', () => {
@@ -68,5 +78,18 @@ describe('camada local do agente conectado', () => {
     })
     assert.deepEqual(trimmed, { allowedTools: ['mcp:local/*', AUTO], permissions: [{ category: 'terminal', pattern: 'npm test', decision: 'allow' }] })
     assert.ok(isEmptyLayer(trimLocalLayer(origin, { providers: [], allowedTools: ['agent:atlas'], permissions: [] })))
+  })
+
+  it('no que se desliga, a camada guarda só o que a origem TEM', () => {
+    const trimmed = trimLocalLayer(origin, {
+      allowedTools: [],
+      // Fica: a entrada da origem e a automática que ela deixou ligada. Sai: o repetido, o que ela não tem, a que ela
+      // mesma desligou e a marca `off:`.
+      disabledTools: ['agent:atlas', 'agent:atlas', 'mcp:nao-tem/*', AUTO, AUTO_TOOLS[1], `off:${AUTO}`],
+      permissions: [],
+    })
+    assert.deepEqual(trimmed, { allowedTools: [], disabledTools: ['agent:atlas', AUTO_TOOLS[1]], permissions: [] })
+    assert.ok(!isEmptyLayer(trimmed))
+    assert.ok(isEmptyLayer(trimLocalLayer(origin, { allowedTools: [], disabledTools: ['mcp:nao-tem/*'], permissions: [] })))
   })
 })

@@ -35,7 +35,12 @@ export interface ICatalogWriter {
    * Prepara trocar `current` por `target` (ausente = apagar o item). ⛔ Lança `CatalogRestoreInvalidError` com os
    * problemas quando a versão não passa nas regras de HOJE.
    */
-  prepare(target: ICatalogDocument | undefined, current: ICatalogDocument | undefined): Promise<IPreparedWrite>
+  prepare(target: ICatalogDocument | undefined, current: ICatalogDocument | undefined, options?: ICatalogWriteOptions): Promise<IPreparedWrite>
+}
+
+export interface ICatalogWriteOptions {
+  /** 🔌 A cópia do projeto conectado (ver `IPlanOptions.mirror`): o agente entra mesmo citando um MCP que não está (ou está desligado) aqui. */
+  mirror?: boolean
 }
 
 export interface ICatalogWriterDeps {
@@ -111,12 +116,12 @@ const list = (value: unknown): string[] => (Array.isArray(value) ? value.map(Str
 export class CatalogWriter implements ICatalogWriter {
   constructor(private readonly deps: ICatalogWriterDeps) {}
 
-  async prepare(target: ICatalogDocument | undefined, current: ICatalogDocument | undefined): Promise<IPreparedWrite> {
+  async prepare(target: ICatalogDocument | undefined, current: ICatalogDocument | undefined, options: ICatalogWriteOptions = {}): Promise<IPreparedWrite> {
     const doc = target ?? current
     if (!doc) return { commit: () => undefined }
     switch (doc.kind) {
       case 'agent':
-        return target ? this.agent(target) : this.removeAgent(doc.id)
+        return target ? this.agent(target, options) : this.removeAgent(doc.id)
       case 'skill':
       case 'command':
         return target ? this.resource(target, doc.kind) : { commit: (by) => this.deps.guidance.deleteResource(doc.id, by) }
@@ -141,7 +146,7 @@ export class CatalogWriter implements ICatalogWriter {
 
   // --- Agente -----------------------------------------------------------------------------------------------------
 
-  private async agent(target: ICatalogDocument): Promise<IPreparedWrite> {
+  private async agent(target: ICatalogDocument, options: ICatalogWriteOptions): Promise<IPreparedWrite> {
     const { resources, initialContext, ...fields } = target.body
     const agent = fields as unknown as IAgent
     const links = {
@@ -159,7 +164,8 @@ export class CatalogWriter implements ICatalogWriter {
     ]
     if (issues.length) throw new CatalogRestoreInvalidError(issues)
     const creating = !this.deps.agents.catalog.entry(agent.id)
-    const rules = await this.deps.agents.rules()
+    const today = await this.deps.agents.rules()
+    const rules = options.mirror ? { ...today, mcpServerExists: () => true } : today
     return {
       commit: (by) => {
         // O agente primeiro (é o que pode recusar); os vínculos já foram conferidos acima.
