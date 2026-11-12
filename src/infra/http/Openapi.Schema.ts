@@ -4582,10 +4582,17 @@ export const OPENAPI_DOCUMENT = {
     },
     '/projects/{projectId}/permissions/decisions': {
       get: {
-        summary: 'The latest permission decisions taken in the project (at most 200; the last 500 are kept). Administrators only',
+        summary:
+          'The latest permission decisions taken in the project, newest first (at most 200; with `category`, every one kept — the last 500 of the project are kept). Administrators only',
         parameters: [
           { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'agentId', in: 'query', required: false, schema: { type: 'string' } },
+          {
+            name: 'category',
+            in: 'query',
+            required: false,
+            schema: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account', 'repository', 'trigger'] },
+          },
         ],
         responses: {
           '200': {

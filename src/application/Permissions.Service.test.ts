@@ -35,6 +35,20 @@ describe('PermissionsService', () => {
     assert.strictEqual(service.decisions('xpto').length, 2)
   })
 
+  it('o registro estreita por categoria e por agente ANTES do limite: a guia vê as últimas dela', () => {
+    const service = make()
+    service.saveProjectRules('xpto', [{ category: 'read', pattern: '**', decision: 'allow' }], 'ana')
+    const log = (agentId: string, category: 'read' | 'write', value: string) => service.check({ agentId, projectId: 'xpto' }, { category, value }, { log: true })
+    log('dev', 'write', 'apps/a.ts')
+    for (let index = 0; index < 5; index++) log('dev', 'read', `docs/${index}.md`)
+    log('qa', 'read', 'docs/qa.md')
+    const subjects = (options: Parameters<typeof service.decisions>[1]) => service.decisions('xpto', options).map((entry) => entry.subject)
+    assert.deepStrictEqual(subjects({ limit: 2 }), ['docs/qa.md', 'docs/4.md'])
+    assert.deepStrictEqual(subjects({ category: 'write', limit: 2 }), ['apps/a.ts'], 'a escrita antiga não some atrás das leituras')
+    assert.deepStrictEqual(subjects({ category: 'read', agentId: 'qa' }), ['docs/qa.md'])
+    assert.deepStrictEqual(subjects({ category: 'network' }), [])
+  })
+
   it('⛔ recusa regra inválida; projeto sem regra nega; apagar o projeto apaga regras e registro', () => {
     const service = make()
     assert.throws(() => service.saveProjectRules('xpto', [{ category: 'x', pattern: '', decision: 'allow' }], 'ana'), /Permissions are invalid/)
