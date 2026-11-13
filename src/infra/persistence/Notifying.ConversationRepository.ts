@@ -16,7 +16,7 @@ import {
 import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
 import type { IToolUsage } from '@domain/models/ToolUsage.Model'
 import { IConversationEvents } from '@domain/ports/ConversationEvents.Port'
-import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
+import { IConversationRepository, ITurnWindow, turnWindow } from '@domain/ports/ConversationRepository.Port'
 
 /**
  * O repositório que AVISA: grava no de verdade e, depois, publica o que mudou.
@@ -117,6 +117,10 @@ export class NotifyingConversationRepository implements IConversationRepository 
 
   listTurns(sessionId: string): Promise<IConversationTurn[]> {
     return this.inner.listTurns(sessionId)
+  }
+
+  async listTurnsPage(sessionId: string, window: ITurnWindow): Promise<{ turns: IConversationTurn[]; hasMore: boolean }> {
+    return this.inner.listTurnsPage ? this.inner.listTurnsPage(sessionId, window) : turnWindow(await this.inner.listTurns(sessionId), window)
   }
 
   findSession(sessionId: string): Promise<IConversationSession | undefined> {

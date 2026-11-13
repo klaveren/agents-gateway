@@ -176,10 +176,45 @@
   }
 
   // ⚖️ A rolagem segue o fim só enquanto a pessoa está nele (ver `useStickToBottom`).
-  const { pinned, unseen, onScroll, toBottom, grew } = useStickToBottom(scroller)
+  const content = ref<HTMLElement>()
+  const { pinned, unseen, onScroll, toBottom, grew } = useStickToBottom(scroller, content)
+  // O que cresce EMBAIXO (turno novo, a resposta chegando). O último índice, não o tamanho: os anteriores entram em cima.
   watch(
-    () => [thread.turns.length, thread.pending?.text.length, thread.pending?.tools.length],
+    () => [thread.turns.at(-1)?.index, thread.pending?.text.length, thread.pending?.tools.length],
     () => grew(),
+  )
+
+  /** Perto do topo, a conversa traz os turnos anteriores (ver `TURN_PAGE`). */
+  const OLDER_AT_PX = 300
+
+  /**
+   * ⚖️ OS ANTERIORES ENTRAM EM CIMA SEM A TELA PULAR: guarda a distância até o fim, traz a página e volta a ela — o turno que
+   * estava à vista fica no lugar. Enquanto o conteúdo não enche a tela (não há o que rolar), segue trazendo.
+   */
+  async function loadOlder() {
+    const element = scroller.value
+    if (!element || !thread.hasOlder || thread.loadingOlder) return
+    const fromBottom = element.scrollHeight - element.scrollTop
+    if (!(await thread.loadOlder())) return
+    await nextTick()
+    element.scrollTop = element.scrollHeight - fromBottom
+    if (element.scrollHeight <= element.clientHeight + OLDER_AT_PX) void loadOlder()
+  }
+
+  function scrolled() {
+    onScroll()
+    if (scroller.value && scroller.value.scrollTop < OLDER_AT_PX) void loadOlder()
+  }
+
+  // Abriu (ou releu) com poucos turnos à vista: traz os anteriores até haver o que rolar.
+  watch(
+    () => thread.loading,
+    async (busy) => {
+      if (busy) return
+      await nextTick()
+      const element = scroller.value
+      if (element && element.scrollHeight <= element.clientHeight + OLDER_AT_PX) void loadOlder()
+    },
   )
   // Outra conversa aberta: começa no fim, seguindo.
   watch(
@@ -482,12 +517,17 @@
     <div
       ref="scroller"
       data-test="thread-scroller"
-      @scroll.passive="onScroll"
+      @scroll.passive="scrolled"
       class="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgb(39_39_42/0.6)_1px,transparent_0)] [background-size:22px_22px] px-4 py-5"
     >
-      <div class="mx-auto flex max-w-3xl flex-col gap-5">
+      <div ref="content" class="mx-auto flex max-w-3xl flex-col gap-5">
         <p v-if="thread.loading" class="text-center text-sm text-zinc-500">Carregando conversa…</p>
-        <p v-if="header" class="mx-auto rounded-full bg-zinc-900/80 px-3 py-1 text-xs text-zinc-400">Começou em {{ fullTime(header.createdAt) }}</p>
+        <!-- Os turnos anteriores vêm ao rolar até aqui; o botão é o caminho para quem não rola (teclado, leitor de tela). -->
+        <p v-if="thread.hasOlder" class="text-center text-xs text-zinc-500" data-test="thread-older">
+          <span v-if="thread.loadingOlder">Carregando mensagens anteriores…</span>
+          <button v-else type="button" class="btn btn-sm btn-ghost" @click="loadOlder">Ver mensagens anteriores</button>
+        </p>
+        <p v-else-if="header" class="mx-auto rounded-full bg-zinc-900/80 px-3 py-1 text-xs text-zinc-400">Começou em {{ fullTime(header.createdAt) }}</p>
         <template v-for="(turn, index) in thread.turns" :key="`${turn.sessionId}-${turn.index}`">
           <p v-if="switchBefore(index)" class="mx-auto rounded-full border border-zinc-800 px-3 py-0.5 font-mono text-[11px] text-zinc-500">{{ switchBefore(index) }}</p>
           <TurnBubbles :turn="turn" :show-cost="projects.manages" />

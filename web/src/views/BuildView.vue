@@ -114,9 +114,11 @@ watch(
   selected,
   (id) => {
     if (id && thread.sessionId !== id)
+      // O construtor procura o rascunho na conversa inteira: abre sem janela.
       void thread.open(
         id,
         builds.value.find((build) => build.id === id),
+        { all: true },
       )
   },
   { immediate: true },
