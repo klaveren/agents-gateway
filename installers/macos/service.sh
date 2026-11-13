@@ -24,6 +24,7 @@ GATEWAY_DATA=""
 PORT=3210
 APP_VERSION=""
 SETUP_CODE=""
+NETWORK_ACCESS=0
 [ -f "$CONFIG" ] && source "$CONFIG"
 
 # Tira o serviço do launchd e espera o processo sair de fato (o launchd dá 20 s a ele antes de matar).
@@ -43,14 +44,31 @@ if [ "${1:-}" = stop ]; then
   exit 0
 fi
 
-# No ar = carregado no launchd: é ele quem mantém o processo vivo.
+# O IPv4 deste Mac na rede (a interface da rota padrão): o endereço que os outros aparelhos usam com o acesso pela rede.
+lan_address() {
+  local iface="$(route -n get default 2>/dev/null | awk '/interface:/ { print $2 }')"
+  [ -n "$iface" ] && ipconfig getifaddr "$iface" 2>/dev/null
+}
+
+# No ar = carregado no launchd: é ele quem mantém o processo vivo. Depois da porta: o acesso pela rede (1/0) e o endereço na rede.
 if [ "${1:-}" = status ]; then
-  if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then print -r -- "running $PORT"; else print -r -- "stopped $PORT"; fi
+  state=stopped
+  launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 && state=running
+  print -r -- "$state $PORT ${NETWORK_ACCESS:-0} $(lan_address)"
   exit 0
 fi
 
 restart=0
 [ "${1:-}" = restart ] && restart=1
+# ⚖️ O acesso pela rede (menu Servidor): liga ou desliga e reinicia — o endereço em que o servidor ouve só muda ao subir.
+if [ "${1:-}" = network ]; then
+  case "${2:-}" in
+    on) NETWORK_ACCESS=1 ;;
+    off) NETWORK_ACCESS=0 ;;
+    *) echo "use: network on|off" >&2; exit 2 ;;
+  esac
+  restart=1
+fi
 if [ -n "${AG_DATA:-}" ] && [ "${AG_DATA%/}" != "$GATEWAY_DATA" ]; then
   GATEWAY_DATA="${AG_DATA%/}"
   restart=1
@@ -68,6 +86,7 @@ fi
   print -r -- "PORT=${(q)PORT}"
   print -r -- "APP_VERSION=${(q)VERSION}"
   print -r -- "SETUP_CODE=${(q)SETUP_CODE}"
+  print -r -- "NETWORK_ACCESS=${(q)NETWORK_ACCESS}"
 } >"$CONFIG"
 chmod 600 "$CONFIG"
 

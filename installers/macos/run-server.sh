@@ -13,7 +13,8 @@ mkdir -p "$GATEWAY_DATA"
 
 export CONVERSATIONS_DB="$GATEWAY_DATA/gateway.db"
 export PORT="${PORT:-3210}"
-export HOST=127.0.0.1
+# ⚖️ Só este Mac, salvo quando a pessoa liga Servidor → Acesso pela rede (`NETWORK_ACCESS=1`): aí ouve em todas as interfaces.
+if [ "${NETWORK_ACCESS:-0}" = 1 ]; then export HOST=0.0.0.0; else export HOST=127.0.0.1; fi
 export NODE_ENV=production
 # O build deste app (`<versão>+<commit>`), para o "Sobre" da tela dizer qual instalador está rodando.
 export GATEWAY_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${RES:h}/Info.plist" 2>/dev/null)"
