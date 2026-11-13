@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { connect } from 'node:net'
+import { connect, createServer, Socket } from 'node:net'
 import { after, before, describe, it } from 'node:test'
 import { addressKind, NetworkGate, preferredAddress } from './Network.Gate'
 
@@ -12,6 +12,36 @@ function connectThrough(port: number, target: string, token?: string): Promise<s
     })
     socket.once('data', (chunk) => (resolve(chunk.toString('utf8').split('\r\n')[0]), socket.destroy()))
     socket.once('error', reject)
+  })
+}
+
+/** Um cliente SOCKS5 cru: oferece os métodos, entra com o token (se o portão pedir) e pede o destino. Devolve o que veio. */
+function socksThrough(port: number, host: string, target: number, token: string | undefined, methods = [0x02]): Promise<{ steps: number[][]; socket?: Socket }> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, '127.0.0.1')
+    const steps: number[][] = []
+    let buffer = Buffer.alloc(0)
+    const need = [2, 2, 10]
+    socket.on('data', (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk])
+      while (need.length && buffer.length >= need[0]!) {
+        const answer = [...buffer.subarray(0, need[0])]
+        buffer = buffer.subarray(need.shift())
+        steps.push(answer)
+        if (steps.length === 1) {
+          if (answer[1] !== 0x02) return resolve({ steps })
+          const user = Buffer.from(token ?? '')
+          socket.write(Buffer.concat([Buffer.from([1, user.length]), user, Buffer.from([1]), Buffer.from('x')]))
+        } else if (steps.length === 2) {
+          if (answer[1] !== 0) return resolve({ steps })
+          const name = Buffer.from(host)
+          socket.write(Buffer.concat([Buffer.from([5, 1, 0, 3, name.length]), name, Buffer.from([target >> 8, target & 0xff])]))
+        } else return resolve({ steps, socket })
+      }
+    })
+    socket.on('error', reject)
+    socket.on('close', () => resolve({ steps }))
+    socket.write(Buffer.from([5, methods.length, ...methods]))
   })
 }
 
@@ -114,6 +144,37 @@ describe('Network.Gate', () => {
     }
     assert.match(await connectThrough(port, 'evil.example:443', token), /^HTTP\/1\.1 403/)
     gate.release(token)
+  })
+
+  it('⚖️ SOCKS5 na mesma porta: o token entra como usuário; o destino passa pela mesma regra; o túnel liga; o HTTP segue igual', async () => {
+    const echo = createServer((client) => client.pipe(client))
+    await new Promise<void>((resolve) => echo.listen(0, '127.0.0.1', resolve))
+    const echoPort = (echo.address() as { port: number }).port
+    const token = gate.register((host, target) => ({ allowed: host === 'localhost' && target === echoPort, reason: 'o eco', pattern: `localhost:${echoPort}` }))
+    try {
+      const ok = await socksThrough(port, 'localhost', echoPort, token)
+      assert.deepStrictEqual(ok.steps.slice(0, 2), [
+        [5, 2],
+        [1, 0],
+      ])
+      assert.strictEqual(ok.steps[2]![1], 0x00, 'conectou')
+      const echoed = await new Promise<string>((resolve) => {
+        ok.socket!.once('data', (chunk) => resolve(chunk.toString('utf8')))
+        ok.socket!.write('oi')
+      })
+      ok.socket!.destroy()
+      assert.strictEqual(echoed, 'oi')
+
+      // ⛔ O destino que a regra nega: "não permitido" (0x02); o token desconhecido não passa da senha; sem usuário e senha, nada.
+      assert.strictEqual((await socksThrough(port, 'localhost', echoPort + 1, token)).steps[2]?.[1], 0x02)
+      assert.deepStrictEqual((await socksThrough(port, 'localhost', echoPort, 'token-que-nao-existe')).steps[1], [1, 1])
+      assert.deepStrictEqual((await socksThrough(port, 'localhost', echoPort, token, [0x00])).steps[0], [5, 0xff])
+      // O HTTP continua na mesma porta.
+      assert.match(await connectThrough(port, `localhost:${echoPort}`, token), /^HTTP\/1\.1 200/)
+    } finally {
+      gate.release(token)
+      echo.close()
+    }
   })
 
   it('classifica o endereço resolvido', () => {
