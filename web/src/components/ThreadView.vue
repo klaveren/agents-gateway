@@ -580,6 +580,7 @@
       :commands="commands"
       :queued="thread.queued"
       :restore="thread.leftover"
+      :draft-key="thread.sessionId"
       @send="send"
       @stop="thread.stop"
       @restored="thread.leftover = undefined"
