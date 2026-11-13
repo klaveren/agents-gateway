@@ -1066,6 +1066,19 @@ describe('AgentController', () => {
         assert.strictEqual((await withRules({ agentId: 'pesquisa-teste', model: 'gemini-3.6-flash' })).locals.statusCode, 200)
       })
 
+      it('⛔ modelo de sugestão: os dois juntos, com chave de API (não assinatura); "nenhum" tira; o válido grava', async () => {
+        for (const body of [{ suggestProvider: 'openai', suggestModel: 'gpt-5.6-sol' }, { suggestProvider: 'codex', suggestModel: 'gpt-6.1-sol' }, { suggestProvider: 'google' }]) {
+          const { locals, settings } = await withRules(body)
+          assert.strictEqual(locals.statusCode, 422, JSON.stringify(body))
+          assert.deepStrictEqual(await settings.read(), { audience: 'all' }, 'nada é gravado')
+        }
+        const { locals, settings } = await withRules({ suggestProvider: 'google', suggestModel: 'gemini-3.6-flash' })
+        assert.strictEqual(locals.statusCode, 200)
+        assert.deepStrictEqual([(await settings.read()).suggestProvider, (await settings.read()).suggestModel], ['google', 'gemini-3.6-flash'])
+        assert.strictEqual((await withRules({ suggestProvider: null, suggestModel: null }, settings)).locals.statusCode, 200)
+        assert.strictEqual((await settings.read()).suggestModel, undefined)
+      })
+
       it('grupos de modelos: provedor que não existe, padrão que não é grupo e id repetido são 422; o válido grava', async () => {
         const group = { id: 'padrao', name: 'Padrão', steps: [{ provider: 'google', model: 'gemini-3.6-flash' }] }
         for (const body of [

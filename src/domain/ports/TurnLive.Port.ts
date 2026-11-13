@@ -7,7 +7,12 @@ export interface ILiveTurnSnapshot {
   events: IAgentEvent[]
 }
 
-export type TLiveTurnSignal = { type: 'turn.started'; turn: ILiveTurnSnapshot } | { type: 'turn.event'; event: IAgentEvent } | { type: 'turn.finished' }
+export type TLiveTurnSignal =
+  | { type: 'turn.started'; turn: ILiveTurnSnapshot }
+  | { type: 'turn.event'; event: IAgentEvent }
+  | { type: 'turn.finished' }
+  /** A sugestão de próximo passo do turno `index`, que chega depois do fim dele (ver `INextStepSuggester`). */
+  | { type: 'turn.suggestion'; index: number; text: string }
 
 /**
  * O TURNO AO VIVO, por conversa: venha da tela, da API, de um agendamento ou de uma delegação, quem abre a conversa
@@ -20,6 +25,8 @@ export interface ITurnLive {
   start(sessionId: string, request: string, metadata?: Record<string, unknown>): number
   push(sessionId: string, event: IAgentEvent): void
   finish(sessionId: string, ticket: number): void
+  /** A sugestão de próximo passo do turno já gravado: para quem está com a conversa aberta. */
+  suggest?(sessionId: string, index: number, text: string): void
   snapshot(sessionId: string): ILiveTurnSnapshot | undefined
   /** Devolve quem cancela a assinatura. */
   subscribe(sessionId: string, listener: (signal: TLiveTurnSignal) => void): () => void

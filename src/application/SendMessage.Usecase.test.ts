@@ -676,5 +676,33 @@ describe('SendMessageUseCase', () => {
       assert.strictEqual(repository.turns.length, 1)
       assert.deepStrictEqual(repository.labels, [])
     })
+
+    it('⚖️ a sugestão de próximo passo: só no turno mandado pela tela, gravada no turno e avisada a quem está com a conversa aberta', async () => {
+      const repository = new LabelingRepository()
+      const suggested: Array<{ index: number; text: string }> = []
+      Object.assign(repository, { suggestTurn: async (_sessionId: string, index: number, text: string) => void suggested.push({ index, text }) })
+      const live = new TurnLive({ publish: () => undefined, subscribe: () => () => undefined })
+      const signals: TLiveTurnSignal[] = []
+      live.subscribe('s', (signal) => signals.push(signal))
+      const seen: unknown[] = []
+      const suggester = { suggest: async (input: unknown) => (seen.push(input), 'Pode seguir') }
+      const run = async (input: { text: string; suggestNext?: boolean }) => {
+        const done = repository.recorded()
+        for await (const _ of new SendMessageUseCase(talking(), repository, undefined, undefined, live, undefined, suggester).execute('s', input)) void _
+        await done
+        await settle()
+      }
+
+      await run({ text: 'de uma tarefa' })
+      assert.deepStrictEqual([seen, suggested], [[], []], 'turno sem a pessoa na tela: nenhuma chamada')
+
+      await run({ text: 'minha pergunta', suggestNext: true })
+      assert.deepStrictEqual(seen, [{ request: 'minha pergunta', answer: 'resposta' }])
+      assert.deepStrictEqual(suggested, [{ index: 3, text: 'Pode seguir' }])
+      assert.deepStrictEqual(
+        signals.filter((signal) => signal.type === 'turn.suggestion'),
+        [{ type: 'turn.suggestion', index: 3, text: 'Pode seguir' }],
+      )
+    })
   })
 })

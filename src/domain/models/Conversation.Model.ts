@@ -140,6 +140,8 @@ export interface IConversationTurn {
   error?: string
   /** Como este turno foi rotulado. Ausente enquanto ninguém classificou (ou a classificação falhou). */
   classification?: TClassification
+  /** A próxima mensagem provável da pessoa (ver `INextStepSuggester`), gravada depois do turno. Ausente = sem sugestão. */
+  suggestion?: string
 }
 
 /**

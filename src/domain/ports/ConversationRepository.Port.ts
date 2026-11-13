@@ -80,6 +80,9 @@ export interface IConversationRepository {
    */
   classifyTurn(sessionId: string, index: number, classification: TClassification): Promise<void>
 
+  /** Grava a sugestão de próximo passo no turno JÁ GRAVADO (ver `INextStepSuggester`). Ausente: a sugestão não fica. */
+  suggestTurn?(sessionId: string, index: number, suggestion: string): Promise<void>
+
   /**
    * Conversas mais recentes primeiro. `filter` casa contra `metadata`.
    *

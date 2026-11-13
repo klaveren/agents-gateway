@@ -4,13 +4,18 @@ import Composer from './Composer.vue'
 
 let app: App | undefined
 
-async function mount(key: { value: string | undefined }, sent: string[] = []) {
+async function mount(key: { value: string | undefined }, sent: string[] = [], suggestion?: string) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const draftKey = ref(key.value)
   app = createApp({
     render: () =>
-      h(Composer, { sending: false, draftKey: draftKey.value, onSend: (text: string, _files: unknown, settle: (ok: boolean) => void) => (sent.push(text), settle(true)) }),
+      h(Composer, {
+        sending: false,
+        draftKey: draftKey.value,
+        suggestion,
+        onSend: (text: string, _files: unknown, settle: (ok: boolean) => void) => (sent.push(text), settle(true)),
+      }),
   })
   app.mount(host)
   await nextTick()
@@ -63,5 +68,28 @@ describe('Composer — o rascunho de cada conversa', () => {
     const { area } = await mount({ value: undefined })
     await type(area(), 'solto')
     expect(localStorage.length).toBe(0)
+  })
+})
+
+describe('Composer — a sugestão de próximo passo', () => {
+  it('com a caixa vazia, aparece no lugar do texto de exemplo; Tab a põe na caixa; digitou, ela some', async () => {
+    const { area } = await mount({ value: 'C' }, [], 'Pode seguir com o varejonline')
+    expect(area().placeholder).toContain('Pode seguir com o varejonline')
+    expect(area().placeholder).toContain('Tab')
+    area().dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', cancelable: true }))
+    await nextTick()
+    expect(area().value).toBe('Pode seguir com o varejonline')
+    await type(area(), 'outra coisa')
+    expect(area().placeholder).not.toContain('Pode seguir')
+  })
+
+  it('no celular vira um botão acima da caixa', async () => {
+    window.matchMedia = (() => ({ matches: true, addEventListener: () => undefined, removeEventListener: () => undefined })) as never
+    const { host, area } = await mount({ value: 'D' }, [], 'Rode os testes')
+    const button = host.querySelector<HTMLButtonElement>('[data-test="composer-suggestion"]')!
+    expect(button.textContent).toContain('Rode os testes')
+    button.click()
+    await nextTick()
+    expect(area().value).toBe('Rode os testes')
   })
 })

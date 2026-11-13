@@ -452,6 +452,21 @@ describe('SqliteConversationRepository', () => {
 describe('SqliteConversationRepository — monitor, rótulos e compartilhamento', () => {
   const owner = (id: string, extra: Record<string, string> = {}) => ({ owner: { id, ...extra } })
 
+  describe('suggestTurn', () => {
+    it('grava a sugestão no turno, e a leitura do turno (a lista e a janela) a devolve; a conversa não ganha campo', async () => {
+      const repo = repository()
+      await repo.saveSession(session({ turns: 2 }))
+      for (const index of [0, 1]) await repo.appendTurn(turn({ index }))
+      await repo.suggestTurn('s1', 1, 'Pode seguir')
+      assert.deepStrictEqual(
+        (await repo.listTurns('s1')).map((stored) => stored.suggestion),
+        [undefined, 'Pode seguir'],
+      )
+      assert.strictEqual((await repo.listTurnsPage('s1', { limit: 1 })).turns[0]?.suggestion, 'Pode seguir')
+      assert.strictEqual('suggestion' in ((await repo.findSession('s1')) ?? {}), false)
+    })
+  })
+
   describe('classifyTurn', () => {
     it('grava o rótulo no turno e a conversa fica com o PIOR entre os turnos', async () => {
       const repo = repository()

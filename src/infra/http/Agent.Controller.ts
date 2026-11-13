@@ -100,6 +100,8 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { normalizeTags } from '@domain/Tag.Policy'
 import { SseStream } from './Sse.Stream'
 import { NextFunction, Request, Response } from 'express'
+import { viaAccessToken } from './Auth.Controller'
+import { viaSessionCookie } from './Session.Cookie'
 
 /**
  * As tools LOCAIS que um agente PODE receber — o perímetro, decidido no deploy.
@@ -456,6 +458,8 @@ export class AgentController {
     model?: string | null
     classifierModel?: string | null
     classifierProvider?: string | null
+    suggestProvider?: string | null
+    suggestModel?: string | null
     builderProvider?: string | null
     builderModel?: string | null
     modelGroups?: IModelGroup[] | null
@@ -514,6 +518,20 @@ export class AgentController {
       !this.usecases.models.isEnabled(classifierProvider, classifierModel)
     ) {
       issues.push({ field: 'classifierModel', message: `${classifierModel} is not enabled in ${classifierProvider}` })
+    }
+
+    // A sugestão de próximo passo: os dois juntos (ou nenhum = sem sugestão), com chave de API, como o classificador.
+    const suggestProvider = body.suggestProvider === undefined ? current.suggestProvider : body.suggestProvider || undefined
+    const suggestModel = body.suggestModel === undefined ? current.suggestModel : body.suggestModel || undefined
+    if (body.suggestProvider !== undefined || body.suggestModel !== undefined) {
+      const suggester = suggestProvider ? this.usecases.providers?.connection(suggestProvider) : undefined
+      if (!!suggestProvider !== !!suggestModel) issues.push({ field: 'suggestModel', message: 'choose the provider and the model together (or neither: no suggestion)' })
+      else if (suggestProvider && this.usecases.providers && !suggester) issues.push({ field: 'suggestProvider', message: `${suggestProvider} is disabled or does not exist` })
+      else if (suggester && isSubscription(suggester.protocol))
+        issues.push({ field: 'suggestProvider', message: `${suggester.providerId} is a subscription: the suggestion needs an API key` })
+      else if (suggester && !suggester.key) issues.push({ field: 'suggestProvider', message: `${suggester.providerId} has no API key` })
+      else if (suggestProvider && suggestModel && this.usecases.models && !this.usecases.models.isEnabled(suggestProvider, suggestModel))
+        issues.push({ field: 'suggestModel', message: `${suggestModel} is not enabled in ${suggestProvider}` })
     }
 
     // O construtor: os dois juntos, provider ligado e modelo ativado nele (ou nenhum dos dois = o do Atlas).
@@ -1653,6 +1671,7 @@ export class AgentController {
       live?.subscribe(sessionId, (signal) => {
         if (signal.type === 'turn.started') emit(signal.type, { turn: signal.turn })
         else if (signal.type === 'turn.event') emit(signal.type, { event: signal.event })
+        else if (signal.type === 'turn.suggestion') emit(signal.type, { index: signal.index, text: signal.text })
         else emit(signal.type, {})
       }) ?? (() => undefined)
     const current = live?.snapshot(sessionId)
@@ -2085,7 +2104,7 @@ export class AgentController {
 
     let input: IMessageInput
     try {
-      input = await this.turnInput(sessionId, resolved, body)
+      input = { ...(await this.turnInput(sessionId, resolved, body)), ...(fromScreen(res) ? { suggestNext: true } : {}) }
     } catch (error: unknown) {
       return this.refused(res, error, req, sessionId)
     }
@@ -2153,7 +2172,7 @@ export class AgentController {
         const resolved = await this.requireOwnedSession(sessionId, { resume: true })
         const body = parseBody(sendMessageSchema, req.body)
         const session = await this.usecases.getSession.execute(sessionId)
-        const input = await this.turnInput(sessionId, resolved, body)
+        const input = { ...(await this.turnInput(sessionId, resolved, body)), ...(fromScreen(res) ? { suggestNext: true } : {}) }
         const position = body.whileBusy === 'queue' ? this.queue(sessionId, body, input) : undefined
         if (position !== undefined) return { conversationId: sessionId, turn: this.liveTurns.get(sessionId)?.turn ?? session.turns - 1, status: 'queued' as const, position }
         const url = session.metadata?.[CALLBACK_METADATA_KEY]
@@ -2647,4 +2666,9 @@ function turnWindowOf(query: Request['query']): ITurnWindow | undefined {
   const after = int(query.after, -1, Number.MAX_SAFE_INTEGER)
   if (limit === undefined && before === undefined && after === undefined) return undefined
   return { ...(limit !== undefined ? { limit } : {}), ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) }
+}
+
+/** A pessoa na tela (o cookie de sessão, não um token de acesso de integração): é quem recebe a sugestão de próximo passo. */
+function fromScreen(res: Response): boolean {
+  return !!res.locals && viaSessionCookie(res) && !viaAccessToken(res)
 }

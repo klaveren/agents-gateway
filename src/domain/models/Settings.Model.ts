@@ -68,6 +68,14 @@ export interface IAgentSettings {
   classifyTurns?: boolean
 
   /**
+   * O modelo da SUGESTÃO DE PRÓXIMO PASSO (ver `ConfiguredNextStepSuggester`): ao fim do turno que a pessoa mandou pela tela,
+   * uma frase com a mensagem que ela provavelmente mandaria em seguida. Lidos A CADA TURNO; os dois juntos, provider com chave
+   * de API e modelo ativado. Ausentes = sem sugestão.
+   */
+  suggestProvider?: string
+  suggestModel?: string
+
+  /**
    * O provider e o modelo do CONSTRUTOR (o agente do core que redige skills e commands, ver `Builder.Agents`).
    * Ausentes = os do Atlas. ⚖️ É o único botão sobre ele: o resto é do core.
    */
@@ -139,6 +147,8 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
     classifierModel: text(stored.classifierModel),
     classifierProvider: text(stored.classifierProvider),
     classifyTurns: typeof stored.classifyTurns === 'boolean' ? stored.classifyTurns : undefined,
+    suggestProvider: text(stored.suggestProvider),
+    suggestModel: text(stored.suggestModel),
     builderProvider: text(stored.builderProvider),
     builderModel: text(stored.builderModel),
     limits: normalizeLimits(stored.limits),
@@ -204,6 +214,8 @@ const EDITABLE = [
   'classifierModel',
   'classifierProvider',
   'classifyTurns',
+  'suggestProvider',
+  'suggestModel',
   'builderProvider',
   'builderModel',
   'limits',

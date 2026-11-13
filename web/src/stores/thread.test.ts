@@ -645,3 +645,23 @@ describe('a janela de turnos', () => {
     expect(thread.hasOlder).toBe(false)
   })
 })
+
+describe('a sugestão de próximo passo', () => {
+  it('chega ao vivo depois do turno e vale só para o último; a gravada vem com o histórico', async () => {
+    let live: ((frame: never) => void) | undefined
+    vi.spyOn(useConversationsStore(), 'onTurn').mockImplementation(((handler: (frame: never) => void) => ((live = handler), () => undefined)) as never)
+    routes({ '/conversations/A/turns': () => ({ turns: [{ sessionId: 'A', index: 0, at: '', request: 'p', text: 'r', toolCalls: [] }] }) })
+    const thread = useThreadStore()
+    await thread.open('A')
+    expect(thread.nextSuggestion).toBeUndefined()
+    // A de um turno que não é o último não vale.
+    live!({ type: 'turn.suggestion', sessionId: 'A', index: 7, text: 'velha' } as never)
+    expect(thread.nextSuggestion).toBeUndefined()
+    live!({ type: 'turn.suggestion', sessionId: 'A', index: 0, text: 'Pode seguir' } as never)
+    expect(thread.nextSuggestion).toBe('Pode seguir')
+
+    routes({ '/conversations/B/turns': () => ({ turns: [{ sessionId: 'B', index: 0, at: '', request: 'p', text: 'r', toolCalls: [], suggestion: 'Gravada' }] }) })
+    await thread.open('B')
+    expect(thread.nextSuggestion).toBe('Gravada')
+  })
+})

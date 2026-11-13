@@ -86,6 +86,8 @@ export interface ITurn {
   aborted?: boolean
   error?: string
   classification?: TClassification
+  /** A próxima mensagem provável da pessoa (o modelo de sugestão), que chega segundos depois do turno. */
+  suggestion?: string
   costUsd?: number
 }
 
@@ -372,6 +374,9 @@ export interface ISettings {
   model?: string
   classifierModel?: string
   classifierProvider?: string
+  /** O modelo da sugestão de próximo passo (Configuração). Ausentes = sem sugestão. */
+  suggestProvider?: string
+  suggestModel?: string
   /** O provider e o modelo do construtor (agente do core). Ausentes = os do Atlas. */
   builderProvider?: string
   builderModel?: string

@@ -581,6 +581,7 @@
       :queued="thread.queued"
       :restore="thread.leftover"
       :draft-key="thread.sessionId"
+      :suggestion="thread.nextSuggestion"
       @send="send"
       @stop="thread.stop"
       @restored="thread.leftover = undefined"
