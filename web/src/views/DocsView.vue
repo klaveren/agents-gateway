@@ -405,7 +405,7 @@ function onInvalid(event: Event) {
       <header class="flex items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">{{ info.title }}</h1>
         <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(shown.length, ofKind.length) }}</span>
-        <RouterLink v-if="!connections.originOf(projects.current)" :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`${g.nova} ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <RouterLink v-if="!connections.originOf(projects.current)" :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`${g.nova} ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs :kind="kind" active="list" class="px-3 pb-2" />
       <!-- ⚖️ Sem seletor de projeto aqui: a lista segue o projeto escolhido no topo (e traz os globais junto). -->

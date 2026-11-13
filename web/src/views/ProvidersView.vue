@@ -181,7 +181,7 @@ function sourceLabel(provider: IProviderStatus): string {
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">Modelos</h1>
         <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(shownProviders.length, providers.list.length) }}</span>
-        <RouterLink to="/models/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar provedor"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <RouterLink to="/models/new" class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar provedor"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Provedores oficiais e APIs compatíveis com OpenAI ou Anthropic.</p>
       <ListFilter v-model:query="query" placeholder="Buscar provedor…" />

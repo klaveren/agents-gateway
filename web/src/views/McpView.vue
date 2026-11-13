@@ -463,7 +463,7 @@ import { computed, onMounted, ref, watch } from 'vue'
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">MCPs</h1>
         <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(listed.length, inScope.length) }}</span>
-        <RouterLink to="/mcp/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar MCP">
+        <RouterLink to="/mcp/new" class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar MCP">
           <Icon name="plus" class="h-5 w-5" />
         </RouterLink>
       </header>

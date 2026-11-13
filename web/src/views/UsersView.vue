@@ -185,7 +185,7 @@ async function doReset() {
       <header class="flex items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">Usuários</h1>
         <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(shownUsers.length, users.list.length) }}</span>
-        <RouterLink to="/users/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo usuário"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <RouterLink to="/users/new" class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo usuário"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <ListFilter v-model:query="query" placeholder="Buscar por nome ou e-mail…" />
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
