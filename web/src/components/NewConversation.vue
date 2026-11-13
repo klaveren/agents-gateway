@@ -213,6 +213,14 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
       </div>
     </div>
 
-    <Composer :sending="thread.sending" :disabled="!agent" :commands="commands" :placeholder="agent ? `Mensagem para ${agent.name}` : 'Escolha um agente'" @send="send" @stop="thread.stop" />
+    <Composer
+      :sending="thread.sending"
+      :disabled="!agent"
+      :commands="commands"
+      :placeholder="agent ? `Mensagem para ${agent.name}` : 'Escolha um agente'"
+      draft-key="new"
+      @send="send"
+      @stop="thread.stop"
+    />
   </section>
 </template>

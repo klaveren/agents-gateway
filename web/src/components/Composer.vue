@@ -7,8 +7,9 @@
   /**
    * `sending`: um turno roda — a mensagem vai para a FILA dele (entra no mesmo turno). `queued`: as que esperam.
    * `restore`: o que estava na fila quando o turno parou, de volta para a caixa.
+   * `draftKey`: de quem é o rascunho (a conversa): o que se digita fica guardado neste navegador e volta ao reabrir.
    */
-  const props = defineProps<{ sending: boolean; disabled?: boolean; placeholder?: string; commands?: ICommandHint[]; queued?: string[]; restore?: string }>()
+  const props = defineProps<{ sending: boolean; disabled?: boolean; placeholder?: string; commands?: ICommandHint[]; queued?: string[]; restore?: string; draftKey?: string }>()
   /** `settle(false)`: o envio falhou — o texto e os anexos voltam para a caixa. */
   const emit = defineEmits<{ send: [text: string, files: IOutgoingFile[], settle: (ok: boolean) => void]; stop: []; restored: [] }>()
 
@@ -27,6 +28,39 @@
   narrowQuery?.addEventListener('change', onNarrow)
   onBeforeUnmount(() => narrowQuery?.removeEventListener('change', onNarrow))
   const shownPlaceholder = computed(() => (narrow.value || !props.placeholder ? 'Mensagem' : props.placeholder))
+
+  /**
+   * ⚖️ O RASCUNHO NÃO SE PERDE: o texto digitado fica guardado neste navegador, por conversa — trocou de tela e voltou, ele está
+   * ali. Enviar limpa. É só conveniência de quem digita: o navegador que não guarda (aba anônima, bloqueio) segue sem ele.
+   */
+  const DRAFT_PREFIX = 'gw-draft:'
+  function readDraft(key: string): string {
+    try {
+      return localStorage.getItem(DRAFT_PREFIX + key) ?? ''
+    } catch {
+      return ''
+    }
+  }
+  function writeDraft(key: string, value: string): void {
+    try {
+      if (value) localStorage.setItem(DRAFT_PREFIX + key, value)
+      else localStorage.removeItem(DRAFT_PREFIX + key)
+    } catch {
+      // Sem o armazenamento do navegador, o rascunho só não sobrevive à troca de tela.
+    }
+  }
+  watch(
+    () => props.draftKey,
+    (key) => {
+      if (!key) return
+      text.value = readDraft(key)
+      void nextTick(grow)
+    },
+    { immediate: true },
+  )
+  watch(text, (value) => {
+    if (props.draftKey) writeDraft(props.draftKey, value)
+  })
 
   /** O conteúdo vai em base64 (`files[].data`), como a API espera. */
   async function attach(event: Event) {
