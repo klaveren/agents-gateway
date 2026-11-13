@@ -23,7 +23,7 @@ import {
 import { IUsageQuery, IUsageRow, metadataKeyIssue } from '@domain/models/Usage.Model'
 import { IStoredToolCall, IToolUsage, sumToolUsage, toolUsageOfTurn } from '@domain/models/ToolUsage.Model'
 import { BUILDER_METADATA_KEY } from '@domain/Builder.Agents'
-import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
+import { IConversationRepository, ITurnWindow } from '@domain/ports/ConversationRepository.Port'
 
 /**
  * Onde o arquivo fica quando ninguém escolheu. Relativo ao processo, como o resto da configuração.
@@ -650,6 +650,31 @@ export class SqliteConversationRepository implements IConversationRepository {
 
         return rows.map((row) => this.toTurn(row))
       }) ?? []
+    )
+  }
+
+  /**
+   * A janela dos turnos no banco (ver `ITurnWindow`): os `limit` mais recentes antes de `before`, ou os depois de `after`. Lê só
+   * o que a tela vai mostrar — a conversa longa não traz o histórico inteiro a cada abertura.
+   */
+  async listTurnsPage(sessionId: string, window: ITurnWindow): Promise<{ turns: IConversationTurn[]; hasMore: boolean }> {
+    return (
+      this.guard('listTurnsPage', () => {
+        const alive = 'conversation_id = ? AND NOT EXISTS (SELECT 1 FROM conversations WHERE id = ? AND deleted_at IS NOT NULL)'
+        if (window.after !== undefined) {
+          const rows = this.db.prepare(`SELECT * FROM conversation_turns WHERE ${alive} AND idx > ? ORDER BY idx ASC`).all(sessionId, sessionId, window.after) as TRow[]
+          const earlier = this.db.prepare(`SELECT 1 FROM conversation_turns WHERE ${alive} AND idx <= ? LIMIT 1`).get(sessionId, sessionId, window.after)
+          return { turns: rows.map((row) => this.toTurn(row)), hasMore: !!earlier }
+        }
+        const before = window.before ?? Number.MAX_SAFE_INTEGER
+        const limit = window.limit ?? -1
+        // Um a mais: diz se há turno antes do primeiro devolvido.
+        const rows = this.db
+          .prepare(`SELECT * FROM conversation_turns WHERE ${alive} AND idx < ? ORDER BY idx DESC LIMIT ?`)
+          .all(sessionId, sessionId, before, limit < 0 ? -1 : limit + 1) as TRow[]
+        const hasMore = limit >= 0 && rows.length > limit
+        return { turns: (hasMore ? rows.slice(0, limit) : rows).reverse().map((row) => this.toTurn(row)), hasMore }
+      }) ?? { turns: [], hasMore: false }
     )
   }
 

@@ -1105,7 +1105,7 @@ describe('ImportView', () => {
     desk.querySelector<HTMLButtonElement>('[data-test="import-draft-conversation"]')!.click()
     await flush()
     expect(document.querySelector('[data-test="desk-drawer"]')).not.toBeNull()
-    expect(useThreadStore().open).toHaveBeenCalledWith('conv-s')
+    expect(useThreadStore().open).toHaveBeenCalledWith('conv-s', undefined, { all: true })
     document.querySelector<HTMLButtonElement>('[data-test="desk-drawer-close"]')!.click()
     await flush()
     expect(document.querySelector('[data-test="desk-drawer"]')).toBeNull()

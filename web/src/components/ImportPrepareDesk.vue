@@ -160,7 +160,7 @@ async function startAll() {
 
 const opened = computed(() => runs.value.find((run) => run.conversationId === drawer.value))
 watch(drawer, (id) => {
-  if (id && thread.sessionId !== id) void thread.open(id)
+  if (id && thread.sessionId !== id) void thread.open(id, undefined, { all: true })
 })
 const RUN_LABEL: Record<NonNullable<IImportBatchRun['run']>['state'], string> = { queued: 'na fila', running: 'trabalhando', ok: 'terminou', error: 'erro', aborted: 'interrompida' }
 </script>

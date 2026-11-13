@@ -25,6 +25,24 @@ import {
  * é o que aconteceria se um `await` de escrita lançasse no meio do stream. A única exceção é `setShared`,
  * que nunca roda dentro de um turno (ver abaixo).
  */
+/** A janela de turnos (ver `listTurnsPage`): `limit` sem `after` = os mais recentes (antes de `before`, se vier). */
+export interface ITurnWindow {
+  limit?: number
+  before?: number
+  after?: number
+}
+
+/** A janela sobre a lista inteira (o que o repositório sem `listTurnsPage` faz, e a regra que o do banco segue). */
+export function turnWindow<T extends { index: number }>(all: readonly T[], window: ITurnWindow): { turns: T[]; hasMore: boolean } {
+  if (window.after !== undefined) {
+    const turns = all.filter((turn) => turn.index > window.after!)
+    return { turns, hasMore: all.some((turn) => turn.index <= window.after!) }
+  }
+  const older = window.before === undefined ? [...all] : all.filter((turn) => turn.index < window.before!)
+  const turns = window.limit === undefined ? older : older.slice(Math.max(0, older.length - window.limit))
+  return { turns, hasMore: older.length > turns.length }
+}
+
 export interface IConversationRepository {
   /** Cria ou atualiza o cabeçalho da conversa. */
   saveSession(session: IConversationSession): Promise<void>
@@ -93,6 +111,13 @@ export interface IConversationRepository {
 
   /** Os turnos de uma conversa, em ordem. É isto que reabre o histórico. */
   listTurns(sessionId: string): Promise<IConversationTurn[]>
+
+  /**
+   * Uma JANELA dos turnos, em ordem: os `limit` mais recentes antes de `before` (o índice), ou os depois de `after`. É o que a
+   * tela carrega aos poucos (os recentes primeiro, os antigos ao rolar). `hasMore`: há turno antes do primeiro devolvido.
+   * Ausente: quem lê usa `listTurns` e recorta.
+   */
+  listTurnsPage?(sessionId: string, window: ITurnWindow): Promise<{ turns: IConversationTurn[]; hasMore: boolean }>
 
   /**
    * O cabeçalho de UMA conversa. Existe para responder "de quem é isto?" antes de entregar o

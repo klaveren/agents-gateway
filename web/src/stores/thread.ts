@@ -102,6 +102,12 @@ const messageOf = (failure: unknown): string => {
  * sobrevive ao restart; a sessão não. Sem sessão viva a conversa abre só para leitura — o provider
  * já esqueceu o contexto, e mandar mensagem "nela" seria conversar com um estado que não existe.
  */
+/** Quantos turnos a conversa abre (os mais recentes) e quantos cada rolagem para cima traz. */
+export const TURN_PAGE = 5
+
+/** O histórico gravado como a rota devolve (com janela, `hasMore` diz se há turno antes do primeiro). */
+type THistory = { agentId?: string; conversation?: IConversation; turns: ITurn[]; hasMore?: boolean }
+
 export const useThreadStore = defineStore('thread', () => {
   const sessionId = ref<string>()
   const header = ref<IConversation>()
@@ -109,6 +115,15 @@ export const useThreadStore = defineStore('thread', () => {
   const agentId = ref<string>()
   const turns = ref<ITurn[]>([])
   const loading = ref(false)
+  /**
+   * ⚖️ A JANELA: a conversa abre com os `TURN_PAGE` turnos mais recentes e traz os anteriores ao rolar para cima
+   * (`loadOlder`). `windowed: false` (o construtor, que procura rascunhos na conversa inteira) carrega tudo.
+   */
+  const windowed = ref(true)
+  const hasOlder = ref(false)
+  const loadingOlder = ref(false)
+  /** O índice do próximo turno: o do último carregado + 1 (com janela, o tamanho da lista não é o índice). */
+  const nextIndex = () => (turns.value.at(-1)?.index ?? -1) + 1
   const error = ref<string>()
   /** `undefined` enquanto pergunta ao gateway. */
   const liveSession = ref<boolean>()
@@ -157,7 +172,7 @@ export const useThreadStore = defineStore('thread', () => {
     return ++generation
   }
 
-  async function open(id: string, known?: IConversation): Promise<void> {
+  async function open(id: string, known?: IConversation, options: { all?: boolean } = {}): Promise<void> {
     const current = leave()
     sessionId.value = id
     header.value = known
@@ -165,6 +180,8 @@ export const useThreadStore = defineStore('thread', () => {
     draft.value = undefined
     pending.value = undefined
     turns.value = []
+    windowed.value = !options.all
+    hasOlder.value = false
     todos.value = []
     watches.value = []
     liveSession.value = undefined
@@ -178,9 +195,9 @@ export const useThreadStore = defineStore('thread', () => {
       void loadTodos(id, current)
       void loadWatches(id, current)
       const [history, live] = await Promise.all([
-        api<{ agentId?: string; conversation?: IConversation; turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch((failure) => {
+        api<THistory>(`/conversations/${encodeURIComponent(id)}/turns`, windowed.value ? { query: { limit: TURN_PAGE } } : {}).catch((failure): THistory => {
           if (!isNotFound(failure)) historyFailure = messageOf(failure)
-          return { turns: [] as ITurn[] }
+          return { turns: [] }
         }),
         api<ISessionState>(`/sessions/${encodeURIComponent(id)}`).catch((failure) => {
           // ⚠️ Só o 404 diz "a sessão não existe". Rede ou 5xx não provam nada: marcar "não ativa" trancaria a conversa por um tropeço.
@@ -190,6 +207,7 @@ export const useThreadStore = defineStore('thread', () => {
       ])
       if (current !== generation) return
       turns.value = history.turns
+      hasOlder.value = history.hasMore === true
       agentId.value = 'agentId' in history ? history.agentId : undefined
       // ⚖️ A conversa fora da caixa de entrada (a delegada, a de outra pessoa) não tem cabeçalho na lista: vem com o histórico.
       if (!header.value && 'conversation' in history && history.conversation) header.value = history.conversation
@@ -213,6 +231,8 @@ export const useThreadStore = defineStore('thread', () => {
     sessionId.value = undefined
     header.value = undefined
     turns.value = []
+    hasOlder.value = false
+    windowed.value = true
     todos.value = []
     watches.value = []
     pending.value = undefined
@@ -226,12 +246,41 @@ export const useThreadStore = defineStore('thread', () => {
     if (conversation && conversation.id === sessionId.value) header.value = conversation
   }
 
-  /** Relê o histórico gravado — o turno chega ao banco um instante depois do fim do stream. */
+  /**
+   * Relê o histórico gravado — o turno chega ao banco um instante depois do fim do stream. Com janela, só a parte aberta: do
+   * primeiro turno carregado em diante (ou os mais recentes, se nada está carregado).
+   */
   async function refresh(): Promise<void> {
     const id = sessionId.value
     if (!id) return
-    const history = await api<{ turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch(() => undefined)
-    if (history && id === sessionId.value && history.turns.length >= turns.value.length) turns.value = history.turns
+    const first = turns.value[0]?.index
+    const query = !windowed.value ? undefined : first === undefined ? { limit: TURN_PAGE } : { after: first - 1 }
+    const history = await api<THistory>(`/conversations/${encodeURIComponent(id)}/turns`, query ? { query } : {}).catch(() => undefined)
+    if (history && id === sessionId.value && history.turns.length >= turns.value.length) {
+      turns.value = history.turns
+      if (windowed.value) hasOlder.value = history.hasMore === true
+    }
+  }
+
+  /** Traz os `TURN_PAGE` turnos anteriores ao primeiro carregado (a rolagem chegou ao topo). Devolve se trouxe algum. */
+  async function loadOlder(): Promise<boolean> {
+    const id = sessionId.value
+    const first = turns.value[0]?.index
+    if (!id || first === undefined || !hasOlder.value || loadingOlder.value) return false
+    const mine = generation
+    loadingOlder.value = true
+    try {
+      const history = await api<THistory>(`/conversations/${encodeURIComponent(id)}/turns`, { query: { limit: TURN_PAGE, before: first } })
+      if (mine !== generation || id !== sessionId.value) return false
+      const older = history.turns.filter((turn) => turn.index < first)
+      turns.value = [...older, ...turns.value]
+      hasOlder.value = history.hasMore === true
+      return older.length > 0
+    } catch {
+      return false
+    } finally {
+      if (mine === generation) loadingOlder.value = false
+    }
   }
 
   /**
@@ -288,7 +337,7 @@ export const useThreadStore = defineStore('thread', () => {
         error.value = turn.error
         return { ok: false }
       }
-      turns.value = [...turns.value, settled(id, turn, turns.value.length, session.value)]
+      turns.value = [...turns.value, settled(id, turn, nextIndex(), session.value)]
       // A sessão que estava encerrada foi RETOMADA pelo gateway ao receber a mensagem: volta a contar como viva. E relê o
       // provedor e o modelo: a troca de provedor (cota esgotada) pode tê-los mudado no meio do turno.
       if (liveSession.value === false) liveSession.value = true
@@ -305,14 +354,14 @@ export const useThreadStore = defineStore('thread', () => {
       const aborted = failure instanceof DOMException && failure.name === 'AbortError'
 
       if (aborted && turn) {
-        turns.value = [...turns.value, settled(sessionId.value ?? '', { ...(pending.value ?? turn), aborted: true }, turns.value.length, session.value)]
+        turns.value = [...turns.value, settled(sessionId.value ?? '', { ...(pending.value ?? turn), aborted: true }, nextIndex(), session.value)]
         ok = true
       } else if (!aborted) {
         const partial = pending.value ?? turn
         pending.value = undefined
         if (partial?.text) {
           // Já chegou resposta: o turno existe, mesmo interrompido pela falha.
-          turns.value = [...turns.value, settled(sessionId.value ?? '', partial, turns.value.length, session.value)]
+          turns.value = [...turns.value, settled(sessionId.value ?? '', partial, nextIndex(), session.value)]
           ok = true
         }
         error.value = describe(failure)
@@ -453,6 +502,8 @@ export const useThreadStore = defineStore('thread', () => {
     sessionId.value = undefined
     header.value = undefined
     turns.value = []
+    hasOlder.value = false
+    loadingOlder.value = false
     todos.value = []
     watches.value = []
     loading.value = false
@@ -560,6 +611,10 @@ export const useThreadStore = defineStore('thread', () => {
     header,
     agentId,
     turns,
+    hasOlder,
+    loadingOlder,
+    windowed,
+    loadOlder,
     todos,
     watches,
     stopWatch,

@@ -154,7 +154,16 @@ describe('send: geração', () => {
   })
 
   it('as vigias: carregam ao abrir, se releem no resultado de uma ferramenta de vigia e somem ao cancelar', async () => {
-    const armed = { id: 'w-1', kind: 'command', label: 'servidor voltar', everySeconds: 60, status: 'active', createdAt: '2026-01-01T10:00:00Z', deadlineAt: '2026-01-01T11:00:00Z', checks: 1 }
+    const armed = {
+      id: 'w-1',
+      kind: 'command',
+      label: 'servidor voltar',
+      everySeconds: 60,
+      status: 'active',
+      createdAt: '2026-01-01T10:00:00Z',
+      deadlineAt: '2026-01-01T11:00:00Z',
+      checks: 1,
+    }
     let watches: unknown[] = []
     routes({ '/sessions/A/watches': () => ({ sessionId: 'A', watches }) })
     const thread = useThreadStore()
@@ -476,7 +485,9 @@ describe('reconcileDraft', () => {
 describe('o turno ao vivo (pelo stream da caixa de entrada)', () => {
   it('o turno que outro começou aparece andando, o parar vale para ele, e no fim entra o gravado', async () => {
     let stored: unknown[] = []
-    let watches: unknown[] = [{ id: 'w-1', kind: 'timer', label: 'ticket fechar', status: 'active', createdAt: '2026-01-01T10:00:00Z', deadlineAt: '2026-01-01T10:30:00Z', checks: 0 }]
+    let watches: unknown[] = [
+      { id: 'w-1', kind: 'timer', label: 'ticket fechar', status: 'active', createdAt: '2026-01-01T10:00:00Z', deadlineAt: '2026-01-01T10:30:00Z', checks: 0 },
+    ]
     const follows: unknown[] = []
     vi.mocked(api).mockImplementation(async (path: string, request?: { body?: unknown }) => {
       if (path === '/conversations/events/s1/follow') return follows.push(request?.body) as never
@@ -560,5 +571,77 @@ describe('open: o cabeçalho da conversa fora da caixa de entrada', () => {
     const thread = useThreadStore()
     await thread.open('a', { id: 'a', title: 'Da lista' } as never)
     expect(thread.header?.title).toBe('Da lista')
+  })
+})
+
+describe('a janela de turnos', () => {
+  /** Uma conversa gravada com `total` turnos; a rota responde à janela como o servidor (`limit`, `before`, `after`). */
+  function history(total: number) {
+    const all = Array.from({ length: total }, (_, index) => ({ sessionId: 'A', index, at: '', request: `p${index}`, text: `r${index}`, toolCalls: [] }))
+    const calls: Array<Record<string, unknown> | undefined> = []
+    vi.mocked(api).mockImplementation((async (path: string, init?: { query?: Record<string, number> }) => {
+      if (path.endsWith('/turns')) {
+        calls.push(init?.query)
+        const query = init?.query ?? {}
+        if (query.after !== undefined) return { turns: all.filter((turn) => turn.index > query.after!), hasMore: query.after >= 0 }
+        const older = query.before === undefined ? all : all.filter((turn) => turn.index < query.before!)
+        const turns = query.limit === undefined ? older : older.slice(Math.max(0, older.length - query.limit))
+        return { turns, ...(query.limit !== undefined ? { hasMore: older.length > turns.length } : {}) }
+      }
+      if (path.startsWith('/sessions/')) return { model: 'm1' }
+      if (path === '/agents') return []
+      return []
+    }) as never)
+    return { all, calls }
+  }
+
+  it('abre com os 5 mais recentes; rolar traz os anteriores, de 5 em 5, até o começo', async () => {
+    const { calls } = history(12)
+    const thread = useThreadStore()
+    await thread.open('A')
+    expect(thread.turns.map((turn) => turn.index)).toEqual([7, 8, 9, 10, 11])
+    expect(thread.hasOlder).toBe(true)
+    expect(calls[0]).toEqual({ limit: 5 })
+
+    expect(await thread.loadOlder()).toBe(true)
+    expect(thread.turns.map((turn) => turn.index)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    expect(calls.at(-1)).toEqual({ limit: 5, before: 7 })
+    await thread.loadOlder()
+    expect(thread.turns[0]!.index).toBe(0)
+    expect(thread.hasOlder).toBe(false)
+    expect(await thread.loadOlder()).toBe(false)
+  })
+
+  it('o turno novo ganha o índice depois do último carregado; a releitura traz só a parte aberta', async () => {
+    const { all, calls } = history(12)
+    const thread = useThreadStore()
+    await thread.open('A')
+    const stream = channel()
+    vi.mocked(openStream).mockImplementation(async (_path, request) => {
+      stream.attach(request?.signal)
+      return new ReadableStream()
+    })
+    vi.mocked(readSse).mockImplementation(() => stream.iterate())
+    const sent = thread.send('mais uma', [])
+    await tick()
+    stream.push('text.delta', { text: 'ok' })
+    stream.end()
+    await sent
+    expect(thread.turns.at(-1)!.index).toBe(12)
+
+    all.push({ sessionId: 'A', index: 12, at: '', request: 'mais uma', text: 'ok', toolCalls: [] })
+    await thread.refresh()
+    expect(calls.at(-1)).toEqual({ after: 6 })
+    expect(thread.turns.map((turn) => turn.index)).toEqual([7, 8, 9, 10, 11, 12])
+    expect(thread.hasOlder).toBe(true)
+  })
+
+  it('o construtor abre a conversa inteira (procura o rascunho em todos os turnos)', async () => {
+    const { calls } = history(12)
+    const thread = useThreadStore()
+    await thread.open('A', undefined, { all: true })
+    expect(thread.turns).toHaveLength(12)
+    expect(calls[0]).toBeUndefined()
+    expect(thread.hasOlder).toBe(false)
   })
 })

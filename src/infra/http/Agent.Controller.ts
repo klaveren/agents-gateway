@@ -52,7 +52,7 @@ import { ICatalogEvents } from '@domain/ports/CatalogEvents.Port'
 import { IConversationEvents, TConversationEvent } from '@domain/ports/ConversationEvents.Port'
 import { ITurnLive } from '@domain/ports/TurnLive.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
-import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
+import { IConversationRepository, ITurnWindow, turnWindow } from '@domain/ports/ConversationRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
 import { drain, DRAIN_RETRY_SECONDS, fromThisHostDirectly, refuseWhenDraining } from './Drain.State'
@@ -1710,7 +1710,14 @@ export class AgentController {
         const { conversation, admin } = await this.requireConversationAccess(id)
         const view = this.viewFor(admin)
 
-        const turns = await this.usecases.conversations.listTurns(id)
+        // ⚖️ A JANELA: com `limit`, só os mais recentes (antes de `before`); com `after`, os que vieram depois. Sem nada, todos.
+        const window = turnWindowOf(req.query)
+        const page = window
+          ? this.usecases.conversations.listTurnsPage
+            ? await this.usecases.conversations.listTurnsPage(id, window)
+            : turnWindow(await this.usecases.conversations.listTurns(id), window)
+          : undefined
+        const turns = page?.turns ?? (await this.usecases.conversations.listTurns(id))
 
         // `agentId`: a tela sabe de quem é a conversa mesmo quando ela é de outro projeto que o atual (o autocompletar de `/`).
         // `conversation`: o cabeçalho (título, consumo, de quem foi delegada), para a conversa que NÃO está na caixa de
@@ -1720,6 +1727,7 @@ export class AgentController {
           agentId: conversation.agentId,
           conversation: toConversationDto(conversation, view),
           turns: turns.map((turn) => toTurnDto(turn, conversation, view)),
+          ...(page ? { hasMore: page.hasMore } : {}),
         }
       },
       { message: 'Turns listed' },
@@ -2624,4 +2632,19 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
 
 function unauthorized(): HttpError {
   return new HttpError(401, 'unauthorized', 'Missing or unverifiable caller credential')
+}
+
+/** A janela pedida na query (`limit` 1–200, `before` e `after` como índice de turno); nada pedido = a conversa inteira. */
+function turnWindowOf(query: Request['query']): ITurnWindow | undefined {
+  const int = (value: unknown, min: number, max: number) => {
+    const parsed = typeof value === 'string' && /^-?\d+$/.test(value) ? Number(value) : undefined
+    if (parsed === undefined) return undefined
+    if (parsed < min || parsed > max) throw new HttpError(422, 'validation_error', 'Query is invalid', [{ field: 'query', message: `between ${min} and ${max}` }])
+    return parsed
+  }
+  const limit = int(query.limit, 1, 200)
+  const before = int(query.before, 0, Number.MAX_SAFE_INTEGER)
+  const after = int(query.after, -1, Number.MAX_SAFE_INTEGER)
+  if (limit === undefined && before === undefined && after === undefined) return undefined
+  return { ...(limit !== undefined ? { limit } : {}), ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) }
 }

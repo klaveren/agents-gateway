@@ -6069,8 +6069,14 @@ export const OPENAPI_DOCUMENT = {
     },
     '/conversations/{id}/turns': {
       get: {
-        summary: 'The turns of a persisted conversation. The owner or an administrator; anyone else gets 404. `costUsd` and `classification` appear only for administrators',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        summary:
+          'The turns of a persisted conversation. The owner or an administrator; anyone else gets 404. `costUsd` and `classification` appear only for administrators. Without query, every turn; with `limit`, only the latest ones (before `before`), and `hasMore` says whether older turns exist; with `after`, the turns after that index',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200 }, description: 'Only the latest N turns (of those before `before`).' },
+          { name: 'before', in: 'query', schema: { type: 'integer', minimum: 0 }, description: 'Turns with an index lower than this (the older page).' },
+          { name: 'after', in: 'query', schema: { type: 'integer', minimum: -1 }, description: 'Turns with an index higher than this (what came since).' },
+        ],
         responses: {
           '200': {
             description: 'OK',
@@ -6082,12 +6088,14 @@ export const OPENAPI_DOCUMENT = {
                   agentId: { type: 'string' },
                   conversation: { type: 'object', description: 'The conversation header (title, usage, cost for admins, metadata such as `delegatedBy`), as in the list.' },
                   turns: { type: 'array', items: turnSchema },
+                  hasMore: { type: 'boolean', description: 'With `limit`/`before`/`after`: there are turns before the first one returned.' },
                 },
               }),
             ),
           },
           '401': failures['401'],
           '404': failures['404'],
+          '422': failures['422'],
         },
       },
     },

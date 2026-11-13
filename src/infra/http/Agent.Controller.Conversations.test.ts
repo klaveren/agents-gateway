@@ -431,6 +431,30 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       assert.strictEqual(turn.classification, 'red')
     })
 
+    it('⚖️ a janela: `limit` traz os mais recentes e diz se há antes; `before` a página anterior; `after` o que veio depois; sem nada, todos', async () => {
+      const { controller, conversations } = await setup()
+      for (let index = 1; index < 12; index++) await conversations.appendTurn(turnOf('a1', { index, request: `pergunta ${index}` }))
+      const page = async (query: Record<string, unknown>) =>
+        (await call(ALICE, (res) => controller.getConversationTurns(request({ params: { id: 'a1' }, query }), res))).body!.result as {
+          turns: Array<{ index: number }>
+          hasMore?: boolean
+        }
+      const indexes = (result: { turns: Array<{ index: number }> }) => result.turns.map((turn) => turn.index)
+
+      const latest = await page({ limit: '5' })
+      assert.deepStrictEqual([indexes(latest), latest.hasMore], [[7, 8, 9, 10, 11], true])
+      const older = await page({ limit: '5', before: '7' })
+      assert.deepStrictEqual([indexes(older), older.hasMore], [[2, 3, 4, 5, 6], true])
+      const first = await page({ limit: '5', before: '2' })
+      assert.deepStrictEqual([indexes(first), first.hasMore], [[0, 1], false])
+      const since = await page({ after: '9' })
+      assert.deepStrictEqual([indexes(since), since.hasMore], [[10, 11], true])
+      const all = await page({})
+      assert.deepStrictEqual([indexes(all).length, 'hasMore' in all], [12, false])
+      const invalid = await call(ALICE, (res) => controller.getConversationTurns(request({ params: { id: 'a1' }, query: { limit: '0' } }), res))
+      assert.strictEqual(invalid.status, 422)
+    })
+
     it('⛔ outro dono, id inexistente e id de conversa sem dono respondem IGUAL: 404', async () => {
       const { controller } = await setup()
 
