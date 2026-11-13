@@ -18,6 +18,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
   private var activity: String? { didSet { refreshStatusLine() } }
   /// A porta do servidor deste Mac, dita pelo `service.sh`.
   private var port: Int?
+  /// O acesso pela rede está ligado (o servidor ouve em todas as interfaces), e o endereço deste Mac na rede.
+  private var network = false
+  private var lanAddress: String?
+  /// O item "Acesso pela rede" do menu Servidor (a marca diz se está ligado).
+  private let networkItem = NSMenuItem(title: "Acesso pela rede", action: nil, keyEquivalent: "")
   /// A linha de estado do menu Servidor ("Este Mac: rodando na porta 3210").
   private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
   private let resources = Bundle.main.resourceURL!
@@ -83,10 +88,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
   }
 
   /// O `service.sh` no modo pedido (`nil`: garantir o servidor no ar): o que ele imprimiu e, quando falha, o motivo.
-  private func service(_ mode: String?, folder: String? = nil) -> (ok: Bool, printed: String, reason: String) {
+  private func service(_ mode: String?, folder: String? = nil, extra: [String] = []) -> (ok: Bool, printed: String, reason: String) {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-    process.arguments = [resources.appendingPathComponent("service.sh").path] + (mode.map { [$0] } ?? [])
+    process.arguments = [resources.appendingPathComponent("service.sh").path] + (mode.map { [$0] } ?? []) + extra
     var env = ProcessInfo.processInfo.environment
     if let folder { env["AG_DATA"] = folder }
     process.environment = env
@@ -156,8 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     DispatchQueue.global(qos: .userInitiated).async {
       let parts = self.service("status").printed.split(separator: " ")
       DispatchQueue.main.async {
-        guard parts.count == 2, let port = Int(parts[1]) else { return }
+        guard parts.count >= 2, let port = Int(parts[1]) else { return }
         self.port = port
+        self.network = parts.count >= 3 && parts[2] == "1"
+        self.lanAddress = parts.count >= 4 ? String(parts[3]) : nil
         if self.activity == nil { self.stopped = parts[0] == "stopped" }
         self.refreshStatusLine()
       }
@@ -166,7 +173,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
   private func refreshStatusLine() {
     let at = port.map { " na porta \($0)" } ?? ""
-    statusLine.title = "\(Self.localName): " + (activity.map { "\($0)…" } ?? (stopped ? "parado" : "rodando\(at)"))
+    // Com o acesso pela rede, o endereço que os outros aparelhos usam.
+    let lan = network && !stopped ? lanAddress.map { " · na rede: http://\($0):\(port ?? 3210)" } ?? " · na rede" : ""
+    statusLine.title = "\(Self.localName): " + (activity.map { "\($0)…" } ?? (stopped ? "parado" : "rodando\(at)\(lan)"))
+    networkItem.state = network ? .on : .off
     serverMenu.update()
   }
 
@@ -213,6 +223,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     confirmCut("Parar o servidor deste Mac?", button: "Parar", note: note) { self.stopService() }
   }
 
+  /**
+   * ⚖️ O ACESSO PELA REDE: ligado, o servidor deste Mac ouve em todas as interfaces e os outros aparelhos da rede abrem a tela
+   * dele pelo endereço do Mac. ⛔ A pessoa confirma sabendo do risco (a senha passa sem HTTPS) e de que o servidor reinicia.
+   */
+  @objc private func toggleNetwork(_ sender: Any?) {
+    let turningOn = !network
+    let note = turningOn
+      ? "Outros aparelhos desta rede passam a abrir o gateway pelo endereço do Mac. A senha continua exigida, mas sem HTTPS ela trafega sem criptografia: use só em rede confiável. O macOS pode pedir para permitir conexões de entrada."
+      : "O servidor volta a atender só este Mac."
+    confirmCut(turningOn ? "Liberar o acesso pela rede?" : "Fechar o acesso pela rede?", button: turningOn ? "Liberar e reiniciar" : "Fechar e reiniciar", note: note) {
+      self.activity = "reiniciando"
+      DispatchQueue.global(qos: .userInitiated).async {
+        let result = self.service("network", extra: [turningOn ? "on" : "off"])
+        DispatchQueue.main.async {
+          self.activity = nil
+          self.refreshStatus()
+          if !result.ok { self.warn("Não consegui \(turningOn ? "liberar" : "fechar") o acesso pela rede", result.reason.isEmpty ? "O servidor não subiu." : result.reason) }
+        }
+      }
+    }
+  }
+
   @objc private func restartLocal(_ sender: Any?) {
     confirmCut("Reiniciar o servidor deste Mac?", button: "Reiniciar") { self.startService(folder: nil, restart: true, reveal: self.current == Self.localId, fromMenu: true) }
   }
@@ -222,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     switch item.action {
     case #selector(startLocal(_:)): return activity == nil && stopped
     case #selector(stopLocal(_:)), #selector(restartLocal(_:)): return activity == nil && !stopped
+    case #selector(toggleNetwork(_:)): return activity == nil
     default: return true
     }
   }
@@ -407,6 +440,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
       entry.target = self
       serverMenu.addItem(entry)
     }
+    serverMenu.addItem(.separator())
+    networkItem.action = #selector(toggleNetwork(_:))
+    networkItem.target = self
+    serverMenu.addItem(networkItem)
     refreshStatusLine()
   }
 
