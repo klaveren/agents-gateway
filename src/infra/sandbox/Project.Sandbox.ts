@@ -289,7 +289,12 @@ export class ProjectSandbox implements IProjectSandbox {
     cleanLegacyScratch(place.scratchBase ?? root)
     // ⚠️ No Linux o comando roda noutro namespace de rede: o runtime põe lá dentro uma ponte (socat) em `localhost:3128`
     // que leva à porta do gateway no host. No Mac o seatbelt divide a rede com o host, e a porta é a própria.
-    const proxy = `http://${networkToken}:x@127.0.0.1:${process.platform === 'linux' ? LINUX_BRIDGE_PORT : port}`
+    const gatePort = process.platform === 'linux' ? LINUX_BRIDGE_PORT : port
+    const proxy = `http://${networkToken}:x@127.0.0.1:${gatePort}`
+    // ⚖️ O ALL_PROXY em SOCKS5, na mesma porta (ver `Network.Gate`): o cliente que só fala SOCKS (o driver do Mongo) passa direto
+    // pelo portão. Em HTTP, ele montava uma ponte numa porta local — que o cerco nega. HTTP_PROXY e HTTPS_PROXY seguem em HTTP.
+    // ⚠️ `socks5://`, não `socks5h://`: é o que o `mongosh` reconhece para usar o proxy direto (o nome segue para o portão).
+    const socks = `socks5://${networkToken}:x@127.0.0.1:${gatePort}`
     const connector = writeConnector(home)
     ensureGitProxyAuth(home)
     const scoped: Record<string, string> = {
@@ -302,10 +307,10 @@ export class ProjectSandbox implements IProjectSandbox {
       // A rede: só pela porta do gateway, com o token deste comando (quem decide é a regra do agente).
       HTTP_PROXY: proxy,
       HTTPS_PROXY: proxy,
-      ALL_PROXY: proxy,
+      ALL_PROXY: socks,
       http_proxy: proxy,
       https_proxy: proxy,
-      all_proxy: proxy,
+      all_proxy: socks,
       // O `fetch` do Node só segue o proxy com isto (Node 24+).
       NODE_USE_ENV_PROXY: '1',
       // ⚖️ Linux: o cerco tem rede PRÓPRIA (`--unshare-net`), então o loopback é do comando (o servidor que o teste sobe, o

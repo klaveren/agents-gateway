@@ -2,7 +2,7 @@ import { classifyAddress, isAlwaysBlockedKind } from '@domain/Address.Policy'
 import { randomBytes } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import { createServer, IncomingMessage, request as httpRequest, Server, ServerResponse } from 'node:http'
-import { isIP, connect, Socket } from 'node:net'
+import { isIP, connect, createServer as createTcpServer, Server as TcpServer, Socket } from 'node:net'
 import { Duplex } from 'node:stream'
 
 /** A decisão para um destino: o que as regras do agente dizem (ver `Permission.Policy`). */
@@ -24,9 +24,12 @@ export type TNetworkDecide = (host: string, port: number) => INetworkVerdict
  * (169.254.169.254). Serviço no loopback (`localhost:<porta>`) e rede local (10/8, 172.16/12, 192.168/16, fc00::/7) só
  * com regra EXATA, nunca por curinga.
  * Fala HTTP (URL absoluta) e CONNECT (HTTPS, e SSH por um auxiliar de ProxyCommand). Token desconhecido: 407.
+ * ⚖️ E SOCKS5, na MESMA porta (o primeiro byte diz o protocolo), com usuário e senha: o usuário é o token. É o que deixa o
+ * cliente que só fala SOCKS (o driver do Mongo, pelo `ALL_PROXY=socks5://…`) passar pelo portão sem abrir porta local nenhuma.
  */
 export class NetworkGate {
-  private server?: Server
+  private server?: TcpServer
+  private http?: Server
   private port?: number
   private readonly runs = new Map<string, TNetworkDecide>()
 
@@ -37,10 +40,22 @@ export class NetworkGate {
 
   async start(): Promise<number> {
     if (this.port) return this.port
-    this.server = createServer((req, res) => void this.forward(req, res).catch(() => res.destroy()))
-    this.server.on('connect', (req, socket, head) => void this.tunnel(req, socket, head).catch(() => socket.destroy()))
+    const http = createServer((req, res) => void this.forward(req, res).catch(() => res.destroy()))
+    http.on('connect', (req, socket, head) => void this.tunnel(req, socket, head).catch(() => socket.destroy()))
     // ⛔ Um cliente que cai no meio (o comando morreu, o curl desistiu) nunca derruba o gateway.
-    this.server.on('clientError', (_error, socket) => socket.destroy())
+    http.on('clientError', (_error, socket) => socket.destroy())
+    this.http = http
+    // O primeiro byte separa os dois: 0x05 é o SOCKS5; o resto vai, intacto, para o HTTP.
+    this.server = createTcpServer((socket) => {
+      socket.on('error', () => socket.destroy())
+      socket.once('data', (first: Buffer) => {
+        if (first[0] === SOCKS_VERSION) return void this.socks(socket, first).catch(() => socket.destroy())
+        socket.pause()
+        socket.unshift(first)
+        http.emit('connection', socket)
+        socket.resume()
+      })
+    })
     await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve))
     // A porta não segura o processo de pé: ela serve aos comandos, e cada comando já segura o seu.
     this.server.unref()
@@ -50,7 +65,9 @@ export class NetworkGate {
 
   stop(): void {
     this.server?.close()
+    this.http?.close()
     this.server = undefined
+    this.http = undefined
     this.port = undefined
   }
 
@@ -119,6 +136,53 @@ export class NetworkGate {
     client.on('close', () => upstream.destroy())
   }
 
+  /**
+   * ⚖️ O SOCKS5 (RFC 1928), só com usuário e senha (RFC 1929): o usuário é o token do comando, e sem ele nada passa. Só
+   * CONNECT; o destino passa pela MESMA decisão do CONNECT do HTTP (as regras, os bloqueios fixos, o endereço resolvido).
+   */
+  private async socks(socket: Socket, first: Buffer): Promise<void> {
+    const reader = new ByteReader(socket, first)
+    const deadline = setTimeout(() => socket.destroy(), SOCKS_HANDSHAKE_MS)
+    const reply = (code: number) => Buffer.from([SOCKS_VERSION, code, 0, 1, 0, 0, 0, 0, 0, 0])
+    try {
+      const [, methods] = await reader.take(2)
+      if (!(await reader.take(methods)).includes(SOCKS_USER_PASSWORD)) return void socket.end(Buffer.from([SOCKS_VERSION, 0xff]))
+      socket.write(Buffer.from([SOCKS_VERSION, SOCKS_USER_PASSWORD]))
+      const [, userLength] = await reader.take(2)
+      const token = (await reader.take(userLength)).toString('utf8')
+      const [passwordLength] = await reader.take(1)
+      await reader.take(passwordLength)
+      if (!this.runs.has(token)) return void socket.end(Buffer.from([1, 1]))
+      socket.write(Buffer.from([1, 0]))
+      const [, command, , type] = await reader.take(4)
+      let host: string
+      if (type === 1) host = [...(await reader.take(4))].join('.')
+      else if (type === 3) host = (await reader.take((await reader.take(1))[0])).toString('utf8')
+      else if (type === 4) host = ipv6Of(await reader.take(16))
+      else return void socket.end(reply(0x08))
+      const port = (await reader.take(2)).readUInt16BE(0)
+      if (command !== 1) return void socket.end(reply(0x07))
+      clearTimeout(deadline)
+      const verdict = await this.decide(token, host, port)
+      if (!verdict.allowed) {
+        // O cliente só vê "conexão não permitida": o motivo fica no log do serviço, como no CONNECT.
+        console.warn(`[portão] negado ${host}:${port}: ${verdict.reason}`)
+        return void socket.end(reply(0x02))
+      }
+      const rest = reader.release()
+      const upstream: Socket = connect(port, verdict.address!, () => {
+        socket.write(reply(0x00))
+        if (rest.length) upstream.write(rest)
+        upstream.pipe(socket)
+        socket.pipe(upstream)
+      })
+      upstream.on('error', () => (upstream.connecting ? socket.end(reply(0x05)) : socket.destroy()))
+      socket.on('close', () => upstream.destroy())
+    } finally {
+      clearTimeout(deadline)
+    }
+  }
+
   private async forward(req: IncomingMessage, res: ServerResponse): Promise<void> {
     req.on('error', () => res.destroy())
     res.on('error', () => req.destroy())
@@ -153,6 +217,59 @@ export class NetworkGate {
     res.on('close', () => upstream.destroy())
     req.pipe(upstream)
   }
+}
+
+const SOCKS_VERSION = 0x05
+const SOCKS_USER_PASSWORD = 0x02
+/** O cliente SOCKS tem este tempo para dizer quem é e aonde vai; depois, a conexão cai. */
+const SOCKS_HANDSHAKE_MS = 15_000
+
+/** Lê do socket os bytes do aperto de mão do SOCKS, na quantidade pedida, venham em quantos pedaços vierem. */
+class ByteReader {
+  private buffer: Buffer
+  private wake?: () => void
+  private closed = false
+  private readonly onData = (chunk: Buffer) => {
+    this.buffer = Buffer.concat([this.buffer, chunk])
+    this.wake?.()
+  }
+  private readonly onClose = () => {
+    this.closed = true
+    this.wake?.()
+  }
+
+  constructor(
+    private readonly socket: Socket,
+    first: Buffer,
+  ) {
+    this.buffer = first
+    socket.on('data', this.onData)
+    socket.on('close', this.onClose)
+  }
+
+  async take(count: number): Promise<Buffer> {
+    while (this.buffer.length < count) {
+      if (this.closed) throw new Error('socks: o cliente fechou no meio')
+      await new Promise<void>((resolve) => (this.wake = resolve))
+    }
+    const out = this.buffer.subarray(0, count)
+    this.buffer = this.buffer.subarray(count)
+    return out
+  }
+
+  /** Para de ler: o que sobrou já é do túnel. */
+  release(): Buffer {
+    this.socket.off('data', this.onData)
+    this.socket.off('close', this.onClose)
+    return this.buffer
+  }
+}
+
+/** Os 16 bytes de um IPv6 do SOCKS, no texto que o `connect` entende. */
+function ipv6Of(bytes: Buffer): string {
+  const groups: string[] = []
+  for (let index = 0; index < 16; index += 2) groups.push(bytes.readUInt16BE(index).toString(16))
+  return groups.join(':')
 }
 
 function tokenOf(req: IncomingMessage): string | undefined {
