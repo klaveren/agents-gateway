@@ -204,7 +204,7 @@ async function confirmRemove() {
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">Projetos</h1>
         <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(shownProjects.length, projects.list.length) }}</span>
-        <RouterLink v-if="auth.isAdmin" to="/projects/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo projeto"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <RouterLink v-if="auth.isAdmin" to="/projects/new" class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo projeto"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Cada projeto tem seus agentes, conversas e pasta.</p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>

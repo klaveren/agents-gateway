@@ -161,16 +161,13 @@ import { computed, onMounted, ref, watch } from 'vue'
   <MasterDetail v-else :open="!!id || adding" back-to="/model-groups" back-label="Sequências" :title="adding ? 'Nova sequência' : selected?.name">
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
-        <h1 class="text-xl font-semibold">Troca automática de modelo</h1>
+        <h1 class="min-w-0 truncate text-xl font-semibold">Troca de modelo</h1>
         <span class="text-sm text-zinc-500" data-test="list-count">{{ groups.length }}</span>
-        <RouterLink to="/model-groups/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Nova sequência">
+        <RouterLink to="/model-groups/new" class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Nova sequência">
           <Icon name="plus" class="h-5 w-5" />
         </RouterLink>
       </header>
-      <p class="px-4 pb-3 text-xs text-zinc-500">
-        Uma sequência é uma lista de modelos em ordem. Quando o modelo da conversa falha por um dos motivos marcados, o agente continua no próximo disponível, sem a pessoa
-        precisar fazer nada, e fica nele. A conversa aberta sem modelo escolhido já começa no primeiro. A pessoa ainda pode escolher outro modelo na conversa.
-      </p>
+      <p class="px-4 pb-3 text-xs text-zinc-500">Modelos em ordem: se o da conversa falha, o agente segue no próximo e fica nele.</p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <p v-else-if="settings.current && !groups.length" class="px-4 text-sm text-zinc-500">Nenhuma sequência ainda. Sem sequência, o agente não troca de modelo quando um falha.</p>
       <RouterLink
