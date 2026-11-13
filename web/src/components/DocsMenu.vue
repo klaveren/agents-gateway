@@ -9,8 +9,8 @@ defineProps<{ placement: 'side' | 'up'; active?: string }>()
 
 const ITEMS: IRailMenuItem[] = [
   { to: '/specs', key: 'specs', label: 'Specs', hint: 'Como algo deve ser', icon: 'doc' },
-  { to: '/adrs', key: 'adrs', label: 'ADRs', hint: 'Decisões tomadas e o porquê', icon: 'doc' },
-  { to: '/knowledge', key: 'knowledge', label: 'Conhecimento', hint: 'Estudos de um tema, com as fontes', icon: 'doc' },
+  { to: '/adrs', key: 'adrs', label: 'ADRs', hint: 'Decisões tomadas e o porquê', icon: 'check' },
+  { to: '/knowledge', key: 'knowledge', label: 'Conhecimento', hint: 'Estudos de um tema, com as fontes', icon: 'info' },
 ]
 </script>
 

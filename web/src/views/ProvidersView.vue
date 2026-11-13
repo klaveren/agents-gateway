@@ -176,10 +176,10 @@ function sourceLabel(provider: IProviderStatus): string {
     </div>
   </div>
 
-  <MasterDetail v-else :open="!!id || adding" back-to="/models" back-label="Modelos" :title="adding ? 'Novo provedor' : selected?.name">
+  <MasterDetail v-else :open="!!id || adding" back-to="/models" back-label="Provedores" :title="adding ? 'Novo provedor' : selected?.name">
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
-        <h1 class="text-xl font-semibold">Modelos</h1>
+        <h1 class="text-xl font-semibold">Provedores</h1>
         <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(shownProviders.length, providers.list.length) }}</span>
         <RouterLink to="/models/new" class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar provedor"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>

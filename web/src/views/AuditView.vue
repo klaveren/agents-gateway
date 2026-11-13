@@ -117,7 +117,7 @@
   <div class="h-full overflow-y-auto px-4 py-6">
     <div class="mx-auto flex max-w-5xl flex-col gap-4">
       <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h1 class="text-xl font-semibold">Logs</h1>
+        <h1 class="text-xl font-semibold">Logs da API</h1>
         <div class="ml-auto flex shrink-0 gap-1 rounded-full bg-zinc-900 p-1 text-sm whitespace-nowrap" role="group" aria-label="Período">
           <button
             v-for="period in PERIODS"
