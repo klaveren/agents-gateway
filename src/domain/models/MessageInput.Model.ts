@@ -32,4 +32,9 @@ export interface IMessageInput {
    * da pessoa. A próxima mensagem já começa com o resumo (ver `Compaction.Policy`).
    */
   compactOnly?: boolean
+  /**
+   * A pessoa MANDOU este turno pela tela: ao fim, a sugestão de próximo passo (ver `INextStepSuggester`). Turno de tarefa —
+   * agendamento, vigia, aviso do gateway, hook, delegação, API — não tem: ninguém está digitando.
+   */
+  suggestNext?: boolean
 }

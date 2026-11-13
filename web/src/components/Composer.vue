@@ -8,8 +8,19 @@
    * `sending`: um turno roda — a mensagem vai para a FILA dele (entra no mesmo turno). `queued`: as que esperam.
    * `restore`: o que estava na fila quando o turno parou, de volta para a caixa.
    * `draftKey`: de quem é o rascunho (a conversa): o que se digita fica guardado neste navegador e volta ao reabrir.
+   * `suggestion`: a próxima mensagem provável (o modelo de sugestão). Com a caixa vazia, aparece no lugar do texto de exemplo,
+   * e Tab (ou o toque, no celular) a põe na caixa para editar ou enviar.
    */
-  const props = defineProps<{ sending: boolean; disabled?: boolean; placeholder?: string; commands?: ICommandHint[]; queued?: string[]; restore?: string; draftKey?: string }>()
+  const props = defineProps<{
+    sending: boolean
+    disabled?: boolean
+    placeholder?: string
+    commands?: ICommandHint[]
+    queued?: string[]
+    restore?: string
+    draftKey?: string
+    suggestion?: string
+  }>()
   /** `settle(false)`: o envio falhou — o texto e os anexos voltam para a caixa. */
   const emit = defineEmits<{ send: [text: string, files: IOutgoingFile[], settle: (ok: boolean) => void]; stop: []; restored: [] }>()
 
@@ -27,7 +38,22 @@
   const onNarrow = (event: MediaQueryListEvent) => (narrow.value = event.matches)
   narrowQuery?.addEventListener('change', onNarrow)
   onBeforeUnmount(() => narrowQuery?.removeEventListener('change', onNarrow))
-  const shownPlaceholder = computed(() => (narrow.value || !props.placeholder ? 'Mensagem' : props.placeholder))
+  /** A sugestão vale com a caixa vazia: digitou, ela some (e volta se apagar). */
+  const offered = computed(() => (!text.value && !props.disabled && props.suggestion?.trim()) || undefined)
+  const shownPlaceholder = computed(() =>
+    offered.value && !narrow.value ? `${offered.value}  ·  Tab para usar` : narrow.value || !props.placeholder ? 'Mensagem' : props.placeholder,
+  )
+
+  /** Põe a sugestão na caixa, com o cursor no fim: a pessoa edita ou envia. */
+  function useSuggestion() {
+    if (!offered.value) return
+    text.value = offered.value
+    void nextTick(() => {
+      grow()
+      area.value?.focus()
+      area.value?.setSelectionRange(text.value.length, text.value.length)
+    })
+  }
 
   /**
    * ⚖️ O RASCUNHO NÃO SE PERDE: o texto digitado fica guardado neste navegador, por conversa — trocou de tela e voltou, ele está
@@ -213,6 +239,11 @@
         return
       }
     }
+    if (event.key === 'Tab' && !event.shiftKey && offered.value && !slashOpen.value) {
+      event.preventDefault()
+      useSuggestion()
+      return
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault()
       submit()
@@ -222,6 +253,17 @@
 
 <template>
   <form class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3" @submit.prevent="submit">
+    <!-- No celular não há Tab: a sugestão vira um botão acima da caixa. -->
+    <button
+      v-if="offered && narrow"
+      type="button"
+      class="mb-2 flex max-w-full items-center gap-1.5 truncate rounded-full border border-zinc-700 px-3 py-1 text-left text-xs text-zinc-300"
+      data-test="composer-suggestion"
+      @click="useSuggestion"
+    >
+      <span class="text-zinc-500">↳</span>
+      <span class="truncate">{{ offered }}</span>
+    </button>
     <div v-if="files.length" class="mb-2 flex flex-wrap gap-1.5">
       <span v-for="(file, index) in files" :key="index" class="flex items-center gap-1 rounded-full bg-zinc-800 px-2.5 py-1 text-xs">
         {{ file.name }}

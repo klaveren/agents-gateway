@@ -23,6 +23,7 @@ const model = ref('')
 /** `provider::modelo` — o classificador é um modelo ATIVADO de um provider, escolhido numa lista. */
 const classifier = ref('')
 const classifyTurns = ref(false)
+const suggester = ref('')
 /** `provider::modelo` do construtor de skills e commands — vazio = o do Atlas. Lane agent: assinatura serve. */
 const builder = ref('')
 const saved = ref<string>()
@@ -101,6 +102,7 @@ watch(
     model.value = current.model ? `${current.provider ?? providerOfModel(current.model)}|${current.model}` : ''
     classifier.value = current.classifierModel ? `${current.classifierProvider ?? ''}::${current.classifierModel}` : ''
     classifyTurns.value = current.classifyTurns ?? false
+    suggester.value = current.suggestModel ? `${current.suggestProvider ?? ''}::${current.suggestModel}` : ''
     builder.value = current.builderModel ? `${current.builderProvider ?? ''}::${current.builderModel}` : ''
     defaultGroup.value = current.defaultModelGroup ?? ''
     limitDrafts.value = Object.fromEntries(LIMITS.map(({ name }) => [name, current.limits?.[name] ?? ''])) as Partial<Record<TLimitName, number | ''>>
@@ -126,6 +128,7 @@ async function saveSettings() {
     // Vazio vira `null`: volta ao padrão em vez de gravar texto em branco.
     const [classifierProvider, classifierModel] = classifier.value ? classifier.value.split('::') : ['', '']
     const [builderProvider, builderModel] = builder.value ? builder.value.split('::') : ['', '']
+    const [suggestProvider, suggestModel] = suggester.value ? suggester.value.split('::') : ['', '']
     await settings.save({
       audience: audience.value,
       agentId: agentId.value || null,
@@ -134,6 +137,8 @@ async function saveSettings() {
       classifierModel: classifierModel || null,
       classifierProvider: classifierProvider || null,
       classifyTurns: classifyTurns.value,
+      suggestProvider: suggestProvider || null,
+      suggestModel: suggestModel || null,
       builderProvider: builderProvider || null,
       builderModel: builderModel || null,
       // A sequência padrão vai junto (um salvar só por tela); "Nenhum" = `null` desliga a troca dos agentes sem sequência.
@@ -201,6 +206,18 @@ async function saveSettings() {
           </label>
           <label class="flex items-center gap-2 self-start text-sm text-zinc-300 sm:mt-6 sm:h-[38px]">
             <input v-model="classifyTurns" type="checkbox" class="accent-emerald-500" /> Classificar cada mensagem
+          </label>
+          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2" data-test="suggest-model">
+            Modelo de sugestão
+            <select v-model="suggester" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
+              <option value="">Nenhum (sem sugestão)</option>
+              <option v-if="suggester && !classifierOptions.some((option) => option.value === suggester)" :value="suggester">{{ suggester.replace('::', ' · ') }} (não ativado)</option>
+              <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
+            </select>
+            <small class="text-xs text-zinc-500">
+              Ao fim de cada resposta a uma mensagem sua, sugere a próxima (aparece na caixa de mensagem; Tab usa). Só modelos ativados com chave (sem assinatura). Prefira um
+              pequeno: roda a cada mensagem.
+            </small>
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">
             Modelo do construtor

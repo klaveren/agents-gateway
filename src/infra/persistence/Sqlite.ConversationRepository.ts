@@ -185,6 +185,8 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'conversation_turns', column: 'context_tokens', definition: 'INTEGER' },
   // As mensagens que a pessoa mandou com o turno rodando (JSON: `[{ at, text }]`); `NULL` = nenhuma.
   { table: 'conversation_turns', column: 'interjections', definition: 'TEXT' },
+  // A próxima mensagem provável da pessoa (ver `INextStepSuggester`); `NULL` = sem sugestão.
+  { table: 'conversation_turns', column: 'suggestion', definition: 'TEXT' },
 ]
 
 /**
@@ -624,6 +626,12 @@ export class SqliteConversationRepository implements IConversationRepository {
    * jeito de saber o pior de hoje é olhar todos. Turno que não existe não muda nada — um rótulo que
    * chega depois de a conversa ser apagada não pode ressuscitá-la.
    */
+  async suggestTurn(sessionId: string, index: number, suggestion: string): Promise<void> {
+    this.guard('suggestTurn', () => {
+      this.db.prepare('UPDATE conversation_turns SET suggestion = ? WHERE conversation_id = ? AND idx = ?').run(suggestion, sessionId, index)
+    })
+  }
+
   async classifyTurn(sessionId: string, index: number, classification: TClassification): Promise<void> {
     this.guard('classifyTurn', () => {
       if (!isClassification(classification)) throw new Error(`classificação desconhecida: ${String(classification)}`)
@@ -1138,6 +1146,7 @@ export class SqliteConversationRepository implements IConversationRepository {
       aborted: count(row.aborted) === 1 || undefined,
       error: typeof row.error === 'string' ? row.error : undefined,
       classification: isClassification(row.classification) ? row.classification : undefined,
+      ...(typeof row.suggestion === 'string' && row.suggestion ? { suggestion: row.suggestion } : {}),
     }
   }
 

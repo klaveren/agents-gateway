@@ -14,6 +14,7 @@ import { InMemoryConversationEvents } from '@infra/events/InMemory.ConversationE
 import { TurnLive } from '@infra/events/Turn.Live'
 import { NotifyingConversationRepository } from '@infra/persistence/Notifying.ConversationRepository'
 import { makeClassifier } from './Classifier.Factory'
+import { makeSuggester } from './Suggester.Factory'
 import { makeConversationRepository } from './Conversations.Factory'
 import { makeOrchestrator } from './Orchestrator.Factory'
 import { makeTools } from './Tools.Factory'
@@ -37,7 +38,7 @@ export function makeUsecases() {
     (query) => conversations.usage(query),
     (provider) => makeModelCatalog().pricing(provider),
   )
-  const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier(), makeSecretMasker(), live, usageCap)
+  const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier(), makeSecretMasker(), live, usageCap, makeSuggester())
   // A delegação usa os MESMOS casos de uso: a conversa filha é gravada e avisada como qualquer outra.
   makeTools().delegation.bind(
     new DelegationService(

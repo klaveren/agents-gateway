@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { api, ApiError, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
 import type { IAgent, IAgentEvent, IConversation, ISessionState, ITodoItem, ITurn, ITurnInterjection, IUsage, IWatchItem, TMode } from '@/lib/types'
@@ -122,6 +122,16 @@ export const useThreadStore = defineStore('thread', () => {
   const windowed = ref(true)
   const hasOlder = ref(false)
   const loadingOlder = ref(false)
+  /**
+   * A sugestão de próximo passo que chegou ao vivo (`turn.suggestion`): guardada à parte porque uma releitura que saiu antes
+   * dela devolveria o turno sem. `nextSuggestion`: a do ÚLTIMO turno, se nada está rodando.
+   */
+  const suggestion = ref<{ index: number; text: string }>()
+  const nextSuggestion = computed(() => {
+    const last = turns.value.at(-1)
+    if (!last || pending.value || sending.value) return undefined
+    return last.suggestion ?? (suggestion.value?.index === last.index ? suggestion.value.text : undefined)
+  })
   /** O índice do próximo turno: o do último carregado + 1 (com janela, o tamanho da lista não é o índice). */
   const nextIndex = () => (turns.value.at(-1)?.index ?? -1) + 1
   const error = ref<string>()
@@ -182,6 +192,7 @@ export const useThreadStore = defineStore('thread', () => {
     turns.value = []
     windowed.value = !options.all
     hasOlder.value = false
+    suggestion.value = undefined
     todos.value = []
     watches.value = []
     liveSession.value = undefined
@@ -233,6 +244,7 @@ export const useThreadStore = defineStore('thread', () => {
     turns.value = []
     hasOlder.value = false
     windowed.value = true
+    suggestion.value = undefined
     todos.value = []
     watches.value = []
     pending.value = undefined
@@ -417,6 +429,11 @@ export const useThreadStore = defineStore('thread', () => {
 
   /** O turno que outro começou (a API, um agendamento, outra aba). O desta aba chega pelo próprio stream. */
   function onLive(frame: TTurnFrame): void {
+    // A sugestão de próximo passo chega depois do turno (também do desta aba): entra no turno dela, se ele está carregado.
+    if (frame.type === 'turn.suggestion') {
+      if (frame.sessionId === sessionId.value) suggestion.value = { index: frame.index, text: frame.text }
+      return
+    }
     if (sending.value || frame.sessionId !== sessionId.value) return
     if (frame.type === 'turn.started') {
       const turn: IPendingTurn = { request: frame.turn.request, files: 0, text: '', reasoning: '', tools: [], warnings: [], interjections: [], aborted: false }
@@ -504,6 +521,7 @@ export const useThreadStore = defineStore('thread', () => {
     turns.value = []
     hasOlder.value = false
     loadingOlder.value = false
+    suggestion.value = undefined
     todos.value = []
     watches.value = []
     loading.value = false
@@ -615,6 +633,7 @@ export const useThreadStore = defineStore('thread', () => {
     loadingOlder,
     windowed,
     loadOlder,
+    nextSuggestion,
     todos,
     watches,
     stopWatch,

@@ -1,3 +1,4 @@
+import type { INextStepSuggester } from '@domain/ports/NextStepSuggester.Port'
 import { UsageCapReachedError } from '@domain/errors/Domain.Error'
 import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IStoredUsage } from '@domain/models/Conversation.Model'
@@ -82,6 +83,8 @@ export class SendMessageUseCase {
     private live?: ITurnLive,
     /** O teto de uso do mês (ver `UsageCap.Service`): bateu, o turno não começa. */
     private cap?: IUsageCapGate,
+    /** A sugestão de próximo passo (ver `INextStepSuggester`): só no turno que a pessoa mandou pela tela. */
+    private suggester?: INextStepSuggester,
   ) {}
 
   /**
@@ -221,8 +224,25 @@ export class SendMessageUseCase {
     })
 
     stored()
-    // O rótulo vai para onde o turno FICOU: com o índice pedido ocupado, o banco o pôs no próximo.
-    if (at !== undefined) await this.classify(sessionId, at, input, turn)
+    // O rótulo e a sugestão vão para onde o turno FICOU: com o índice pedido ocupado, o banco o pôs no próximo.
+    if (at !== undefined) await Promise.all([this.classify(sessionId, at, input, turn), this.suggestNext(sessionId, at, input, turn)])
+  }
+
+  /**
+   * ⚖️ A SUGESTÃO DE PRÓXIMO PASSO, no turno JÁ GRAVADO e só no que a pessoa mandou pela tela (`suggestNext`): a frase vai para
+   * o turno e para quem está com a conversa aberta. Turno interrompido, com erro ou sem texto não tem.
+   * ⛔ NUNCA LANÇA (o mesmo motivo do `classify`): é conveniência, e o turno já está salvo.
+   */
+  private async suggestNext(sessionId: string, index: number, input: IMessageInput, turn: { text: string; aborted?: boolean; error?: string }): Promise<void> {
+    if (!this.suggester || !input.suggestNext || turn.aborted || turn.error || !turn.text.trim()) return
+    try {
+      const suggestion = await this.suggester.suggest({ request: input.recordAs ?? input.text ?? '', answer: turn.text })
+      if (!suggestion) return
+      await this.conversations.suggestTurn?.(sessionId, index, suggestion)
+      this.live?.suggest?.(sessionId, index, suggestion)
+    } catch (error: unknown) {
+      console.warn('[sugestão] o turno ficou sem sugestão:', error instanceof Error ? error.message : error)
+    }
   }
 
   /**

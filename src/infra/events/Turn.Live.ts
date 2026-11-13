@@ -51,6 +51,10 @@ export class TurnLive implements ITurnLive {
     this.conversations?.publish({ type: 'conversation.idle', sessionId, ...(turn.metadata ? { metadata: turn.metadata } : {}) })
   }
 
+  suggest(sessionId: string, index: number, text: string): void {
+    this.signal(sessionId, { type: 'turn.suggestion', index, text })
+  }
+
   snapshot(sessionId: string): ILiveTurnSnapshot | undefined {
     const turn = this.turns.get(sessionId)
     return turn ? this.view(turn) : undefined

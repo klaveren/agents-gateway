@@ -48,6 +48,10 @@ export class NotifyingConversationRepository implements IConversationRepository 
     return stored
   }
 
+  async suggestTurn(sessionId: string, index: number, suggestion: string): Promise<void> {
+    await this.inner.suggestTurn?.(sessionId, index, suggestion)
+  }
+
   async classifyTurn(sessionId: string, index: number, classification: TClassification): Promise<void> {
     await this.inner.classifyTurn(sessionId, index, classification)
     await this.announce(sessionId)

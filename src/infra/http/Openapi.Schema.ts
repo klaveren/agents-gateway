@@ -140,6 +140,10 @@ const turnSchema = {
     aborted: { type: 'boolean' },
     error: { type: 'string' },
     classification: { ...classificationSchema, description: 'ADMIN responses only.' },
+    suggestion: {
+      type: 'string',
+      description: 'The next message the person would probably send (the suggestion model of the settings), for turns sent from the screen. Arrives seconds after the turn.',
+    },
     costUsd: { type: 'number', description: 'ADMIN responses only. Absent when the model has no known price.' },
   },
 }
@@ -435,6 +439,12 @@ const settingsSchema = {
     provider: { type: 'string', description: 'Provider used when the caller sends none: one of the agent providers. Absent = the first that offers `model`.' },
     model: { type: 'string', description: "Model used when the caller sends none. A model the chosen agent does not declare falls back to the agent's default." },
     classifierModel: { type: 'string', description: 'Model that labels each turn — an enabled model of `classifierProvider`.' },
+    suggestProvider: { type: 'string', description: 'Provider of the next-step suggestion model: enabled, with an API key (not a subscription). Absent = no suggestion.' },
+    suggestModel: {
+      type: 'string',
+      description:
+        'Model of the next-step suggestion — an enabled model of `suggestProvider`. At the end of a turn the person sent from the screen, one short sentence with the message they would probably send next (`suggestion` on the turn, `turn.suggestion` on the live streams).',
+    },
     classifierProvider: { type: 'string', description: 'Provider of the classifier model. Absent: inferred from the model id (official providers only).' },
     builderProvider: { type: 'string', description: 'Provider of the builder (the core agent that drafts skills and commands). Absent: the one of Atlas.' },
     builderModel: { type: 'string', description: 'Model of the builder — an enabled model of `builderProvider`. Absent: the one of Atlas.' },
@@ -5971,6 +5981,8 @@ export const OPENAPI_DOCUMENT = {
                   model: nullableText,
                   classifierModel: nullableText,
                   classifierProvider: nullableText,
+                  suggestProvider: nullableText,
+                  suggestModel: nullableText,
                   builderProvider: nullableText,
                   builderModel: nullableText,
                   classifyTurns: { type: ['boolean', 'null'] },
@@ -6056,7 +6068,7 @@ export const OPENAPI_DOCUMENT = {
       put: {
         summary: 'Follow the live turn of one conversation on an open `/conversations/events` stream (one connection per tab, not two). `null` stops',
         description:
-          'The stream then also carries `turn.started`, `turn.event`, `turn.finished` (as in `/sessions/{id}/live`) with `sessionId`, and `turn.idle` when nothing is running as the follow starts. The stream must be the caller own, and the conversation theirs (or the caller an administrator); 404 otherwise.',
+          'The stream then also carries `turn.started`, `turn.event`, `turn.finished` and `turn.suggestion` (as in `/sessions/{id}/live`) with `sessionId`, and `turn.idle` when nothing is running as the follow starts. The stream must be the caller own, and the conversation theirs (or the caller an administrator); 404 otherwise.',
         parameters: [{ name: 'streamId', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json({ type: 'object', required: ['sessionId'], properties: { sessionId: { type: ['string', 'null'] } } }) },
         responses: {
@@ -6379,7 +6391,7 @@ export const OPENAPI_DOCUMENT = {
       get: {
         summary: 'The turn of a conversation, live (SSE), whoever started it (screen, API, schedule, delegation). The owner or an administrator; anyone else gets 404',
         description:
-          'On connect, the running turn if any: `turn.started` with `{ turn: { request, startedAt, events } }` (consecutive text pieces already joined). Then `turn.event` with `{ event }` (the same agent events as `/messages`, secrets masked) and `turn.finished` once the turn is recorded. The stream stays open for the next turn. Counts toward the same per-account stream cap as `/conversations/events`.',
+          'On connect, the running turn if any: `turn.started` with `{ turn: { request, startedAt, events } }` (consecutive text pieces already joined). Then `turn.event` with `{ event }` (the same agent events as `/messages`, secrets masked) and `turn.finished` once the turn is recorded; `turn.suggestion` with `{ index, text }` when the suggestion model proposes the next message, seconds later. The stream stays open for the next turn. Counts toward the same per-account stream cap as `/conversations/events`.',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'An event stream', content: { 'text/event-stream': { schema: { type: 'string' } } } },

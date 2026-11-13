@@ -21,6 +21,8 @@ export type TTurnFrame =
   | { type: 'turn.event'; sessionId: string; event: IAgentEvent }
   | { type: 'turn.finished'; sessionId: string }
   | { type: 'turn.idle'; sessionId: string }
+  /** A sugestão de próximo passo do turno `index`, segundos depois do fim dele. */
+  | { type: 'turn.suggestion'; sessionId: string; index: number; text: string }
 type TStreamFrame = TConversationEvent | TRunningEvent | TTurnFrame | { type: 'stream.ready'; streamId: string } | { type: 'catalog.changed'; changes: ICatalogChanged[] }
 
 const PAGE_SIZE = 30
