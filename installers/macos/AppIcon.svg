@@ -1,102 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Agents Gateway: o portal (o gateway) com a luz do núcleo, e os agentes ligados a ele. -->
+  <!-- Agents Gateway: dois elos encaixados (o gateway liga um lado ao outro) e o agente no meio. -->
   <defs>
     <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="100" y1="100" x2="924" y2="924">
-      <stop offset="0" stop-color="#062a24"/>
-      <stop offset="0.5" stop-color="#03211d"/>
-      <stop offset="1" stop-color="#062f3a"/>
+      <stop offset="0" stop-color="#1c1b1f"/>
+      <stop offset="1" stop-color="#0f0f12"/>
     </linearGradient>
-    <radialGradient id="aura" gradientUnits="userSpaceOnUse" cx="512" cy="600" r="420">
-      <stop offset="0" stop-color="#10b981" stop-opacity="0.55"/>
-      <stop offset="0.45" stop-color="#0d9488" stop-opacity="0.18"/>
-      <stop offset="1" stop-color="#0d9488" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="portal" gradientUnits="userSpaceOnUse" cx="512" cy="610" r="190">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
-      <stop offset="0.25" stop-color="#a7f3d0" stop-opacity="0.85"/>
-      <stop offset="0.7" stop-color="#10b981" stop-opacity="0.35"/>
-      <stop offset="1" stop-color="#10b981" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="gate" gradientUnits="userSpaceOnUse" x1="0" y1="360" x2="0" y2="760">
-      <stop offset="0" stop-color="#f0fdf4"/>
-      <stop offset="1" stop-color="#5eead4"/>
-    </linearGradient>
-    <linearGradient id="floor" gradientUnits="userSpaceOnUse" x1="300" y1="0" x2="724" y2="0">
-      <stop offset="0" stop-color="#5eead4" stop-opacity="0"/>
-      <stop offset="0.5" stop-color="#ccfbf1"/>
-      <stop offset="1" stop-color="#5eead4" stop-opacity="0"/>
-    </linearGradient>
-    <linearGradient id="gloss" gradientUnits="userSpaceOnUse" x1="0" y1="100" x2="0" y2="520">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
-      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
-    </linearGradient>
-    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
-      <feGaussianBlur stdDeviation="9" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-    <filter id="blur30" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="30"/></filter>
-    <filter id="blur14" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="14"/></filter>
-    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
   </defs>
-
-  <!-- a sombra e o azulejo -->
-  <rect x="112" y="128" width="800" height="800" rx="180" fill="#000" opacity="0.45" filter="url(#blur30)"/>
-  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
-
-  <g clip-path="url(#tile)">
-    <rect x="100" y="100" width="824" height="824" fill="url(#aura)"/>
-
-    <!-- as linhas dos agentes até o núcleo, em curva -->
-    <g fill="none" stroke-linecap="round">
-      <g stroke="#5eead4" stroke-opacity="0.75" stroke-width="6" filter="url(#glow)">
-        <path d="M250 300 Q380 420 512 600"/>
-        <path d="M784 286 Q650 420 512 600"/>
-        <path d="M214 708 Q360 650 512 600"/>
-        <path d="M812 720 Q660 650 512 600"/>
-      </g>
-      <!-- a órbita -->
-      <ellipse cx="512" cy="508" rx="330" ry="240" stroke="#99f6e4" stroke-opacity="0.18" stroke-width="3" stroke-dasharray="2 20"/>
-    </g>
-    <!-- os pulsos viajando nas linhas -->
-    <g fill="#ecfeff" filter="url(#glow)">
-      <circle cx="368" cy="420" r="8"/>
-      <circle cx="640" cy="440" r="7"/>
-      <circle cx="356" cy="652" r="6"/>
-      <circle cx="684" cy="664" r="7"/>
-    </g>
-
-    <!-- a luz que sai do portal e o reflexo no chão -->
-    <ellipse cx="512" cy="764" rx="250" ry="34" fill="#34d399" opacity="0.55" filter="url(#blur14)"/>
+  <!-- A forma do ícone do macOS: o quadrado arredondado de 824 na grade de 1024. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#ffffff" stroke-opacity="0.06"/>
+  <g transform="translate(62.4 116.5) scale(0.873)">
+    <!-- O elo de trás (roxo): aberto embaixo à direita, onde o coral entra. -->
+    <path fill="#5a0a57" d="M265 128H620Q645 128 645 153V338H527V255H333Q293 255 293 295V530Q293 570 333 570H517V660H265Q160 660 160 555V233Q160 128 265 128Z"/>
+    <!-- O elo da frente (coral): aberto em cima à esquerda, e passa por cima do roxo embaixo. -->
+    <path fill="#ff5c5f" d="M670 252H765Q870 252 870 357V673Q870 778 765 778H425Q390 778 390 743V634H517V658H698Q738 658 738 618V378Q738 338 698 338H645V277Q645 252 670 252Z"/>
+    <!-- O agente. -->
+    <circle cx="430" cy="457" r="20" fill="#ff5c5f"/>
+    <circle cx="595" cy="457" r="20" fill="#ff5c5f"/>
+    <rect x="437" y="395" width="151" height="113" rx="56.5" fill="#ff5c5f"/>
+    <rect x="452" y="427" width="121" height="60" rx="30" fill="#5a0a57"/>
+    <circle cx="489" cy="457" r="11" fill="#ff5c5f"/>
+    <circle cx="536" cy="457" r="11" fill="#ff5c5f"/>
   </g>
-
-  <!-- dentro do portal -->
-  <path d="M392 752 V540 A120 120 0 0 1 632 540 V752 Z" fill="url(#portal)"/>
-  <!-- o portal -->
-  <g filter="url(#glow)">
-    <path d="M372 752 V540 A140 140 0 0 1 652 540 V752" fill="none" stroke="url(#gate)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M296 772 H728" fill="none" stroke="url(#floor)" stroke-width="14" stroke-linecap="round"/>
-  </g>
-  <!-- o núcleo -->
-  <g filter="url(#glow)">
-    <circle cx="512" cy="600" r="34" fill="#ffffff"/>
-    <path d="M512 548 L520 592 L564 600 L520 608 L512 652 L504 608 L460 600 L504 592 Z" fill="#ffffff" opacity="0.9"/>
-  </g>
-
-  <!-- os agentes -->
-  <g filter="url(#glow)">
-    <circle cx="250" cy="300" r="44" fill="#ccfbf1"/>
-    <circle cx="784" cy="286" r="36" fill="#ccfbf1"/>
-    <circle cx="214" cy="708" r="32" fill="#ccfbf1"/>
-    <circle cx="812" cy="720" r="40" fill="#ccfbf1"/>
-  </g>
-  <g fill="#0f766e">
-    <circle cx="250" cy="300" r="20"/>
-    <circle cx="784" cy="286" r="16"/>
-    <circle cx="214" cy="708" r="14"/>
-    <circle cx="812" cy="720" r="18"/>
-  </g>
-
-  <!-- o vidro -->
-  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#gloss)"/>
-  <rect x="101.5" y="101.5" width="821" height="821" rx="185" fill="none" stroke="#99f6e4" stroke-opacity="0.16" stroke-width="3"/>
 </svg>

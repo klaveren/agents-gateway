@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="100 100 824 824">
+  <!-- Agents Gateway: dois elos encaixados (o gateway liga um lado ao outro) e o agente no meio. -->
+  <defs>
+    <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="100" y1="100" x2="924" y2="924">
+      <stop offset="0" stop-color="#1c1b1f"/>
+      <stop offset="1" stop-color="#0f0f12"/>
+    </linearGradient>
+  </defs>
+  <!-- A forma do ícone do macOS: o quadrado arredondado de 824 na grade de 1024. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  
+  <g transform="translate(62.4 116.5) scale(0.873)">
+    <!-- O elo de trás (roxo): aberto embaixo à direita, onde o coral entra. -->
+    <path fill="#5a0a57" d="M265 128H620Q645 128 645 153V338H527V255H333Q293 255 293 295V530Q293 570 333 570H517V660H265Q160 660 160 555V233Q160 128 265 128Z"/>
+    <!-- O elo da frente (coral): aberto em cima à esquerda, e passa por cima do roxo embaixo. -->
+    <path fill="#ff5c5f" d="M670 252H765Q870 252 870 357V673Q870 778 765 778H425Q390 778 390 743V634H517V658H698Q738 658 738 618V378Q738 338 698 338H645V277Q645 252 670 252Z"/>
+    <!-- O agente. -->
+    <circle cx="430" cy="457" r="20" fill="#ff5c5f"/>
+    <circle cx="595" cy="457" r="20" fill="#ff5c5f"/>
+    <rect x="437" y="395" width="151" height="113" rx="56.5" fill="#ff5c5f"/>
+    <rect x="452" y="427" width="121" height="60" rx="30" fill="#5a0a57"/>
+    <circle cx="489" cy="457" r="11" fill="#ff5c5f"/>
+    <circle cx="536" cy="457" r="11" fill="#ff5c5f"/>
+  </g>
+</svg>
