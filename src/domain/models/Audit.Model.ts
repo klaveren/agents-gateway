@@ -41,6 +41,8 @@ export interface IAuditQuery {
   /** Só os recusados ou com falha (status >= 400). */
   failed?: boolean
   before?: number
+  /** Pula os N mais novos (a página da tela, junto do `total`). */
+  offset?: number
   limit?: number
 }
 

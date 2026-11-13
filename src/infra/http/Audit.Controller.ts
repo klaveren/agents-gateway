@@ -125,10 +125,13 @@ export class AuditController {
         action: text(query.action),
         failed: query.failed === '1' || query.failed === 'true',
         before: number(query.before),
+        offset: number(query.offset),
         limit,
       }
       const events = this.deps.repository.query(filter)
-      res.status(200).json(ok({ events, next: events.length === limit ? events[events.length - 1]?.id : undefined }))
+      // `total`: quantos o recorte tem (a tela pagina por `offset`); `next`: o cursor, para quem pagina por `before`.
+      const total = this.deps.repository.count?.(filter)
+      res.status(200).json(ok({ events, ...(total !== undefined ? { total } : {}), next: events.length === limit ? events[events.length - 1]?.id : undefined }))
     } catch (error) {
       const failure = toHttpFailure(error)
       res.status(failure.status).json(fail(failure.message, failure.code, failure.details))

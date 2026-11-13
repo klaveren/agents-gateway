@@ -1,5 +1,7 @@
 <script setup lang="ts">
-  import { onMounted, ref, watch } from 'vue'
+  import { computed, onMounted, ref, watch } from 'vue'
+  import ListPager from '@/components/ListPager.vue'
+  import PeriodPicker from '@/components/PeriodPicker.vue'
   import { api } from '@/lib/api'
   import { fullTime } from '@/lib/format'
 
@@ -74,34 +76,34 @@
       .filter(Boolean)
       .join(' · ')
 
-  const PERIODS = [
-    { days: 1, label: '24 h' },
-    { days: 7, label: '7 dias' },
-    { days: 30, label: '30 dias' },
-    { days: 90, label: '90 dias' },
-  ]
   const days = ref(7)
   const actor = ref('')
   const action = ref('')
   const failed = ref(false)
   const events = ref<IAuditEvent[]>([])
-  const next = ref<number>()
+  const total = ref(0)
   const loading = ref(false)
   const error = ref<string>()
+  const scroller = ref<HTMLElement>()
 
-  async function load(more = false) {
+  /** As páginas, como em toda página de Logs (`ListPager`): `PAGE_SIZE` por vez, do mais novo ao mais velho. */
+  const PAGE_SIZE = 50
+  const page = ref(0)
+  const pages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+
+  async function load() {
     loading.value = true
     error.value = undefined
     try {
       const since = new Date(Date.now() - days.value * 86_400_000).toISOString()
-      const query: Record<string, string> = { since, limit: '50' }
+      const query: Record<string, string> = { since, limit: String(PAGE_SIZE), offset: String(page.value * PAGE_SIZE) }
       if (actor.value.trim()) query.actor = actor.value.trim()
       if (action.value.trim()) query.action = action.value.trim()
       if (failed.value) query.failed = '1'
-      if (more && next.value) query.before = String(next.value)
-      const page = await api<{ events: IAuditEvent[]; next?: number }>('/audit', { query })
-      events.value = more ? [...events.value, ...page.events] : page.events
-      next.value = page.next
+      const result = await api<{ events: IAuditEvent[]; total?: number }>('/audit', { query })
+      events.value = result.events
+      total.value = result.total ?? result.events.length
+      scroller.value?.scrollTo({ top: 0 })
     } catch (caught) {
       error.value = caught instanceof Error ? caught.message : String(caught)
     } finally {
@@ -109,31 +111,27 @@
     }
   }
 
+  /** Filtro ou período novo: volta à primeira página. */
+  function restart() {
+    if (page.value === 0) void load()
+    else page.value = 0
+  }
+
   onMounted(() => void load())
-  watch([days, failed], () => void load())
+  watch(page, () => void load())
+  watch([days, failed], () => restart())
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto px-4 py-6">
+  <div ref="scroller" class="h-full overflow-y-auto px-4 py-6">
     <div class="mx-auto flex max-w-5xl flex-col gap-4">
       <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 class="text-xl font-semibold">Logs da API</h1>
-        <div class="ml-auto flex shrink-0 gap-1 rounded-full bg-zinc-900 p-1 text-sm whitespace-nowrap" role="group" aria-label="Período">
-          <button
-            v-for="period in PERIODS"
-            :key="period.days"
-            class="rounded-full px-3 py-1"
-            :class="days === period.days ? 'bg-zinc-700 text-white' : 'text-zinc-400'"
-            :aria-pressed="days === period.days"
-            @click="days = period.days"
-          >
-            {{ period.label }}
-          </button>
-        </div>
+        <PeriodPicker v-model="days" />
       </header>
       <p class="text-xs text-zinc-500">Cada ação que mudou algo: quem, o quê, quando, de onde e como terminou. Senhas, chaves e o texto das conversas não entram aqui.</p>
 
-      <form class="flex flex-wrap items-center gap-2 text-sm" @submit.prevent="load()">
+      <form class="flex flex-wrap items-center gap-2 text-sm" @submit.prevent="restart()">
         <input v-model="actor" class="h-9 rounded-full bg-zinc-900 px-3 text-zinc-200 ring-1 ring-zinc-800" placeholder="Pessoa (e-mail)" aria-label="Pessoa" />
         <input v-model="action" class="h-9 rounded-full bg-zinc-900 px-3 text-zinc-200 ring-1 ring-zinc-800" placeholder="Ação (agents, login…)" aria-label="Ação" />
         <label class="flex items-center gap-2 text-zinc-300"><input v-model="failed" type="checkbox" class="accent-emerald-500" /> Só recusadas ou com falha</label>
@@ -162,7 +160,7 @@
           <p v-if="event.error" class="mt-1 font-mono text-xs break-words whitespace-pre-wrap text-rose-300">{{ event.error }}</p>
         </li>
       </ul>
-      <button v-if="next" type="button" class="btn btn-secondary self-center" :disabled="loading" @click="load(true)">{{ loading ? 'Carregando…' : 'Carregar mais' }}</button>
+      <ListPager v-model="page" :pages="pages" :total="total" :size="PAGE_SIZE" />
     </div>
   </div>
 </template>

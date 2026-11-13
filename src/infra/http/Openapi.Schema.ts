@@ -5682,6 +5682,7 @@ export const OPENAPI_DOCUMENT = {
           { name: 'action', in: 'query', schema: { type: 'string' }, description: 'Part of the action (`agents`, `DELETE`, `/auth/login`)' },
           { name: 'failed', in: 'query', schema: { type: 'boolean' }, description: 'Only refused or failed (status >= 400)' },
           { name: 'before', in: 'query', schema: { type: 'integer' }, description: 'Cursor: the `next` of the previous page' },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0 }, description: 'Skip the N newest (page by offset, with `total`)' },
           { name: 'limit', in: 'query', schema: { type: 'integer' }, description: 'Page size (default 50, at most 200)' },
         ],
         responses: {
@@ -5713,6 +5714,7 @@ export const OPENAPI_DOCUMENT = {
                     },
                   },
                   next: { type: 'integer', description: 'Cursor for the next page (pass as `before`); absent on the last page' },
+                  total: { type: 'integer', description: 'How many events the filter has (the page is not counted): page with `offset`' },
                 },
               }),
             ),
