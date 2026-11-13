@@ -212,6 +212,12 @@ describe('AgentController: o admin do projeto, só o projeto dele', () => {
     assert.strictEqual((await turns(CAIO, 'c-alfa')).status, 200)
   })
 
+  it('⚖️ a conversa de outra pessoa, aberta pelo admin, vem marcada só leitura; a do dono, não', async () => {
+    const turns = async (as: string, id: string) => (await call(as, 'getConversationTurns', { params: { id } })).body!.result as { readOnly?: boolean }
+    assert.strictEqual((await turns(ANA, 'c-alfa')).readOnly, true)
+    assert.strictEqual((await turns(CAIO, 'c-alfa')).readOnly, undefined)
+  })
+
   it('apagar e compartilhar seguem a mesma regra', async () => {
     assert.strictEqual((await call(BIA, 'shareConversation', { params: { id: 'c-alfa' }, body: { shared: true } })).status, 404)
     assert.strictEqual((await call(ROOT, 'deleteConversation', { params: { id: 'c-alfa' } })).status, 404)
