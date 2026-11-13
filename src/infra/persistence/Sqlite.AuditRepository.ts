@@ -68,22 +68,35 @@ export class SqliteAuditRepository implements IAuditRepository {
   }
 
   query(filter: IAuditQuery): IAuditEvent[] {
-    const where: string[] = []
-    const values: SQLInputValue[] = []
-    const add = (clause: string, ...params: SQLInputValue[]) => {
-      where.push(clause)
-      values.push(...params)
-    }
-    if (filter.since) add('at >= ?', filter.since.toISOString())
-    if (filter.until) add('at < ?', filter.until.toISOString())
-    if (filter.actor) add("(actor_id LIKE ? ESCAPE '\\' OR actor_email LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')", ...Array<string>(3).fill(like(filter.actor)))
-    if (filter.action) add("action LIKE ? ESCAPE '\\'", like(filter.action))
-    if (filter.failed) add('status >= 400')
-    if (filter.before) add('id < ?', filter.before)
+    const { where, values } = whereOf(filter, true)
     const limit = Math.min(Math.max(filter.limit ?? 50, 1), AUDIT_PAGE_MAX)
-    const sql = `SELECT * FROM audit_events ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ?`
-    return (this.db.prepare(sql).all(...values, limit) as TRow[]).map(toEvent)
+    const offset = Math.max(filter.offset ?? 0, 0)
+    const sql = `SELECT * FROM audit_events ${where} ORDER BY id DESC LIMIT ? OFFSET ?`
+    return (this.db.prepare(sql).all(...values, limit, offset) as TRow[]).map(toEvent)
   }
+
+  count(filter: IAuditQuery): number {
+    const { where, values } = whereOf(filter, false)
+    const row = this.db.prepare(`SELECT COUNT(*) AS n FROM audit_events ${where}`).get(...values) as TRow | undefined
+    return Number(row?.n ?? 0)
+  }
+}
+
+/** O recorte em SQL; `withCursor`: o `before` entra (a contagem é do recorte inteiro, sem a página). */
+function whereOf(filter: IAuditQuery, withCursor: boolean): { where: string; values: SQLInputValue[] } {
+  const clauses: string[] = []
+  const values: SQLInputValue[] = []
+  const add = (clause: string, ...params: SQLInputValue[]) => {
+    clauses.push(clause)
+    values.push(...params)
+  }
+  if (filter.since) add('at >= ?', filter.since.toISOString())
+  if (filter.until) add('at < ?', filter.until.toISOString())
+  if (filter.actor) add("(actor_id LIKE ? ESCAPE '\\' OR actor_email LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')", ...Array<string>(3).fill(like(filter.actor)))
+  if (filter.action) add("action LIKE ? ESCAPE '\\'", like(filter.action))
+  if (filter.failed) add('status >= 400')
+  if (withCursor && filter.before) add('id < ?', filter.before)
+  return { where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', values }
 }
 
 /** O texto vira `%texto%`, com `%`, `_` e `\` tratados como letra. */

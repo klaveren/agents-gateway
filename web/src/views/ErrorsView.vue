@@ -3,6 +3,7 @@
   import { api } from '@/lib/api'
   import ListPager from '@/components/ListPager.vue'
   import { usePaged } from '@/composables/usePaged'
+  import PeriodPicker from '@/components/PeriodPicker.vue'
   import { copyText } from '@/lib/clipboard'
   import { fullTime } from '@/lib/format'
   import { useAgentsStore } from '@/stores/agents'
@@ -34,12 +35,6 @@
     byTool: Array<{ tool: string; count: number }>
   }
 
-  const PERIODS = [
-    { days: 1, label: '24 h' },
-    { days: 7, label: '7 dias' },
-    { days: 30, label: '30 dias' },
-    { days: 90, label: '90 dias' },
-  ]
   const KINDS: Array<{ kind: TKind; label: string; badge: string }> = [
     { kind: 'tool', label: 'Ferramenta', badge: 'border-rose-500/40 bg-rose-500/10 text-rose-300' },
     { kind: 'turn', label: 'Turno com erro', badge: 'border-amber-500/40 bg-amber-500/10 text-amber-300' },
@@ -135,18 +130,7 @@
     <div class="mx-auto flex max-w-5xl flex-col gap-4">
       <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 class="text-xl font-semibold">Erros</h1>
-        <div class="ml-auto flex shrink-0 gap-1 rounded-full bg-zinc-900 p-1 text-sm whitespace-nowrap" role="group" aria-label="Período">
-          <button
-            v-for="period in PERIODS"
-            :key="period.days"
-            class="rounded-full px-3 py-1"
-            :class="days === period.days ? 'bg-zinc-700 text-white' : 'text-zinc-400'"
-            :aria-pressed="days === period.days"
-            @click="days = period.days"
-          >
-            {{ period.label }}
-          </button>
-        </div>
+        <PeriodPicker v-model="days" />
       </header>
 
       <div class="flex flex-wrap gap-2 text-sm">

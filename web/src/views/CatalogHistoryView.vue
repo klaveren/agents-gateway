@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import ListPager from '@/components/ListPager.vue'
 import WideningConfirm from '@/components/WideningConfirm.vue'
 import {
   BATCH_KIND_LABEL,
@@ -59,6 +60,9 @@ const batchPage = ref<IBatchPage>()
 const batchPageNo = ref(1)
 const batchPages = computed(() => (batchPage.value ? Math.max(1, Math.ceil(batchPage.value.total / batchPage.value.pageSize)) : 1))
 const batches = computed<IBatch[]>(() => batchPage.value?.batches ?? [])
+/** O `ListPager` conta as páginas do zero (como em toda página de Logs); a API, do um. */
+const revisionPager = computed({ get: () => page.value - 1, set: (value: number) => (page.value = value + 1) })
+const batchPager = computed({ get: () => batchPageNo.value - 1, set: (value: number) => (batchPageNo.value = value + 1) })
 const highlighted = computed(() => (typeof route.query.lote === 'string' ? route.query.lote : undefined))
 
 /** O que o resumo do lote diz de onde parou e do que ficou pendente. */
@@ -168,11 +172,11 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
     <p class="font-medium text-zinc-200">Só quem administra este projeto vê o histórico do catálogo.</p>
   </div>
 
-  <div v-else class="h-full overflow-y-auto px-4 py-5">
-    <section class="mx-auto flex max-w-3xl flex-col gap-4">
-      <header class="flex flex-wrap items-center gap-3">
+  <div v-else class="h-full overflow-y-auto px-4 py-6">
+    <section class="mx-auto flex max-w-5xl flex-col gap-4">
+      <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 class="text-xl font-semibold">Histórico do catálogo</h1>
-        <select v-model="scope" class="input ml-auto w-auto py-1.5 text-sm" aria-label="Escopo">
+        <select v-model="scope" class="ml-auto h-9 rounded-full bg-zinc-900 px-3 text-sm text-zinc-200 ring-1 ring-zinc-800" aria-label="Escopo">
           <option v-if="auth.isAdmin" value="*">Tudo</option>
           <option v-if="projects.current && projects.manages" :value="projects.current">{{ projects.list.find((project) => project.id === projects.current)?.name ?? projects.current }}</option>
           <option v-if="auth.isAdmin" value="global">Global</option>
@@ -184,8 +188,8 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
       <p v-else-if="loading && !data" class="text-sm text-zinc-500">Carregando…</p>
       <p v-else-if="data && !data.revisions.length" class="text-sm text-zinc-500">Nenhuma revisão neste escopo.</p>
 
-      <ul v-if="data?.revisions.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800" data-test="recent">
-        <li v-for="revision in data.revisions" :key="revision.id" class="flex flex-col gap-0.5 px-3 py-2 text-sm">
+      <ul v-if="data?.revisions.length" class="flex flex-col gap-2" data-test="recent">
+        <li v-for="revision in data.revisions" :key="revision.id" class="flex flex-col gap-0.5 rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm">
           <span class="flex flex-wrap items-center gap-2">
             <span class="rounded bg-zinc-800 px-1.5 text-[10px] text-zinc-400 uppercase">{{ KIND_LABEL[revision.kind] ?? revision.kind }}</span>
             <RouterLink v-if="link(revision)" :to="link(revision)!" class="font-mono text-zinc-100 hover:underline">{{ revision.itemId }}</RouterLink>
@@ -203,11 +207,7 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
           </span>
         </li>
       </ul>
-      <div v-if="pages > 1" class="flex items-center gap-2 text-xs text-zinc-500">
-        <button type="button" class="btn btn-sm btn-ghost" :disabled="page <= 1" @click="page--">Mais novas</button>
-        <span>Página {{ page }} de {{ pages }}</span>
-        <button type="button" class="btn btn-sm btn-ghost" :disabled="page >= pages" @click="page++">Mais antigas</button>
-      </div>
+      <ListPager v-if="data" v-model="revisionPager" :pages="pages" :total="data.total" :size="data.pageSize" />
 
       <section class="flex flex-col gap-2">
         <h2 class="text-sm font-medium text-zinc-200">Lotes</h2>
@@ -215,11 +215,11 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
           Os lotes (importação, reversão) do escopo, com o estado de cada um. Reverter grava um lote novo: cada item volta ao estado de antes, e o histórico guarda tudo.
         </p>
         <p v-if="!batches.length" class="text-xs text-zinc-500">Nenhum lote neste escopo.</p>
-        <ul v-else class="divide-y divide-zinc-800 rounded-xl border border-zinc-800" data-test="batches">
+        <ul v-else class="flex flex-col gap-2" data-test="batches">
           <li
             v-for="batch in batches"
             :key="batch.id"
-            class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm"
+            class="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm"
             :class="batch.id === highlighted ? 'bg-emerald-500/10' : ''"
             :data-batch="batch.id"
           >
@@ -245,11 +245,7 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
             <button type="button" class="btn btn-sm btn-secondary" :disabled="busy || batch.status === 'reverted'" data-test="revert-batch" @click="startRevert(batch)">Reverter lote</button>
           </li>
         </ul>
-        <div v-if="batchPages > 1" class="flex items-center gap-2 text-xs text-zinc-500">
-          <button type="button" class="btn btn-sm btn-ghost" :disabled="batchPageNo <= 1" @click="batchPageNo--">Mais novos</button>
-          <span>Página {{ batchPageNo }} de {{ batchPages }}</span>
-          <button type="button" class="btn btn-sm btn-ghost" :disabled="batchPageNo >= batchPages" @click="batchPageNo++">Mais antigos</button>
-        </div>
+        <ListPager v-if="batchPage" v-model="batchPager" :pages="batchPages" :total="batchPage.total" :size="batchPage.pageSize" />
 
         <template v-if="reverting && !asking">
           <WideningConfirm v-if="widenings" :widenings="widenings" action="Reverter com estas ampliações" :busy="busy" @confirm="revert" @cancel="widenings = undefined" />
