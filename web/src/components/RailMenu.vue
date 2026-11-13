@@ -1,58 +1,75 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { useAboveBar, usePopover } from '@/lib/popover'
-import Icon from './Icon.vue'
+  import { computed, ref, watch } from 'vue'
+  import { useAboveBar, usePopover } from '@/lib/popover'
+  import Icon from './Icon.vue'
 
-export type TRailIcon = 'users' | 'key' | 'plug' | 'box' | 'settings' | 'agents' | 'rule' | 'doc' | 'bolt' | 'slash' | 'folder' | 'clock' | 'warn' | 'shield' | 'git'
-export interface IRailMenuItem {
-  /** Ausente no AGRUPADOR (`children`): ele só abre e fecha a lista dos filhos. */
-  to?: string
-  key: string
-  label: string
-  hint: string
-  icon: TRailIcon
-  /** Os filhos de um agrupador (ex.: Logs → API, Erros, Catálogo), mostrados recuados embaixo dele. */
-  children?: readonly IRailMenuItem[]
-}
+  export type TRailIcon =
+    | 'users'
+    | 'key'
+    | 'plug'
+    | 'box'
+    | 'settings'
+    | 'agents'
+    | 'rule'
+    | 'doc'
+    | 'bolt'
+    | 'slash'
+    | 'folder'
+    | 'clock'
+    | 'warn'
+    | 'shield'
+    | 'git'
+    | 'list'
+    | 'globe'
+    | 'refresh'
+    | 'tokens'
+    | 'check'
+    | 'info'
+    | 'bell'
+  export interface IRailMenuItem {
+    /** Ausente no AGRUPADOR (`children`): ele só abre e fecha a lista dos filhos. */
+    to?: string
+    key: string
+    label: string
+    hint: string
+    icon: TRailIcon
+    /** Os filhos de um agrupador (ex.: Logs → API, Erros, Catálogo), mostrados recuados embaixo dele. */
+    children?: readonly IRailMenuItem[]
+  }
 
-/**
- * Um botão do trilho que abre um menu de páginas (o Sistema, os Docs). `active`: a página aberta é uma
- * destas — o botão fica aceso.
- */
-const props = defineProps<{ title: string; icon: TRailIcon; items: readonly IRailMenuItem[]; placement: 'side' | 'up'; active?: string }>()
-const { open, root } = usePopover()
-const above = useAboveBar(open, root)
+  /**
+   * Um botão do trilho que abre um menu de páginas (o Sistema, os Docs). `active`: a página aberta é uma
+   * destas — o botão fica aceso.
+   */
+  const props = defineProps<{ title: string; icon: TRailIcon; items: readonly IRailMenuItem[]; placement: 'side' | 'up'; active?: string }>()
+  const { open, root } = usePopover()
+  const above = useAboveBar(open, root)
 
-const lit = computed(() => props.items.some((item) => item.key === props.active || item.children?.some((child) => child.key === props.active)))
+  const lit = computed(() => props.items.some((item) => item.key === props.active || item.children?.some((child) => child.key === props.active)))
 
-/** Os agrupadores abertos: começa aberto o que tem a página atual entre os filhos. */
-const expanded = ref(new Set<string>())
-watch(
-  open,
-  (isOpen) => {
-    if (isOpen) expanded.value = new Set(props.items.filter((item) => item.children?.some((child) => child.key === props.active)).map((item) => item.key))
-  },
-  { immediate: true },
-)
-function toggle(key: string) {
-  const next = new Set(expanded.value)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
-  expanded.value = next
-}
+  /** Os agrupadores abertos: o menu abre sempre com todos fechados (a pessoa abre o que quer). */
+  const expanded = ref(new Set<string>())
+  watch(open, (isOpen) => {
+    if (isOpen) expanded.value = new Set()
+  })
+  function toggle(key: string) {
+    const next = new Set(expanded.value)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    expanded.value = next
+  }
 
-/**
- * ⚠️ O menu cresce para baixo (no trilho) ou para cima (na barra do celular) a partir do botão: em tela baixa ele
- * passava da borda, sem rolagem. A altura máxima é o espaço que sobra até a borda, medido ao abrir.
- */
-const room = ref<number>()
-watch(open, (isOpen) => {
-  const rect = root.value?.getBoundingClientRect()
-  if (!isOpen || !rect) return
-  room.value = Math.max(160, (props.placement === 'side' ? window.innerHeight - rect.top : rect.top) - 12)
-})
+  /**
+   * ⚠️ O menu cresce para baixo (no trilho) ou para cima (na barra do celular) a partir do botão: em tela baixa ele
+   * passava da borda, sem rolagem. A altura máxima é o espaço que sobra até a borda, medido ao abrir.
+   */
+  const room = ref<number>()
+  watch(open, (isOpen) => {
+    const rect = root.value?.getBoundingClientRect()
+    if (!isOpen || !rect) return
+    room.value = Math.max(160, (props.placement === 'side' ? window.innerHeight - rect.top : rect.top) - 12)
+  })
 </script>
-
 
 <template>
   <div ref="root" class="relative flex justify-center" :class="placement === 'up' ? 'min-w-0 flex-1' : ''">

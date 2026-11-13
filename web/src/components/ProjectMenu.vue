@@ -17,10 +17,10 @@ defineProps<{ placement: 'side' | 'up'; active?: string }>()
 const ITEMS: IRailMenuItem[] = [
   { to: '/environment', key: 'environment', label: 'Ambiente', hint: 'O que toda conversa do projeto recebe', icon: 'folder' },
   { to: '/rules', key: 'rules', label: 'Rules', hint: 'Regras que todo agente respeita', icon: 'rule' },
-  { to: '/permissions', key: 'permissions', label: 'Permissões', hint: 'O que os agentes podem fazer: comandos, arquivos, MCP', icon: 'key' },
+  { to: '/permissions', key: 'permissions', label: 'Permissões', hint: 'O que os agentes podem fazer: comandos, arquivos, MCP', icon: 'shield' },
   { to: '/accounts', key: 'accounts', label: 'Contas', hint: 'As credenciais que o terminal do projeto recebe: GitHub, variáveis', icon: 'key' },
   { to: '/repositories', key: 'repositories', label: 'Repositórios', hint: 'Clonar, criar um git local, remover; as regras do git', icon: 'git' },
-  { to: '/schedules', key: 'schedules', label: 'Agendamentos', hint: 'O que os agentes rodam sozinhos, e quando', icon: 'clock' },
+  { to: '/schedules', key: 'schedules', label: 'Agendamentos', hint: 'O que os agentes rodam sozinhos, e quando', icon: 'bell' },
   { to: '/import', key: 'import', label: 'Importador', hint: 'O que um repositório tem de agentes, skills e docs', icon: 'box' },
   { to: '/mcp', key: 'mcp', label: 'MCPs', hint: 'Os servidores de ferramentas do projeto', icon: 'plug' },
   { to: '/catalog/history', key: 'catalog-history', label: 'Histórico do catálogo', hint: 'O que mudou no projeto, quem mudou, restaurar e reverter lote', icon: 'clock' },

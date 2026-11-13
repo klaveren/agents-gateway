@@ -48,9 +48,9 @@ describe('RailMenu — o agrupador', () => {
     expect(links(host)).toEqual(['Projetos', 'API', 'Erros'])
   })
 
-  it('abre já aberto quando a página atual é um dos filhos (e o botão do menu fica aceso)', async () => {
+  it('abre sempre com o agrupador fechado, mesmo com a página atual entre os filhos (e o botão do menu fica aceso)', async () => {
     const host = await mount('errors')
-    expect(links(host)).toEqual(['Projetos', 'API', 'Erros'])
+    expect(links(host)).toEqual(['Projetos'])
     expect(host.querySelector('button[aria-haspopup="menu"]')!.className).toContain('text-emerald-300')
   })
 })

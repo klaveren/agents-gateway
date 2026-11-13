@@ -158,7 +158,7 @@ import { computed, onMounted, ref, watch } from 'vue'
     <p class="font-medium text-zinc-200">Só quem administra configura a troca automática de modelo.</p>
   </div>
 
-  <MasterDetail v-else :open="!!id || adding" back-to="/model-groups" back-label="Sequências" :title="adding ? 'Nova sequência' : selected?.name">
+  <MasterDetail v-else :open="!!id || adding" back-to="/model-groups" back-label="Fallback" :title="adding ? 'Nova sequência' : selected?.name">
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="min-w-0 truncate text-xl font-semibold">Fallback</h1>

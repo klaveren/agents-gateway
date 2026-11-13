@@ -261,7 +261,7 @@ async function saveSettings() {
       </section>
 
       <section v-if="!lite && auth.isAdmin && settings.current" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 class="font-medium">Troca automática de modelo</h2>
+        <h2 class="font-medium">Fallback</h2>
         <p class="text-xs text-zinc-400">
           A sequência dos agentes que não escolheram uma: a conversa começa no primeiro modelo disponível dela e, se o modelo falha (cota, limite de uso…), segue no próximo e fica nele.
         </p>
