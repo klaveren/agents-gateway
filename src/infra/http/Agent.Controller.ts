@@ -1726,7 +1726,7 @@ export class AgentController {
       res,
       async () => {
         const id = req.params.id as string
-        const { conversation, admin } = await this.requireConversationAccess(id)
+        const { conversation, admin, owns } = await this.requireConversationAccess(id)
         const view = this.viewFor(admin)
 
         // ⚖️ A JANELA: com `limit`, só os mais recentes (antes de `before`); com `after`, os que vieram depois. Sem nada, todos.
@@ -1747,6 +1747,8 @@ export class AgentController {
           conversation: toConversationDto(conversation, view),
           turns: turns.map((turn) => toTurnDto(turn, conversation, view)),
           ...(page ? { hasMore: page.hasMore } : {}),
+          // ⚖️ O admin que abre a conversa de OUTRA pessoa só lê: mandar mensagem nela é recusado (ver `requireOwnedSession`).
+          ...(owns ? {} : { readOnly: true }),
         }
       },
       { message: 'Turns listed' },
@@ -2514,9 +2516,10 @@ export class AgentController {
     if (!conversation) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
     // ⛔ O admin abre a conversa dos PROJETOS QUE ADMINISTRA (a sem projeto, o gateway), não a de qualquer um.
     const admin = await this.administersConversation(conversation.metadata)
-    if (!admin && !this.ownsConversation(resolved, conversation.metadata)) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
+    const owns = this.ownsConversation(resolved, conversation.metadata)
+    if (!admin && !owns) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
 
-    return { resolved, admin, conversation }
+    return { resolved, admin, owns, conversation }
   }
 
   /** A audiência configurada admite este chamador? Ver `allowsCaller` para a ordem das regras. */

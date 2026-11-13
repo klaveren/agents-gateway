@@ -106,7 +106,7 @@ const messageOf = (failure: unknown): string => {
 export const TURN_PAGE = 5
 
 /** O histórico gravado como a rota devolve (com janela, `hasMore` diz se há turno antes do primeiro). */
-type THistory = { agentId?: string; conversation?: IConversation; turns: ITurn[]; hasMore?: boolean }
+type THistory = { agentId?: string; conversation?: IConversation; turns: ITurn[]; hasMore?: boolean; readOnly?: boolean }
 
 export const useThreadStore = defineStore('thread', () => {
   const sessionId = ref<string>()
@@ -121,6 +121,8 @@ export const useThreadStore = defineStore('thread', () => {
    */
   const windowed = ref(true)
   const hasOlder = ref(false)
+  /** A conversa é de OUTRA pessoa (o admin abriu): só leitura — o gateway recusa mensagem de quem não é o dono. */
+  const readOnly = ref(false)
   const loadingOlder = ref(false)
   /**
    * A sugestão de próximo passo que chegou ao vivo (`turn.suggestion`): guardada à parte porque uma releitura que saiu antes
@@ -192,6 +194,7 @@ export const useThreadStore = defineStore('thread', () => {
     turns.value = []
     windowed.value = !options.all
     hasOlder.value = false
+    readOnly.value = false
     suggestion.value = undefined
     todos.value = []
     watches.value = []
@@ -219,6 +222,7 @@ export const useThreadStore = defineStore('thread', () => {
       if (current !== generation) return
       turns.value = history.turns
       hasOlder.value = history.hasMore === true
+      readOnly.value = history.readOnly === true
       agentId.value = 'agentId' in history ? history.agentId : undefined
       // ⚖️ A conversa fora da caixa de entrada (a delegada, a de outra pessoa) não tem cabeçalho na lista: vem com o histórico.
       if (!header.value && 'conversation' in history && history.conversation) header.value = history.conversation
@@ -243,6 +247,7 @@ export const useThreadStore = defineStore('thread', () => {
     header.value = undefined
     turns.value = []
     hasOlder.value = false
+    readOnly.value = false
     windowed.value = true
     suggestion.value = undefined
     todos.value = []
@@ -520,6 +525,7 @@ export const useThreadStore = defineStore('thread', () => {
     header.value = undefined
     turns.value = []
     hasOlder.value = false
+    readOnly.value = false
     loadingOlder.value = false
     suggestion.value = undefined
     todos.value = []
@@ -630,6 +636,7 @@ export const useThreadStore = defineStore('thread', () => {
     agentId,
     turns,
     hasOlder,
+    readOnly,
     loadingOlder,
     windowed,
     loadOlder,

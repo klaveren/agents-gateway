@@ -413,6 +413,18 @@ describe('open: sessão viva', () => {
     expect(thread.liveSession).toBe(false)
     expect(thread.error).toBeUndefined()
   })
+
+  it('⚖️ a conversa de outra pessoa (o admin abriu) vem só leitura; a próxima conversa e o reset limpam', async () => {
+    routes({ '/conversations/B/turns': () => ({ turns: [], readOnly: true }) })
+    const thread = useThreadStore()
+    await thread.open('B')
+    expect(thread.readOnly).toBe(true)
+    await thread.open('A')
+    expect(thread.readOnly).toBe(false)
+    await thread.open('B')
+    thread.reset()
+    expect(thread.readOnly).toBe(false)
+  })
 })
 
 describe('reconcileDraft', () => {

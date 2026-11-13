@@ -118,7 +118,7 @@
   )
   /** A sessão não está viva, mas a conversa volta ao enviar (o gateway a retoma do histórico gravado). */
   // Com um turno rodando a conversa não está encerrada, mesmo que o servidor ainda não a tenha marcado viva de novo.
-  const resumable = computed(() => thread.liveSession === false && !thread.pending)
+  const resumable = computed(() => thread.liveSession === false && !thread.pending && !thread.readOnly)
 
   /** De quem esta conversa é filha (delegada por outro agente) e as filhas que ela abriu. */
   const parentId = computed(() => (typeof header.value?.metadata?.delegatedBy === 'string' ? header.value.metadata.delegatedBy : undefined))
@@ -573,8 +573,13 @@
         Começar uma nova
       </button>
     </div>
-    <SessionTuner v-if="thread.liveSession && agent" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
+    <!-- ⚖️ Conversa de outra pessoa (o admin abriu): só leitura. Mandar mensagem nela o gateway recusa. -->
+    <p v-if="thread.readOnly" class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3 text-center text-xs text-zinc-400" data-test="thread-read-only">
+      Conversa de {{ owner?.email ?? owner?.id ?? 'outra pessoa' }} — só leitura.
+    </p>
+    <SessionTuner v-if="thread.liveSession && agent && !thread.readOnly" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
     <Composer
+      v-if="!thread.readOnly"
       :sending="thread.sending || thread.following"
       :disabled="thread.liveSession === undefined"
       :commands="commands"
