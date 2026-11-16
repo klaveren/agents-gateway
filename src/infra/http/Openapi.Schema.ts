@@ -5415,6 +5415,18 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/connections/{projectId}/secrets': {
+      put: {
+        summary:
+          'Fill, in one go, the secret variables the connected project asks for (`{ values: { NAME: value } }`): each value goes to EVERY agent, skill and command that asks for that name, on this machine only. Screen only (a session, never an access token); values are never returned — the answer is the connection with `configured` on each variable, and `failed` for the ones that could not be saved. A name the project does not ask for is refused',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', required: ['values'], properties: { values: { type: 'object', additionalProperties: { type: 'string' } } } }),
+        },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '403': failures['403'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/connections/{projectId}/env': {
       put: {
         summary:

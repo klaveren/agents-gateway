@@ -75,3 +75,52 @@ describe('ProjectConnectionCard', () => {
     expect(host.textContent).toContain('revoked')
   })
 })
+
+describe('ProjectConnectionCard — as variáveis que o projeto pede', () => {
+  beforeEach(() => vi.mocked(api).mockReset())
+
+  const secrets = [
+    { kind: 'skill', id: 'efi', name: 'EFI_CLIENT_ID', description: 'Client ID', configured: true },
+    { kind: 'agent', id: 'zeus', name: 'EFI_CLIENT_ID', configured: false },
+    { kind: 'skill', id: 'efi', name: 'EFI_CLIENT_SECRET', configured: false },
+    { kind: 'skill', id: 'efi', name: 'EFI_CERT', configured: true },
+  ]
+
+  it('⚖️ uma linha por nome, com o status daqui; o .env colado preenche os nomes pedidos e salvar manda só os preenchidos', async () => {
+    const { host, app } = (await mount()) as unknown as { host: HTMLElement; app: ReturnType<typeof createApp> }
+    useConnectionsStore().list = [connection({ updateAvailable: false, secrets })]
+    app.mount(host)
+    await nextTick()
+
+    expect(host.querySelector('[data-test="secrets-pending"]')?.textContent).toBe('2 pendente(s)')
+    const rows = [...host.querySelectorAll<HTMLElement>('[data-secret]')]
+    expect(rows.map((row) => [row.dataset.secret, row.querySelector('[data-test="secret-status"]')?.textContent?.trim()])).toEqual([
+      ['EFI_CLIENT_ID', 'Parcial · 1 de 2'],
+      ['EFI_CLIENT_SECRET', 'Pendente'],
+      ['EFI_CERT', 'Preenchida'],
+    ])
+    expect(rows[0]!.textContent).toContain('skill efi · agente zeus — Client ID')
+
+    ;(host.querySelector('[data-test="secrets-paste-toggle"]') as HTMLElement).click()
+    await nextTick()
+    const paste = host.querySelector<HTMLTextAreaElement>('[data-test="secrets-paste"]')!
+    paste.value = '# comentário\nexport EFI_CLIENT_SECRET="s3cr3t"\nOUTRA=x\n'
+    paste.dispatchEvent(new Event('input'))
+    await nextTick()
+    ;(host.querySelector('[data-test="secrets-paste-apply"]') as HTMLElement).click()
+    await nextTick()
+    expect(host.querySelector('[data-test="secrets-paste-note"]')?.textContent).toContain('1 preenchida(s) a partir do .env · 1 ignorada(s), o projeto não pede: OUTRA')
+
+    vi.mocked(api).mockResolvedValueOnce(connection({ updateAvailable: false, secrets: secrets.map((secret) => ({ ...secret, configured: true })) }) as never)
+    const save = host.querySelector<HTMLButtonElement>('[data-test="secrets-save"]')!
+    expect(save.textContent?.trim()).toBe('Salvar 1 variável(is)')
+    save.click()
+    await nextTick()
+    await new Promise((resolve) => setTimeout(resolve))
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/connections/logiccus/secrets', { method: 'PUT', body: { values: { EFI_CLIENT_SECRET: 's3cr3t' } } })
+    expect(host.querySelector('[data-test="secrets-pending"]')).toBeNull()
+    expect(host.querySelector('[data-test="secrets-note"]')?.textContent).toBe('1 variável(is) gravada(s) nesta máquina.')
+    // O campo volta vazio: o valor não fica na tela.
+    expect([...host.querySelectorAll<HTMLInputElement>('[data-test="secret-input"]')].every((input) => input.value === '')).toBe(true)
+  })
+})

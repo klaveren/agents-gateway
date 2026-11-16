@@ -4,6 +4,7 @@ import { changeLabel, originLabel } from '@/lib/connection'
 import { fullTime } from '@/lib/format'
 import { useConnectionsStore } from '@/stores/connections'
 import ConfirmDialog from './ConfirmDialog.vue'
+import ConnectionSecretsTable from './ConnectionSecretsTable.vue'
 
 /**
  * 🔌 O projeto conectado: de onde vem, a versão daqui e a da origem, o aviso de atualização (um só, sempre para a
@@ -99,15 +100,7 @@ async function disconnect() {
         <li v-for="item in connection.skipped" :key="item.ref"><code class="text-zinc-300">{{ item.ref }}</code>: {{ item.message }}</li>
       </ul>
     </details>
-    <details v-if="connection.secrets.length" class="text-xs">
-      <summary class="cursor-pointer text-zinc-300">{{ connection.secrets.length }} variável(is) que o projeto pede</summary>
-      <p class="mt-1 text-zinc-500">Os valores ficam só nesta máquina: preencha cada um na tela do agente ou do recurso.</p>
-      <ul class="mt-1 flex flex-col gap-0.5 text-zinc-400">
-        <li v-for="secret in connection.secrets" :key="`${secret.kind}/${secret.id}/${secret.name}`">
-          <code class="text-zinc-300">{{ secret.name }}</code> · {{ secret.kind }} {{ secret.id }}<template v-if="secret.description"> — {{ secret.description }}</template>
-        </li>
-      </ul>
-    </details>
+    <ConnectionSecretsTable :project-id="projectId" />
 
     <form v-if="askingToken" class="flex flex-wrap items-end gap-2" @submit.prevent="saveToken">
       <label class="flex min-w-0 flex-1 flex-col gap-1 text-xs text-zinc-300">

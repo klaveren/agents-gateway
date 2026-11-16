@@ -10,12 +10,23 @@ import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { adminView, administers, requireGatewayAdmin, requireProjectAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
+import { SECRET_LIMITS } from '@domain/models/ResourceSecret.Model'
+import { viaAccessToken } from './Auth.Controller'
+import { viaSessionCookie } from './Session.Cookie'
 
 export interface IProjectConnectionsControllerDeps {
   /** Ausente (o servidor de teste sem banco): as rotas respondem 404. */
   connections?: ProjectConnectionService
   layers?: AgentLocalLayerService
   proof?: ICallerProof
+  /**
+   * O cofre local das variáveis secretas (ver `ResourceSecrets.Service`): diz quais variáveis que o projeto pede já têm
+   * valor NESTA máquina e grava as preenchidas na tabela. Ausente: todas aparecem pendentes, e gravar responde 404.
+   */
+  secrets?: {
+    list(scope: 'agent' | 'skill' | 'command', scopeId: string): ReadonlyArray<{ name: string; configured: boolean }>
+    save(scope: 'agent' | 'skill' | 'command', scopeId: string, input: { name: string; description?: string; value?: string }, by: string): unknown
+  }
 }
 
 const connectSchema = z.object({ url: z.string().min(1).max(500), projectId: z.string().min(1).max(64), token: z.string().min(1).max(200) })
@@ -23,6 +34,8 @@ const tokenSchema = z.object({ token: z.string().min(1).max(200) })
 const modelsSchema = z.object({ map: z.record(z.string().max(300), z.string().max(300)) })
 /** As fixas desta máquina (`{ NOME: valor }`): a lista inteira. As regras de nome e tamanho são as do projeto. */
 const envSchema = z.object({ env: z.record(z.string().max(80), z.string().max(5_000)) })
+/** As variáveis secretas preenchidas na tabela (`{ NOME: valor }`): cada uma vai para todo agente e recurso que a pede. */
+const secretsSchema = z.object({ values: z.record(z.string().min(1).max(120), z.string().min(1).max(SECRET_LIMITS.value)) })
 // A forma, só: o que cada item pode ser quem diz é a regra do agente (`AgentLocalLayer.Service`).
 /** A camada inteira (a local de um projeto conectado e a do projeto de um agente global têm a mesma forma). */
 export const localSchema = z.object({
@@ -85,6 +98,7 @@ export class ProjectConnectionsController {
       'replaceToken',
       'setModels',
       'setEnv',
+      'setSecrets',
       'disconnect',
       'getLocal',
       'saveLocal',
@@ -102,7 +116,7 @@ export class ProjectConnectionsController {
       return this.service()
         .list()
         .filter((connection) => administers(view, connection.projectId))
-        .map(toDto)
+        .map((connection) => this.dto(connection))
     })
   }
 
@@ -115,21 +129,21 @@ export class ProjectConnectionsController {
         const view = await adminView(this.deps.proof)
         const connection = await this.service().connect(parseBody(connectSchema, req.body), { email: by, ...(view?.userId ? { userId: view.userId } : {}) })
         this.service().follow(connection.projectId)
-        return toDto(connection)
+        return this.dto(connection)
       },
       201,
     )
   }
 
   async get(req: Request, res: Response): Promise<void> {
-    await this.respond(res, async () => toDto(await this.owned(req, 'getConnection')))
+    await this.respond(res, async () => this.dto(await this.owned(req, 'getConnection')))
   }
 
   /** `POST /connections/:projectId/check` — pergunta à origem agora (sem esperar o vigia). */
   async check(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { projectId } = await this.owned(req, 'checkConnection')
-      return toDto(await this.service().check(projectId))
+      return this.dto(await this.service().check(projectId))
     })
   }
 
@@ -139,21 +153,21 @@ export class ProjectConnectionsController {
       const connection = await this.owned(req, 'syncConnection')
       const by = await requireProjectAdmin(this.deps.proof, connection.projectId, 'syncConnection')
       const result = await this.service().sync(connection.projectId, by)
-      return { result, connection: toDto(this.service().get(connection.projectId)!) }
+      return { result, connection: this.dto(this.service().get(connection.projectId)!) }
     })
   }
 
   async replaceToken(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { projectId } = await this.owned(req, 'replaceConnectionToken')
-      return toDto(await this.service().replaceToken(projectId, parseBody(tokenSchema, req.body).token))
+      return this.dto(await this.service().replaceToken(projectId, parseBody(tokenSchema, req.body).token))
     })
   }
 
   async setModels(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { projectId } = await this.owned(req, 'setConnectionModels')
-      return toDto(this.service().setModelMap(projectId, parseBody(modelsSchema, req.body).map))
+      return this.dto(this.service().setModelMap(projectId, parseBody(modelsSchema, req.body).map))
     })
   }
 
@@ -164,7 +178,36 @@ export class ProjectConnectionsController {
   async setEnv(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { projectId } = await this.owned(req, 'setConnectionEnv')
-      return toDto(this.service().setLocalEnv(projectId, parseBody(envSchema, req.body).env))
+      return this.dto(this.service().setLocalEnv(projectId, parseBody(envSchema, req.body).env))
+    })
+  }
+
+  /**
+   * `PUT /connections/:projectId/secrets { values: { NOME: valor } }` — preenche, numa tela só, as variáveis secretas que o
+   * projeto pede: cada valor vai para TODO agente e recurso que pede aquele nome. ⛔ Só na tela (como gravar uma variável
+   * secreta): o valor entra pela pessoa, nunca por agente ou token de acesso, e não volta — a resposta traz só o status.
+   * Nome que o projeto não pede é recusado.
+   */
+  async setSecrets(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const connection = await this.owned(req, 'setConnectionSecrets')
+      if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem administra, entrando pela tela, grava uma variável secreta.')
+      if (!this.deps.secrets) throw new HttpError(404, 'not_found', 'Secrets are not enabled')
+      const { values } = parseBody(secretsSchema, req.body)
+      const unknown = Object.keys(values).filter((name) => !connection.secrets.some((secret) => secret.name === name))
+      if (unknown.length) throw new HttpError(422, 'validation_error', `not asked by this project: ${unknown.join(', ')}`)
+      // O item que não veio para cá (ficou de fora da atualização) não derruba os outros: volta em `failed`, com o motivo.
+      const failed: Array<{ name: string; kind: string; id: string; message: string }> = []
+      for (const secret of connection.secrets) {
+        const value = values[secret.name]
+        if (value === undefined) continue
+        try {
+          this.deps.secrets.save(secret.kind, secret.id, { name: secret.name, value, ...(secret.description ? { description: secret.description } : {}) }, connection.by)
+        } catch (error: unknown) {
+          failed.push({ name: secret.name, kind: secret.kind, id: secret.id, message: error instanceof Error ? error.message : String(error) })
+        }
+      }
+      return { ...this.dto(connection), ...(failed.length ? { failed } : {}) }
     })
   }
 
@@ -224,6 +267,25 @@ export class ProjectConnectionsController {
     const connection = this.service().get(projectId)
     if (!connection) throw new HttpError(404, 'not_found', `${projectId} is not a connected project`)
     return { ...connection, by }
+  }
+
+  /** A conexão para a tela: o aviso de atualização e, em cada variável que o projeto pede, se ela já tem valor aqui. */
+  private dto(connection: IProjectConnection) {
+    const configured = new Map<string, Set<string>>()
+    const has = (kind: 'agent' | 'skill' | 'command', id: string, name: string) => {
+      const key = `${kind}/${id}`
+      if (!configured.has(key)) {
+        let names: Set<string>
+        try {
+          names = new Set((this.deps.secrets?.list(kind, id) ?? []).filter((item) => item.configured).map((item) => item.name))
+        } catch {
+          names = new Set()
+        }
+        configured.set(key, names)
+      }
+      return configured.get(key)!.has(name)
+    }
+    return { ...toDto(connection), secrets: connection.secrets.map((secret) => ({ ...secret, configured: has(secret.kind, secret.id, secret.name) })) }
   }
 
   private layers(): AgentLocalLayerService {

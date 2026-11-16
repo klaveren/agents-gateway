@@ -28,7 +28,8 @@ export interface IProjectConnection {
   changes: IConnectionChange[]
   changesTruncated?: boolean
   skipped: Array<{ ref: string; message: string }>
-  secrets: Array<{ kind: string; id: string; name: string; description?: string }>
+  /** As variáveis secretas que o projeto pede; `configured`: já tem valor NESTA máquina. */
+  secrets: Array<{ kind: string; id: string; name: string; description?: string; configured?: boolean }>
   modelMap: Record<string, string>
   /** As variáveis fixas DESTA MÁQUINA, por cima das que vêm da origem (nunca vão para lá). */
   localEnv?: Record<string, string>
@@ -114,6 +115,20 @@ export const useConnectionsStore = defineStore('connections', () => {
     put(await api<IProjectConnection>(`/connections/${encodeURIComponent(projectId)}/env`, { method: 'PUT', body: { env } }))
   }
 
+  /**
+   * Preenche, de uma vez, as variáveis secretas que o projeto pede (`{ NOME: valor }`): cada valor vai para todo agente e
+   * recurso que pede aquele nome. O valor só entra: volta só o status. Devolve o que não pôde ser gravado.
+   */
+  async function setSecrets(projectId: string, values: Record<string, string>): Promise<Array<{ name: string; kind: string; id: string; message: string }>> {
+    const result = await api<IProjectConnection & { failed?: Array<{ name: string; kind: string; id: string; message: string }> }>(
+      `/connections/${encodeURIComponent(projectId)}/secrets`,
+      { method: 'PUT', body: { values } },
+    )
+    const { failed, ...connection } = result
+    put(connection)
+    return failed ?? []
+  }
+
   async function disconnect(projectId: string): Promise<void> {
     await api(`/connections/${encodeURIComponent(projectId)}`, { method: 'DELETE' })
     list.value = list.value.filter((item) => item.projectId !== projectId)
@@ -134,5 +149,23 @@ export const useConnectionsStore = defineStore('connections', () => {
     return api<IAgentLocalLayerView>(localPath(projectId, agentId), { method: 'DELETE' })
   }
 
-  return { list, byProject, attention, originOf, refresh, reset, follow, connect, check, sync, replaceToken, setLocalEnv, disconnect, readLocal, saveLocal, removeLocal }
+  return {
+    list,
+    byProject,
+    attention,
+    originOf,
+    refresh,
+    reset,
+    follow,
+    connect,
+    check,
+    sync,
+    replaceToken,
+    setLocalEnv,
+    setSecrets,
+    disconnect,
+    readLocal,
+    saveLocal,
+    removeLocal,
+  }
 })
