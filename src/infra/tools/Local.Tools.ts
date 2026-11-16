@@ -675,7 +675,16 @@ export async function terminalRefusal(
     // ⚖️ Os embutidos do shell que não fazem nada sozinhos (`echo ---` como separador, `cd`, `pwd`) passam sem regra: o
     // redirecionamento deles é checado abaixo, e uma negação explícita do agente ou do projeto continua valendo.
     if (HARMLESS_BUILTINS.has(part.argv[0] ?? '') && !explicitlyDenied(permissions, asker, part)) continue
-    const verdict = permissions.check(asker, { category: 'terminal', value: part.text, argv: part.argv }, { log: true })
+    // ⚖️ O `ssh` com o comando remoto entre aspas: a regra é conferida também contra as PALAVRAS de cada comando remoto (ver
+    // `remoteRuleVerdict`). Sem isto `ssh * sudo *` nunca casava `ssh h "sudo …"` (a aspa grudava no sudo) e o agente pedia
+    // regra nova a cada comando. A negação da pessoa num comando remoto vale mesmo com `ssh *` liberado.
+    const remote = part.name === 'ssh' ? await remoteRuleVerdict(part, command, permissions, asker) : undefined
+    if (remote?.denied) return remote.denied
+    const verdict = permissions.check(asker, { category: 'terminal', value: part.text, argv: part.argv }, { log: !remote?.allowed })
+    if (remote?.allowed && verdict.rule?.decision !== 'deny') {
+      remote.record()
+      continue
+    }
     // ⚖️ Depois de `cd repositories/x && …`, o caminho relativo do comando é o da pasta nova: a regra escrita da pasta do
     // projeto (`node repositories/x/tools/*`) vale também para `node tools/a.mjs`. Negar, em qualquer das duas formas, vence.
     const shifted = moved && shiftArgv(part.argv, moved)
@@ -703,6 +712,47 @@ export async function terminalRefusal(
     if (!verdict.allowed) return verdict.reason
   }
   return undefined
+}
+
+/**
+ * ⚖️ AS REGRAS DE TERMINAL CONTRA O COMANDO REMOTO DO `ssh`, palavra por palavra: cada comando da linha remota vale como
+ * `[ssh, opções, host, …argv dele]` (`ssh h "sudo update-grub | tail -5"` → `ssh h sudo update-grub` e `ssh h tail -5`).
+ * - O que o `sudo` embrulha (`sudo X` → `X`) é coberto pela regra do `sudo X`.
+ * - ⚖️ A regra que libera o comando COM sudo cobre o mesmo comando sem sudo: quem liberou `ssh * sudo *` liberou rodar
+ *   qualquer coisa como root lá; o `tail` do pipe não precisa de outra regra.
+ * - Negação explícita de qualquer comando remoto vence (`denied`). Linha opaca ou montada pelo shell local: nada a dizer.
+ * O sudo e o reboot remotos seguem passando também pela trava própria (`remoteSudoGap`), que exige a regra que os cite.
+ */
+async function remoteRuleVerdict(
+  part: IShellCommand,
+  full: string,
+  permissions: IPermissionChecker,
+  asker: IPermissionAsker,
+): Promise<{ allowed: boolean; denied?: string; record: () => void } | undefined> {
+  const remote = await remoteOf(part, full)
+  if (!remote || remote.opaque || !remote.commands.length) return undefined
+  const prefix = part.argv.slice(0, sshRemoteStart(part.argv))
+  const outer = remote.commands.filter(
+    (command) => !remote.commands.some((other) => other !== command && other.argv.length > command.argv.length && endsWith(other.argv, command.argv)),
+  )
+  const matched: Array<readonly string[]> = []
+  let allowed = true
+  for (const command of outer) {
+    const tries = [[...prefix, ...command.argv], ...(command.argv[0] === 'sudo' ? [] : [[...prefix, 'sudo', ...command.argv]])]
+    const verdicts = tries.map((argv) => ({ argv, verdict: permissions.check(asker, { category: 'terminal', value: argv.join(' '), argv }, { log: false }) }))
+    // A negação vale contra o comando como ele roda (a do `sudo X` não fecha o `X` sem sudo).
+    const denied = verdicts[0]!.verdict
+    if (!denied.allowed && denied.rule?.decision === 'deny') return { allowed: false, denied: denied.reason, record: () => undefined }
+    const ok = verdicts.find(({ verdict }) => verdict.allowed)
+    if (ok) matched.push(ok.argv)
+    else if (!HARMLESS_BUILTINS.has(command.argv[0] ?? '')) allowed = false
+  }
+  return {
+    allowed,
+    record: () => {
+      for (const argv of matched) permissions.check(asker, { category: 'terminal', value: argv.join(' '), argv: [...argv] }, { log: true })
+    },
+  }
 }
 
 /**

@@ -397,3 +397,40 @@ describe('terminal — `IFS=` do `read` e `bash --version`', () => {
     assert.match((await refusal('echo ls | bash -x', rules)) ?? '', /shell-stdin/)
   })
 })
+
+describe('terminal — regras contra o comando remoto do ssh, palavra por palavra', () => {
+  const sudo = [rule('ssh * sudo *', 'allow')]
+
+  it('✅ `ssh * sudo *` cobre o comando remoto entre aspas (antes a aspa grudava no sudo e nada casava), com `>` no argumento', async () => {
+    for (const command of [
+      `ssh isrv2 "sudo grub-set-default 'gnulinux-advanced-x>gnulinux-6.17-x'"`,
+      `ssh isrv2 'sudo systemctl restart k3s'`,
+      `ssh -o BatchMode=yes ubuntu@isrv2 "sudo cat /etc/default/grub"`,
+      `ssh isrv2 "sudo sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=saved/' /etc/default/grub"`,
+    ]) {
+      assert.strictEqual(await refusal(command, sudo), undefined, command)
+    }
+  })
+
+  it('⚖️ quem liberou com sudo liberou o mesmo sem sudo: o `tail` do pipe e o `cd` passam', async () => {
+    assert.strictEqual(await refusal(`ssh isrv2 "sudo update-grub 2>&1 | tail -5"`, sudo), undefined)
+    assert.strictEqual(await refusal(`ssh isrv2 "cd /etc && sudo ls"`, sudo), undefined)
+  })
+
+  it('a regra estreita segue estreita: `ssh * sudo systemctl *` não cobre outro comando na mesma linha', async () => {
+    const narrow = [rule('ssh * sudo systemctl *', 'allow')]
+    assert.strictEqual(await refusal(`ssh h "sudo systemctl status k3s"`, narrow), undefined)
+    assert.ok(await refusal(`ssh h "sudo systemctl status k3s; rm -rf ~/x"`, narrow))
+    assert.ok(await refusal(`ssh h "sudo journalctl -u k3s"`, narrow))
+  })
+
+  it('⛔ a negação da pessoa num comando remoto vence, mesmo com `ssh *` liberado; a do sudo não fecha o comando sem sudo', async () => {
+    const rules = [rule('ssh *', 'allow'), rule('ssh * sudo rm *', 'deny')]
+    assert.ok(await refusal(`ssh h "ls; sudo rm -f /x"`, rules))
+    assert.strictEqual(await refusal(`ssh h "rm -f /tmp/x"`, rules), undefined)
+  })
+
+  it('⛔ linha remota montada pelo shell local (`$(…)`) não ganha a leitura por palavras', async () => {
+    assert.ok(await refusal('ssh h "sudo $(cat cmd)"', sudo))
+  })
+})
