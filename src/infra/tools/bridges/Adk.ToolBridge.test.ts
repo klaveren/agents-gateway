@@ -20,7 +20,8 @@ describe('Adk.ToolBridge — Gemini schema sanitization', () => {
       const: 'x',
     })
 
-    assert.deepStrictEqual(clean, { type: 'STRING', description: 'código do SKU' })
+    // `const` em texto vira `enum` de um valor (ver o teste do zod abaixo).
+    assert.deepStrictEqual(clean, { type: 'STRING', enum: ['x'], description: 'código do SKU' })
   })
 
   it('keeps what Gemini accepts', () => {
@@ -45,6 +46,29 @@ describe('Adk.ToolBridge — Gemini schema sanitization', () => {
       type: 'OBJECT',
       properties: { code: { type: 'STRING' }, nested: { type: 'OBJECT', properties: { deep: { type: 'NUMBER' } } } },
     })
+  })
+})
+
+describe('Adk.ToolBridge — o que o zod gera (16/11: o Gemini recusou `propertyNames` e `const` no anyOf)', () => {
+  it('⚖️ `z.record` perde `propertyNames`; o `anyOf` de literais desce e vira `enum` por opção; `.nullable()` vira `nullable`', () => {
+    assert.deepStrictEqual(
+      sanitizeProperty({
+        type: 'object',
+        properties: {
+          env: { type: 'object', propertyNames: { type: 'string' }, additionalProperties: { type: 'string' } },
+          mode: { anyOf: [{ type: 'string', const: 'chat' }, { const: 'agent' }, { type: 'number', const: 1 }] },
+          projectId: { type: ['string', 'null'], description: 'null = global' },
+        },
+      }),
+      {
+        type: 'OBJECT',
+        properties: {
+          env: { type: 'OBJECT' },
+          mode: { anyOf: [{ type: 'STRING', enum: ['chat'] }, { type: 'STRING', enum: ['agent'] }, { type: 'NUMBER' }] },
+          projectId: { type: 'STRING', nullable: true, description: 'null = global' },
+        },
+      },
+    )
   })
 })
 
