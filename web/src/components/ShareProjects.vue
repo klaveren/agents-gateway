@@ -70,7 +70,7 @@ async function submit() {
       </li>
     </ul>
     <p v-if="error" class="text-sm text-rose-300" data-test="share-error">{{ error }}</p>
-    <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
+    <p v-if="note" class="text-sm text-success-300">{{ note }}</p>
     <SaveFooter v-if="!readonly" label="Salvar compartilhamento" :busy="busy" :disabled="!dirty" :pending="dirty" @save="submit" />
   </div>
 </template>

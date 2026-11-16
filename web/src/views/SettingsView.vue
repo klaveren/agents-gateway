@@ -288,7 +288,7 @@ async function saveSettings() {
             <dd class="min-w-0 truncate font-mono text-xs text-zinc-200" :title="deploymentValue(settings.current.deployment[item.key])">{{ deploymentValue(settings.current.deployment[item.key]) }}</dd>
           </div>
         </dl>
-        <p v-if="settings.current.deployment.sandbox" class="text-xs" :class="settings.current.deployment.sandbox.available ? 'text-emerald-300' : 'text-amber-300'">
+        <p v-if="settings.current.deployment.sandbox" class="text-xs" :class="settings.current.deployment.sandbox.available ? 'text-success-300' : 'text-amber-300'">
           Isolamento dos agentes de projeto:
           {{ settings.current.deployment.sandbox.available ? 'ativo' : `indisponível — ${settings.current.deployment.sandbox.reason ?? 'sem motivo'}. O terminal deles fica bloqueado.` }}
         </p>
@@ -301,7 +301,7 @@ async function saveSettings() {
       </p>
       <!-- Um salvar só: a operação do gateway e a troca automática de modelo padrão. -->
       <SaveFooter v-if="auth.isAdmin && settings.current" label="Salvar configurações" @save="saveSettings">
-        <span v-if="saved" class="text-sm text-emerald-300">{{ saved }}</span>
+        <span v-if="saved" class="text-sm text-success-300">{{ saved }}</span>
         <span v-if="failure" class="text-sm text-rose-300">{{ failure }}</span>
       </SaveFooter>
     </div>

@@ -139,7 +139,7 @@ import { computed, ref, watch } from 'vue'
         </p>
       </div>
       <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-      <p v-if="notice" class="text-sm text-emerald-300">{{ notice }}</p>
+      <p v-if="notice" class="text-sm text-success-300">{{ notice }}</p>
 
       <section class="flex flex-col gap-2">
         <h2 class="text-sm font-medium text-zinc-200">Valores a mascarar</h2>

@@ -108,7 +108,7 @@ function message(failure: unknown): string {
           <label v-for="place in tool.places" :key="place" class="flex items-center gap-2 py-0.5" data-test="scope-place" :data-place="place">
             <input type="checkbox" :checked="!off.has(place)" data-test="scope-toggle" @change="toggle(place)" />
             <code class="break-all text-zinc-200">{{ place }}</code>
-            <span v-if="foundBy.get(place)?.found" class="text-emerald-300" data-test="scope-mark">encontrado</span>
+            <span v-if="foundBy.get(place)?.found" class="text-success-300" data-test="scope-mark">encontrado</span>
             <span v-else-if="foundBy.has(place)" class="text-zinc-500" data-test="scope-mark">não encontrado</span>
           </label>
         </fieldset>
@@ -120,7 +120,7 @@ function message(failure: unknown): string {
       <div class="flex flex-wrap items-center gap-2">
         <button v-if="!embedded" type="submit" class="btn btn-secondary btn-sm" :disabled="busy || !dirty" data-test="scope-save">{{ busy ? 'Salvando…' : 'Salvar ambiente' }}</button>
         <span v-else-if="dirty" class="text-amber-300">Mudança não salva</span>
-        <span v-if="saved" class="text-emerald-300" data-test="scope-saved">{{ saved }}</span>
+        <span v-if="saved" class="text-success-300" data-test="scope-saved">{{ saved }}</span>
         <span v-if="error" class="text-rose-300" data-test="scope-error">{{ error }}</span>
       </div>
     </form>

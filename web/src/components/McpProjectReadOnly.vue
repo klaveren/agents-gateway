@@ -103,7 +103,7 @@
             <h2 class="truncate text-lg font-semibold">{{ selected.name }}</h2>
             <p class="truncate font-mono text-xs text-zinc-500">mcp:{{ selected.id }}/…</p>
           </div>
-          <span class="ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs" :class="selected.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-800 text-zinc-400'">
+          <span class="ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs" :class="selected.enabled ? 'bg-success-500/15 text-success-300' : 'bg-zinc-800 text-zinc-400'">
             {{ selected.enabled ? 'Ligado' : 'Desligado' }}
           </span>
         </div>
@@ -152,7 +152,7 @@
           </dl>
 
           <div v-if="selected.auth === 'oauth'" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
-            <p class="text-sm" :class="selected.oauthConnected ? 'text-emerald-300' : 'text-zinc-300'">
+            <p class="text-sm" :class="selected.oauthConnected ? 'text-success-300' : 'text-zinc-300'">
               {{ selected.oauthConnected ? '✓ Sua conta está conectada.' : 'Sua conta não está conectada: as ferramentas deste MCP não funcionam nas suas conversas até você conectar.' }}
             </p>
             <div class="flex flex-wrap gap-2">
@@ -161,7 +161,7 @@
             </div>
             <p v-if="accountError" class="text-sm text-rose-300">{{ accountError }}</p>
           </div>
-          <p v-if="oauthNotice" class="text-sm" :class="route.query.oauth === 'ok' ? 'text-emerald-300' : 'text-rose-300'">{{ oauthNotice }}</p>
+          <p v-if="oauthNotice" class="text-sm" :class="route.query.oauth === 'ok' ? 'text-success-300' : 'text-rose-300'">{{ oauthNotice }}</p>
           <p class="text-xs text-zinc-500">As ferramentas que este servidor expõe, e o teste de conexão, ficam com quem administra.</p>
         </template>
       </section>

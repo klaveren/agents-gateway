@@ -228,7 +228,7 @@ const sideLabel = (side: IRevisionDiff['from']) => (side.revision === 'current' 
         <template v-else-if="diff">
           <p class="text-xs text-zinc-500">
             De {{ sideLabel(diff.from) }} para {{ sideLabel(diff.to) }}:
-            <span class="text-emerald-300">+{{ diff.added }}</span> /
+            <span class="text-success-300">+{{ diff.added }}</span> /
             <span class="text-rose-300">−{{ diff.removed }}</span> linha(s)
           </p>
           <p v-if="diff.equal" class="text-sm text-zinc-500">Sem diferença.</p>
@@ -244,9 +244,9 @@ const sideLabel = (side: IRevisionDiff['from']) => (side.revision === 'current' 
           </ul>
         </div>
         <p v-if="failure" class="text-sm text-rose-300">{{ failure }}</p>
-        <div v-if="done" class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200" data-test="restored">
+        <div v-if="done" class="rounded-lg border border-success-500/30 bg-success-500/10 px-3 py-2 text-sm text-success-200" data-test="restored">
           <p>{{ done.unchanged ? 'Já era a versão atual: nada mudou.' : `Restaurado da rev ${done.restoredFrom}${done.revision ? ` (nova rev ${done.revision.revision})` : ''}.` }}</p>
-          <p v-if="done.alsoChanged.length" class="text-xs text-emerald-300/80">Mudaram junto: {{ done.alsoChanged.map((item) => `${item.kind}/${item.itemId}`).join(', ') }}.</p>
+          <p v-if="done.alsoChanged.length" class="text-xs text-success-300/80">Mudaram junto: {{ done.alsoChanged.map((item) => `${item.kind}/${item.itemId}`).join(', ') }}.</p>
           <p v-if="done.missingSecrets.length" class="mt-1 text-amber-200" data-test="missing-secrets">
             Faltam segredos no cofre: <code>{{ done.missingSecrets.join(', ') }}</code>. Cadastre na tela do MCP antes de usar.
           </p>

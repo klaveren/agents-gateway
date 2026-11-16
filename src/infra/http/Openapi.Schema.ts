@@ -2182,6 +2182,22 @@ export const OPENAPI_DOCUMENT = {
         responses: { '201': { description: 'Created', ...json(envelope(projectSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/projects/{id}/color': {
+      put: {
+        summary:
+          'The color of the screen accent in this project: one of the Tailwind palettes (emerald, teal, cyan, sky, blue, indigo, violet, purple, fuchsia, pink, orange, lime); `null` = the theme green. Project administrators. Local to this installation (also on a connected project), not part of the catalog',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            required: ['color'],
+            properties: { color: { type: ['string', 'null'], enum: ['emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'orange', 'lime', null] } },
+          }),
+        },
+        responses: { '200': { description: 'The project', ...json(envelope({ type: 'object' })) }, '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/projects/{id}': {
       put: {
         summary:

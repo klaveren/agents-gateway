@@ -32,7 +32,7 @@ watch(finished, (value) => (open.value = !value))
           :class="{
             'border-zinc-600': item.status === 'pending',
             'border-emerald-400 bg-emerald-400/20': item.status === 'in_progress',
-            'border-emerald-500 bg-emerald-500 text-zinc-950': item.status === 'done',
+            'border-success-500 bg-success-500 text-zinc-950': item.status === 'done',
             'border-zinc-700 text-zinc-600': item.status === 'cancelled',
           }"
           aria-hidden="true"

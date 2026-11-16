@@ -195,7 +195,7 @@ const size = (bytes: number) => (bytes < 1024 ? `${bytes} B` : `${(bytes / 1024)
     </form>
 
     <p v-if="error" class="text-sm text-rose-300" data-test="files-error">{{ error }}</p>
-    <p v-if="note" class="text-sm text-emerald-300" data-test="files-note">{{ note }}</p>
+    <p v-if="note" class="text-sm text-success-300" data-test="files-note">{{ note }}</p>
     <div class="flex items-center gap-3">
       <button v-if="!embedded" type="button" class="btn btn-primary" :disabled="busy || !dirty || issues.some(Boolean)" data-test="files-save" @click="saveAll">Salvar arquivos</button>
       <span class="text-xs text-zinc-500">{{ draft.length }} arquivo(s) · {{ size(total) }}<template v-if="dirty"> · não salvo</template></span>

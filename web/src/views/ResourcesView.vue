@@ -484,7 +484,7 @@ function onInvalid(event: Event) {
         </div>
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-        <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
+        <p v-if="note" class="text-sm text-success-300">{{ note }}</p>
         <!-- Os arquivos também vão no Salvar (um salvar só por tela): a guia fica montada, com o rascunho dela. -->
         <div v-if="loaded" v-show="tab === 'files'">
           <ResourceFiles

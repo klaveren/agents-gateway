@@ -783,6 +783,8 @@ export interface IProject {
   env?: Record<string, string>
   /** Só admin: os valores VISÍVEIS que o projeto dá às variáveis que cada MCP pede. */
   mcpEnv?: IProjectMcpVar[]
+  /** 🎨 A paleta do destaque da tela no projeto (ver `projectColors.ts`). Ausente: o verde do tema. */
+  color?: string
   createdAt: string
   updatedAt: string
   updatedBy?: string

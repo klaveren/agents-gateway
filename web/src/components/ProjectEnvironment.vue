@@ -108,7 +108,7 @@ const format = (value: number) => value.toLocaleString('pt-BR')
     </div>
 
     <p class="rounded-xl bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400">Cada agente soma o que tem de próprio; veja o total na guia Tamanho do agente.</p>
-    <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
+    <p v-if="note" class="text-sm text-success-300">{{ note }}</p>
     <p v-if="failure" class="text-sm text-rose-300">{{ failure }}</p>
     <SaveFooter v-show="tab === 'contexto' && !connectedOrigin" label="Salvar contexto inicial" :busy="busy" :disabled="!editor?.dirty" :pending="!!editor?.dirty" @save="saveContext" />
   </section>

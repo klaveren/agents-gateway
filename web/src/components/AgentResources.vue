@@ -117,7 +117,7 @@ async function save() {
     </div>
 
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-    <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
+    <p v-if="note" class="text-sm text-success-300">{{ note }}</p>
     <div v-if="!embedded"><button type="button" :disabled="busy || !dirty" class="btn btn-primary" @click="save">Salvar</button></div>
     <p v-else-if="dirty" class="text-xs text-amber-300">Mudança não salva: grave com "Salvar agente".</p>
   </section>

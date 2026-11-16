@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api } from '@/lib/api'
 import { lite, LITE_PROJECT } from '@/lib/edition'
+import { applyAccent } from '@/lib/projectColors'
 import { keyedResource } from '@/lib/resource'
 import { readLocal, writeLocal } from '@/lib/storage'
 import type { IProject, IProjectMcpVar, IProjectMember, TProjectRole } from '@/lib/types'
@@ -23,6 +24,14 @@ export const useProjectsStore = defineStore('projects', () => {
   const loaded = ref(false)
 
   const currentProject = computed(() => list.value.find((project) => project.id === current.value))
+  // 🎨 O destaque da tela é o do projeto atual: trocar de projeto (ou a cor dele) repinta na hora.
+  watch(
+    () => currentProject.value?.color,
+    (color) => {
+      if (typeof document !== 'undefined') applyAccent(color)
+    },
+    { immediate: true },
+  )
   /** ⛔ Administra o projeto ATUAL: o catálogo, os agentes e as regras dele (o admin do gateway só se for admin dele). */
   const manages = computed(() => currentProject.value?.role === 'admin')
   /** Vê as conversas de todos: o admin do gateway, ou quem administra o projeto atual. */
@@ -105,6 +114,11 @@ export const useProjectsStore = defineStore('projects', () => {
     putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}`, { method: 'PUT', body: change }))
   }
 
+  /** 🎨 A cor do destaque do projeto (`undefined` = o verde do tema). */
+  async function setColor(id: string, color: string | undefined): Promise<void> {
+    putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}/color`, { method: 'PUT', body: { color: color ?? null } }))
+  }
+
   async function remove(id: string): Promise<void> {
     await api(`/projects/${encodeURIComponent(id)}`, { method: 'DELETE' })
     put(list.value.filter((one) => one.id !== id))
@@ -124,5 +138,25 @@ export const useProjectsStore = defineStore('projects', () => {
     list.value = list.value.map((one) => (one.id === id ? { ...one, members: saved.length } : one))
   }
 
-  return { list, current, currentProject, manages, managesAny, seesAll, query, loaded, load, ensure, select, reset, create, update, remove, memberLists, members, setMembers }
+  return {
+    list,
+    current,
+    currentProject,
+    manages,
+    managesAny,
+    seesAll,
+    query,
+    loaded,
+    load,
+    ensure,
+    select,
+    reset,
+    create,
+    update,
+    setColor,
+    remove,
+    memberLists,
+    members,
+    setMembers,
+  }
 })

@@ -208,7 +208,7 @@ async function doReset() {
     </template>
 
     <template #detail>
-      <p v-if="resetDone" class="mx-auto mb-4 max-w-3xl rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">{{ resetDone }}</p>
+      <p v-if="resetDone" class="mx-auto mb-4 max-w-3xl rounded-xl border border-success-500/30 bg-success-500/10 p-3 text-sm text-success-200">{{ resetDone }}</p>
 
       <template v-if="creating">
         <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">Novo usuário</h2>

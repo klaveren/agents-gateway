@@ -5,6 +5,13 @@ import { IAgenticScope } from '@domain/Import.Scope'
  * (`<dados>/projects/<id>/`). ⚖️ Vários projetos isolados no mesmo gateway, cada um com as suas
  * particularidades. Modelos, MCPs e pacotes são do sistema e valem para todos.
  */
+/**
+ * 🎨 As paletas que um projeto pode usar no lugar do verde do tema (as padrão do Tailwind; a tela tem os valores). Vermelho
+ * e amarelo ficam de fora: são as cores de erro e de alerta.
+ */
+export const PROJECT_COLORS = ['emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'orange', 'lime'] as const
+export type TProjectColor = (typeof PROJECT_COLORS)[number]
+
 export interface IProject {
   id: string
   name: string
@@ -23,6 +30,8 @@ export interface IProject {
    * terminal do agente. Os secretos ficam no cofre (`mcp`). Ausente = nenhum.
    */
   mcpEnv?: IProjectMcpVar[]
+  /** 🎨 A cor do destaque da tela neste projeto (uma paleta do Tailwind, ver `PROJECT_COLORS`). Desta máquina: não vai no catálogo. */
+  color?: TProjectColor
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

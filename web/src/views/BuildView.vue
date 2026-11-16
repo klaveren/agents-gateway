@@ -344,7 +344,7 @@ function describe(failure: unknown): string {
                 {{ draft.global ? 'Global — todos os projetos' : `Projeto ${projects.list.find((item) => item.id === buildProject)?.name ?? buildProject ?? '—'}` }}
               </p>
             </div>
-            <p v-if="draft.saved" class="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+            <p v-if="draft.saved" class="flex items-center gap-2 rounded-xl border border-success-500/30 bg-success-500/10 px-3 py-2 text-sm text-success-200">
               <Icon name="check" class="h-4 w-4" />
               Salvo pelo construtor.
               <RouterLink :to="savedLink" class="ml-auto text-emerald-300 underline underline-offset-2">Abrir</RouterLink>
@@ -451,7 +451,7 @@ function describe(failure: unknown): string {
                 >
                   Salvar
                 </button>
-                <span v-if="saved === 'global'" class="text-xs text-emerald-300">Salvo. Vale para as próximas conversas.</span>
+                <span v-if="saved === 'global'" class="text-xs text-success-300">Salvo. Vale para as próximas conversas.</span>
                 <span v-else-if="protocol.addenda.global" class="text-xs text-zinc-500">
                   {{ shortTime(protocol.addenda.global.updatedAt) }} · {{ protocol.addenda.global.updatedBy }}
                 </span>
@@ -475,7 +475,7 @@ function describe(failure: unknown): string {
                 >
                   Salvar
                 </button>
-                <span v-if="saved === 'project'" class="text-xs text-emerald-300">Salvo. Vale para as próximas conversas.</span>
+                <span v-if="saved === 'project'" class="text-xs text-success-300">Salvo. Vale para as próximas conversas.</span>
                 <span v-else-if="protocol.addenda.project" class="text-xs text-zinc-500">
                   {{ shortTime(protocol.addenda.project.updatedAt) }} · {{ protocol.addenda.project.updatedBy }}
                 </span>

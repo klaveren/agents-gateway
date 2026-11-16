@@ -60,7 +60,7 @@ async function changePassword() {
             </label>
             <div class="flex items-center gap-3 sm:col-span-2">
               <button type="submit" class="btn btn-secondary">Trocar senha</button>
-              <span v-if="passwordNote" class="text-sm text-emerald-300">{{ passwordNote }}</span>
+              <span v-if="passwordNote" class="text-sm text-success-300">{{ passwordNote }}</span>
               <span v-if="passwordError" class="text-sm text-rose-300">{{ passwordError }}</span>
             </div>
           </form>

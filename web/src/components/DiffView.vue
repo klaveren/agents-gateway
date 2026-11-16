@@ -19,7 +19,7 @@ const LABEL: Record<IDiffLine['op'], string> = { add: 'adicionada', remove: 'rem
         v-for="(line, position) in hunk.lines"
         :key="position"
         class="flex min-w-max"
-        :class="line.op === 'add' ? 'bg-emerald-500/10 text-emerald-200' : line.op === 'remove' ? 'bg-rose-500/10 text-rose-200' : 'text-zinc-400'"
+        :class="line.op === 'add' ? 'bg-success-500/10 text-success-200' : line.op === 'remove' ? 'bg-rose-500/10 text-rose-200' : 'text-zinc-400'"
         :data-op="line.op"
       >
         <span class="w-10 shrink-0 px-1 text-right text-zinc-600 select-none">{{ line.oldLine ?? '' }}</span>

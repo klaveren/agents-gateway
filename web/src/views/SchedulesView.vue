@@ -57,7 +57,7 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
       <ul v-if="list.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
         <li v-for="schedule in schedulePage.items.value" :key="`${schedule.agentId}/${schedule.name}`">
           <RouterLink :to="`/agents/${schedule.agentId}#agendamentos`" class="flex items-center gap-3 px-3 py-2.5 hover:bg-zinc-800/40">
-            <span class="h-2 w-2 shrink-0 rounded-full" :class="schedule.enabled ? 'bg-emerald-400' : schedule.pausedReason ? 'bg-rose-400' : 'bg-zinc-600'" />
+            <span class="h-2 w-2 shrink-0 rounded-full" :class="schedule.enabled ? 'bg-success-400' : schedule.pausedReason ? 'bg-rose-400' : 'bg-zinc-600'" />
             <span class="min-w-0 flex-1">
               <span class="block truncate text-sm text-zinc-200">
                 <span class="font-mono text-[13px]">{{ schedule.name }}</span>

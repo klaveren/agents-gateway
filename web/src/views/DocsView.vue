@@ -520,7 +520,7 @@ function onInvalid(event: Event) {
         </div>
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-        <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
+        <p v-if="note" class="text-sm text-success-300">{{ note }}</p>
         </fieldset>
         <SaveFooter v-if="!locked" submit :label="`${adding ? 'Criar' : 'Salvar'} ${info.one}`" :busy="busy" :disabled="!(dirty)" :pending="!adding && (dirty)">
           <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>

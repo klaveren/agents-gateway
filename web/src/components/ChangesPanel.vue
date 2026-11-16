@@ -46,7 +46,7 @@ const SCOPES: Array<{ id: TScope; label: string }> = [
 ]
 const STATUS: Record<IFile['status'], { label: string; class: string }> = {
   M: { label: 'M', class: 'text-amber-300' },
-  A: { label: 'A', class: 'text-emerald-300' },
+  A: { label: 'A', class: 'text-success-300' },
   D: { label: 'D', class: 'text-rose-300' },
   R: { label: 'R', class: 'text-sky-300' },
   U: { label: 'U', class: 'text-zinc-400' },
@@ -182,7 +182,7 @@ watch(
       <header class="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-4 py-2.5">
         <h2 class="font-medium">Alterações</h2>
         <span v-if="changes" class="text-xs text-zinc-400">
-          {{ changes.files.length }} arquivo(s) · <span class="text-emerald-300">+{{ totals.add }}</span> <span class="text-rose-300">−{{ totals.del }}</span>
+          {{ changes.files.length }} arquivo(s) · <span class="text-success-300">+{{ totals.add }}</span> <span class="text-rose-300">−{{ totals.del }}</span>
         </span>
         <div class="ml-auto flex items-center gap-1">
           <button v-for="item in SCOPES" :key="item.id" class="chip" :class="{ on: scope === item.id }" @click="pickScope(item.id)">{{ item.label }}</button>
@@ -226,7 +226,7 @@ watch(
               <span class="min-w-0 flex-1 truncate" :class="{ 'line-through opacity-70': file.status === 'D' }">{{ nameOf(file.path) }}</span>
               <span v-if="file.protected" class="shrink-0 text-amber-300" title="Segredo: sem conteúdo">🔒</span>
               <span v-else-if="file.binary" class="shrink-0 text-zinc-500">bin</span>
-              <span v-else class="shrink-0 tabular-nums"><span class="text-emerald-400">+{{ file.additions }}</span> <span class="text-rose-400">−{{ file.deletions }}</span></span>
+              <span v-else class="shrink-0 tabular-nums"><span class="text-success-400">+{{ file.additions }}</span> <span class="text-rose-400">−{{ file.deletions }}</span></span>
             </button>
           </div>
           <p v-if="changes?.truncated" class="px-3 py-2 text-xs text-amber-300">Mostrando os primeiros 300 arquivos.</p>

@@ -2,7 +2,17 @@ import { ignoreIssues, normalizeIgnore } from '@domain/Import.Ignore'
 import { IAgenticScope, normalizeScope, scopeIssues } from '@domain/Import.Scope'
 import { InvalidProjectError, ProjectInUseError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
-import { DEFAULT_PROJECT_ID, IProject, IProjectMcpVar, IProjectMember, PROJECT_ENV_LIMITS, PROJECT_ID_PATTERN, PROJECT_ROLES, TProjectRole } from '@domain/models/Project.Model'
+import {
+  DEFAULT_PROJECT_ID,
+  IProject,
+  IProjectMcpVar,
+  IProjectMember,
+  PROJECT_ENV_LIMITS,
+  PROJECT_ID_PATTERN,
+  PROJECT_ROLES,
+  TProjectColor,
+  TProjectRole,
+} from '@domain/models/Project.Model'
 import { AGENT_ENV_NAME, fixedEnvIssues } from '@domain/Agent.Policy'
 import { MCP_SERVER_ID_PATTERN } from '@domain/models/McpServer.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
@@ -138,6 +148,12 @@ export class ProjectsService {
     })!
     this.history.record([{ kind: 'project', id }], { by })
     return saved
+  }
+
+  /** 🎨 A paleta do destaque da tela no projeto (`undefined` = o verde do tema). Desta máquina: sem revisão no catálogo. */
+  setColor(id: string, color: TProjectColor | undefined, by: string): IProject {
+    this.get(id)
+    return this.projects.update(id, { color, updatedAt: this.now(), updatedBy: by })!
   }
 
   /**

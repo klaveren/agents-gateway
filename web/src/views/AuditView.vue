@@ -145,7 +145,7 @@
       <ul v-else class="flex flex-col gap-2">
         <li v-for="event in events" :key="event.id" class="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-            <span class="rounded-full border px-2 py-0.5 font-mono" :class="event.status >= 400 ? 'border-rose-500/40 text-rose-300' : 'border-emerald-500/40 text-emerald-300'">{{ event.status }}</span>
+            <span class="rounded-full border px-2 py-0.5 font-mono" :class="event.status >= 400 ? 'border-rose-500/40 text-rose-300' : 'border-success-500/40 text-success-300'">{{ event.status }}</span>
             <span class="text-zinc-400">{{ fullTime(event.at) }}</span>
             <span class="font-medium text-zinc-200">{{ label(event) }}</span>
             <span v-if="target(event)" class="min-w-0 truncate font-mono text-zinc-400">{{ target(event) }}</span>

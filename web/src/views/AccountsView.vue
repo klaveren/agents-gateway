@@ -285,7 +285,7 @@ watch(
           gateway. Cada conta só chega a quem tem a permissão dela (Contas), e o destino precisa da regra de rede.
         </div>
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-        <p v-if="notice" class="text-sm text-emerald-300">{{ notice }}</p>
+        <p v-if="notice" class="text-sm text-success-300">{{ notice }}</p>
 
         <form v-if="editing !== null" class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3" @submit.prevent="save">
           <div class="grid gap-3 sm:grid-cols-2">
@@ -391,7 +391,7 @@ watch(
               <span class="text-zinc-400">No servidor: grave em <code>/etc/ssh/ca.pub</code> e ponha <code>TrustedUserCAKeys /etc/ssh/ca.pub</code> no sshd_config. Ou, num usuário, a linha no authorized_keys:</span>
               <code class="break-all text-zinc-200">cert-authority {{ account.public.publicKey }}</code>
             </div>
-            <p v-if="tests[account.id]" class="text-xs" :class="tests[account.id].ok ? 'text-emerald-300' : 'text-rose-300'">{{ tests[account.id].detail }}</p>
+            <p v-if="tests[account.id]" class="text-xs" :class="tests[account.id].ok ? 'text-success-300' : 'text-rose-300'">{{ tests[account.id].detail }}</p>
             <p v-if="suggested(account).length" class="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
               Regras:
               <code v-for="rule in suggested(account)" :key="rule.category + rule.pattern" class="text-zinc-300">{{ rule.category === 'account' ? 'conta' : 'rede' }} {{ rule.pattern }}</code>

@@ -257,7 +257,7 @@ import { computed, onMounted, ref, watch } from 'vue'
             </ul>
           </div>
 
-          <p v-if="saved" class="text-sm text-emerald-300">{{ saved }}</p>
+          <p v-if="saved" class="text-sm text-success-300">{{ saved }}</p>
           <p v-if="failure" class="text-sm text-rose-300">{{ failure }}</p>
           <SaveFooter submit :label="adding ? 'Criar sequência' : 'Salvar sequência'" :busy="busy" :disabled="!canSave">
             <button v-if="selected && selected.id !== defaultId" type="button" class="btn btn-secondary" @click="makeDefault">Tornar padrão</button>

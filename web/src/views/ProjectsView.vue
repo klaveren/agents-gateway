@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import SaveFooter from '@/components/SaveFooter.vue'
@@ -12,6 +12,7 @@ import MasterDetail from '@/components/MasterDetail.vue'
 import { useResource } from '@/composables/useResource'
 import { ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
+import { applyAccent, PALETTES, PROJECT_COLOR_LABEL, PROJECT_COLORS } from '@/lib/projectColors'
 import type { IProject, TProjectRole } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
@@ -61,7 +62,7 @@ const loadError = ref<string>()
 const form = ref({ id: '', name: '', description: '' })
 const formIssues = ref<Record<string, string[]>>({})
 const formError = ref<string>()
-const edit = ref({ name: '', description: '' })
+const edit = ref({ name: '', description: '', color: 'emerald' })
 /** Os membros gravados do projeto aberto, da store (lidos uma vez; salvar põe a resposta lá). */
 const memberList = useResource(projects.memberLists, () => (canEdit.value ? selected.value?.id : undefined))
 const savedMembers = computed(() => new Map((memberList.data.value ?? []).map((member) => [member.userId, member.role] as const)))
@@ -88,7 +89,7 @@ watch(
   selected,
   (project, previous) => {
     if (!project || project.id === previous?.id) return
-    edit.value = { name: project.name, description: project.description ?? '' }
+    edit.value = { name: project.name, description: project.description ?? '', color: project.color ?? 'emerald' }
     error.value = undefined
     note.value = undefined
   },
@@ -158,11 +159,20 @@ async function run(work: () => Promise<void>, done?: string) {
 }
 
 const dirty = computed(() => !!selected.value && (edit.value.name !== selected.value.name || edit.value.description !== (selected.value.description ?? '')))
+/** 🎨 A cor escolhida e ainda não salva. Desta máquina: muda também no projeto conectado. */
+const colorDirty = computed(() => !!selected.value && edit.value.color !== (selected.value.color ?? 'emerald'))
+// A cor escolhida já aparece na tela (a prévia) quando o projeto é o atual; sair sem salvar volta a do projeto.
+watch(
+  () => [edit.value.color, selected.value?.id, projects.current] as const,
+  () => applyAccent(selected.value?.id === projects.current ? edit.value.color : projects.currentProject?.color),
+)
+onBeforeUnmount(() => applyAccent(projects.currentProject?.color))
 const membersDirty = computed(() => members.value.size !== savedMembers.value.size || [...members.value].some(([id, role]) => savedMembers.value.get(id) !== role))
 /** Um salvar só: o nome e a descrição (guia Projeto) e os membros (guia Membros), o que mudou. */
 const saveProject = () =>
   run(async () => {
     if (dirty.value) await projects.update(selected.value!.id, { name: edit.value.name, description: edit.value.description })
+    if (colorDirty.value) await projects.setColor(selected.value!.id, edit.value.color === 'emerald' ? undefined : edit.value.color)
     if (membersDirty.value)
       await projects.setMembers(
         selected.value!.id,
@@ -222,6 +232,7 @@ async function confirmRemove() {
           <span class="block truncate text-sm font-medium">{{ project.name }}</span>
           <span class="block truncate text-xs text-zinc-500">{{ project.id }} · {{ project.members ?? 0 }} membro(s)</span>
         </span>
+        <span v-if="project.color" class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ background: PALETTES[project.color as keyof typeof PALETTES]?.['500'] }" :title="`Cor: ${project.color}`" />
         <span v-if="project.id === projects.current" class="text-[10px] text-emerald-300">atual</span>
       </RouterLink>
     </template>
@@ -313,7 +324,7 @@ async function confirmRemove() {
             <div class="mb-1 font-medium text-zinc-300">Pasta</div>
             <code class="block truncate text-zinc-200">{{ selected.folder }}</code>
             <p class="mt-2 text-zinc-400">Pasta de trabalho dos agentes deste projeto.</p>
-            <p v-if="sandbox?.available" class="mt-2 text-emerald-300">
+            <p v-if="sandbox?.available" class="mt-2 text-success-300">
               ✓ Os agentes só acessam arquivos desta pasta.
             </p>
             <p v-else-if="sandbox" class="mt-2 text-amber-300">
@@ -324,6 +335,26 @@ async function confirmRemove() {
           <div class="grid gap-3">
             <label class="field">Nome<input v-model="edit.name" :disabled="!canEdit || connected" class="input" /></label>
             <label class="field">Descrição<textarea v-model="edit.description" :disabled="!canEdit || connected" rows="2" class="input text-sm" /></label>
+            <div class="field" data-test="project-color">
+              Cor do projeto
+              <span class="hint">o destaque da tela neste projeto, só nesta máquina; mensagens de sucesso seguem verdes</span>
+              <div class="mt-1 flex flex-wrap gap-2" role="radiogroup" aria-label="Cor do projeto">
+                <button
+                  v-for="color in PROJECT_COLORS"
+                  :key="color"
+                  type="button"
+                  role="radio"
+                  :aria-checked="edit.color === color"
+                  :disabled="!canEdit"
+                  :title="PROJECT_COLOR_LABEL[color]"
+                  class="h-7 w-7 rounded-full ring-offset-2 ring-offset-zinc-950 transition"
+                  :class="edit.color === color ? 'ring-2 ring-zinc-100' : 'hover:ring-2 hover:ring-zinc-500'"
+                  :style="{ background: PALETTES[color]['500'] }"
+                  :data-color="color"
+                  @click="edit.color = color"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -357,9 +388,9 @@ async function confirmRemove() {
           <p v-if="noAdmin" class="text-xs text-amber-300">Escolha ao menos um administrador para o projeto.</p>
         </div>
 
-        <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
+        <p v-if="note" class="text-sm text-success-300">{{ note }}</p>
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-        <SaveFooter v-if="canEdit" label="Salvar projeto" :busy="busy" :disabled="(!dirty && !membersDirty) || noAdmin" :pending="dirty || membersDirty" @save="saveProject">
+        <SaveFooter v-if="canEdit" label="Salvar projeto" :busy="busy" :disabled="(!dirty && !membersDirty && !colorDirty) || noAdmin" :pending="dirty || membersDirty || colorDirty" @save="saveProject">
           <template #end>
             <button v-if="auth.isAdmin && !connected" type="button" class="btn btn-danger" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
           </template>

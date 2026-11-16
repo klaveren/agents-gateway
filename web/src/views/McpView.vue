@@ -504,7 +504,7 @@ import { computed, onMounted, ref, watch } from 'vue'
           </span>
           <TagChips :tags="server.tags" />
         </span>
-        <span class="h-2 w-2 shrink-0 rounded-full" :class="server.enabled && server.status.connected ? 'bg-emerald-400' : 'bg-zinc-600'" />
+        <span class="h-2 w-2 shrink-0 rounded-full" :class="server.enabled && server.status.connected ? 'bg-success-400' : 'bg-zinc-600'" />
       </RouterLink>
     </template>
 
@@ -722,7 +722,7 @@ import { computed, onMounted, ref, watch } from 'vue'
                 </button>
               </div>
               <small v-if="processDirty" class="text-xs text-zinc-500">Salve as alterações antes de instalar.</small>
-              <p v-if="installResult" class="text-sm" :class="installResult.ok ? 'text-emerald-300' : 'text-rose-300'">
+              <p v-if="installResult" class="text-sm" :class="installResult.ok ? 'text-success-300' : 'text-rose-300'">
                 {{ installResult.ok ? `✓ Instalado v${installResult.version}.` : '✕ A instalação falhou. A versão anterior continua.' }}
               </p>
               <pre
@@ -805,7 +805,7 @@ import { computed, onMounted, ref, watch } from 'vue'
           </form>
 
           <div v-if="selected.auth === 'oauth'" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
-            <p class="text-sm" :class="selected.oauthConnected ? 'text-emerald-300' : 'text-zinc-300'">
+            <p class="text-sm" :class="selected.oauthConnected ? 'text-success-300' : 'text-zinc-300'">
               {{ selected.oauthConnected ? '✓ Sua conta está conectada.' : 'Sua conta não está conectada: as ferramentas deste MCP não funcionam nas suas conversas até você conectar.' }}
             </p>
             <div class="flex flex-wrap gap-2">
@@ -814,7 +814,7 @@ import { computed, onMounted, ref, watch } from 'vue'
             </div>
             <p v-if="!locked" class="hint">Endereço de retorno a cadastrar no provedor: <code>{{ callbackUri }}</code></p>
           </div>
-          <p v-if="oauthNotice" class="text-sm" :class="route.query.oauth === 'ok' ? 'text-emerald-300' : 'text-rose-300'">{{ oauthNotice }}</p>
+          <p v-if="oauthNotice" class="text-sm" :class="route.query.oauth === 'ok' ? 'text-success-300' : 'text-rose-300'">{{ oauthNotice }}</p>
 
           <div v-if="selected.kind === 'remote' && (selected.auth === 'header' || selected.auth === 'oauth')" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
             <p class="text-xs" :class="selected.secret.configured ? 'text-zinc-400' : 'text-amber-300'">
@@ -840,7 +840,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 
           <div class="flex flex-wrap items-center gap-2">
             <button type="button" :disabled="busy || !selected.enabled" class="btn btn-secondary" @click="test">Testar conexão</button>
-            <span v-if="testResult" class="text-sm" :class="testResult.ok ? 'text-emerald-300' : 'text-rose-300'">
+            <span v-if="testResult" class="text-sm" :class="testResult.ok ? 'text-success-300' : 'text-rose-300'">
               {{ testResult.ok ? `✓ Conectado — ${testResult.tools} ferramenta(s).` : `✕ ${testResult.message}` }}
             </span>
             <span v-else-if="selected.status.lastError" class="text-xs text-rose-300">Último erro: {{ selected.status.lastError }}</span>

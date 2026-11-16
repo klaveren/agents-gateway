@@ -196,7 +196,7 @@ watch([decisionAgent, section], () => {
           <fieldset :disabled="!!connectedOrigin" class="contents">
             <PermissionRules v-model="rules" :only="section" />
           </fieldset>
-          <p v-if="notice" class="text-xs text-emerald-300">{{ notice }}</p>
+          <p v-if="notice" class="text-xs text-success-300">{{ notice }}</p>
           <p v-else-if="meta.updatedBy" class="text-xs text-zinc-500">Alterado por {{ meta.updatedBy }} em {{ fullTime(meta.updatedAt) }}</p>
 
           <PermissionTester :project-id="project.id" :initial="section" />
@@ -213,7 +213,7 @@ watch([decisionAgent, section], () => {
             <ul v-if="decisions.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800 text-xs">
               <li v-for="(entry, index) in decisionPage.items.value" :key="index" class="flex items-baseline gap-3 px-3 py-1.5" data-test="decision">
                 <span class="w-32 shrink-0 text-zinc-500">{{ fullTime(entry.at) }}</span>
-                <span class="w-12 shrink-0" :class="entry.allowed ? 'text-emerald-300' : 'text-rose-300'">{{ entry.allowed ? 'permitiu' : 'negou' }}</span>
+                <span class="w-12 shrink-0" :class="entry.allowed ? 'text-success-300' : 'text-rose-300'">{{ entry.allowed ? 'permitiu' : 'negou' }}</span>
                 <span class="w-24 shrink-0 truncate text-zinc-400">{{ agents.byId.get(entry.agentId ?? '')?.name ?? entry.agentId ?? '—' }}</span>
                 <code class="min-w-0 flex-1 truncate text-zinc-200" :title="entry.subject">{{ entry.subject }}</code>
                 <span class="shrink-0 text-zinc-500">{{ entry.pattern ? `"${entry.pattern}"` : '' }} · {{ LAYER_LABEL[entry.layer] }}</span>

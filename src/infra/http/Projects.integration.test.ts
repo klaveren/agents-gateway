@@ -257,6 +257,16 @@ describe('Projetos (integração)', () => {
     )
   })
 
+  it('🎨 a cor do projeto: o admin escolhe uma paleta, todo membro a vê; valor fora da lista é 422; null volta ao tema', async () => {
+    assert.strictEqual((await call(ADMIN, 'PUT', '/projects/alfa/color', { color: 'violet' })).body.result.color, 'violet')
+    assert.strictEqual(((await call(ANA, 'GET', '/projects')).body.result as Array<{ id: string; color?: string }>).find((project) => project.id === 'alfa')?.color, 'violet')
+    assert.strictEqual((await call(ADMIN, 'PUT', '/projects/alfa/color', { color: 'red' })).status, 422, 'vermelho é cor de erro')
+    assert.strictEqual((await call(ANA, 'PUT', '/projects/alfa/color', { color: 'sky' })).status, 404, 'o membro não muda')
+    const cleared = await call(ADMIN, 'PUT', '/projects/alfa/color', { color: null })
+    assert.strictEqual(cleared.status, 200)
+    assert.strictEqual(cleared.body.result.color, undefined)
+  })
+
   it('⛔ o agente de projeto só aparece para os membros dele; o global aparece em todos', async () => {
     agents.moveToProject(CLAUDE_TEST_AGENT.id, 'alfa', 'teste')
     agents.moveToProject(OPENAI_TEST_AGENT.id, 'beta', 'teste')

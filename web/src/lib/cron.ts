@@ -47,7 +47,7 @@ export function describeCron(expression: string): string | undefined {
 /** Como cada execução aparece no histórico. */
 export const RUN_STATUS: Record<'running' | 'ok' | 'error' | 'skipped' | 'missed', { label: string; tone: string }> = {
   running: { label: 'rodando', tone: 'text-amber-300' },
-  ok: { label: 'ok', tone: 'text-emerald-300' },
+  ok: { label: 'ok', tone: 'text-success-300' },
   error: { label: 'erro', tone: 'text-rose-300' },
   skipped: { label: 'pulada', tone: 'text-zinc-400' },
   missed: { label: 'perdida', tone: 'text-zinc-400' },

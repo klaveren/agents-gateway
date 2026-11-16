@@ -198,7 +198,7 @@ function sourceLabel(provider: IProviderStatus): string {
           <span class="block truncate text-sm font-medium">{{ provider.name }}</span>
           <span class="block truncate text-xs" :class="provider.enabled && !provider.credential.configured && !provider.subscription ? 'text-amber-300' : 'text-zinc-500'">{{ rowStatus(provider) }}</span>
         </span>
-        <span class="h-2 w-2 shrink-0 rounded-full" :class="provider.enabled && (provider.credential.configured || provider.subscription) ? 'bg-emerald-400' : 'bg-zinc-600'" :title="provider.enabled ? 'Ligado' : 'Desligado'" />
+        <span class="h-2 w-2 shrink-0 rounded-full" :class="provider.enabled && (provider.credential.configured || provider.subscription) ? 'bg-success-400' : 'bg-zinc-600'" :title="provider.enabled ? 'Ligado' : 'Desligado'" />
       </RouterLink>
     </template>
 
@@ -280,7 +280,7 @@ function sourceLabel(provider: IProviderStatus): string {
           <button v-if="selected.credential.source === 'stored'" type="button" class="btn btn-danger" @click="removingKey = selected">Remover chave</button>
         </form>
 
-        <p v-if="results[selected.id]" class="text-sm" :class="results[selected.id].ok ? 'text-emerald-300' : 'text-rose-300'">
+        <p v-if="results[selected.id]" class="text-sm" :class="results[selected.id].ok ? 'text-success-300' : 'text-rose-300'">
           <template v-if="results[selected.id].saved">Salva. </template>
           <template v-if="results[selected.id].ok && results[selected.id].unverified">⚠ {{ results[selected.id].message }} ({{ results[selected.id].models }} modelos listados)</template>
           <template v-else-if="results[selected.id].ok && results[selected.id].models !== undefined">✓ A chave funciona — {{ results[selected.id].models }} modelos disponíveis.</template>

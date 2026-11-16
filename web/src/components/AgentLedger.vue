@@ -358,7 +358,7 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
               <span class="text-zinc-500"> · {{ fullTime(revision.at) }}</span>
             </p>
             <pre v-if="revision.before" class="mt-1 whitespace-pre-wrap text-rose-300/80">− {{ snapshotText(revision.before) }}</pre>
-            <pre v-if="revision.after" class="mt-1 whitespace-pre-wrap text-emerald-300/80">+ {{ snapshotText(revision.after) }}</pre>
+            <pre v-if="revision.after" class="mt-1 whitespace-pre-wrap text-success-300/80">+ {{ snapshotText(revision.after) }}</pre>
           </li>
           <li v-if="revisions && !revisions.length" class="text-xs text-zinc-500">Sem revisões.</li>
         </ol>
@@ -366,7 +366,7 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
       </template>
     </div>
 
-    <p v-if="notice" class="text-xs text-emerald-300">{{ notice }}</p>
+    <p v-if="notice" class="text-xs text-success-300">{{ notice }}</p>
     <p v-if="error" class="text-sm text-rose-300" data-test="ledger-error">{{ error }}</p>
 
     <ConfirmDialog
