@@ -38,7 +38,7 @@
           <p class="text-xs text-zinc-500">Compartilhada · só leitura · começou em {{ fullTime(conversation.createdAt) }}</p>
         </header>
         <template v-for="(turn, index) in conversation.turns" :key="index">
-          <div v-if="turn.request" class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3.5 py-2 text-sm whitespace-pre-wrap wrap-anywhere text-white">
+          <div v-if="turn.request" class="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md border border-emerald-500/30 bg-emerald-500/15 px-3.5 py-2 text-sm whitespace-pre-wrap wrap-anywhere text-zinc-100">
             {{ turn.request }}
           </div>
           <div v-if="turn.text" class="mr-auto max-w-[95%] rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5 py-2 text-sm leading-relaxed shadow">
