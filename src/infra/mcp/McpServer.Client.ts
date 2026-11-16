@@ -14,6 +14,8 @@ const CLIENT_INFO = { name: 'agents-gateway', version: packageVersion() }
 
 export const BASE_RETRY_MS = 1_000
 export const MAX_RETRY_MS = 60_000
+/** O teto da tentativa do começo de um turno (`connectWithin`): o turno não fica parado esperando um servidor caído. */
+export const TURN_WAKE_MS = 3_000
 const STDERR_TAIL = 600
 
 export interface IMcpClientDeps {
@@ -117,6 +119,26 @@ export class McpServerClient {
     if (this.inFlight) return this.inFlight
     if (this.now() < this.nextAttemptAt) return false
     return this.attempt()
+  }
+
+  /**
+   * ⚖️ O COMEÇO DE UM TURNO: tenta AGORA, ignorando o backoff (o "Testar conexão" da tela faz o mesmo), esperando no máximo
+   * `waitMs`. Sem isto, o servidor que caiu e já voltou ficava de fora do turno até o backoff (até 1 min) passar — a Maya
+   * abriu uma conversa sem as ferramentas de ticket (16/11) e só as recebeu depois que alguém testou a conexão na tela.
+   * A tentativa que passar do teto segue sozinha e vale para o próximo turno.
+   */
+  async connectWithin(waitMs: number): Promise<boolean> {
+    if (this.connected) return true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), waitMs)
+      timer.unref?.()
+    })
+    try {
+      return await Promise.race([this.attempt(), late])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /**

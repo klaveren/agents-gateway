@@ -55,6 +55,7 @@ export function fakeMcpRegistry(servers: IFakeMcpServer[] = []): McpRegistry {
       serverUrl: config.url,
       isConnected: connected,
       connect: async () => connected(),
+      connectWithin: async () => connected(),
       ensureConnected: async () => connected(),
       ensureConnectedAs: async (token?: string) => connected() || (!!token && token === fake.acceptsToken),
       close: async () => undefined,

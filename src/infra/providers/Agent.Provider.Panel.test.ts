@@ -70,4 +70,65 @@ describe('AgentProvider — painel da conversa', () => {
     assert.doesNotMatch(seen[3].text, /não entrou no painel/, 'o turno anterior mexeu no painel')
     assert.ok(!seen[3].text.includes('<painel da conversa>'), 'painel vazio não entra')
   })
+
+  it('⚖️ MCP que não respondeu no começo do turno: o agente recebe o aviso na entrada do modelo, e a pessoa, no turno', async () => {
+    const agent: IAgent = {
+      id: 'maya',
+      name: 'Maya',
+      providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }],
+      systemPrompt: 'p',
+      modes: [EMode.CHAT],
+      allowedTools: ['mcp:tickets/ticket_get'],
+    }
+    const store = new SessionStore()
+    const seen: string[] = []
+    const adapter: IAgentAdapter = {
+      async createSession(created, input) {
+        const record = store.create({
+          agentId: created.id,
+          provider: input.provider!,
+          protocol: EProvider.CLAUDE,
+          mode: EMode.CHAT,
+          model: input.model!,
+          tools: false,
+          systemPrompt: 'p',
+        })
+        return { id: record.id, provider: EProvider.CLAUDE, mode: record.mode, createdAt: record.createdAt }
+      },
+      async *sendMessage(_running, sessionId, input): AsyncIterable<IAgentEvent> {
+        seen.push(input.text)
+        yield { type: 'message.completed', sessionId, timestamp: new Date() }
+      },
+      async cancel() {},
+    }
+    const provider = new AgentProvider(
+      new Map([[adapterKey(EProvider.CLAUDE, EMode.CHAT), adapter]]),
+      store,
+      new NullSettingsRepository({ audience: 'all' }),
+      { list: () => [agent], get: (id) => (id === agent.id ? agent : undefined) },
+      {
+        list: () => [],
+        get: (id) => (id === 'claude' ? { id, name: id, protocol: EProvider.CLAUDE, official: true, enabled: true, createdAt: new Date(), updatedAt: new Date() } : undefined),
+        connection: (id) => (id === 'claude' ? { providerId: id, name: id, protocol: EProvider.CLAUDE, key: 'k' } : undefined),
+      },
+    )
+    let down = ['tickets']
+    const asked: Array<readonly string[]> = []
+    provider.useMcpWake(async (allowed) => (asked.push(allowed), down))
+    await new Promise((resolve) => setImmediate(resolve))
+    const session = await provider.createSession({ agentId: 'maya' })
+    const run = async (text: string) => {
+      const events: IAgentEvent[] = []
+      for await (const event of provider.sendMessage(session.id, { text })) events.push(event)
+      return events
+    }
+
+    const events = await run('meus tickets')
+    assert.match(seen[0], /Servidor MCP fora do ar agora: `tickets`[\s\S]*não falta de acesso[\s\S]*meus tickets$/)
+    assert.ok(events.some((event) => event.type === 'warning' && /MCP fora do ar neste turno: tickets/.test(String(event.payload?.message))))
+    assert.ok(asked[0].includes('mcp:tickets/ticket_get'))
+    down = []
+    await run('de novo')
+    assert.doesNotMatch(seen[1], /fora do ar/)
+  })
 })

@@ -215,6 +215,18 @@ describe('McpServerClient reconnection', () => {
     assert.strictEqual(client.isConnected(), true)
   })
 
+  it('⚖️ o começo do turno tenta AGORA, mesmo no backoff; quem não responde no teto conta como fora', async () => {
+    const state = { up: false, listed: 0 }
+    const time = clock()
+    const client = new McpServerClient('http://localhost:8000/mcp', { createClient: () => flakyClient(state), now: time.now })
+    assert.strictEqual(await client.connect(), false)
+    // O servidor voltou, mas o backoff ainda não passou: a chamada comum não tenta; o turno, sim.
+    state.up = true
+    assert.strictEqual(await client.ensureConnected(), false)
+    assert.strictEqual(await client.connectWithin(1_000), true)
+    assert.strictEqual(client.isConnected(), true)
+  })
+
   it('backs off exponentially instead of hammering a server that is down', async () => {
     const state = { up: false, listed: 0 }
     const time = clock()
@@ -338,5 +350,23 @@ describe('McpServerClient resource hygiene', () => {
 
     // `<=`: a tentativa agora conecta de verdade (o loopback cadastrado passa), e um handle de antes pode fechar no meio.
     assert.ok(after <= before, `tentativa falha deixou handle vivo (${before} → ${after})`)
+  })
+})
+
+describe('McpServerClient — o teto do começo do turno', () => {
+  it('quem não responde no teto conta como fora; a tentativa segue e, ao falhar, fecha o que abriu', async () => {
+    let release: (() => void) | undefined
+    let released = false
+    const hanging = new McpServerClient('http://localhost:8001/mcp', {
+      createClient: () =>
+        ({
+          connect: () => (released ? Promise.reject(new Error('down')) : new Promise((_, reject) => (release = () => reject(new Error('down'))))),
+          close: async () => undefined,
+        }) as unknown as Client,
+    })
+    assert.strictEqual(await hanging.connectWithin(20), false)
+    released = true
+    release?.()
+    assert.strictEqual(await hanging.connect(), false)
   })
 })
