@@ -18,6 +18,7 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs'
+import { readdir } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -200,6 +201,8 @@ export class ProjectSandbox implements IProjectSandbox {
   private probe?: Promise<ISandboxStatus>
   /** Quando o teste do cerco falhou (ver `status`). */
   private failedAt?: number
+  /** As varreduras das raízes, para achar os modelos poupados sem travar o servidor (ver `TreeIndexCache`). */
+  private readonly trees: TreeIndexCache
   /** Quantos comandos cercados rodam agora (a varredura dos pontos de montagem só roda com zero: ver `sweepMountPoints`). */
   private active = 0
   /** As pastas onde um comando já rodou: a varredura do fim passa por elas. */
@@ -210,7 +213,9 @@ export class ProjectSandbox implements IProjectSandbox {
     private readonly load: () => Promise<{ SandboxManager: ISandboxManager }> = () => esmImport('@anthropic-ai/sandbox-runtime'),
     private readonly platform: NodeJS.Platform = process.platform,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.trees = new TreeIndexCache(now)
+  }
 
   /** ⛔ `CERCO_READ_ALLOWLIST=1` (padrão desligado): o cerco lê só o liberado, não o host inteiro. Só no Linux (bubblewrap). */
   readAllowlistOn(): boolean {
@@ -249,7 +254,7 @@ export class ProjectSandbox implements IProjectSandbox {
       ...(this.readAllowlistOn() ? { readAllowlist: systemReadAllowlist() } : {}),
       // Os arquivos de recurso: o global sempre; os do projeto quando a raiz é dele. Lê, não grava.
       readOnly: existing([...readOnlyResourceDirs(root, this.env), ...(place.sharedFolders ?? [])]),
-      find: (pattern) => findUnder(root, pattern),
+      find: (pattern) => this.trees.find(root, pattern),
     }
   }
 
@@ -269,6 +274,8 @@ export class ProjectSandbox implements IProjectSandbox {
     if (!status.available) throw new Error(`${SANDBOX_UNAVAILABLE}: ${status.reason ?? 'sem motivo'}`)
     const manager = await this.ready()
     const port = await networkGate().start()
+    // A varredura dos modelos poupados, sem travar o servidor (ver `TreeIndexCache`): o plano abaixo é síncrono.
+    await this.trees.warm(root)
     const planned = plan(this.base(root, place))
     planned.readAllow.push(...bridgeSockets(manager))
     // ⛔ Só ESTE comando lê o que o servidor guardou para ele (a chave SSH, o proxychains): a pasta de dados segue negada aos outros.
@@ -700,19 +707,54 @@ function listEntries(dir: string): Array<{ name: string; dir: boolean }> {
 /** Teto da busca dos modelos: numa árvore maior, o que sobra fica escondido (falha fechada). */
 const FIND_LIMIT = 100_000
 
+/** O que a varredura de uma raiz achou: os arquivos (caminho relativo) e as pastas de worktree (não varridas). */
+export interface ITreeIndex {
+  files: string[]
+  worktreeDirs: string[]
+}
+
 /**
- * Os arquivos de um padrão relativo dentro da raiz (o casamento é o da regra), sem descer em `node_modules` nem nas pastas
- * `.git`: lá dentro segue escondido. O `glob` do Node não serve: o `**` dele pula as entradas com ponto.
+ * A varredura da raiz: os arquivos, sem descer em `node_modules` nem nas pastas `.git` (lá dentro segue escondido), e as
+ * pastas de worktree à parte. O `glob` do Node não serve: o `**` dele pula as entradas com ponto.
  *
  * ⚖️ Desce também em repositório ou worktree ANINHADO (`repositories/x`, `repositories/x/_worktrees/EP-1`): é lá que os
  * `.env.example` do projeto moram, e o cerco os trocava por /dev/null (o lint-staged parava em "Backing up original state").
  * Em LARGURA: o que está perto da raiz entra antes do teto, e um checkout fundo não gasta a cota dos rasos.
+ *
+ * ⛔ ASSÍNCRONA (a do `TreeIndexCache`): a síncrona, num projeto grande, prendia o servidor inteiro ~2 s a cada comando de
+ * terminal de um agente — e todo pedido esperava, inclusive a troca de conversa na tela (16/11).
  */
-export function findUnder(root: string, pattern: string): string[] {
-  if (isAbsolute(pattern) || pattern.startsWith('~')) return []
-  const found: string[] = []
-  const pending = ['']
+async function walkTree(root: string, read: (dir: string) => Promise<Dirent[]>): Promise<ITreeIndex> {
+  const files: string[] = []
   const worktreeDirs: string[] = []
+  const pending = ['']
+  let seen = 0
+  for (let next = 0; next < pending.length && seen < FIND_LIMIT; next += 1) {
+    const dir = pending[next]!
+    let entries: Dirent[]
+    try {
+      entries = await read(join(root, dir))
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      seen += 1
+      const path = dir ? `${dir}/${entry.name}` : entry.name
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git') continue
+        if (WORKTREE_DIRS.has(entry.name)) worktreeDirs.push(path)
+        else pending.push(path)
+      } else if (entry.isFile()) files.push(path)
+    }
+  }
+  return { files, worktreeDirs }
+}
+
+/** A mesma varredura, síncrona: o `findUnder` (quem ainda não tem a guardada). */
+function walkTreeSync(root: string): ITreeIndex {
+  const files: string[] = []
+  const worktreeDirs: string[] = []
+  const pending = ['']
   let seen = 0
   for (let next = 0; next < pending.length && seen < FIND_LIMIT; next += 1) {
     const dir = pending[next]!
@@ -729,16 +771,42 @@ export function findUnder(root: string, pattern: string): string[] {
         if (entry.name === 'node_modules' || entry.name === '.git') continue
         if (WORKTREE_DIRS.has(entry.name)) worktreeDirs.push(path)
         else pending.push(path)
-      } else if (entry.isFile() && pathMatches(pattern, path)) found.push(path)
+      } else if (entry.isFile()) files.push(path)
     }
   }
+  return { files, worktreeDirs }
+}
+
+/**
+ * ⚖️ O FILTRO BARATO antes do padrão: o último trecho do padrão (sem `**`) tem de casar o NOME do arquivo — o `*` não
+ * atravessa a barra, então quem casa o padrão inteiro casa esse trecho no nome. Nome é curto: a conta é de microssegundos,
+ * e o padrão completo (que é proporcional ao caminho) só roda para os poucos que passam.
+ */
+function nameFilter(pattern: string): (name: string) => boolean {
+  const last = pattern.trim().replace(/^\.\//, '').split('/').pop() ?? ''
+  if (!last || last.includes('**')) return () => true
+  // O começo e o fim LITERAIS do trecho (antes do primeiro coringa, depois do último): condição necessária, e só
+  // comparação de texto. O padrão completo confere depois.
+  const first = last.search(/[*?]/)
+  if (first < 0) return (name) => name === last
+  const prefix = last.slice(0, first)
+  const suffix = last.slice(Math.max(last.lastIndexOf('*'), last.lastIndexOf('?')) + 1)
+  return (name) => name.length >= prefix.length + suffix.length && name.startsWith(prefix) && name.endsWith(suffix)
+}
+
+/** Os arquivos de um padrão relativo dentro de uma varredura, com os modelos espelhados em cada worktree. */
+function matchTemplates(root: string, index: ITreeIndex, pattern: string): string[] {
+  if (isAbsolute(pattern) || pattern.startsWith('~')) return []
+  const byName = nameFilter(pattern)
+  const found = index.files.filter((path) => byName(path.slice(path.lastIndexOf('/') + 1)) && pathMatches(pattern, path))
   // ⚖️ As worktrees não são varridas (a árvore principal já gasta o teto, e cada uma repete os modelos dela): para cada
   // modelo do repositório, o MESMO caminho em cada worktree. Sem isso, o `git diff`/`merge` na worktree via o modelo
   // versionado como /dev/null ("unsupported file type") e o commit do épico travava (07/11). Vêm depois dos da árvore
   // principal, e o teto (abaixo) corta por elas.
-  const mirrored = worktreeDirs.flatMap((worktrees) => {
+  const mirrored = index.worktreeDirs.flatMap((worktrees) => {
     const repo = posix.dirname(worktrees) === '.' ? '' : posix.dirname(worktrees)
     const own = repo ? found.filter((path) => path.startsWith(`${repo}/`)) : found
+    if (!own.length) return []
     let names: string[]
     try {
       names = readdirSync(join(root, worktrees), { withFileTypes: true })
@@ -762,6 +830,58 @@ export function findUnder(root: string, pattern: string): string[] {
   // ⛔ Teto de modelos reabertos (cada um é uma montagem no bwrap, que para em ~9000 argumentos): passou, o resto fica
   // escondido, como antes — o terminal nunca quebra por isso.
   return [...found, ...mirrored].slice(0, TEMPLATE_LIMIT)
+}
+
+/** Os arquivos de um padrão relativo dentro da raiz (ver `walkTree` e `matchTemplates`). Síncrono: lê a árvore agora. */
+export function findUnder(root: string, pattern: string): string[] {
+  if (isAbsolute(pattern) || pattern.startsWith('~')) return []
+  return matchTemplates(root, walkTreeSync(root), pattern)
+}
+
+/** Quanto a varredura de uma raiz vale: depois disso, o próximo comando usa a de antes e uma nova roda em segundo plano. */
+export const TREE_INDEX_TTL_MS = 60_000
+
+/**
+ * ⚖️ A VARREDURA GUARDADA, por raiz: lida sem travar o servidor (assíncrona) e reaproveitada por `TREE_INDEX_TTL_MS`;
+ * vencida, o comando segue com a de antes e uma nova roda em segundo plano. O padrão casado fica guardado junto, até a
+ * próxima varredura. O modelo criado nesse meio-tempo fica escondido até a renovação (falha fechada, como o teto).
+ */
+export class TreeIndexCache {
+  private readonly entries = new Map<string, { at: number; index: ITreeIndex; matches: Map<string, string[]>; refreshing?: Promise<void> }>()
+
+  constructor(
+    private readonly now: () => number = Date.now,
+    private readonly read: (dir: string) => Promise<Dirent[]> = (dir) => readdir(dir, { withFileTypes: true }),
+  ) {}
+
+  /** Garante uma varredura da raiz: a primeira espera (sem travar o servidor); a vencida renova em segundo plano. */
+  async warm(root: string): Promise<void> {
+    const entry = this.entries.get(root)
+    if (!entry) return this.refresh(root)
+    if (this.now() - entry.at >= TREE_INDEX_TTL_MS && !entry.refreshing) void this.refresh(root).catch(() => undefined)
+  }
+
+  /** Os arquivos do padrão na raiz: da varredura guardada; sem ela, a síncrona de sempre. */
+  find(root: string, pattern: string): string[] {
+    const entry = this.entries.get(root)
+    if (!entry) return findUnder(root, pattern)
+    let hit = entry.matches.get(pattern)
+    if (!hit) {
+      hit = matchTemplates(root, entry.index, pattern)
+      entry.matches.set(pattern, hit)
+    }
+    return hit
+  }
+
+  private refresh(root: string): Promise<void> {
+    const current = this.entries.get(root)
+    if (current?.refreshing) return current.refreshing
+    const refreshing = walkTree(root, this.read).then((index) => {
+      this.entries.set(root, { at: this.now(), index, matches: new Map() })
+    })
+    if (current) current.refreshing = refreshing.finally(() => (current.refreshing = undefined))
+    return refreshing
+  }
 }
 
 /** As pastas onde moram as worktrees de um repositório (`git worktree add _worktrees/EP-1`). */

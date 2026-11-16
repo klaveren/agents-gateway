@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -12,6 +12,8 @@ import {
   ensureGitProxyAuth,
   expandGlobPath,
   findUnder,
+  TREE_INDEX_TTL_MS,
+  TreeIndexCache,
   forBubblewrap,
   withWriteGlobsExpanded,
   hostSocketDirs,
@@ -591,6 +593,43 @@ describe('findUnder — os modelos de segredo reabertos para leitura', () => {
     const found = findUnder(many, '**/.env.*')
     assert.strictEqual(found.length, 400)
     assert.deepStrictEqual(found.slice(0, 10).sort(), Array.from({ length: 10 }, (_, i) => `d${i}/.env.example`).sort())
+  })
+})
+
+describe('TreeIndexCache — a varredura dos modelos sem travar o servidor', () => {
+  const root = mkdtempSync(join(tmpdir(), 'gw-tree-'))
+  after(() => rmSync(root, { recursive: true, force: true }))
+
+  it('⚖️ varre uma vez por raiz (assíncrona); o mesmo resultado do findUnder; vencida, segue com a de antes e renova por trás', async () => {
+    mkdirSync(join(root, 'apps', 'web'), { recursive: true })
+    writeFileSync(join(root, 'apps', 'web', '.env.example'), 'A=')
+    writeFileSync(join(root, 'apps', 'web', '.env'), 'SEGREDO=1')
+    writeFileSync(join(root, 'apps', 'chave.pem'), 'x')
+    let now = 0
+    let reads = 0
+    const cache = new TreeIndexCache(
+      () => now,
+      async (dir) => {
+        reads += 1
+        return readdirSync(dir, { withFileTypes: true })
+      },
+    )
+    await cache.warm(root)
+    const first = reads
+    assert.ok(first > 0)
+    assert.deepStrictEqual(cache.find(root, '**/.env.*'), findUnder(root, '**/.env.*'))
+    assert.deepStrictEqual(cache.find(root, '**/*.pem'), ['apps/chave.pem'])
+    await cache.warm(root)
+    assert.strictEqual(reads, first, 'dentro do prazo, nenhuma leitura nova')
+    // O modelo novo só aparece na próxima varredura; vencida, o comando não espera por ela.
+    writeFileSync(join(root, 'apps', '.env.local.example'), 'B=')
+    now = TREE_INDEX_TTL_MS + 1
+    await cache.warm(root)
+    assert.deepStrictEqual(cache.find(root, '**/.env.*'), ['apps/web/.env.example'])
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.deepStrictEqual(cache.find(root, '**/.env.*').sort(), ['apps/.env.local.example', 'apps/web/.env.example'])
+    // Sem varredura guardada (outra raiz), o find é o síncrono de sempre.
+    assert.deepStrictEqual(cache.find(join(root, 'apps'), '**/.env.*'), findUnder(join(root, 'apps'), '**/.env.*'))
   })
 })
 
