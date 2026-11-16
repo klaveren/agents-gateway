@@ -64,7 +64,7 @@ async function submit() {
   <div class="grid h-full place-items-center overflow-y-auto p-4">
     <form class="w-full max-w-sm rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 shadow-xl" @submit.prevent="submit">
       <div class="mb-5 flex items-center gap-3">
-        <div class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950">AG</div>
+        <div class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-accent-end text-sm font-bold text-zinc-950">AG</div>
         <div>
           <h1 class="font-semibold">{{ isSetup ? 'Criar o primeiro administrador' : 'Entrar' }}</h1>
           <p class="text-xs text-zinc-400">{{ isSetup ? 'Só na primeira vez.' : 'Agents Gateway' }}</p>

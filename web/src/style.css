@@ -19,6 +19,8 @@
   --color-success-700: oklch(50.8% 0.118 165.612);
   --color-success-800: oklch(43.2% 0.095 166.913);
   --color-success-900: oklch(37.8% 0.077 168.94);
+  /* 🎨 O fim do degradê do logo e do projeto: o verde-azulado do tema; com cor de projeto, o tom escuro da paleta dele. */
+  --color-accent-end: oklch(60% 0.118 184.704);
   --color-success-950: oklch(26.2% 0.051 172.552);
 }
 

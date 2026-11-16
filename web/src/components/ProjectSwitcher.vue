@@ -57,7 +57,7 @@ const paletteOf = (color: string | undefined) => (color && color in PALETTES ? P
       @click="open = !open"
     >
       <span
-        class="grid place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 font-bold text-zinc-950"
+        class="grid place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-accent-end font-bold text-zinc-950"
         :class="[placement === 'up' ? 'h-[22px] w-[22px] rounded-md text-[9px]' : 'h-10 w-10 text-sm', open ? 'ring-2 ring-emerald-300/60' : '']"
         >{{ projects.currentProject ? initials(projects.currentProject.name) : 'AG' }}</span
       >

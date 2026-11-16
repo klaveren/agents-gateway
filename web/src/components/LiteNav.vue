@@ -54,7 +54,7 @@
     <div v-if="auth.user" class="mb-3 hidden md:block"><ProjectSwitcher placement="side" /></div>
     <div
       v-else
-      class="mb-3 hidden h-10 w-10 place-items-center rounded-xl md:grid bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950"
+      class="mb-3 hidden h-10 w-10 place-items-center rounded-xl md:grid bg-gradient-to-br from-emerald-400 to-accent-end text-sm font-bold text-zinc-950"
       title="Agents Gateway"
     >
       AG
