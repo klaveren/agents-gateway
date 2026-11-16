@@ -21,7 +21,6 @@
   import Composer from './Composer.vue'
   import ConfirmDialog from './ConfirmDialog.vue'
   import Icon from './Icon.vue'
-  import PanelToggle from './PanelToggle.vue'
   import TokensMenu from './TokensMenu.vue'
   import SessionTuner from './SessionTuner.vue'
   import TodoPanel from './TodoPanel.vue'
@@ -283,8 +282,8 @@
   }
 
   /**
-   * ⚖️ NO CELULAR, as ações do cabeçalho (painel, alterações, compactar, compartilhar, arquivar, apagar) moram num menu
-   * "⋯", no estilo do menu da conta: o título ganha o espaço. O medidor de contexto continua à vista.
+   * ⚖️ As ações do cabeçalho (board, alterações, compactar, compartilhar, arquivar, apagar) moram num menu "⋯", no estilo
+   * do menu da conta, no celular e no desktop: o título ganha o espaço. O medidor de contexto continua à vista (e abre o consumo).
    */
   const { open: menuOpen, root: menuRoot } = usePopover()
   function fromMenu(action: () => unknown) {
@@ -390,7 +389,40 @@
         </div>
       </div>
       <div v-if="header || context" class="ml-auto flex items-center gap-1">
-        <div v-if="context" class="mr-2 grid h-8 w-8 place-items-center" :title="`Contexto da conversa: ${context.label.replace(' / ', ' de ').replace(' usados', '')} tokens`">
+        <!-- ⚖️ À vista ficam só o medidor de contexto (que abre o consumo) e o menu "⋯" com as ações, no desktop e no celular:
+             o título ganha o espaço. -->
+        <TokensMenu
+          v-if="header?.usage.totalTokens"
+          :usage="header.usage"
+          :cost-usd="projects.manages ? header.costUsd : undefined"
+          :cost-is-floor="header.costIsFloor"
+          :turns="header.turns"
+          :context="context"
+        >
+          <span v-if="context" class="grid h-8 w-8 place-items-center" data-test="context-meter">
+            <svg v-if="context.percent !== undefined" viewBox="0 0 32 32" class="col-start-1 row-start-1 h-8 w-8 -rotate-90">
+              <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" class="stroke-zinc-800" />
+              <circle
+                cx="16"
+                cy="16"
+                r="13"
+                fill="none"
+                stroke-width="3"
+                stroke-linecap="round"
+                pathLength="100"
+                :stroke-dasharray="`${context.percent} 100`"
+                :class="context.warn ? 'stroke-amber-400' : 'stroke-emerald-500'"
+              />
+            </svg>
+            <span class="col-start-1 row-start-1 text-[9px] tabular-nums" :class="context.warn ? 'text-amber-300' : 'text-zinc-400'">{{ context.short }}</span>
+          </span>
+        </TokensMenu>
+        <div
+          v-else-if="context"
+          class="grid h-8 w-8 place-items-center"
+          :title="`Contexto da conversa: ${context.label.replace(' / ', ' de ').replace(' usados', '')} tokens`"
+          data-test="context-meter"
+        >
           <svg v-if="context.percent !== undefined" viewBox="0 0 32 32" class="col-start-1 row-start-1 h-8 w-8 -rotate-90">
             <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" class="stroke-zinc-800" />
             <circle
@@ -407,60 +439,8 @@
           </svg>
           <span class="col-start-1 row-start-1 text-[9px] tabular-nums" :class="context.warn ? 'text-amber-300' : 'text-zinc-400'">{{ context.short }}</span>
         </div>
-        <button
-          v-if="canCompact"
-          class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800 disabled:hover:bg-transparent max-md:hidden"
-          :class="thread.session?.compactNext ? 'text-zinc-500' : 'text-amber-300'"
-          :disabled="thread.session?.compactNext || compacting"
-          :title="thread.session?.compactNext ? 'A próxima mensagem começa com um resumo da conversa' : 'Compactar: resumir a conversa e recomeçar com o resumo, na próxima mensagem'"
-          :aria-label="thread.session?.compactNext ? 'Compacta na próxima mensagem' : 'Compactar o contexto'"
-          @click="compactNow"
-        >
-          <Icon name="compress" class="h-5 w-5" />
-        </button>
         <template v-if="header">
-          <TokensMenu
-            v-if="header.usage.totalTokens"
-            class="max-md:hidden"
-            :usage="header.usage"
-            :cost-usd="projects.manages ? header.costUsd : undefined"
-            :cost-is-floor="header.costIsFloor"
-            :turns="header.turns"
-            :context="context"
-          />
-          <button
-            v-if="inRepository"
-            class="relative grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 max-md:hidden"
-            :title="changesCount ? `O que o agente mudou nesta conversa: ${changesCount}` : 'O que o agente mudou nesta conversa'"
-            data-test="changes-toggle"
-            @click="changesOpen = true"
-          >
-            <Icon name="git" class="h-5 w-5" />
-            <span
-              v-if="changesCount"
-              class="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-emerald-500/20 px-1 text-center text-[10px] leading-4 text-emerald-300"
-            >
-              {{ changesCount }}
-            </span>
-          </button>
-          <PanelToggle class="max-md:hidden" :count="panelCount" :active="panelOpen" @click="panelOpen = !panelOpen" />
-          <button
-            v-if="!embedded"
-            class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800 max-md:hidden"
-            :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'"
-            :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'"
-            @click="toggleShare"
-          >
-            <Icon name="share" class="h-5 w-5" />
-          </button>
-          <button
-            class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-rose-300 max-md:hidden"
-            title="Apagar histórico"
-            @click="confirming = true"
-          >
-            <Icon name="trash" class="h-5 w-5" />
-          </button>
-          <div ref="menuRoot" class="relative md:hidden">
+          <div ref="menuRoot" class="relative">
             <button
               type="button"
               class="relative grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800"
