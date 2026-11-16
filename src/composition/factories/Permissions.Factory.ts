@@ -1,3 +1,4 @@
+import { readsEnvFiles } from '@domain/models/Project.Model'
 import { makeAgentProjectLayers } from './AgentProjectLayers.Factory'
 import { PermissionsService } from '@application/Permissions.Service'
 import { IPermissionRule } from '@domain/Permission.Policy'
@@ -42,10 +43,10 @@ export function makePermissions(): PermissionsService {
     (text, sessionId) => makeSecretMasker().text(text, sessionId),
   )
   service.history.use(() => makeCatalogHistory())
-  // ⚠️ A leitura dos `.env` que o admin do projeto liberou (ver `IProject.readEnvFiles`): lida a cada pedido, vale na hora.
-  service.useEnvFiles((projectId) => {
+  // ⚠️ A leitura dos `.env` que o admin do projeto liberou para o agente (ver `IProject.envFileAgents`): lida a cada pedido.
+  service.useEnvFiles((projectId, agentId) => {
     const projects = makeProjects()
-    return projects.exists(projectId) && projects.get(projectId).readEnvFiles === true
+    return projects.exists(projectId) && readsEnvFiles(projects.get(projectId), agentId)
   })
   return service
 }

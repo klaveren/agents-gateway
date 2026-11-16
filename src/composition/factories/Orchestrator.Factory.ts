@@ -1,3 +1,4 @@
+import { readsEnvFiles } from '@domain/models/Project.Model'
 import { projectFixedEnv } from './ProjectVariables.Factory'
 import { markAnswersDelivered } from '@domain/models/ConversationPanel.Model'
 import type { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
@@ -132,10 +133,10 @@ export function makeOrchestrator(): AgentProvider {
     })
   // O começo do turno: os MCPs do agente que caíram e voltaram entram já (sem esperar o backoff); os que seguem fora, avisados.
   provider.useMcpWake((allowedTools, projectId) => catalog.wakeMcp(allowedTools, projectId))
-  // ⚠️ Os `.env` que o admin do projeto deixou os agentes lerem: os valores mascarados na conversa desde o começo do turno.
-  provider.useEnvMask(async (sessionId, projectId, dir) => {
+  // ⚠️ Os `.env` que o admin do projeto deixou o agente ler: os valores mascarados na conversa desde o começo do turno.
+  provider.useEnvMask(async (sessionId, projectId, agentId, dir) => {
     const projects = makeProjects()
-    if (!projects.exists(projectId) || !projects.get(projectId).readEnvFiles) return
+    if (!projects.exists(projectId) || !readsEnvFiles(projects.get(projectId), agentId)) return
     for (const file of (await projectSandbox().envFiles?.(dir)) ?? []) {
       const text = await readFile(file, 'utf8').catch(() => '')
       makeSecretMasker().register(

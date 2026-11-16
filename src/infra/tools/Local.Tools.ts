@@ -301,7 +301,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     if (git.refusal) return { status: 'error', result: `Not permitted: ${git.refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
     const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
-    // ⚠️ O projeto liberou a leitura dos `.env` (ver `IProject.readEnvFiles`): os valores deles passam a ser mascarados em tudo
+    // ⚠️ O projeto liberou a leitura dos `.env` para este agente (ver `IProject.envFileAgents`): os valores deles passam a ser mascarados em tudo
     // o que a conversa mostra e grava ANTES de o comando rodar (um `cat .env`, ou o log que imprime o valor).
     if (layers.envFiles && context?.sessionId && deps.mask && sandbox.envFiles) {
       const files = await sandbox.envFiles(root).catch(() => [])

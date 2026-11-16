@@ -268,12 +268,12 @@ describe('Projetos (integração)', () => {
   })
 
   it('⚠️ a leitura dos .env: ⛔ só na tela — com token (agente, integração) é 403; membro comum, 404', async () => {
-    const refused = await call(ADMIN, 'PUT', '/projects/alfa/env-files', { read: true })
+    const refused = await call(ADMIN, 'PUT', '/projects/alfa/env-files', { agents: ['zeus'] })
     assert.strictEqual(refused.status, 403)
     assert.match(JSON.stringify(refused.body), /entrando pela tela/)
-    assert.strictEqual((await call(ANA, 'PUT', '/projects/alfa/env-files', { read: true })).status, 404)
+    assert.strictEqual((await call(ANA, 'PUT', '/projects/alfa/env-files', { agents: ['zeus'] })).status, 404)
     assert.strictEqual(
-      ((await call(ADMIN, 'GET', '/projects')).body.result as Array<{ id: string; readEnvFiles?: boolean }>).find((project) => project.id === 'alfa')?.readEnvFiles,
+      ((await call(ADMIN, 'GET', '/projects')).body.result as Array<{ id: string; envFileAgents?: string[] }>).find((project) => project.id === 'alfa')?.envFileAgents,
       undefined,
     )
   })

@@ -1,3 +1,4 @@
+import { readsEnvFiles } from '@domain/models/Project.Model'
 import assert from 'node:assert'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -29,12 +30,14 @@ describe('ProjectsService', () => {
     return { service, repository, agents, root }
   }
 
-  it('⚠️ a leitura dos .env e a cor ficam gravadas; desligar volta ao padrão (fechado, verde)', () => {
+  it('⚠️ a leitura dos .env (por agente) e a cor ficam gravadas; esvaziar volta ao padrão (fechado, verde)', () => {
     const { service } = build()
     service.create({ id: 'alfa', name: 'Alfa' }, 'root')
-    assert.strictEqual(service.setReadEnvFiles('alfa', true, 'root').readEnvFiles, true)
-    assert.strictEqual(service.get('alfa').readEnvFiles, true)
-    assert.strictEqual(service.setReadEnvFiles('alfa', false, 'root').readEnvFiles, undefined)
+    assert.deepStrictEqual(service.setEnvFileAgents('alfa', ['zeus', ' atlas ', 'zeus', ''], 'root').envFileAgents, ['atlas', 'zeus'])
+    assert.ok(readsEnvFiles(service.get('alfa'), 'zeus'))
+    assert.ok(!readsEnvFiles(service.get('alfa'), 'hermes'), 'só quem está na lista')
+    assert.ok(!readsEnvFiles(service.get('alfa'), undefined))
+    assert.strictEqual(service.setEnvFileAgents('alfa', [], 'root').envFileAgents, undefined)
     assert.strictEqual(service.setColor('alfa', 'violet', 'root').color, 'violet')
     assert.strictEqual(service.setColor('alfa', undefined, 'root').color, undefined)
   })

@@ -7,7 +7,7 @@ export interface IProjectRepository {
   insert(project: IProject): void
   update(
     id: string,
-    patch: Partial<Pick<IProject, 'name' | 'description' | 'importIgnore' | 'importScope' | 'env' | 'mcpEnv' | 'color' | 'readEnvFiles' | 'updatedAt' | 'updatedBy'>>,
+    patch: Partial<Pick<IProject, 'name' | 'description' | 'importIgnore' | 'importScope' | 'env' | 'mcpEnv' | 'color' | 'envFileAgents' | 'updatedAt' | 'updatedBy'>>,
   ): IProject | undefined
   delete(id: string): boolean
   members(projectId: string): IProjectMember[]

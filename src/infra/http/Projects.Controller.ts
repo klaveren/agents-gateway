@@ -38,7 +38,7 @@ const updateSchema = z.object({
     .optional(),
 })
 const colorSchema = z.object({ color: z.enum(PROJECT_COLORS).nullable() })
-const envFilesSchema = z.object({ read: z.boolean() })
+const envFilesSchema = z.object({ agents: z.array(z.string().min(1).max(200)).max(500) })
 /** A lista inteira de membros, com o papel (`members`); `userIds` (sem papel) segue aceito: cada um fica com o que tinha. */
 const membersSchema = z
   .object({
@@ -199,8 +199,8 @@ export class ProjectsController {
   }
 
   /**
-   * `PUT /projects/:id/env-files { read }` — ⚠️ os agentes do projeto passam a LER os `.env` (a trava do sistema que cede, ver
-   * `ISystemRule.opensWith`). ⛔ Só o admin do projeto e só na TELA (como gravar uma variável secreta): nem token de acesso
+   * `PUT /projects/:id/env-files { agents }` — ⚠️ a lista INTEIRA dos agentes do projeto que LEEM os `.env` (a trava do sistema
+   * que cede, ver `ISystemRule.opensWith`); vazia = nenhum. ⛔ Só o admin do projeto e só na TELA (como gravar uma variável secreta): nem token de acesso
    * nem agente liga — o agente não libera para si mesmo. Desta máquina: vale também no projeto conectado.
    */
   async setEnvFiles(req: Request, res: Response): Promise<void> {
@@ -208,7 +208,7 @@ export class ProjectsController {
       const id = req.params.id as string
       const by = await requireProjectAdmin(this.deps.proof, id, 'setProjectEnvFiles')
       if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem administra o projeto, entrando pela tela, libera a leitura dos .env.')
-      return this.toDto(this.deps.projects.setReadEnvFiles(id, parseBody(envFilesSchema, req.body).read, by), 'admin')
+      return this.toDto(this.deps.projects.setEnvFileAgents(id, parseBody(envFilesSchema, req.body).agents, by), 'admin')
     })
   }
 
@@ -248,7 +248,7 @@ export class ProjectsController {
       ...(role ? { role } : {}),
       ...(project.description ? { description: project.description } : {}),
       ...(project.color ? { color: project.color } : {}),
-      ...(project.readEnvFiles ? { readEnvFiles: true } : {}),
+      ...(admin && project.envFileAgents?.length ? { envFileAgents: project.envFileAgents } : {}),
       ...(admin ? { folder: this.deps.projects.folderOf(project.id), members: this.deps.projects.members(project.id).length } : {}),
       // As fixas e os valores visíveis dos MCPs são configuração de quem administra: o membro não lê.
       ...(admin ? { env: project.env ?? {}, mcpEnv: project.mcpEnv ?? [] } : {}),
