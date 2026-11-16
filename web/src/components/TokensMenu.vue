@@ -37,7 +37,8 @@
       data-test="tokens-menu"
       @click="open = !open"
     >
-      <Icon name="tokens" class="h-5 w-5" />
+      <!-- O gatilho: o ícone, ou o que o cabeçalho põe aqui (o medidor de contexto). -->
+      <slot><Icon name="tokens" class="h-5 w-5" /></slot>
     </button>
     <div v-if="open" role="menu" class="absolute top-full right-0 z-50 mt-2 w-64 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40">
       <div class="border-b border-zinc-800 px-3 py-2.5">
@@ -45,7 +46,11 @@
         <div class="flex items-baseline gap-2">
           <span class="text-lg font-semibold text-zinc-100 tabular-nums">{{ tokens(usage.totalTokens) }}</span>
           <span class="text-xs text-zinc-500">tokens</span>
-          <span v-if="costUsd !== undefined" class="ml-auto font-medium text-zinc-200 tabular-nums" :title="costIsFloor ? 'Pelo menos: algum modelo sem preço cadastrado' : undefined">
+          <span
+            v-if="costUsd !== undefined"
+            class="ml-auto font-medium text-zinc-200 tabular-nums"
+            :title="costIsFloor ? 'Pelo menos: algum modelo sem preço cadastrado' : undefined"
+          >
             {{ costIsFloor ? '≥ ' : '' }}{{ usd(costUsd) }}
           </span>
         </div>
@@ -61,7 +66,10 @@
       <div v-if="context || turns" class="flex flex-col gap-1 border-t border-zinc-800 px-3 py-2.5 text-xs text-zinc-400">
         <div v-if="context" class="flex justify-between gap-3">
           <span>Contexto agora</span>
-          <span class="text-zinc-200 tabular-nums">{{ context.label }}<template v-if="context.percent !== undefined"> · {{ context.percent }}%</template></span>
+          <span class="text-zinc-200 tabular-nums">
+            {{ context.label }}
+            <template v-if="context.percent !== undefined">· {{ context.percent }}%</template>
+          </span>
         </div>
         <div v-if="turns" class="flex justify-between gap-3">
           <span>Turnos</span>
