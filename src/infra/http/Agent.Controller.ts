@@ -87,6 +87,7 @@ import { parseBody } from './Request.Parser'
 import {
   agentBodySchema,
   createSessionSchema,
+  renameConversationSchema,
   followTurnSchema,
   sendMessageSchema,
   shareAgentSchema,
@@ -314,6 +315,7 @@ export class AgentController {
     this.shareConversation = this.shareConversation.bind(this)
     this.deleteConversation = this.deleteConversation.bind(this)
     this.archiveConversation = this.archiveConversation.bind(this)
+    this.renameConversation = this.renameConversation.bind(this)
     this.listErrors = this.listErrors.bind(this)
     this.getConversationPanel = this.getConversationPanel.bind(this)
     this.updateConversationPanel = this.updateConversationPanel.bind(this)
@@ -1176,7 +1178,7 @@ export class AgentController {
         if (mine + opening >= sessionsPerOwner()) throw new HttpError(429, 'rate_limited', `At most ${sessionsPerOwner()} live conversations per account: close one first`)
         this.openingSessions.set(account, opening + 1)
         try {
-          const { projectId: requested, repository, worktree, callbackUrl, ...session } = body
+          const { projectId: requested, repository, worktree, callbackUrl, title, ...session } = body
           const project = await this.sessionProject(this.callerOf(resolved), body.agentId, requested)
           const place = await this.workPlace(body.agentId, project, repository, worktree)
           const startCommit = place ? await headOf(place).catch(() => undefined) : undefined
@@ -1198,7 +1200,9 @@ export class AgentController {
             ...(startCommit ? { [START_COMMIT_METADATA_KEY]: startCommit } : {}),
             ...(callbackUrl ? { [CALLBACK_METADATA_KEY]: callbackUrl } : {}),
           }
-          return await this.usecases.createSession.execute({ ...session, metadata: stamped, adminAccess })
+          const created = await this.usecases.createSession.execute({ ...session, metadata: stamped, adminAccess })
+          if (title) this.usecases.sendMessage.chooseTitle(created.id, title)
+          return created
         } finally {
           const left = (this.openingSessions.get(account) ?? 1) - 1
           if (left > 0) this.openingSessions.set(account, left)
@@ -1866,6 +1870,24 @@ export class AgentController {
    * "Arquivadas"), não é retomada sozinha (a delegação recusa) e volta ao desarquivar — ou quando a pessoa manda mensagem
    * nela. Quem pode é quem pode apagar.
    */
+  /**
+   * `PATCH /conversations/:id { title }` — renomeia. Quem pode é quem pode arquivar. A conversa que ainda não tem turno
+   * (a sessão viva, fora do banco) guarda o título para o primeiro turno — e o turno que roda o primeiro também.
+   */
+  async renameConversation(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const { title } = parseBody(renameConversationSchema, req.body)
+      const stored = await this.usecases.conversations.findSession(id).catch(() => undefined)
+      if (stored) await this.requireConversationAccess(id)
+      else await this.requireOwnedSession(id)
+      const live = await this.usecases.getSession.execute(id).catch(() => undefined)
+      if (live && (live.turns === 0 || (live.turns === 1 && live.status === 'running'))) this.usecases.sendMessage.chooseTitle(id, title)
+      if (stored) await this.usecases.conversations.setTitle?.(id, title)
+      return { id, title }
+    })
+  }
+
   async archiveConversation(req: Request, res: Response) {
     await this.respond(res, async () => {
       const id = req.params.id as string

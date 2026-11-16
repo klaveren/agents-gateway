@@ -40,7 +40,12 @@ export const createSessionSchema = z.object({
   worktree: z.string().trim().max(200).optional(),
   /** Para onde vai o aviso de fim de cada turno (POST assinado). Só para os hosts de `TURN_CALLBACK_HOSTS`. */
   callbackUrl: z.string().trim().url().max(500).optional(),
+  /** O título da conversa. Ausente: a primeira linha da primeira mensagem. */
+  title: z.string().trim().min(1).max(120).optional(),
 })
+
+/** `PATCH /conversations/:id`: renomear. */
+export const renameConversationSchema = z.object({ title: z.string().trim().min(1).max(120) })
 
 /**
  * A troca no meio da conversa: `reasoning: null` volta ao padrão; campo ausente não muda. `provider`

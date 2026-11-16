@@ -811,6 +811,11 @@ export class SqliteConversationRepository implements IConversationRepository {
     })
   }
 
+  /** Renomeia a conversa. Apagada não muda. */
+  async setTitle(sessionId: string, title: string): Promise<boolean> {
+    return this.guard('setTitle', () => this.db.prepare('UPDATE conversations SET title = ? WHERE id = ? AND deleted_at IS NULL').run(title, sessionId).changes > 0) ?? false
+  }
+
   /** Quantas arquivadas a pessoa tem (a linha "Arquivadas (N)" da caixa de entrada). */
   async countArchived(owner?: IOwnerFilter | null): Promise<number> {
     return (

@@ -107,6 +107,14 @@ export class NotifyingConversationRepository implements IConversationRepository 
     if (session) this.events.publish({ type: 'conversation.updated', session })
   }
 
+  /** Renomear avisa a caixa de entrada (o título novo na lista). */
+  async setTitle(sessionId: string, title: string): Promise<boolean> {
+    const changed = (await this.inner.setTitle?.(sessionId, title)) ?? false
+    const session = changed ? await this.inner.findSession(sessionId) : undefined
+    if (session) this.events.publish({ type: 'conversation.updated', session })
+    return changed
+  }
+
   countArchived(owner?: IOwnerFilter | null): Promise<number> {
     return this.inner.countArchived?.(owner) ?? Promise.resolve(0)
   }

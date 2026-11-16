@@ -218,6 +218,32 @@ describe('AgentController: o admin do projeto, só o projeto dele', () => {
     assert.strictEqual((await turns(CAIO, 'c-alfa')).readOnly, undefined)
   })
 
+  it('abrir sessão com `title`: o título fica guardado para o primeiro turno', async () => {
+    const chosen: Array<[string, string]> = []
+    const sendMessage = (controller as unknown as { usecases: { sendMessage: SendMessageUseCase } }).usecases.sendMessage
+    const original = sendMessage.chooseTitle.bind(sendMessage)
+    sendMessage.chooseTitle = (id, title) => (chosen.push([id, title]), original(id, title))
+    try {
+      assert.strictEqual((await call(ANA, 'createSession', { body: { agentId: 'agente-alfa', title: 'Fechamento de outubro' } })).status, 201)
+      assert.strictEqual((await call(ANA, 'createSession', { body: { agentId: 'agente-alfa' } })).status, 201)
+    } finally {
+      sendMessage.chooseTitle = original
+    }
+    assert.deepStrictEqual(chosen, [['novo', 'Fechamento de outubro']])
+  })
+
+  it('renomear: o dono e o admin do projeto renomeiam; a Bia (admin de outro escopo) recebe 404; título vazio é 422', async () => {
+    const rename = (as: string, title: unknown) => call(as, 'renameConversation', { params: { id: 'c-alfa' }, body: { title } })
+    assert.strictEqual((await rename(CAIO, '  Vendas de outubro ')).status, 200)
+    assert.strictEqual((await conversations.findSession('c-alfa'))?.title, 'Vendas de outubro')
+    assert.strictEqual((await rename(ANA, 'Pelo admin')).status, 200)
+    assert.strictEqual((await rename(BIA, 'Intrusa')).status, 404)
+    assert.strictEqual((await rename(CAIO, '   ')).status, 422)
+    assert.strictEqual((await conversations.findSession('c-alfa'))?.title, 'Pelo admin')
+    // Sem conversa gravada nem sessão viva: 404.
+    assert.strictEqual((await call(CAIO, 'renameConversation', { params: { id: 'nao-existe' }, body: { title: 'x' } })).status, 404)
+  })
+
   it('apagar e compartilhar seguem a mesma regra', async () => {
     assert.strictEqual((await call(BIA, 'shareConversation', { params: { id: 'c-alfa' }, body: { shared: true } })).status, 404)
     assert.strictEqual((await call(ROOT, 'deleteConversation', { params: { id: 'c-alfa' } })).status, 404)

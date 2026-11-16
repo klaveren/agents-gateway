@@ -10,6 +10,8 @@ import { ITurnLive } from '@domain/ports/TurnLive.Port'
 import { aggregateTurn } from './Turn.Aggregator'
 
 const TITLE_MAX = 60
+/** O título que quem abre a conversa escolhe (`POST /sessions` ou renomear): mais folga que o tirado da pergunta. */
+export const CHOSEN_TITLE_MAX = 120
 
 /**
  * Normaliza o consumo para o formato gravado: os campos, mais o total.
@@ -126,7 +128,7 @@ export class SendMessageUseCase {
     // ⚖️ O PRIMEIRO TURNO JÁ APARECE: o cabeçalho vai ao banco agora, não só no fim. Sem isso a conversa que roda pela
     // primeira vez — a delegada, sobretudo, que ninguém abriu na tela — não estava na lista nem no MCP até acabar.
     // ⚖️ E TODO TURNO SOBE A CONVERSA NA LISTA AO COMEÇAR (`updatedAt`), não só ao acabar: a ordem é a da última interação.
-    void this.saveHeader(sessionId, index === 0 ? titleFrom(recorded.recordAs ?? recorded.text) : undefined).catch(() => undefined)
+    void this.saveHeader(sessionId, index === 0 ? this.firstTitle(sessionId, recorded.recordAs ?? recorded.text) : undefined).catch(() => undefined)
 
     try {
       for await (const event of this.agentProvider.sendMessage(sessionId, sent)) {
@@ -196,7 +198,9 @@ export class SendMessageUseCase {
      * `undefined` obrigaria quem lista a abrir o primeiro turno de cada conversa só para ter um
      * rótulo — uma leitura por linha da lista.
      */
-    if (await this.saveHeader(sessionId, index === 0 ? titleFrom(input.recordAs ?? input.text) : undefined)) {
+    const title = index === 0 ? this.firstTitle(sessionId, input.recordAs ?? input.text) : undefined
+    if (index === 0) this.chosenTitles.delete(sessionId)
+    if (await this.saveHeader(sessionId, title)) {
       // O estado do SDK (o id da sessão do CLI do Claude), para a retomada continuar com a memória dele. `null` limpa:
       // a conversa trocou para uma lane que não exporta.
       await this.conversations.saveNative?.(sessionId, this.agentProvider.nativeSnapshot?.(sessionId) ?? null)
@@ -305,6 +309,20 @@ export class SendMessageUseCase {
       metadata: session.metadata,
     })
     return true
+  }
+
+  /**
+   * ⚖️ O TÍTULO ESCOLHIDO antes do primeiro turno (`POST /sessions` com `title`, ou renomear a conversa que ainda não tem
+   * turno): a conversa só chega ao banco no primeiro turno, então ele espera aqui — e vence o tirado da pergunta.
+   */
+  chooseTitle(sessionId: string, title: string): void {
+    this.chosenTitles.set(sessionId, title.trim().slice(0, CHOSEN_TITLE_MAX))
+  }
+
+  private readonly chosenTitles = new Map<string, string>()
+
+  private firstTitle(sessionId: string, text?: string): string | undefined {
+    return this.chosenTitles.get(sessionId) ?? titleFrom(text)
   }
 
   private describeQuietly(sessionId: string) {
