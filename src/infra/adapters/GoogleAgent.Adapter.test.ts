@@ -9,7 +9,7 @@ import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { GOOGLE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
-import { GoogleAgentAdapter, assertNoAdkTemplateCollision, type IAdkRunParams, type IAdkRuntime, type IAdkRuntimeSpec } from './GoogleAgent.Adapter'
+import { AliasAwareUrlContextTool, GoogleAgentAdapter, assertNoAdkTemplateCollision, type IAdkRunParams, type IAdkRuntime, type IAdkRuntimeSpec } from './GoogleAgent.Adapter'
 
 interface IRuntimeLog {
   specs: IAdkRuntimeSpec[]
@@ -402,5 +402,21 @@ describe('assertNoAdkTemplateCollision', () => {
 
   it('names the patterns it found, so the fix does not need a hunt', () => {
     assert.throws(() => assertNoAdkTemplateCollision('{alias} and {sellerId}'), /\{alias}, \{sellerId}/)
+  })
+})
+
+describe('GoogleAgentAdapter — contexto de URL nos apelidos do Gemini', () => {
+  const run = async (model: string) => {
+    const llmRequest = { model, config: {} } as { model: string; config: { tools?: unknown[] } }
+    await new AliasAwareUrlContextTool().processLlmRequest({ llmRequest } as never)
+    return llmRequest.config.tools
+  }
+
+  it('⚖️ o apelido sem versão (`gemini-flash-latest`) liga a ferramenta; com versão segue o ADK; o 1.x segue recusado', async () => {
+    assert.deepStrictEqual(await run('gemini-flash-latest'), [{ urlContext: {} }])
+    assert.deepStrictEqual(await run('models/gemini-pro-latest'), [{ urlContext: {} }])
+    assert.deepStrictEqual(await run('gemini-2.5-flash'), [{ urlContext: {} }])
+    await assert.rejects(run('gemini-1.5-pro'), /requires Gemini 2 or above/)
+    await assert.rejects(run('gpt-6'), /not supported/)
   })
 })

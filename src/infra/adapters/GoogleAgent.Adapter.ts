@@ -11,8 +11,8 @@ import {
   InMemorySessionService,
   LlmAgent,
   Runner,
-  URL_CONTEXT,
   StreamingMode,
+  UrlContextTool,
   toStructuredEvents,
   type BaseTool,
   type BaseToolset,
@@ -123,6 +123,23 @@ export interface IGoogleAgentAdapterDeps {
   store?: SessionStore
   catalog?: ToolCatalog
 }
+
+/**
+ * ⚖️ O CONTEXTO DE URL também nos APELIDOS do Google (`gemini-flash-latest`, `gemini-pro-latest`): o ADK só o liga quando
+ * o nome traz a versão (`gemini-2…`) e recusava o turno inteiro ("requires Gemini 2 or above, but got
+ * gemini-flash-latest"). Apelido sem versão aponta para um Gemini atual; o 1.x (que não tem a ferramenta) segue recusado.
+ */
+export class AliasAwareUrlContextTool extends UrlContextTool {
+  override async processLlmRequest(request: Parameters<UrlContextTool['processLlmRequest']>[0]): Promise<void> {
+    const model = (request.llmRequest.model ?? '').replace(/^.*\//, '')
+    if (!/^gemini-[a-z]/.test(model)) return super.processLlmRequest(request)
+    request.llmRequest.config = request.llmRequest.config ?? {}
+    request.llmRequest.config.tools = request.llmRequest.config.tools ?? []
+    request.llmRequest.config.tools.push({ urlContext: {} })
+  }
+}
+
+const URL_CONTEXT = new AliasAwareUrlContextTool()
 
 /** As buscas nativas do Gemini, que entram em `tools` (a execução de código vai em `codeExecutor`). */
 function nativeAdkTools(natives: readonly string[]): BaseTool[] {
