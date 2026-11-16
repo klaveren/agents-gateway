@@ -4,7 +4,7 @@ import type { IPermissionChecker } from '@application/Permissions.Service'
 import { decide, type IPermissionRule } from '@domain/Permission.Policy'
 import { analyzeShell } from '@infra/permissions/Shell.Parse'
 import { transportRefusal } from './Bash.Guard'
-import { readOnlyNote, terminalRefusal } from './Local.Tools'
+import { looseRemoteHint, readOnlyNote, terminalRefusal } from './Local.Tools'
 
 const rule = (pattern: string, decision: IPermissionRule['decision']): IPermissionRule => ({ category: 'terminal', pattern, decision })
 
@@ -432,5 +432,15 @@ describe('terminal — regras contra o comando remoto do ssh, palavra por palavr
 
   it('⛔ linha remota montada pelo shell local (`$(…)`) não ganha a leitura por palavras', async () => {
     assert.ok(await refusal('ssh h "sudo $(cat cmd)"', sudo))
+  })
+})
+
+describe('recusa do sudo remoto — o comando remoto solto', () => {
+  it("⚠️ `ssh h sudo x 'a>b'` (sem aspas em volta): a recusa explica que o shell de lá relê o `>` e mostra a forma com aspas", async () => {
+    const loose = await analyzeShell("ssh 10.10.0.2 sudo grub-set-default 'gnulinux-advanced-x>gnulinux-6.17-x'")
+    assert.match(looseRemoteHint(loose.commands), /sem aspas em volta[\s\S]*entre aspas duplas/)
+    const quoted = await analyzeShell(`ssh 10.10.0.2 "sudo grub-set-default 'gnulinux-advanced-x>gnulinux-6.17-x'"`)
+    assert.strictEqual(looseRemoteHint(quoted.commands), '')
+    assert.strictEqual(looseRemoteHint((await analyzeShell('ssh h sudo update-grub')).commands), '', 'palavras simples soltas passam como estão')
   })
 })

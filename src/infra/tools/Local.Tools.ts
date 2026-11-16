@@ -400,7 +400,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     if (!real.length) return undefined
     const gap = deps.permissions ? await remoteSudoGap(command, deps.permissions, askerOf(context)) : []
     if (gap === undefined) return undefined
-    return gap.length ? `${real[0]} (sem regra: ${gap.map((text) => `\`${clip(text, 120)}\``).join(', ')})` : real[0]
+    const loose = looseRemoteHint(analysis.commands)
+    return gap.length ? `${real[0]} (sem regra: ${gap.map((text) => `\`${clip(text, 120)}\``).join(', ')})${loose}` : `${real[0]}${loose}`
   }
 
   async function guardedBash(command: string, context: IExecutionContext | undefined, permissions: IPermissionChecker, askedSeconds?: number): Promise<IToolResult> {
@@ -712,6 +713,22 @@ export async function terminalRefusal(
     if (!verdict.allowed) return verdict.reason
   }
   return undefined
+}
+
+/**
+ * ⚠️ O comando remoto do `ssh` SOLTO (sem aspas em volta) com palavra que o shell de lá relê (`>`, `|`, aspas, `$`, `*`…): o
+ * ssh junta as palavras com espaço e o `'a>b'` vira um redirecionamento lá. A recusa diz isso e o jeito certo (o Argos leu
+ * "sem regra" e pediu regra atrás de regra para `ssh h sudo grub-set-default 'x>y'`, 16/11).
+ */
+export function looseRemoteHint(commands: readonly IShellCommand[]): string {
+  const loose = commands.some((part) => {
+    if (part.name !== 'ssh') return false
+    const words = part.argv.slice(sshRemoteStart(part.argv))
+    return words.length > 1 && words.some((word) => !REMOTE_PLAIN_WORD.test(word))
+  })
+  return loose
+    ? ". ⚠️ O comando remoto foi solto, sem aspas em volta: o ssh junta as palavras e o shell de lá relê `>`, `|`, aspas e `$` (o `'a>b'` vira gravação em arquivo). Ponha o comando remoto INTEIRO entre aspas duplas: `ssh host \"sudo comando 'arg>com>sinal'\"` — uma regra como `ssh * sudo *` cobre essa forma"
+    : ''
 }
 
 /**
