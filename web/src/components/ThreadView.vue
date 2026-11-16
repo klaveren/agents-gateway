@@ -2,6 +2,7 @@
   import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
   import { api } from '@/lib/api'
   import { useStickToBottom } from '@/composables/useStickToBottom'
+  import { useDrawerWidth } from '@/composables/useDrawerWidth'
   import type { IConversation, TMode } from '@/lib/types'
   import { useRouter } from 'vue-router'
   import { coreAgentName } from '@/lib/builder'
@@ -57,6 +58,8 @@
   const ConversationPanel = defineAsyncComponent(() => import('./ConversationPanel.vue'))
   /** O Painel da conversa: o selo do ícone (itens em aberto) vale com o painel fechado; o painel relê quando abre, quando o turno acaba e quando o agente mexe nele. */
   const panelOpen = ref(false)
+  /** A largura do painel da conversa: arrastar a borda esquerda (lembrada no navegador, como a das Alterações). */
+  const panelDrawer = useDrawerWidth('gw.panel.width', 460)
   const panelCount = ref<number>()
   const panelRefresh = ref(0)
   async function loadPanelCount() {
@@ -554,9 +557,17 @@
     <!-- Celular: tela cheia; desktop: gaveta à direita, e a conversa ao lado segue usável (como as Alterações). -->
     <div v-if="panelOpen && header" class="fixed inset-0 z-40 bg-black/40 md:pointer-events-none md:bg-transparent" @click.self="panelOpen = false">
       <aside
-        class="pointer-events-auto absolute top-0 right-0 flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-950 p-4 shadow-2xl md:w-[460px]"
+        class="pointer-events-auto absolute top-0 right-0 flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-950 p-4 shadow-2xl md:w-[var(--panel-width)]"
+        :style="{ '--panel-width': `min(${panelDrawer.width.value}px, calc(100vw - 360px))` }"
         aria-label="Painel da conversa"
       >
+        <div
+          class="absolute top-0 left-0 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"
+          data-test="panel-resize"
+          @pointerdown="panelDrawer.startDrag"
+          @pointermove="panelDrawer.onDrag"
+          @pointerup="panelDrawer.stopDrag"
+        />
         <div class="min-h-0 flex-1 overflow-y-auto">
           <ConversationPanel :conversation-id="header.id" :refresh-key="panelRefresh" closable @close="panelOpen = false" @count="panelCount = $event" />
         </div>
