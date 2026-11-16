@@ -902,23 +902,23 @@ function planTool(panels: NonNullable<ILocalToolDeps['panels']>): ILocalTool {
   const steps = {
     type: 'array',
     items: { type: 'object', properties: { title: { type: 'string' }, detail: { type: 'string' } }, required: ['title'], additionalProperties: false },
-    description: 'create/update: the steps, in order. Each becomes a board item when the plan is approved. Fixed after approval.',
+    description: 'create/update: the steps, in order (each becomes a board item when the plan is approved). add_steps: only the NEW steps, appended.',
   }
   return {
     origin: 'local',
     name: PLAN_TOOL,
     description:
-      'The PLANS of this conversation, which the person sees in the board next to the chat. When the person asks for a plan, a strategy or a design to approve: `create` it (title; body in Markdown — context, approach, risks, what is out of scope; steps), then `submit` it for approval. The person approves or asks for changes in the board; the decision comes at the start of the next turn. Changes asked → `update` and `submit` again. Approved → each step is a board item (p…): run them with `board`; the plan follows its items (in progress, done). The person approved in the chat instead → `approve` with `note` quoting her. Work finished or abandoned outside the items → `close`. `read` (with or without `id`) returns the plans. Several plans per conversation are fine: one per planning request.',
+      'The PLANS of this conversation, which the person sees in the board next to the chat. When the person asks for a plan, a strategy or a design to approve: `create` it (title; body in Markdown — context, approach, risks, what is out of scope; steps), then `submit` it for approval. The person approves or asks for changes in the board; the decision comes at the start of the next turn. Changes asked → `update` and `submit` again. Approved → each step is a board item (p…): run them with `board`; the plan follows its items (in progress, done). The person asks for more that belongs to an approved plan → `add_steps` (each new step becomes a board item at once, linked to the plan; say why in `note`); a new subject → a new plan. The person approved in the chat instead → `approve` with `note` quoting her. Work finished or abandoned outside the items → `close`. `read` (with or without `id`) returns the plans. Several plans per conversation are fine: one per planning request.',
     inputSchema: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['read', 'create', 'update', 'submit', 'approve', 'close'] },
+        op: { type: 'string', enum: ['read', 'create', 'update', 'add_steps', 'submit', 'approve', 'close'] },
         id: { type: 'string', description: 'The plan (pl1, pl2…). read: absent = all plans.' },
         title: { type: 'string', description: 'create/update: the plan title, short.' },
         body: { type: 'string', description: 'create/update: the plan itself, in Markdown.' },
         steps,
         status: { type: 'string', enum: ['done', 'dropped'], description: 'close: how it ended.' },
-        note: { type: 'string', description: 'approve: the person approving in the chat (quote). close: why.' },
+        note: { type: 'string', description: 'approve: the person approving in the chat (quote). add_steps: why (what the person asked). close: why.' },
       },
       required: ['op'],
       additionalProperties: false,
@@ -928,8 +928,8 @@ function planTool(panels: NonNullable<ILocalToolDeps['panels']>): ILocalTool {
       const id = typeof args.id === 'string' ? args.id : undefined
       const show = (panel: IConversationPanel) => plansMarkdown(panel, args.op === 'read' ? id : undefined)
       if (args.op === 'read') return runPanelOp(panels, context, undefined, show)
-      const op = typeof args.op === 'string' && ['create', 'update', 'submit', 'approve', 'close'].includes(args.op) ? `plan_${args.op}` : undefined
-      if (!op) return { status: 'error', result: 'op: one of read, create, update, submit, approve, close' }
+      const op = typeof args.op === 'string' && ['create', 'update', 'add_steps', 'submit', 'approve', 'close'].includes(args.op) ? `plan_${args.op}` : undefined
+      if (!op) return { status: 'error', result: 'op: one of read, create, update, add_steps, submit, approve, close' }
       return runPanelOp(panels, context, { ...args, op } as unknown as TPanelOp, (panel) => (id ? plansMarkdown(panel, id) : plansMarkdown(panel)))
     },
   }

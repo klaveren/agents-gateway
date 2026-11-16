@@ -85,6 +85,32 @@ describe('ConversationPlan — o plano da conversa', () => {
     assert.strictEqual(apply(panel, { op: 'plan_update', id: 'pl1', body: 'outro' }).plans[0].status, 'draft')
   })
 
+  it('⚖️ o plano aprovado cresce: o passo novo ganha o próximo id e entra no board na hora, ligado ao plano', () => {
+    let panel = apply(apply(draft(), { op: 'plan_submit', id: 'pl1' }), { op: 'plan_approve', id: 'pl1' }, person)
+    panel = apply(panel, { op: 'update', id: 'p1', status: 'done' })
+    panel = apply(panel, { op: 'update', id: 'p2', status: 'done' })
+    assert.strictEqual(
+      planStatusOf(panel.plans[0], (id) => panel.items.find((item) => item.id === id)?.status),
+      'done',
+    )
+    const grown = applyPanelOp(panel, { op: 'plan_add_steps', id: 'pl1', steps: [{ title: 'Rollback' }], note: 'a pessoa pediu' }, agent)
+    panel = grown.panel
+    assert.match(grown.changed, /plano pl1: 1 passo\(s\) novo\(s\) \(s3\) → board \(p3\) — a pessoa pediu/)
+    assert.deepStrictEqual(panel.plans[0].steps.at(-1), { id: 's3', title: 'Rollback', item: 'p3' })
+    assert.deepStrictEqual(panel.items.at(-1)?.plan, { id: 'pl1', step: 's3' })
+    assert.strictEqual(panel.plans[0].version, 2)
+    // O passo novo reabre a execução: o plano volta a andar com ele.
+    assert.strictEqual(
+      planStatusOf(panel.plans[0], (id) => panel.items.find((item) => item.id === id)?.status),
+      'doing',
+    )
+    // No plano ainda aberto, o passo só entra no texto (vira item na aprovação); o que estava com a pessoa volta a rascunho.
+    const open = apply(apply(draft(), { op: 'plan_submit', id: 'pl1' }), { op: 'plan_add_steps', id: 'pl1', steps: [{ title: 'Extra' }] })
+    assert.deepStrictEqual([open.plans[0].steps.map((step) => step.id), open.plans[0].status, open.items.length], [['s1', 's2', 's3'], 'draft', 0])
+    assert.throws(() => applyPanelOp(apply(panel, { op: 'plan_close', id: 'pl1', status: 'done' }), { op: 'plan_add_steps', id: 'pl1', steps: [{ title: 'x' }] }, agent), /closed/)
+    assert.throws(() => applyPanelOp(panel, { op: 'plan_add_steps', id: 'pl1', steps: [] }, agent), /at least one/)
+  })
+
   it('⛔ o que não serve é recusado com o motivo', () => {
     const approved = apply(apply(draft(), { op: 'plan_submit', id: 'pl1' }), { op: 'plan_approve', id: 'pl1' }, person)
     const refused = (panel: IConversationPanel, op: TPanelOp, context: Parameters<typeof applyPanelOp>[2] = agent) => assert.throws(() => applyPanelOp(panel, op, context))

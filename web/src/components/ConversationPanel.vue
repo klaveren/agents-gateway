@@ -211,8 +211,19 @@
       <h2 class="font-medium">Board</h2>
       <span v-if="panel?.updatedAt" class="text-xs text-zinc-500">atualizado {{ fullTime(panel.updatedAt) }}</span>
       <div class="ml-auto flex items-center gap-1">
-        <button class="btn btn-sm btn-ghost" data-test="export-md" @click="exportMarkdown">Exportar Markdown</button>
-        <RouterLink v-if="!page" :to="`/c/${conversationId}/painel`" class="btn btn-sm btn-ghost" data-test="open-page">Abrir em página</RouterLink>
+        <button class="grid h-8 w-8 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800" title="Exportar Markdown" aria-label="Exportar Markdown" data-test="export-md" @click="exportMarkdown">
+          <Icon name="download" class="h-4 w-4" />
+        </button>
+        <RouterLink
+          v-if="!page"
+          :to="`/c/${conversationId}/painel`"
+          class="grid h-8 w-8 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800"
+          title="Abrir em página"
+          aria-label="Abrir em página"
+          data-test="open-page"
+        >
+          <Icon name="external" class="h-4 w-4" />
+        </RouterLink>
         <button class="grid h-8 w-8 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800" title="Atualizar" :disabled="loading" @click="load">
           <Icon name="refresh" class="h-4 w-4" :class="{ 'animate-spin': loading }" />
         </button>
