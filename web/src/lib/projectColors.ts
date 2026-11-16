@@ -195,4 +195,18 @@ export function applyAccent(color: string | undefined, root: HTMLElement = docum
     if (palette) root.style.setProperty(`--color-emerald-${shade}`, palette[shade])
     else root.style.removeProperty(`--color-emerald-${shade}`)
   }
+  // O fim do degradê (logo, projeto): o tom escuro da paleta; sem cor, o verde-azulado do tema (`style.css`).
+  if (palette) root.style.setProperty('--color-accent-end', palette['700'])
+  else root.style.removeProperty('--color-accent-end')
+}
+
+/**
+ * O degradê de UM projeto (o avatar dele na lista e no cabeçalho): do tom claro ao escuro da paleta dele, e não a do
+ * projeto atual. Sem cor, `undefined` (fica o do tema). `alpha` em 0–1, para o avatar apagado da lista.
+ */
+export function projectGradient(color: string | undefined, alpha = 1): string | undefined {
+  const palette = color && color in PALETTES ? PALETTES[color as TProjectColor] : undefined
+  if (!palette) return undefined
+  const tone = (value: string) => (alpha >= 1 ? value : value.replace(/\)$/, ` / ${alpha})`))
+  return `linear-gradient(to bottom right, ${tone(palette['400'])}, ${tone(palette['700'])})`
 }

@@ -12,7 +12,7 @@ import MasterDetail from '@/components/MasterDetail.vue'
 import { useResource } from '@/composables/useResource'
 import { ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
-import { applyAccent, PALETTES, PROJECT_COLOR_LABEL, PROJECT_COLORS } from '@/lib/projectColors'
+import { applyAccent, PALETTES, PROJECT_COLOR_LABEL, PROJECT_COLORS, projectGradient } from '@/lib/projectColors'
 import type { IProject, TProjectRole } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
@@ -227,7 +227,7 @@ async function confirmRemove() {
         class="mx-2 flex items-center gap-3 rounded-xl px-3 py-2"
         :class="project.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'"
       >
-        <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-emerald-400/30 to-teal-600/30 text-xs font-semibold text-emerald-200">{{ initials(project.name) }}</span>
+        <span :style="projectGradient(project.color, 0.3) ? { background: projectGradient(project.color, 0.3), color: PALETTES[project.color as keyof typeof PALETTES]['200'] } : undefined" class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-emerald-400/30 to-accent-end/30 text-xs font-semibold text-emerald-200">{{ initials(project.name) }}</span>
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-medium">{{ project.name }}</span>
           <span class="block truncate text-xs text-zinc-500">{{ project.id }} · {{ project.members ?? 0 }} membro(s)</span>
@@ -285,7 +285,7 @@ async function confirmRemove() {
 
       <section v-else-if="selected" :key="selected.id" class="mx-auto flex max-w-3xl flex-col gap-4">
         <div class="flex items-center gap-3">
-          <span class="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-600 text-base font-bold text-zinc-950">{{ initials(selected.name) }}</span>
+          <span :style="projectGradient(edit.color) ? { background: projectGradient(edit.color) } : undefined" class="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-400 to-accent-end text-base font-bold text-zinc-950">{{ initials(selected.name) }}</span>
           <div class="min-w-0">
             <h2 class="truncate text-lg font-semibold">{{ selected.name }}</h2>
             <p class="truncate font-mono text-xs text-zinc-500">{{ selected.id }}</p>
