@@ -25,7 +25,7 @@ import { makeAgents } from './Agents.Factory'
 import { makeProjects } from './Projects.Factory'
 import { makeSecretMasker } from './SecretMask.Factory'
 import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
-import { parseEnvFile } from '@domain/Env.File'
+import { envSecrets } from '@domain/Env.File'
 import { readFile } from 'node:fs/promises'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
@@ -139,10 +139,7 @@ export function makeOrchestrator(): AgentProvider {
     if (!projects.exists(projectId) || !readsEnvFiles(projects.get(projectId), agentId)) return
     for (const file of (await projectSandbox().envFiles?.(dir)) ?? []) {
       const text = await readFile(file, 'utf8').catch(() => '')
-      makeSecretMasker().register(
-        sessionId,
-        parseEnvFile(text).map((entry) => ({ value: entry.value, label: `${entry.name} (.env)` })),
-      )
+      makeSecretMasker().register(sessionId, envSecrets(text))
     }
   })
   provider.useProjectEnv((projectId) => projectFixedEnv(projectId))
