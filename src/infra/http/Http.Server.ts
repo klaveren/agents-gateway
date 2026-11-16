@@ -610,6 +610,7 @@ function buildRoutes(
     { method: 'put', path: '/settings', handler: controller.updateSettings },
     // ⚠️ `/conversations/stats` e `/events` ANTES de qualquer `/conversations/:id`: senão seriam lidos como id.
     { method: 'get', path: '/conversations', handler: controller.listConversations },
+    { method: 'get', path: '/conversations/activity', handler: controller.conversationActivity },
     { method: 'get', path: '/conversations/stats', handler: controller.conversationStats },
     { method: 'get', path: '/conversations/events', handler: controller.conversationEvents },
     { method: 'put', path: '/conversations/events/:streamId/follow', handler: controller.followTurn },

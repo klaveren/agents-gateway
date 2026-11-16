@@ -186,6 +186,8 @@ export interface IAgentControllerDeps {
   sessionEnded?: (sessionId: string) => void
   /** As vigias das conversas (ver `Watch.Model`), para a tela. Ausente = a rota responde vazio. */
   watches?: { list(sessionId: string, limit?: number): IWatch[]; stop(sessionId: string, id: string, reason?: string): IWatch | undefined }
+  /** Os processos em segundo plano rodando numa conversa (ver `Background.Processes`). Ausente = nenhum. */
+  processes?: (sessionId: string) => number
   /**
    * O segredo do aviso de fim de turno para este endereço: o do projeto da conversa (a conta `turn-callback`), senão o da
    * instalação (`TURN_CALLBACK_HOSTS`). Ausente, ou sem segredo = o endereço não serve.
@@ -276,6 +278,9 @@ export function delegable(id: string, agents: Pick<AgentCatalog, 'get' | 'isRunn
   return !!target && agents.isRunnable(target)
 }
 
+/** Quantas conversas por pedido de `GET /conversations/activity` (a página da lista). */
+const ACTIVITY_MAX_IDS = 100
+
 export class AgentController {
   /** Os turnos assíncronos rodando (por conversa) e o resultado do último de cada uma, até o gravado chegar. */
   private readonly liveTurns = new Map<string, ILiveTurn>()
@@ -317,6 +322,7 @@ export class AgentController {
     this.shareConversation = this.shareConversation.bind(this)
     this.deleteConversation = this.deleteConversation.bind(this)
     this.archiveConversation = this.archiveConversation.bind(this)
+    this.conversationActivity = this.conversationActivity.bind(this)
     this.renameConversation = this.renameConversation.bind(this)
     this.listErrors = this.listErrors.bind(this)
     this.getConversationPanel = this.getConversationPanel.bind(this)
@@ -1791,6 +1797,44 @@ export class AgentController {
       await this.requireOwnedConversation(id)
       const active = (this.usecases.watches?.list(id, 50) ?? []).filter((watch) => watch.status === 'active')
       return { sessionId: id, watches: active.map((watch) => this.toWatchDto(watch)) }
+    })
+  }
+
+  /**
+   * `GET /conversations/activity?ids=a,b` — o que roda EM SEGUNDO PLANO em cada conversa, fora do turno: vigias armadas,
+   * processos em segundo plano e outros agentes trabalhando num pedido dela (a conversa filha rodando). É o que a lista
+   * mostra para a conversa não parecer parada. Só as da pessoa; as outras, e as sem nada, ficam de fora.
+   */
+  async conversationActivity(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireCaller()
+      const ids = [
+        ...new Set(
+          String(req.query.ids ?? '')
+            .split(',')
+            .map((id) => id.trim())
+            .filter(Boolean),
+        ),
+      ].slice(0, ACTIVITY_MAX_IDS)
+      const live = await this.usecases.listSessions.execute()
+      const waitingOn = new Map<string, number>()
+      for (const session of live) {
+        const parent = session.metadata?.delegatedBy
+        if (typeof parent === 'string' && session.status === 'running') waitingOn.set(parent, (waitingOn.get(parent) ?? 0) + 1)
+      }
+      const activity: Record<string, { watches: number; processes: number; agents: number }> = {}
+      for (const id of ids) {
+        const owned = await this.requireOwnedConversation(id).then(
+          () => true,
+          () => false,
+        )
+        if (!owned) continue
+        const watches = (this.usecases.watches?.list(id, 50) ?? []).filter((watch) => watch.status === 'active').length
+        const processes = this.usecases.processes?.(id) ?? 0
+        const agents = waitingOn.get(id) ?? 0
+        if (watches || processes || agents) activity[id] = { watches, processes, agents }
+      }
+      return activity
     })
   }
 

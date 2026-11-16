@@ -4623,6 +4623,28 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/conversations/activity': {
+      get: {
+        summary:
+          'What runs IN THE BACKGROUND in each of your conversations, outside a turn: armed watches, background processes and other agents working on a request of it (the delegated conversation running). The list shows it so a conversation does not look idle. Only your conversations; the ones with nothing are left out',
+        parameters: [{ name: 'ids', in: 'query', required: true, schema: { type: 'string' }, description: 'Conversation ids, comma-separated (up to 100).' }],
+        responses: {
+          '200': {
+            description: 'By conversation id',
+            ...json(
+              envelope({
+                type: 'object',
+                additionalProperties: {
+                  type: 'object',
+                  properties: { watches: { type: 'integer' }, processes: { type: 'integer' }, agents: { type: 'integer' } },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+        },
+      },
+    },
     '/conversations/{id}/archive': {
       put: {
         summary:

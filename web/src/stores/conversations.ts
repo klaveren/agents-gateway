@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
 import type { IAgentEvent, IConversation, IConversationPage } from '@/lib/types'
@@ -11,6 +11,19 @@ export interface IConversationFilters {
   agentId: string
   classification: string
 }
+
+/** O que roda em SEGUNDO PLANO numa conversa, fora do turno (`GET /conversations/activity`): os selos da lista. */
+export interface IConversationActivity {
+  watches: number
+  processes: number
+  /** Outros agentes trabalhando num pedido dela (a conversa filha rodando). */
+  agents: number
+}
+
+/** Releitura enquanto alguma conversa tem algo em segundo plano: vigia e processo acabam sem aviso na lista. */
+const ACTIVITY_POLL_MS = 15_000
+/** Junta os gatilhos próximos (a lista carregou, vários turnos começaram e acabaram) numa leitura só. */
+const ACTIVITY_SETTLE_MS = 600
 
 export type TConversationEvent = { type: 'conversation.updated'; session: IConversation } | { type: 'conversation.deleted'; sessionId: string }
 /** Um turno começou ou acabou numa conversa (venha da tela, da API ou de um agendamento). */
@@ -109,6 +122,28 @@ export const useConversationsStore = defineStore('conversations', () => {
   const unread = ref(new Set<string>())
   /** As conversas com um turno rodando agora. Ao (re)conectar, o servidor manda as que já estão. */
   const running = ref(new Set<string>())
+  const activity = ref<Record<string, IConversationActivity>>({})
+  let activityTimer: ReturnType<typeof setTimeout> | undefined
+
+  /** Relê o que roda em segundo plano nas conversas da lista; com algo rodando, relê de novo daqui a pouco. */
+  async function refreshActivity(): Promise<void> {
+    const ids = items.value.slice(0, 100).map((item) => item.id)
+    try {
+      activity.value = ids.length ? await api<Record<string, IConversationActivity>>('/conversations/activity', { query: { ids: ids.join(',') } }) : {}
+    } catch {
+      // Sem a leitura, os selos ficam como estavam: a lista segue.
+    }
+    if (Object.keys(activity.value).length) scheduleActivity(ACTIVITY_POLL_MS)
+  }
+  function scheduleActivity(delay = ACTIVITY_SETTLE_MS): void {
+    clearTimeout(activityTimer)
+    activityTimer = setTimeout(() => void refreshActivity(), delay)
+  }
+  // A lista mudou (carregou, filtrou, entrou conversa): relê.
+  watch(
+    () => items.value.map((item) => item.id).join(','),
+    () => scheduleActivity(),
+  )
   const live = ref(false)
   const selectedId = ref<string>()
 
@@ -330,6 +365,8 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function markRunning(id: string, on: boolean, at?: string): void {
+    // Um turno começou ou acabou (o da conversa ou o de um agente que ela chamou): a vigia, o processo ou a filha mudaram.
+    scheduleActivity()
     if (on && at) {
       all = raise(all, id, at)
       items.value = raise(items.value, id, at)
@@ -375,6 +412,8 @@ export const useConversationsStore = defineStore('conversations', () => {
   function reset(): void {
     generation++
     unsubscribe()
+    clearTimeout(activityTimer)
+    activity.value = {}
     all = []
     items.value = []
     total.value = 0
@@ -459,6 +498,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     filters,
     unread,
     running,
+    activity,
     follow,
     onTurn,
     live,

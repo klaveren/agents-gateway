@@ -169,6 +169,7 @@ export function makeController(): AgentController {
       makeWatches().cancelSession(sessionId)
     },
     watches: makeWatches(),
+    processes: (sessionId) => backgroundProcesses().running(sessionId).length,
   })
   // ⛔ O turno de fundo do Importador amarrado ao contexto de quem pediu (a identidade da requisição): a fila roda depois,
   // e o turno passa pelas mesmas regras do `POST …/turns`.

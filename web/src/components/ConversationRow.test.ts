@@ -357,3 +357,20 @@ describe('ConversationList: Arquivadas', () => {
     expect(host.querySelector('[data-testid=list-menu]')).toBeNull()
   })
 })
+
+describe('ConversationRow: o que roda em segundo plano', () => {
+  it('⚖️ agentes trabalhando, processos e vigias viram selos com o que querem dizer; sem nada, nenhum', async () => {
+    const host = await mount(ConversationRow, rowProps({ activity: { agents: 2, processes: 1, watches: 1 } }))
+    const badges = [...host.querySelectorAll<HTMLElement>('[data-activity]')]
+    expect(badges.map((badge) => [badge.dataset.activity, badge.textContent?.trim()])).toEqual([
+      ['agents', '2'],
+      ['processes', ''],
+      ['watches', ''],
+    ])
+    expect(badges[0].title).toBe('2 agentes trabalhando num pedido desta conversa')
+    expect(badges[2].title).toBe('1 vigia armada: o gateway confere e acorda a conversa')
+    app?.unmount()
+    const quiet = await mount(ConversationRow, rowProps())
+    expect(quiet.querySelector('[data-test="row-activity"]')).toBeNull()
+  })
+})
