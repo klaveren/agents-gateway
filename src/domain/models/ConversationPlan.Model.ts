@@ -63,8 +63,9 @@ export type TPlanOp =
   | { op: 'plan_approve'; id: string; note?: string }
   | { op: 'plan_changes'; id: string; text: string }
   | { op: 'plan_close'; id: string; status: 'done' | 'dropped'; note?: string }
+  | { op: 'plan_add_steps'; id: string; steps: Array<{ title: string; detail?: string }>; note?: string }
 
-export const PLAN_OPS: readonly TPlanOp['op'][] = ['plan_create', 'plan_update', 'plan_submit', 'plan_approve', 'plan_changes', 'plan_close']
+export const PLAN_OPS: readonly TPlanOp['op'][] = ['plan_create', 'plan_update', 'plan_submit', 'plan_approve', 'plan_changes', 'plan_close', 'plan_add_steps']
 
 export const isPlanOp = (op: { op?: unknown }): op is TPlanOp => PLAN_OPS.includes(op.op as TPlanOp['op'])
 
@@ -137,7 +138,8 @@ export function applyPlanOp(current: readonly IPlan[], op: TPlanOp, context: IPl
     case 'plan_update': {
       const plan = find(op.id)
       if (plan.status === 'done' || plan.status === 'dropped') throw new Error(`plan ${plan.id} is closed: create a new one`)
-      if (op.steps !== undefined && !opened(plan)) throw new Error(`plan ${plan.id} is approved: its steps are board items now — add new work with board add, or create a new plan`)
+      if (op.steps !== undefined && !opened(plan))
+        throw new Error(`plan ${plan.id} is approved: its steps are board items now — new steps go with add_steps (each becomes a board item)`)
       if (op.title !== undefined) plan.title = clip(need(op.title, 'title'), PLAN_LIMITS.title)
       if (op.body !== undefined) plan.body = clip(need(op.body, 'body'), PLAN_LIMITS.body)
       if (op.steps !== undefined) plan.steps = stepsOf(op.steps)
@@ -188,6 +190,28 @@ export function applyPlanOp(current: readonly IPlan[], op: TPlanOp, context: IPl
       }
       plan.updatedAt = at
       return { plans, changed: `ajustes pedidos no plano ${plan.id}: ${plan.feedback.text}` }
+    }
+    case 'plan_add_steps': {
+      // ⚖️ O PLANO CRESCE COM A CONVERSA: a pessoa pediu mais depois da aprovação, e o passo novo entra no plano (com o
+      // próximo id) — no aprovado, já como item do board, ligado a ele; no que ainda está aberto, só no texto.
+      const plan = find(op.id)
+      if (plan.status === 'done' || plan.status === 'dropped') throw new Error(`plan ${plan.id} is closed: create a new one`)
+      if (!Array.isArray(op.steps) || !op.steps.length) throw new Error('steps: at least one')
+      if (plan.steps.length + op.steps.length > PLAN_LIMITS.steps) throw new Error(`steps: at most ${PLAN_LIMITS.steps} per plan`)
+      const added = stepsOf(op.steps)
+      for (const step of added) {
+        step.id = nextId('s', plan.steps)
+        plan.steps.push(step)
+        if (!opened(plan)) step.item = context.addItem(step, plan)
+      }
+      if (plan.status === 'review') plan.status = 'draft'
+      plan.version += 1
+      plan.updatedAt = at
+      const where = opened(plan) ? '' : ` → board (${added.map((step) => step.item).join(', ')})`
+      return {
+        plans,
+        changed: `plano ${plan.id}: ${added.length} passo(s) novo(s) (${added.map((step) => step.id).join(', ')})${where}${op.note?.trim() ? ` — ${clip(op.note, PLAN_LIMITS.detail)}` : ''}`,
+      }
     }
     case 'plan_close': {
       const plan = find(op.id)

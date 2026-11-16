@@ -45,6 +45,8 @@ describe('board e plan — as ferramentas da conversa', () => {
       ],
     )
     assert.match(String((await plan.execute({ op: 'read', id: 'pl1' }, context)).result), /^# pl1 · Migração/)
+    assert.strictEqual((await plan.execute({ op: 'add_steps', id: 'pl1', steps: [{ title: 'Conferir' }], note: 'pedido no chat' }, context)).status, 'success')
+    assert.deepStrictEqual(panel().items.at(-1)?.plan, { id: 'pl1', step: 's3' })
     assert.strictEqual((await plan.execute({ op: 'changes', id: 'pl1', text: 'x' }, context)).status, 'error', 'pedir ajustes é da pessoa')
     assert.strictEqual((await plan.execute({ op: 'read' }, { agentId: 'maya' })).status, 'error', 'fora de conversa')
   })
