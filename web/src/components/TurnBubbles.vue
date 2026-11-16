@@ -4,9 +4,10 @@
   import { url } from '@/lib/api'
   import { bytes, CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
   import { renderMarkdown } from '@/lib/markdown'
-  import { gatewayNotice } from '@/lib/notice'
+  import { agentReply, gatewayNotice } from '@/lib/notice'
   import type { ITurn } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
+  import AgentReplyCard from './AgentReplyCard.vue'
   import Icon from './Icon.vue'
   import type { IPendingTurn } from '@/stores/thread'
 
@@ -31,6 +32,8 @@
   const request = computed(() => props.turn?.request ?? props.pending?.request ?? '')
   /** O turno que o GATEWAY abriu (a vigia que disparou, a decisão de um pedido): é aviso, não fala da pessoa. */
   const notice = computed(() => gatewayNotice(request.value))
+  /** A resposta de outro agente entregue como mensagem: cartão, não balão da pessoa. */
+  const reply = computed(() => (notice.value ? undefined : agentReply(request.value)))
   const files = computed(() => props.turn?.files?.length ?? props.pending?.files ?? 0)
   const text = computed(() => props.turn?.text ?? props.pending?.text ?? '')
   const reasoning = computed(() => props.turn?.reasoning ?? props.pending?.reasoning ?? '')
@@ -123,10 +126,18 @@
         <pre class="mt-1 max-h-48 overflow-auto font-mono text-[11px] whitespace-pre-wrap wrap-anywhere text-zinc-400">{{ notice.detail }}</pre>
       </details>
     </div>
-    <div v-else-if="request || files" class="ml-auto max-w-[78%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3.5 py-2 text-sm whitespace-pre-wrap wrap-anywhere text-white shadow">
+    <div v-else-if="reply" class="mr-auto w-full max-w-[85%]">
+      <AgentReplyCard :reply="reply" :at="turn ? shortTime(turn.at) : undefined" />
+    </div>
+    <!-- 🎨 O balão da pessoa é TINGIDO com a cor do projeto (fundo leve, borda), texto neutro: lê bem em toda paleta. -->
+    <div
+      v-else-if="request || files"
+      class="ml-auto max-w-[78%] rounded-2xl rounded-br-md border border-emerald-500/30 bg-emerald-500/15 px-3.5 py-2 text-sm whitespace-pre-wrap wrap-anywhere text-zinc-100 shadow"
+      data-test="person-bubble"
+    >
       {{ request }}
-      <div v-if="files" class="mt-1 text-xs text-emerald-100/80">📎 {{ files }} anexo(s)</div>
-      <div v-if="turn" class="mt-0.5 text-right text-[11px] text-emerald-100/70">{{ shortTime(turn.at) }}</div>
+      <div v-if="files" class="mt-1 text-xs text-zinc-400">📎 {{ files }} anexo(s)</div>
+      <div v-if="turn" class="mt-0.5 text-right text-[11px] text-zinc-500">{{ shortTime(turn.at) }}</div>
     </div>
 
     <div class="mr-auto flex max-w-[85%] flex-col gap-1.5">
@@ -194,9 +205,10 @@
         <template v-for="(part, index) in segments" :key="index">
           <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
           <div v-if="part.kind === 'text'" class="prose-agent wrap-anywhere" v-html="renderMarkdown(part.text)" />
+          <AgentReplyCard v-else-if="agentReply(part.text)" :reply="agentReply(part.text)!" class="my-2" />
           <div
             v-else
-            class="my-2 ml-auto w-fit max-w-[90%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3 py-1.5 text-sm whitespace-pre-wrap wrap-anywhere text-white"
+            class="my-2 ml-auto w-fit max-w-[90%] rounded-2xl rounded-br-md border border-emerald-500/30 bg-emerald-500/15 px-3 py-1.5 text-sm whitespace-pre-wrap wrap-anywhere text-zinc-100"
             title="Mandada durante o turno"
           >
             {{ part.text }}

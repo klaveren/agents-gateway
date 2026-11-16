@@ -116,7 +116,17 @@ describe('TurnBubbles — aviso do gateway', () => {
   it('a fala da pessoa segue no balão dela', async () => {
     const host = await mount({ request: 'oi' })
     expect(host.querySelector('[data-test="gateway-notice"]')).toBeNull()
-    expect(host.querySelector('.bg-emerald-600\\/90')?.textContent).toContain('oi')
+    expect(host.querySelector('[data-test="person-bubble"]')?.textContent).toContain('oi')
+    expect(host.querySelector('[data-test="agent-reply"]')).toBeNull()
+  })
+
+  it('🤝 a resposta de outro agente entregue como mensagem vira cartão, não balão da pessoa', async () => {
+    const host = await mount({ request: '[Resposta de integra (conversation gw_filha), que você pediu sem esperar: leia e continue de onde parou.]\n\n**feito**' })
+    expect(host.querySelector('[data-test="person-bubble"]')).toBeNull()
+    const card = host.querySelector('[data-test="agent-reply"]')!
+    expect(card.textContent).toContain('Resposta de integra')
+    expect(card.querySelector('strong')?.textContent).toBe('feito')
+    expect(card.querySelector('a')?.getAttribute('href')).toContain('/c/gw_filha')
   })
 })
 
