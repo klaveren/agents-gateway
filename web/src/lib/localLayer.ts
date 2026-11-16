@@ -3,7 +3,7 @@ import type { IPermissionRule, TSandboxLevel } from './types'
 /** A marca da ferramenta automática desligada (`off:<ferramenta>`), como no servidor. */
 export const AUTO_TOOL_OFF = 'off:'
 /** ⚖️ As automáticas (ver `Auto.Tools` no servidor): ligadas sem estar no `allowedTools`. */
-export const AUTO_TOOLS: readonly string[] = ['ledger_read', 'ledger_write', 'conversation_panel', 'deliver_file', 'read_doc', 'search_docs', 'use_resource', 'search_resources']
+export const AUTO_TOOLS: readonly string[] = ['ledger_read', 'ledger_write', 'board', 'plan', 'deliver_file', 'read_doc', 'search_docs', 'use_resource', 'search_resources']
 
 export interface ILocalProvider {
   provider: string

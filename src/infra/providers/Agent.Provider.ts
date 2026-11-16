@@ -1,5 +1,7 @@
 import { DELIVER_FILE_TOOL } from '@domain/models/ConversationFile.Model'
-import { freshAnswers, IConversationPanel, PANEL_TOOL, panelMarkdown, panelTurnNote } from '@domain/models/ConversationPanel.Model'
+import { BOARD_TOOL, freshIds, IConversationPanel, LEGACY_BOARD_TOOL, panelMarkdown, panelTurnNote } from '@domain/models/ConversationPanel.Model'
+import { PLAN_TOOL } from '@domain/models/ConversationPlan.Model'
+import { deprecatedCitedIn } from '@domain/Tool.Deprecations'
 import { autoToolOff, isAutoToolOff, withoutOffMarks } from '@domain/Auto.Tools'
 import { reaches, runsUnder } from '@domain/Share.Policy'
 
@@ -8,7 +10,7 @@ export interface IPanelAccess {
   get(sessionId: string): Promise<IConversationPanel>
   markDelivered?(sessionId: string, ids: readonly string[]): Promise<void>
 }
-import { DELEGATE_TOOL_NAME, DELEGATED_BY, delegatesOf, LEGACY_DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
+import { DELEGATE_TOOL_NAME, DELEGATED_BY, delegatesOf } from '@domain/models/Delegation.Model'
 import { offers, targetFor } from '@domain/Agent.Policy'
 import { conversationNote, IAmbient, IAmbientSecrets, mcpDownNote } from '@domain/Ambient.Policy'
 import { agentFolderAccess, hasTerminal, hasWatch, resolveCapabilities } from '@domain/Capability.Catalog'
@@ -247,7 +249,7 @@ export class AgentProvider implements IAgentProvider {
     const panelNow = this.panels ? await this.panels.get(record.id).catch(() => undefined) : undefined
     const panelNote = this.panels ? panelTurnNote(panelNow, record.panelSkipped) : ''
     // A resposta que a pessoa deu no painel vai UMA vez: entregue neste turno, sai do próximo aviso.
-    const delivered = panelNow ? freshAnswers(panelNow).map((question) => question.id) : []
+    const delivered = panelNow ? freshIds(panelNow) : []
     if (delivered.length) await this.panels?.markDelivered?.(record.id, delivered).catch(() => undefined)
     // ⚖️ Os servidores MCP do agente tentam conectar agora (ver `ToolCatalog.wakeMcp`); o que segue fora vira aviso, ao
     // agente (na entrada do modelo) e à pessoa (no turno).
@@ -435,7 +437,7 @@ export class AgentProvider implements IAgentProvider {
           else if (event.type === 'text.delta') turn.text += event.payload.text
           else if (event.type === 'tool.started') turn.tools.push(event.payload.tool)
           if (event.type === 'tool.started') this.loops?.observe(sessionId, { type: 'tool.started', tool: event.payload.tool, args: event.payload.args })
-          if (event.type === 'tool.started' && event.payload.tool === PANEL_TOOL) panelTouched = true
+          if (event.type === 'tool.started' && [BOARD_TOOL, LEGACY_BOARD_TOOL, PLAN_TOOL].includes(event.payload.tool)) panelTouched = true
           else if (event.type === 'tool.error' || event.type === 'tool.result') this.loops?.observe(sessionId, { type: event.type })
           yield event
           if (toolEnd) yield* announce()
@@ -689,7 +691,9 @@ export class AgentProvider implements IAgentProvider {
       ...(folder ? { directory: folder.dir } : home ? { directory: projectWorkspacePath(home) } : {}),
       ...this.agentFolderOf(agent, projectOf(metadata)),
       ...(hasTerminal(agent.allowedTools) ? { terminal: true } : {}),
-      ...(delegatesOf(agent.allowedTools).length ? { talk: { legacy: agent.systemPrompt.includes(LEGACY_DELEGATE_TOOL_NAME) } } : {}),
+      ...(delegatesOf(agent.allowedTools).length ? { talk: true } : {}),
+      // ⚖️ O prompt ainda cita uma ferramenta obsoleta (ver `Tool.Deprecations`): a linha diz o nome novo e quando o velho sai.
+      ...(deprecatedCitedIn(agent.systemPrompt).length ? { deprecated: deprecatedCitedIn(agent.systemPrompt) } : {}),
       // ⛔ Na conversa de delegação a vigia recusa (quem arma é a conversa principal): a regra não a oferece.
       ...(hasWatch(agent.allowedTools) && !metadata?.[DELEGATED_BY] ? { watch: true } : {}),
       ...(this.secrets?.ambientFor(agent, projectOf(metadata)) ? { secrets: this.secrets.ambientFor(agent, projectOf(metadata))! } : {}),
@@ -726,8 +730,10 @@ export class AgentProvider implements IAgentProvider {
       ...(this.guidance?.hasResources?.(agent.id) ? [USE_RESOURCE_TOOL, SEARCH_RESOURCES_TOOL] : []),
       // O ledger: todo agente lê e escreve o PRÓPRIO (o dono é o agente do turno, ver `Ledger.Tools`).
       ...(this.guidance?.hasLedger?.() ? LEDGER_TOOLS : []),
-      // O painel da conversa: todo agente mantém o da conversa em que está.
-      ...(this.panels ? [PANEL_TOOL] : []),
+      // O board e os planos da conversa: todo agente mantém os da conversa em que está. O alias obsoleto só para o agente
+      // cujo prompt ainda o cita (ver `Tool.Deprecations`): ele chama, e a resposta avisa.
+      ...(this.panels ? [BOARD_TOOL, PLAN_TOOL] : []),
+      ...(this.panels && deprecatedCitedIn(agent.systemPrompt).some((tool) => tool.name === LEGACY_BOARD_TOOL) ? [LEGACY_BOARD_TOOL] : []),
       // A entrega de arquivo: guarda no mesmo banco do painel.
       ...(this.panels ? [DELIVER_FILE_TOOL] : []),
       // ⚖️ Desligada no cadastro (`off:<ferramenta>`, ver `Auto.Tools`): não vem.

@@ -603,6 +603,7 @@ function buildRoutes(
     { method: 'put', path: '/agents/:agentId/shares', handler: controller.shareAgent },
     { method: 'get', path: '/agents/:agentId/tools', handler: controller.getAgentTools },
     { method: 'get', path: '/tools', handler: controller.getTools },
+    { method: 'get', path: '/tools/deprecated', handler: controller.getDeprecatedTools },
     { method: 'get', path: '/availability', handler: controller.availability },
     { method: 'get', path: '/settings', handler: controller.getSettings },
     { method: 'get', path: '/model-groups', handler: controller.getModelGroups },

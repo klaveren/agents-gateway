@@ -28,7 +28,8 @@ import { CLI_ARG_PROTOCOLS } from '@domain/CliArgument.Policy'
 import { NATIVE_TOOLS } from '@domain/Native.Tools'
 import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { isSubscription } from '@domain/Subscription.Policy'
-import { delegatesOf, delegationMaxDepth, LEGACY_DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
+import { delegatesOf, delegationMaxDepth } from '@domain/models/Delegation.Model'
+import { DEPRECATED_TOOLS, deprecatedCitedIn, deprecatedTool } from '@domain/Tool.Deprecations'
 import type { IWatch } from '@domain/models/Watch.Model'
 import { mcpServerKey, mcpServesProject } from '@domain/models/McpServer.Model'
 import { compactAtPercent } from '@domain/Compaction.Policy'
@@ -290,6 +291,7 @@ export class AgentController {
     this.getAgentSystemPrompt = this.getAgentSystemPrompt.bind(this)
     this.getAgentCommands = this.getAgentCommands.bind(this)
     this.getTools = this.getTools.bind(this)
+    this.getDeprecatedTools = this.getDeprecatedTools.bind(this)
     this.createSession = this.createSession.bind(this)
     this.listSessions = this.listSessions.bind(this)
     this.getSession = this.getSession.bind(this)
@@ -841,7 +843,8 @@ export class AgentController {
         ...(files ? { files } : {}),
         ...(hasTerminal(agent.allowedTools) ? { terminal: true } : {}),
         ...(hasWatch(agent.allowedTools) ? { watch: true } : {}),
-        ...(delegatesOf(agent.allowedTools).length ? { talk: { legacy: agent.systemPrompt.includes(LEGACY_DELEGATE_TOOL_NAME) } } : {}),
+        ...(delegatesOf(agent.allowedTools).length ? { talk: true } : {}),
+        ...(deprecatedCitedIn(agent.systemPrompt).length ? { deprecated: deprecatedCitedIn(agent.systemPrompt) } : {}),
       }
       // As variáveis secretas (só os nomes), como o `AgentProvider` põe na conversa.
       const secrets = this.usecases.secrets?.ambientFor(agent.id, [
@@ -1093,6 +1096,14 @@ export class AgentController {
     })
   }
 
+  /** `GET /tools/deprecated`: as ferramentas obsoletas (ver `Tool.Deprecations`) — o nome novo e a versão em que saem. */
+  async getDeprecatedTools(_req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireCaller()
+      return DEPRECATED_TOOLS
+    })
+  }
+
   async getTools(req: Request, res: Response) {
     await this.respond(res, async () => {
       const resolved = await this.requireCaller()
@@ -1120,7 +1131,8 @@ export class AgentController {
       }))
       return {
         ...catalog,
-        tools: catalog.tools.filter((tool) => !CAPABILITY_TOOLS.has(tool.name)).map((tool) => ({ ...tool, dangerous: dangerous(tool.name) })),
+        // ⚠️ O alias obsoleto não se escolhe: o gateway o liga sozinho para o prompt que ainda o cita (ver `Tool.Deprecations`).
+        tools: catalog.tools.filter((tool) => !CAPABILITY_TOOLS.has(tool.name) && !deprecatedTool(tool.name)).map((tool) => ({ ...tool, dangerous: dangerous(tool.name) })),
         capabilities,
         native,
         limits: { delegationMaxDepth: delegationMaxDepth() },

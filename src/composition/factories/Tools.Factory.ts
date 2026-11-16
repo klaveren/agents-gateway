@@ -181,7 +181,7 @@ function todoStore(): ITodoStore {
   }
 }
 
-/** Onde o `conversation_panel` grava: o mesmo banco das conversas; o turno em curso vem da sessão viva. */
+/** Onde o `board` e o `plan` gravam: o mesmo banco das conversas; o turno em curso vem da sessão viva. */
 function panelStore(): NonNullable<ILocalToolDeps['panels']> {
   const store = () => {
     todos ??= makeConversationRepository()

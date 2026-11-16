@@ -2,13 +2,27 @@
   import { computed, ref, watch } from 'vue'
   import { api, authHeaders, url } from '@/lib/api'
   import { fullTime } from '@/lib/format'
-  import { linkHost, linkKind, openCount, type IConversationPanel, type IPanelItem, type TPanelOp, type TPanelStatus } from '@/lib/conversationPanel'
+  import {
+    awaitsPerson,
+    linkHost,
+    linkKind,
+    openCount,
+    PLAN_STATUS_LABEL,
+    planStatusOf,
+    type IConversationPanel,
+    type IPanelItem,
+    type IPlan,
+    type TPanelOp,
+    type TPanelStatus,
+    type TPlanStatus,
+  } from '@/lib/conversationPanel'
+  import { renderMarkdown } from '@/lib/markdown'
   import { useAgentsStore } from '@/stores/agents'
   import Icon from './Icon.vue'
 
   /**
-   * O PAINEL DA CONVERSA: o documento vivo que o agente mantém (`conversation_panel`). A pessoa lê e corrige — muda o
-   * estado de um item, reordena, responde às perguntas, ajusta o objetivo. ⚖️ Cada correção é UMA operação no servidor
+   * O BOARD DA CONVERSA: o documento vivo que o agente mantém (`board`), e os PLANOS dele (`plan`). A pessoa lê e corrige —
+   * muda o estado de um item, reordena, responde às perguntas, ajusta o objetivo — e aprova os planos ou pede ajustes. ⚖️ Cada correção é UMA operação no servidor
    * (`PATCH`), que devolve o painel novo: a tela nunca monta o documento sozinha, então não diverge do que o agente lê.
    */
   const props = defineProps<{ conversationId: string; refreshKey?: number; page?: boolean; closable?: boolean }>()
@@ -26,6 +40,11 @@
   const showDropped = ref(false)
   const showTimeline = ref(false)
   const showAnswered = ref(false)
+  /** A aba: o board (a execução) ou os planos (a estratégia). Abre nos planos quando há um esperando a pessoa. */
+  const tab = ref<'board' | 'plans'>('board')
+  const openPlan = ref<string>()
+  const changesFor = ref<string>()
+  const changesText = ref('')
 
   const base = computed(() => `/conversations/${encodeURIComponent(props.conversationId)}/panel`)
 
@@ -50,13 +69,46 @@
   const openQuestions = computed(() => (panel.value?.questions ?? []).filter((question) => !question.answer))
   const answeredQuestions = computed(() => (panel.value?.questions ?? []).filter((question) => question.answer))
   const isEmpty = computed(() => !!panel.value && !panel.value.goal && !items.value.length && !panel.value.decisions.length && !panel.value.questions.length)
+  const plans = computed(() => panel.value?.plans ?? [])
+  const waiting = computed(() => plans.value.filter((plan) => plan.status === 'review').length)
+  const statusOfPlan = (plan: IPlan) => planStatusOf(plan, items.value)
+  const PLAN_TONE: Record<TPlanStatus, string> = {
+    draft: 'bg-zinc-700/40 text-zinc-300',
+    review: 'bg-amber-500/15 text-amber-200',
+    changes: 'bg-rose-500/15 text-rose-200',
+    approved: 'bg-sky-500/15 text-sky-200',
+    doing: 'bg-emerald-500/15 text-emerald-200',
+    done: 'bg-sky-500/10 text-sky-300',
+    dropped: 'bg-zinc-800 text-zinc-500',
+  }
+  const stepItem = (id?: string) => items.value.find((item) => item.id === id)
+  const ITEM_LABEL: Record<TPanelStatus, string> = { queued: 'na fila', doing: 'em andamento', blocked: 'bloqueado', done: 'entregue', dropped: 'descartado' }
+  function showPlan(id: string) {
+    tab.value = 'plans'
+    openPlan.value = id
+  }
+  async function approve(plan: IPlan) {
+    if (await send({ op: 'plan_approve', id: plan.id })) changesFor.value = undefined
+  }
+  async function askChanges(plan: IPlan) {
+    const text = changesText.value.trim()
+    if (!text) return
+    if (await send({ op: 'plan_changes', id: plan.id, text })) {
+      changesFor.value = undefined
+      changesText.value = ''
+    }
+  }
   /** O que o menu de um item oferece: os outros estados; um item entregue ou descartado só reabre. */
   const actionsFor = (item: IPanelItem) =>
     item.status === 'done' || item.status === 'dropped' ? [{ status: 'queued' as const, label: 'Reabrir' }] : ACTIONS.filter((action) => action.status !== item.status)
 
   function set(next: IConversationPanel) {
-    panel.value = { ...next, items: next.items ?? [], decisions: next.decisions ?? [], questions: next.questions ?? [], history: next.history ?? [] }
+    const first = !panel.value
+    panel.value = { ...next, items: next.items ?? [], decisions: next.decisions ?? [], questions: next.questions ?? [], plans: next.plans ?? [], history: next.history ?? [] }
     emit('count', openCount(panel.value))
+    // Ao abrir: com plano esperando a pessoa, vai direto a ele.
+    const pending = panel.value.plans.find((plan) => plan.status === 'review')
+    if (first && pending) showPlan(pending.id)
   }
 
   async function load() {
@@ -78,7 +130,7 @@
       error.value = undefined
       return true
     } catch (failure) {
-      error.value = `Não foi possível atualizar o painel: ${failure instanceof Error ? failure.message : String(failure)}`
+      error.value = `Não foi possível atualizar o board: ${failure instanceof Error ? failure.message : String(failure)}`
       return false
     } finally {
       busy.value = false
@@ -128,7 +180,7 @@
       const href = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = href
-      link.download = `painel-${props.conversationId}.md`
+      link.download = `board-${props.conversationId}.md`
       link.click()
       URL.revokeObjectURL(href)
     } catch (failure) {
@@ -156,7 +208,7 @@
 <template>
   <div class="flex min-h-0 flex-col gap-5" data-test="conversation-panel">
     <header class="flex flex-wrap items-center gap-2">
-      <h2 class="font-medium">Painel da conversa</h2>
+      <h2 class="font-medium">Board</h2>
       <span v-if="panel?.updatedAt" class="text-xs text-zinc-500">atualizado {{ fullTime(panel.updatedAt) }}</span>
       <div class="ml-auto flex items-center gap-1">
         <button class="btn btn-sm btn-ghost" data-test="export-md" @click="exportMarkdown">Exportar Markdown</button>
@@ -172,9 +224,90 @@
 
     <p v-if="error" class="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-200" data-test="panel-error">{{ error }}</p>
     <p v-if="!panel && loading" class="text-sm text-zinc-500">Carregando…</p>
-    <p v-if="isEmpty" class="py-6 text-center text-sm text-zinc-500" data-test="panel-empty">O agente ainda não registrou nada nesta conversa.</p>
+    <nav v-if="panel" class="flex gap-1 rounded-xl bg-zinc-900/60 p-1 text-sm" role="tablist">
+      <button
+        role="tab"
+        :aria-selected="tab === 'board'"
+        class="flex-1 rounded-lg px-3 py-1.5"
+        :class="tab === 'board' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'"
+        data-test="tab-board"
+        @click="tab = 'board'"
+      >
+        Board
+      </button>
+      <button
+        role="tab"
+        :aria-selected="tab === 'plans'"
+        class="flex-1 rounded-lg px-3 py-1.5"
+        :class="tab === 'plans' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'"
+        data-test="tab-plans"
+        @click="tab = 'plans'"
+      >
+        Planos<span v-if="plans.length" class="text-zinc-500"> · {{ plans.length }}</span>
+        <span v-if="waiting" class="ml-1 rounded-full bg-amber-500/20 px-1.5 text-xs text-amber-200" data-test="plans-waiting">{{ waiting }}</span>
+      </button>
+    </nav>
 
-    <template v-if="panel">
+    <p v-if="isEmpty && tab === 'board'" class="py-6 text-center text-sm text-zinc-500" data-test="panel-empty">O agente ainda não registrou nada nesta conversa.</p>
+
+    <section v-if="panel && tab === 'plans'" class="flex flex-col gap-3" data-test="plans">
+      <p v-if="!plans.length" class="py-6 text-center text-sm text-zinc-500" data-test="plans-empty">
+        Nenhum plano ainda. Peça ao agente que monte um plano para aprovar: ele aparece aqui.
+      </p>
+      <article v-for="plan in plans" :key="plan.id" :data-plan="plan.id" class="rounded-xl border border-zinc-800 bg-zinc-900/50">
+        <button class="flex w-full items-start gap-2 p-3 text-left" :data-test="`plan-toggle-${plan.id}`" @click="openPlan = openPlan === plan.id ? undefined : plan.id">
+          <span class="mt-0.5 text-xs text-zinc-500">{{ openPlan === plan.id ? '▾' : '▸' }}</span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-medium text-zinc-100">{{ plan.title }}</span>
+            <span class="text-[11px] text-zinc-500">{{ plan.id }} · versão {{ plan.version }} · {{ plan.steps.length }} passos</span>
+          </span>
+          <span class="shrink-0 rounded-full px-2 py-0.5 text-xs" :class="PLAN_TONE[statusOfPlan(plan)]" data-test="plan-status">{{ PLAN_STATUS_LABEL[statusOfPlan(plan)] }}</span>
+        </button>
+        <div v-if="openPlan === plan.id" class="flex flex-col gap-3 border-t border-zinc-800 p-3">
+          <p v-if="plan.feedback" class="text-xs" :class="plan.feedback.kind === 'approved' ? 'text-emerald-300' : 'text-rose-200'">
+            {{ plan.feedback.kind === 'approved' ? 'Aprovado' : 'Ajustes pedidos' }} por {{ plan.feedback.by }}<template v-if="plan.feedback.text">: {{ plan.feedback.text }}</template>
+            <span v-if="plan.feedback.delivered === false" class="text-zinc-500">· o agente vê no próximo turno</span>
+          </p>
+          <div class="prose-agent wrap-anywhere text-sm" data-test="plan-body" v-html="renderMarkdown(plan.body)" />
+          <div v-if="plan.steps.length">
+            <h4 class="mb-1 text-xs font-medium tracking-wide text-zinc-400 uppercase">Passos</h4>
+            <ol class="flex flex-col gap-1.5" data-test="plan-steps">
+              <li v-for="step in plan.steps" :key="step.id" class="flex items-start gap-2 text-sm">
+                <span class="w-6 shrink-0 text-xs text-zinc-500">{{ step.id }}</span>
+                <span class="min-w-0 flex-1">
+                  <span class="text-zinc-200">{{ step.title }}</span>
+                  <span v-if="step.detail" class="block text-xs text-zinc-400">{{ step.detail }}</span>
+                </span>
+                <button
+                  v-if="stepItem(step.item)"
+                  class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 hover:text-zinc-100"
+                  :title="`Item ${step.item} no board`"
+                  @click="tab = 'board'"
+                >
+                  {{ step.item }} · {{ ITEM_LABEL[stepItem(step.item)!.status] }}
+                </button>
+              </li>
+            </ol>
+          </div>
+          <div v-if="awaitsPerson(plan)" class="flex flex-col gap-2 border-t border-zinc-800 pt-3">
+            <form v-if="changesFor === plan.id" class="flex flex-col gap-2" @submit.prevent="askChanges(plan)">
+              <textarea v-model="changesText" rows="3" class="input" placeholder="O que mudar no plano…" aria-label="Ajustes no plano" data-test="plan-changes-input" />
+              <div class="flex gap-2">
+                <button class="btn btn-sm btn-primary" type="submit" :disabled="busy || !changesText.trim()" data-test="plan-changes-send">Enviar ajustes</button>
+                <button class="btn btn-sm btn-ghost" type="button" @click="changesFor = undefined">Cancelar</button>
+              </div>
+            </form>
+            <div v-else class="flex flex-wrap items-center gap-2">
+              <button class="btn btn-sm btn-primary" :disabled="busy || !plan.steps.length" data-test="plan-approve" @click="approve(plan)">Aprovar</button>
+              <button class="btn btn-sm btn-secondary" :disabled="busy" data-test="plan-changes" @click="changesFor = plan.id">Pedir ajustes</button>
+              <span v-if="plan.status === 'draft'" class="text-xs text-zinc-500">O agente ainda não pediu a aprovação.</span>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <template v-if="panel && tab === 'board'">
       <section data-test="goal">
         <h3 class="mb-1 text-xs font-medium tracking-wide text-zinc-400 uppercase">Objetivo</h3>
         <form v-if="editingGoal" class="flex flex-col gap-2" @submit.prevent="saveGoal">
@@ -199,7 +332,10 @@
                 <p class="text-sm font-medium text-zinc-100">{{ item.title }}</p>
                 <p v-if="item.detail" class="mt-0.5 text-xs whitespace-pre-line text-zinc-400">{{ item.detail }}</p>
                 <p v-if="item.note" class="mt-1 text-xs whitespace-pre-line" :class="item.status === 'blocked' ? 'text-amber-300' : 'text-zinc-300'">{{ item.note }}</p>
-                <div v-if="item.links?.length || item.delegatedTo" class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                <div v-if="item.links?.length || item.delegatedTo || item.plan" class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <button v-if="item.plan" class="rounded-full bg-sky-500/15 px-2 py-0.5 text-sky-200" data-test="item-plan" @click="showPlan(item.plan.id)">
+                    {{ item.plan.id }} · {{ item.plan.step }}
+                  </button>
                   <template v-for="(link, index) in item.links ?? []" :key="index">
                     <a v-if="linkKind(link.href) === 'external'" :href="link.href" target="_blank" rel="noopener noreferrer" class="text-emerald-300 hover:underline">
                       {{ link.label }} ↗

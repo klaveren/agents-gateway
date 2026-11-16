@@ -428,8 +428,8 @@ describe('SqliteConversationRepository', () => {
 
   it('o painel da conversa grava e lê o documento inteiro; apagar a conversa apaga o painel', async () => {
     const repo = repository()
-    assert.deepStrictEqual(await repo.panel('s1'), { items: [], decisions: [], questions: [], history: [] })
-    const panel = { goal: 'Migrar', items: [{ id: 'p1', title: 'Ledgers', status: 'done' as const }], decisions: [], questions: [], history: [] }
+    assert.deepStrictEqual(await repo.panel('s1'), { items: [], decisions: [], questions: [], plans: [], history: [] })
+    const panel = { goal: 'Migrar', items: [{ id: 'p1', title: 'Ledgers', status: 'done' as const }], decisions: [], questions: [], plans: [], history: [] }
     await repo.savePanel('s1', panel)
     assert.deepStrictEqual(await repo.panel('s1'), panel)
     await repo.saveSession(session({ id: 's1' }))

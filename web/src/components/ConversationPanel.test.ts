@@ -32,6 +32,7 @@ const fake = (): IConversationPanel => ({
   ],
   decisions: [{ id: 'd1', text: 'Usar Postgres', why: 'já temos', by: 'pessoa' }],
   questions: [{ id: 'q1', text: 'Qual janela?' }],
+  plans: [],
   history: [{ at: '2026-11-01T10:00:00Z', turn: 1, by: 'agente', text: 'p1 adicionado' }],
 })
 
@@ -86,7 +87,7 @@ describe('ConversationPanel', () => {
     }
     const withCount = render(4)
     expect(withCount.host.querySelector('[data-test="panel-badge"]')?.textContent).toBe('4')
-    expect(withCount.host.querySelector('button')?.getAttribute('title')).toBe('Painel da conversa')
+    expect(withCount.host.querySelector('button')?.getAttribute('title')).toBe('Board da conversa')
     withCount.instance.unmount()
     const none = render(0)
     expect(none.host.querySelector('[data-test="panel-badge"]')).toBeNull()
@@ -190,11 +191,65 @@ describe('ConversationPanel', () => {
     await click(host.querySelector('[data-test="export-md"]'))
     HTMLAnchorElement.prototype.click = original
     expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe('/v1/conversations/gw_1/panel?format=md')
-    expect(clicked).toEqual(['painel-gw_1.md'])
+    expect(clicked).toEqual(['board-gw_1.md'])
+  })
+
+  it('⚖️ plano aguardando a pessoa: abre na aba Planos, com o texto e os passos; Aprovar e Pedir ajustes viram operações', async () => {
+    current = {
+      ...fake(),
+      plans: [
+        {
+          id: 'pl1',
+          title: 'Migração',
+          body: '## Contexto\nTexto **forte**',
+          steps: [
+            { id: 's1', title: 'Exportar' },
+            { id: 's2', title: 'Importar' },
+          ],
+          status: 'review',
+          version: 2,
+        },
+        { id: 'pl2', title: 'Antigo', body: 'b', steps: [{ id: 's1', title: 'A', item: 'p1' }], status: 'approved', version: 1 },
+      ],
+    }
+    expect(openCount(current)).toBe(5)
+    const host = await mount()
+    expect(host.querySelector('[data-test="tab-plans"]')?.getAttribute('aria-selected')).toBe('true')
+    expect(host.querySelector('[data-test="plans-waiting"]')?.textContent).toBe('1')
+    const first = host.querySelector('[data-plan="pl1"]')!
+    expect(first.querySelector('[data-test="plan-status"]')?.textContent).toBe('Aguardando aprovação')
+    expect(first.querySelector('[data-test="plan-body"] strong')?.textContent).toBe('forte')
+    expect(first.querySelectorAll('[data-test="plan-steps"] li')).toHaveLength(2)
+    // O aprovado anda com o item do board: p1 entregue → concluído.
+    expect(host.querySelector('[data-plan="pl2"] [data-test="plan-status"]')?.textContent).toBe('Concluído')
+    await click(first.querySelector('[data-test="plan-changes"]'))
+    const input = host.querySelector<HTMLTextAreaElement>('[data-test="plan-changes-input"]')!
+    input.value = 'Falta o rollback'
+    input.dispatchEvent(new Event('input'))
+    await flush()
+    await click(host.querySelector('[data-test="plan-changes-send"]'))
+    await click(host.querySelector('[data-plan="pl1"] [data-test="plan-approve"]'))
+    expect(patches()).toEqual([
+      { op: 'plan_changes', id: 'pl1', text: 'Falta o rollback' },
+      { op: 'plan_approve', id: 'pl1' },
+    ])
+  })
+
+  it('o item de um plano mostra o passo e leva ao plano', async () => {
+    current = {
+      ...fake(),
+      items: [{ id: 'p1', title: 'Exportar', status: 'queued', plan: { id: 'pl1', step: 's1' } }],
+      plans: [{ id: 'pl1', title: 'M', body: 'b', steps: [{ id: 's1', title: 'Exportar', item: 'p1' }], status: 'approved', version: 1 }],
+    }
+    const host = await mount()
+    expect(host.querySelector('[data-test="tab-board"]')?.getAttribute('aria-selected')).toBe('true')
+    await click(host.querySelector('[data-test="item-plan"]'))
+    expect(host.querySelector('[data-test="tab-plans"]')?.getAttribute('aria-selected')).toBe('true')
+    expect(host.querySelector('[data-plan="pl1"] [data-test="plan-steps"]')).toBeTruthy()
   })
 
   it('mostra o estado vazio', async () => {
-    current = { items: [], decisions: [], questions: [], history: [] }
+    current = { items: [], decisions: [], questions: [], plans: [], history: [] }
     const host = await mount()
     expect(host.querySelector('[data-test="panel-empty"]')?.textContent).toBe('O agente ainda não registrou nada nesta conversa.')
   })

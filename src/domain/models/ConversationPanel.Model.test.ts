@@ -66,13 +66,13 @@ describe('ConversationPanel.Model', () => {
     assert.match(note, /Objetivo: Fechar a migração/)
     assert.match(note, /Em andamento:\n- p2 Triggers \(com agent-god, gw_1\)/)
     assert.match(note, /Na fila:\n- p3 Specs/)
-    assert.match(note, /Perguntas para a pessoa \(.*feche com conversation_panel answer\):\n- q1 Aprovar\?/)
+    assert.match(note, /Perguntas para a pessoa \(.*feche com board answer\):\n- q1 Aprovar\?/)
     assert.doesNotMatch(note, /Ledgers/)
     assert.match(note, /\(1 entregue;/)
     assert.match(note, /um item por pedido \(add\)\. Etapas do item em andamento: update_todos/)
-    assert.match(panelTurnNote(panel, true), /não entrou no painel/)
+    assert.match(panelTurnNote(panel, true), /não entrou no board/)
     assert.strictEqual(panelTurnNote(emptyPanel()), '')
-    assert.match(panelTurnNote(emptyPanel(), true), /não entrou no painel/)
+    assert.match(panelTurnNote(emptyPanel(), true), /não entrou no board/)
   })
 
   it('a resposta da pessoa no painel vai ao agente UMA vez; a do agente, nunca', () => {
@@ -83,7 +83,7 @@ describe('ConversationPanel.Model', () => {
       freshAnswers(both).map((question) => question.id),
       ['q1'],
     )
-    assert.match(panelTurnNote(both), /A pessoa respondeu no painel \(considere agora\):\n- q1 Qual porta\? → 27017/)
+    assert.match(panelTurnNote(both), /A pessoa respondeu no board \(considere agora\):\n- q1 Qual porta\? → 27017/)
     assert.doesNotMatch(panelTurnNote(both), /Pode subir/)
     const seen = markAnswersDelivered(both, ['q1'])
     assert.deepStrictEqual(freshAnswers(seen), [])

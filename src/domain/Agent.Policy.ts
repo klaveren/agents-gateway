@@ -1,5 +1,5 @@
 import { NO_MODEL_GROUP } from './Fallback.Policy'
-import { AUTO_TOOL_OFF, AUTO_TOOLS, isAutoToolOff } from './Auto.Tools'
+import { AUTO_TOOL_OFF, isAutoToolOff, OFF_ABLE_TOOLS } from './Auto.Tools'
 import { fileIssues } from './models/ResourceFile.Model'
 import { permissionIssues } from './Permission.Policy'
 import { CLI_ARG_PROTOCOLS } from './CliArgument.Policy'
@@ -150,7 +150,7 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   for (const tool of agent.allowedTools) {
     // A marca de ferramenta automática desligada (`off:ledger_write`, ver `Auto.Tools`): só das automáticas.
     if (isAutoToolOff(tool)) {
-      if (!AUTO_TOOLS.includes(tool.slice(AUTO_TOOL_OFF.length))) issue('allowedTools', `only automatic tools can be turned off: ${tool}`)
+      if (!OFF_ABLE_TOOLS.includes(tool.slice(AUTO_TOOL_OFF.length))) issue('allowedTools', `only automatic tools can be turned off: ${tool}`)
       continue
     }
     // Capacidade (`cap:terminal`…): basta existir — o que roda em cada provedor é decidido no turno (`Capability.Catalog`).

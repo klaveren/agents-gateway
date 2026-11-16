@@ -1,3 +1,4 @@
+import { deprecationLine, IDeprecatedTool } from './Tool.Deprecations'
 /**
  * ⚖️ O MÍNIMO QUE O AGENTE SABE SEM GASTAR FERRAMENTA: quem ele é (o id), em que projeto está e onde opera (o diretório).
  * Vai no system prompt, uma vez (ver `composeSystemPrompt`): é estável na sessão. O id da conversa não está aqui — nasce
@@ -18,15 +19,14 @@ export interface IAmbient {
   files?: { dir: string; write: boolean }
   /** As variáveis secretas que o agente pode usar (só os nomes; ver `ResourceSecret.Model`). */
   secrets?: IAmbientSecrets
-  /** A conversa tem o painel (ver `ConversationPanel.Model`). */
+  /** A conversa tem o board e os planos (ver `ConversationPanel.Model`). */
   panel?: boolean
   /** O agente tem o terminal: a linha da pasta temporária (o `/tmp` dele some a cada comando). */
   terminal?: boolean
-  /**
-   * O agente fala com outros (`agent:<id>`): a linha do `talk`. `legacy`: o prompt dele ainda cita o `delegate_to_agent`,
-   * o nome de antes — a linha diz que agora é `talk`.
-   */
-  talk?: { legacy: boolean }
+  /** O agente fala com outros (`agent:<id>`): a linha do `talk`. */
+  talk?: boolean
+  /** As ferramentas obsoletas que o prompt dele ainda cita (ver `Tool.Deprecations`): uma linha por uma, com o nome novo. */
+  deprecated?: IDeprecatedTool[]
   /** O agente arma vigia nesta conversa (ver `Watch.Model`): a regra de espera cita as ferramentas. Ausente: só a proibição. */
   watch?: boolean
 }
@@ -43,8 +43,8 @@ export interface IAmbientSecrets {
  * ⚖️ COMO FALAR COM OUTRO AGENTE: uma ferramenta só, o `talk`. Os agentes procuravam `send_message` (que é de pessoa) e não
  * sabiam que dava para continuar a conversa que a pessoa já tem com o outro agente.
  */
-export function talkLine(legacy: boolean): string {
-  return `- Outro agente: fale com \`talk\` — sem nada, mostra com quem você fala e as conversas abertas; \`conversation\` continua uma conversa (inclusive a que a pessoa já tem com ele, pelo id que ela passar); \`wait: 0\` não espera, e a resposta chega depois aqui. Não existe \`send_message\` nem \`start_conversation\` para você.${legacy ? ' Onde o seu prompt diz `delegate_to_agent`, use `talk`.' : ''}`
+export function talkLine(): string {
+  return '- Outro agente: fale com `talk` — sem nada, mostra com quem você fala e as conversas abertas; `conversation` continua uma conversa (inclusive a que a pessoa já tem com ele, pelo id que ela passar); `wait: 0` não espera, e a resposta chega depois aqui. Não existe `send_message` nem `start_conversation` para você.'
 }
 
 /** A seção "## Ambiente" do system prompt. */
@@ -62,7 +62,8 @@ export function ambientSection(ambient: IAmbient): string {
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
   if (ambient.files) lines.push(agentFolderLine(ambient.files))
   if (ambient.terminal) lines.push(TEMP_LINE)
-  if (ambient.talk) lines.push(talkLine(ambient.talk.legacy))
+  if (ambient.talk) lines.push(talkLine())
+  for (const tool of ambient.deprecated ?? []) lines.push(deprecationLine(tool))
   lines.push(waitLine(ambient))
   if (ambient.panel)
     lines.push(
@@ -71,11 +72,12 @@ export function ambientSection(ambient: IAmbient): string {
   if (ambient.panel)
     lines.push(
       '',
-      '## Painel da conversa',
-      'A pessoa vê, ao lado da conversa, o painel que VOCÊ mantém com `conversation_panel`, sem precisar pedir. O resumo dele vem no começo de cada turno: siga a rota, não se desvie.',
+      '## Board da conversa',
+      'A pessoa vê, ao lado da conversa, o board que VOCÊ mantém com `board`, sem precisar pedir. O resumo dele vem no começo de cada turno: siga a rota, não se desvie.',
       '- **Um item por pedido.** Separe a mensagem da pessoa em pedidos distintos, e cada um vira um item da fila (`add`), com título curto do que foi pedido. Nunca um item genérico que junta tudo ("ajustes", "melhorias").',
       '- **O ciclo do item:** começou → `doing`; entregou → `done`, com o que entregou e os links; travou → `blocked`, com o motivo. O rumo mudou → `set_goal`; o combinado → `decide`; o que depende dela → `ask`.',
       '- **As etapas do item vão no `update_todos`**: ao começar um item com mais de um passo, liste os passos dele; um em andamento por vez; marque o feito na hora. Passos curtos, sem texto corrido.',
+      '- **Plano (`plan`)**: quando a pessoa pedir um plano, uma estratégia ou um desenho para aprovar, escreva-o com `plan` (`create`: título, o texto em Markdown — contexto, abordagem, riscos, o que fica de fora — e os passos) e peça a aprovação (`submit`). Ela aprova ou pede ajustes no board; a decisão chega no começo do turno. Aprovado, cada passo vira um item do board: execute-os pelo `board`, como qualquer item.',
     )
   if (ambient.secrets) lines.push('', secretsSection(ambient.secrets))
   return lines.join('\n')
