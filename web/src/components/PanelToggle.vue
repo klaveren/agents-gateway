@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import Icon from './Icon.vue'
 
-  /** O ícone do Painel da conversa no cabeçalho, com o selo dos itens em aberto (some quando não há). */
+  /** O ícone do Board da conversa no cabeçalho, com o selo dos itens em aberto (some quando não há). */
   defineProps<{ count?: number; active?: boolean }>()
 </script>
 
@@ -10,7 +10,7 @@
     type="button"
     class="relative grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800"
     :class="active ? 'text-emerald-400' : 'text-zinc-400'"
-    title="Painel da conversa"
+    title="Board da conversa"
     data-test="panel-toggle"
   >
     <Icon name="panel" class="h-5 w-5" />

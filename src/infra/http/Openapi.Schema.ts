@@ -4685,7 +4685,7 @@ export const OPENAPI_DOCUMENT = {
     '/conversations/{id}/panel': {
       get: {
         summary:
-          'The PANEL of a conversation: the goal, items (queued, doing, blocked, done, dropped — with notes, links and the agent doing it), decisions, questions and the timeline. The agent keeps it with the conversation_panel tool. `?format=md` returns Markdown. Who can see the conversation',
+          'The BOARD of a conversation: the goal, items (queued, doing, blocked, done, dropped — with notes, links, the agent doing it and the plan step it runs), decisions, questions, the PLANS (draft, review, changes, approved, doing, done, dropped — body in Markdown and steps) and the timeline. The agent keeps it with the `board` and `plan` tools (`conversation_panel` is a deprecated alias of `board`). `?format=md` returns Markdown. Who can see the conversation',
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'format', in: 'query', schema: { type: 'string', enum: ['md'] } },
@@ -4693,11 +4693,20 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '404': failures['404'] },
       },
       patch: {
-        summary: 'Change the panel (the person correcting it): one operation — set_goal, add, update (status, note, links), move, decide, ask, answer',
+        summary:
+          'Change the board (the person): one operation — set_goal, add, update (status, note, links), move, decide, ask, answer; on a plan, `plan_approve` `{ id }` (each step becomes a board item) or `plan_changes` `{ id, text }`. The decision reaches the agent at the start of its next turn',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,
-          ...json({ type: 'object', required: ['op'], properties: { op: { type: 'string', enum: ['set_goal', 'add', 'update', 'move', 'decide', 'ask', 'answer'] } } }),
+          ...json({
+            type: 'object',
+            required: ['op'],
+            properties: {
+              op: { type: 'string', enum: ['set_goal', 'add', 'update', 'move', 'decide', 'ask', 'answer', 'plan_approve', 'plan_changes'] },
+              id: { type: 'string', description: 'The item (p…), question (q…) or plan (pl…).' },
+              text: { type: 'string', description: 'decide/ask; plan_changes: what to change.' },
+            },
+          }),
         },
         responses: { '200': { description: 'The panel', ...json(envelope({ type: 'object' })) }, '404': failures['404'], '422': failures['422'] },
       },
@@ -5940,6 +5949,35 @@ export const OPENAPI_DOCUMENT = {
       get: {
         summary: 'Full tool catalog: built-in tools merged with whatever MCP exposes',
         responses: { '200': { description: 'OK', ...json(envelope(toolsResult)) }, '401': failures['401'] },
+      },
+    },
+    '/tools/deprecated': {
+      get: {
+        summary:
+          'The deprecated gateway tools: the old name, its replacement, where it lives (agent or the gateway MCP), whether it still works as an alias (with a warning) or is already gone, since which version and in which version it is removed',
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    replacement: { type: 'string' },
+                    scope: { type: 'string', enum: ['agent', 'mcp'] },
+                    kind: { type: 'string', enum: ['alias', 'removed'] },
+                    since: { type: 'string' },
+                    removeIn: { type: 'string' },
+                    note: { type: 'string' },
+                  },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+        },
       },
     },
     '/availability': {

@@ -150,7 +150,7 @@ export const useThreadStore = defineStore('thread', () => {
   const todos = ref<ITodoItem[]>([])
   /** As vigias armadas na conversa (`watch_start`, `wake_me`): o que o gateway está esperando por ela; vazia = nenhuma. */
   const watches = ref<IWatchItem[]>([])
-  /** Sobe a cada resultado da ferramenta do painel (`conversation_panel`): o painel aberto se relê. */
+  /** Sobe a cada resultado das ferramentas do board (`board`, `plan` e o alias obsoleto `conversation_panel`): o board aberto se relê. */
   const panelVersion = ref(0)
   /** As mensagens mandadas com o turno rodando que ainda não entraram nele (`whileBusy: 'queue'`). */
   const queued = ref<string[]>([])
@@ -574,7 +574,7 @@ export const useThreadStore = defineStore('thread', () => {
   }
 
   /** A ferramenta das tarefas, com ou sem o prefixo do servidor MCP local (`mcp__local__update_todos`). */
-  const isPanelTool = (name: unknown) => typeof name === 'string' && (name === 'conversation_panel' || name.endsWith('__conversation_panel'))
+  const isPanelTool = (name: unknown) => typeof name === 'string' && ['board', 'plan', 'conversation_panel'].some((tool) => name === tool || name.endsWith(`__${tool}`))
   const isTodoTool = (name: unknown) => typeof name === 'string' && (name === 'update_todos' || name.endsWith('__update_todos'))
   const isWatchTool = (name: unknown) => typeof name === 'string' && WATCH_TOOLS.has(name.split('__').pop() ?? '')
 

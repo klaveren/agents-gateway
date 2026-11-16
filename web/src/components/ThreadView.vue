@@ -83,7 +83,7 @@
   /** As alterações (o painel tipo IDE): só numa conversa aberta num repositório. O diff (e o destaque) só carrega ao abrir. */
   const ChangesPanel = defineAsyncComponent(() => import('./ChangesPanel.vue'))
   const ConversationPanel = defineAsyncComponent(() => import('./ConversationPanel.vue'))
-  /** O Painel da conversa: o selo do ícone (itens em aberto) vale com o painel fechado; o painel relê quando abre, quando o turno acaba e quando o agente mexe nele. */
+  /** O Board da conversa: o selo do ícone (itens em aberto) vale com o painel fechado; o painel relê quando abre, quando o turno acaba e quando o agente mexe nele. */
   const panelOpen = ref(false)
   /** A largura do painel da conversa: arrastar a borda esquerda (lembrada no navegador, como a das Alterações). */
   const panelDrawer = useDrawerWidth('gw.panel.width', 460)
@@ -487,7 +487,7 @@
                 @click="fromMenu(() => (panelOpen = !panelOpen))"
               >
                 <Icon name="panel" class="h-4 w-4 text-zinc-400" />
-                Painel da conversa
+                Board da conversa
                 <span v-if="panelCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ panelCount }}</span>
               </button>
               <button
@@ -609,7 +609,7 @@
       <aside
         class="pointer-events-auto absolute top-0 right-0 flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-950 p-4 shadow-2xl md:w-[var(--panel-width)]"
         :style="{ '--panel-width': `min(${panelDrawer.width.value}px, calc(100vw - 360px))` }"
-        aria-label="Painel da conversa"
+        aria-label="Board da conversa"
       >
         <div
           class="absolute top-0 left-0 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"

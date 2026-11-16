@@ -57,18 +57,21 @@ describe('AgentProvider — painel da conversa', () => {
     }
 
     await run('migre os ledgers')
-    assert.match(seen[0].text, /<painel da conversa>[\s\S]*Em andamento:\n- p1 Migrar os ledgers[\s\S]*migre os ledgers$/)
-    assert.ok(seen[0].tools.includes('conversation_panel'), 'a ferramenta vai em todo agente')
+    assert.match(seen[0].text, /<board da conversa>[\s\S]*Em andamento:\n- p1 Migrar os ledgers[\s\S]*migre os ledgers$/)
+    assert.ok(
+      seen[0].tools.includes('board') && seen[0].tools.includes('plan') && !seen[0].tools.includes('conversation_panel'),
+      'board e plan vão em todo agente; o alias, só se o prompt o cita',
+    )
     // O turno não mexeu no painel: o próximo começa com o aviso.
     await run('e as specs?')
-    assert.match(seen[1].text, /não entrou no painel/)
+    assert.match(seen[1].text, /não entrou no board/)
     touchPanel = true
     panel = emptyPanel()
     await run('obrigado')
-    assert.match(seen[2].text, /não entrou no painel/)
+    assert.match(seen[2].text, /não entrou no board/)
     await run('mais uma')
-    assert.doesNotMatch(seen[3].text, /não entrou no painel/, 'o turno anterior mexeu no painel')
-    assert.ok(!seen[3].text.includes('<painel da conversa>'), 'painel vazio não entra')
+    assert.doesNotMatch(seen[3].text, /não entrou no board/, 'o turno anterior mexeu no painel')
+    assert.ok(!seen[3].text.includes('<board da conversa>'), 'painel vazio não entra')
   })
 
   it('⚖️ MCP que não respondeu no começo do turno: o agente recebe o aviso na entrada do modelo, e a pessoa, no turno', async () => {

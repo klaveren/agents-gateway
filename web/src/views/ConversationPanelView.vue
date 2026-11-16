@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import ConversationPanel from '@/components/ConversationPanel.vue'
 
-  /** `/c/:id/painel`: o Painel da conversa em página inteira (para ler com calma, colar o link ou imprimir). */
+  /** `/c/:id/painel`: o Board da conversa (e os planos) em página inteira (para ler com calma, colar o link ou imprimir). */
   defineProps<{ id: string }>()
 </script>
 
