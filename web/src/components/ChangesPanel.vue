@@ -6,6 +6,7 @@ import 'diff2html/bundles/css/diff2html.min.css'
 import 'highlight.js/styles/github-dark-dimmed.min.css'
 import { api } from '@/lib/api'
 import { fullTime } from '@/lib/format'
+import { useDrawerWidth } from '@/composables/useDrawerWidth'
 import Icon from './Icon.vue'
 
 /**
@@ -73,7 +74,7 @@ const selected = ref<string>()
 const error = ref<string>()
 const loading = ref(false)
 const layout = ref<'side-by-side' | 'line-by-line'>(read('gw.diff.layout', 'side-by-side') === 'line-by-line' ? 'line-by-line' : 'side-by-side')
-const width = ref(Number(read('gw.diff.width', '900')) || 900)
+const { width, startDrag, onDrag, stopDrag } = useDrawerWidth('gw.diff.width', 900, 420)
 const diffNote = ref<string>()
 const target = ref<HTMLElement>()
 
@@ -154,21 +155,6 @@ function setLayout(next: 'side-by-side' | 'line-by-line') {
   void showDiff()
 }
 
-// Arrastar a borda esquerda muda a largura (lembrada no navegador).
-let dragging = false
-function startDrag(event: PointerEvent) {
-  dragging = true
-  ;(event.target as HTMLElement).setPointerCapture(event.pointerId)
-}
-function onDrag(event: PointerEvent) {
-  if (!dragging) return
-  width.value = Math.min(Math.max(window.innerWidth - event.clientX, 420), window.innerWidth - 80)
-}
-function stopDrag() {
-  if (!dragging) return
-  dragging = false
-  write('gw.diff.width', String(Math.round(width.value)))
-}
 const onKey = (event: KeyboardEvent) => event.key === 'Escape' && emit('close')
 
 onMounted(() => {
