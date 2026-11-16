@@ -23,7 +23,7 @@ const position = computed(() => new Map(props.steps.map((step, at) => [step.key,
           <span class="w-7 shrink-0 text-right font-mono text-xs text-zinc-500">{{ position.get(step.key) }}</span>
           <span class="rounded-full border border-zinc-700 px-2 text-[11px] text-zinc-400">{{ KIND_LABEL[step.kind] }}</span>
           <button type="button" class="min-w-0 font-mono text-sm break-all text-zinc-100 hover:underline" @click="emit('select', step.key)">{{ step.id }}</button>
-          <span v-if="step.done" class="rounded-full border border-emerald-500/40 px-2 text-[11px] text-emerald-200" data-test="step-done">{{ DONE_LABEL[step.done] }}</span>
+          <span v-if="step.done" class="rounded-full border border-success-500/40 px-2 text-[11px] text-success-200" data-test="step-done">{{ DONE_LABEL[step.done] }}</span>
           <span v-else-if="step.state !== 'new'" class="rounded-full border px-2 text-[11px]" :class="step.state === 'update' ? 'border-zinc-700 text-zinc-400' : 'border-rose-500/50 text-rose-200'">{{ ID_STATE_LABEL[step.state] }}</span>
           <span v-if="step.notes.some((note) => note.level === 'untranslatable')" class="rounded-full bg-amber-500/15 px-2 text-[11px] text-amber-200">não traduz</span>
           <span class="text-xs text-zinc-500">{{ WHY_LABEL[step.why] }}<template v-if="!step.done"> · ≈{{ tokens(step.tokens.sources + step.tokens.protocol) }}</template><template v-else> · sem conversa</template></span>

@@ -654,7 +654,7 @@ watch(() => projects.current, reset)
             </label>
             <div class="flex flex-wrap items-center gap-2">
               <span v-if="ignoreDirty" class="text-amber-300">Mudança não salva</span>
-              <span v-if="ignoreMessage" class="text-emerald-300">{{ ignoreMessage }}</span>
+              <span v-if="ignoreMessage" class="text-success-300">{{ ignoreMessage }}</span>
               <span v-if="ignoreError" class="text-rose-300" data-test="ignore-error">{{ ignoreError }}</span>
             </div>
           </form>

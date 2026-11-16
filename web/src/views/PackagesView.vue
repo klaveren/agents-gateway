@@ -183,7 +183,7 @@ async function confirmRemove() {
               <div class="truncate font-mono text-[13px] text-zinc-200">{{ hit.name }}</div>
               <div class="text-xs text-zinc-500">{{ hit.version }}<template v-if="hit.license"> · {{ hit.license }}</template></div>
             </div>
-            <span v-if="versionOf(hit.name)" class="text-xs text-emerald-300">instalado {{ versionOf(hit.name) }}</span>
+            <span v-if="versionOf(hit.name)" class="text-xs text-success-300">instalado {{ versionOf(hit.name) }}</span>
             <button v-else-if="source === 'npm'" type="button" :disabled="!!working" class="btn btn-sm btn-primary" @click="openInstall(hit)">
               {{ working === hit.name ? 'Instalando…' : 'Instalar' }}
             </button>
@@ -213,7 +213,7 @@ async function confirmRemove() {
         <ListPager v-model="hitPage.page.value" :pages="hitPage.pages.value" :total="hitPage.total.value" :size="hitPage.size" />
 
         <div v-if="result" class="flex flex-col gap-2">
-          <p class="text-sm" :class="result.ok ? 'text-emerald-300' : 'text-rose-300'">
+          <p class="text-sm" :class="result.ok ? 'text-success-300' : 'text-rose-300'">
             {{ result.ok ? `✓ ${result.name} ${result.action === 'install' ? 'instalado' : 'removido'}.` : `✕ Não deu para ${result.action === 'install' ? 'instalar' : 'remover'} ${result.name}.` }}
           </p>
           <pre v-if="!result.ok && result.log" class="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-2 text-[11px] whitespace-pre-wrap text-zinc-400">{{ result.log }}</pre>

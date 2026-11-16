@@ -228,7 +228,7 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
                 <code class="truncate text-zinc-200" :title="batch.id">{{ batch.id }}</code>
                 <span
                   class="rounded-full px-2 py-0.5 text-[10px]"
-                  :class="batch.status === 'applied' ? 'bg-emerald-500/15 text-emerald-300' : batch.status === 'partial' ? 'bg-rose-500/15 text-rose-300' : 'bg-zinc-700/50 text-zinc-300'"
+                  :class="batch.status === 'applied' ? 'bg-success-500/15 text-success-300' : batch.status === 'partial' ? 'bg-rose-500/15 text-rose-300' : 'bg-zinc-700/50 text-zinc-300'"
                   data-test="batch-status"
                   >{{ BATCH_STATUS_LABEL[batch.status] ?? batch.status }}</span
                 >

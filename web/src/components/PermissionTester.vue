@@ -73,10 +73,10 @@ async function run() {
     </div>
     <p v-if="error" class="text-xs text-rose-300">{{ error }}</p>
     <div v-if="result" class="flex flex-col gap-1">
-      <p class="text-sm font-medium" :class="result.allowed ? 'text-emerald-300' : 'text-rose-300'">{{ result.allowed ? 'Permitido' : 'Negado' }}</p>
+      <p class="text-sm font-medium" :class="result.allowed ? 'text-success-300' : 'text-rose-300'">{{ result.allowed ? 'Permitido' : 'Negado' }}</p>
       <ul class="flex flex-col gap-1 text-xs">
         <li v-for="(part, index) in result.parts" :key="index" class="flex items-baseline gap-2">
-          <span class="w-14 shrink-0" :class="part.allowed ? 'text-emerald-300' : 'text-rose-300'">{{ part.allowed ? 'permite' : 'nega' }}</span>
+          <span class="w-14 shrink-0" :class="part.allowed ? 'text-success-300' : 'text-rose-300'">{{ part.allowed ? 'permite' : 'nega' }}</span>
           <code class="min-w-0 truncate text-zinc-200">{{ part.value }}</code>
           <span class="min-w-0 flex-1 truncate text-zinc-500">{{ part.reason }} · {{ LAYER_LABEL[part.layer] }}</span>
         </li>

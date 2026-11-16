@@ -222,7 +222,7 @@ watch(creating, (value) => {
     <template #detail>
       <template v-if="creating">
         <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">{{ template ? (draftNote ? 'Novo agente (do construtor)' : 'Duplicar agente') : 'Novo agente' }}</h2>
-        <p v-if="draftNote" class="mx-auto mb-4 max-w-3xl text-sm text-emerald-300">{{ draftNote }}</p>
+        <p v-if="draftNote" class="mx-auto mb-4 max-w-3xl text-sm text-success-300">{{ draftNote }}</p>
         <AgentForm :agent="template" creating @saved="(saved) => router.push(`/agents/${saved}`)" />
       </template>
       <template v-else-if="detail">
@@ -235,7 +235,7 @@ watch(creating, (value) => {
           <span v-if="agents.byId.get(detail.id)?.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300">{{ agents.byId.get(detail.id)?.unavailable?.label }}</span>
           <RouterLink v-if="detail.role !== 'subagent'" :to="{ path: '/new', query: { agent: detail.id } }" class="btn btn-secondary ml-auto">Conversar</RouterLink>
         </div>
-        <p v-if="draftNote" class="mx-auto mb-4 max-w-3xl text-sm text-emerald-300">{{ draftNote }}</p>
+        <p v-if="draftNote" class="mx-auto mb-4 max-w-3xl text-sm text-success-300">{{ draftNote }}</p>
         <AgentForm :agent="detail" :creating="false" :shared-from="agents.byId.get(detail.id)?.sharedFrom" @saved="drafted = undefined" @duplicate="duplicate" @removed="router.push('/agents')" />
       </template>
       <p v-else-if="error" class="text-sm text-rose-300">{{ error }}</p>

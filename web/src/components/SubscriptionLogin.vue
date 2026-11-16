@@ -132,7 +132,7 @@ onBeforeUnmount(() => {
   <div class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3">
     <div class="flex flex-wrap items-center gap-2">
       <span class="text-sm font-medium">Conta</span>
-      <span v-if="login.state === 'done'" class="text-sm text-emerald-300">✓ Conectado</span>
+      <span v-if="login.state === 'done'" class="text-sm text-success-300">✓ Conectado</span>
       <span v-else-if="login.state === 'failed' && !login.missing" class="text-sm text-rose-300">✕ {{ login.message }}</span>
       <button v-if="login.state !== 'waiting'" type="button" :disabled="busy" class="ml-auto btn btn-primary" @click="start">
         {{ busy ? 'Abrindo…' : 'Entrar' }}

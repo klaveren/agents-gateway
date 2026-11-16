@@ -193,7 +193,7 @@ const describeLoad = (failure: unknown) => (failure === undefined ? undefined : 
 
     <form v-if="!readonly" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3" @submit.prevent="add">
       <p class="text-sm font-medium">Nova regra {{ scope === GLOBAL_SCOPE ? 'global' : 'do projeto' }}</p>
-      <p v-if="draftNote" class="text-xs text-emerald-300">{{ draftNote }}</p>
+      <p v-if="draftNote" class="text-xs text-success-300">{{ draftNote }}</p>
       <label class="field">Título<input v-model="draft.title" required maxlength="120" class="input text-sm" placeholder="Idioma" /><small v-for="m in draftIssues.title" :key="m" class="error">{{ m }}</small></label>
       <label class="field">
         Regra

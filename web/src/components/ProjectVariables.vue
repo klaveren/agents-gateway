@@ -279,7 +279,7 @@
       </div>
     </section>
 
-    <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
+    <p v-if="note" class="text-sm text-success-300">{{ note }}</p>
     <p v-if="failure" class="text-sm text-rose-300">{{ failure }}</p>
     <SaveFooter v-if="!connectedOrigin" v-show="active !== false" label="Salvar variáveis fixas" :busy="busy" :disabled="!fixedDirty || !!repeated.length" :pending="fixedDirty" @save="saveFixed" />
     <SaveFooter

@@ -131,6 +131,6 @@ function describe(failure: unknown): string {
       <button v-if="!embedded" type="button" :disabled="busy || !dirty" class="btn btn-primary ml-auto" @click="save">Salvar</button>
       <span v-else-if="dirty" class="ml-auto text-xs text-amber-300">Mudança não salva</span>
     </div>
-    <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
+    <p v-if="note" class="text-sm text-success-300">{{ note }}</p>
   </section>
 </template>

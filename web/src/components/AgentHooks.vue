@@ -136,7 +136,7 @@ function curlOf(hook: IAgentHook, secret: string): string {
 
 const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> = {
   running: { label: 'rodando', tone: 'text-amber-300' },
-  ok: { label: 'ok', tone: 'text-emerald-300' },
+  ok: { label: 'ok', tone: 'text-success-300' },
   error: { label: 'erro', tone: 'text-rose-300' },
 }
 </script>
@@ -148,10 +148,10 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
     </p>
     <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 
-    <div v-if="revealed" class="flex flex-col gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm">
+    <div v-if="revealed" class="flex flex-col gap-2 rounded-xl border border-success-500/30 bg-success-500/10 p-3 text-sm">
       <div class="flex items-center gap-2">
-        <strong class="text-emerald-200">Chave do hook {{ revealed.name }}</strong>
-        <span class="text-xs text-emerald-300/80">— só aparece agora. Copie e guarde.</span>
+        <strong class="text-success-200">Chave do hook {{ revealed.name }}</strong>
+        <span class="text-xs text-success-300/80">— só aparece agora. Copie e guarde.</span>
         <button type="button" class="ml-auto text-xs text-zinc-400 hover:text-zinc-200" @click="revealed = undefined">fechar</button>
       </div>
       <div class="flex items-center gap-2">
@@ -172,7 +172,7 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
     <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
       <li v-for="hook in hookPage.items.value" :key="hook.name">
         <button type="button" class="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-800/40" @click="openHook(hook.name)">
-          <span class="h-2 w-2 shrink-0 rounded-full" :class="hook.enabled ? 'bg-emerald-400' : 'bg-zinc-600'" />
+          <span class="h-2 w-2 shrink-0 rounded-full" :class="hook.enabled ? 'bg-success-400' : 'bg-zinc-600'" />
           <span class="min-w-0 flex-1">
             <span class="block truncate font-mono text-[13px] text-zinc-200">{{ hook.name }}</span>
             <span class="block truncate text-xs text-zinc-500">

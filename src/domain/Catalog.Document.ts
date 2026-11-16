@@ -256,6 +256,7 @@ export const PROJECT_SHAPE: TShape<IProject> = {
   importScope: { omit: 'configuração da varredura do importador (os repositórios desta instalação), não conteúdo do catálogo' },
   env: 'record',
   mcpEnv: { set: { server: 'value', name: 'value', value: 'value' } },
+  color: { omit: 'a cor do destaque da tela é desta instalação, não conteúdo do catálogo' },
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },

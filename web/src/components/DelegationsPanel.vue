@@ -57,7 +57,7 @@
         <RouterLink :to="`/c/${child.id}`" class="flex items-center gap-2 rounded-md py-0.5 hover:bg-zinc-800/60" :data-child="child.id">
           <span
             class="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px] leading-none"
-            :class="isRunning(child) ? 'animate-pulse border-sky-400 bg-sky-400/20' : 'border-emerald-500 bg-emerald-500 text-zinc-950'"
+            :class="isRunning(child) ? 'animate-pulse border-sky-400 bg-sky-400/20' : 'border-success-500 bg-success-500 text-zinc-950'"
             aria-hidden="true"
           >
             {{ isRunning(child) ? '' : '✓' }}

@@ -69,7 +69,7 @@ async function disconnect() {
       <span class="truncate text-xs text-zinc-400">
         origem <code class="text-zinc-200">{{ originLabel(connection.url) }}</code> · projeto <code class="text-zinc-200">{{ connection.remoteProjectId }}</code>
       </span>
-      <span class="ml-auto text-xs" :class="connection.state === 'ok' ? 'text-emerald-300' : 'text-amber-300'">{{ STATE[connection.state] }}</span>
+      <span class="ml-auto text-xs" :class="connection.state === 'ok' ? 'text-success-300' : 'text-amber-300'">{{ STATE[connection.state] }}</span>
     </div>
     <p class="text-xs text-zinc-400">
       Agentes, skills, comandos, specs e regras vêm da origem. A mudança é feita lá e chega aqui pela atualização.
@@ -116,7 +116,7 @@ async function disconnect() {
       <button v-if="!askingToken" type="button" class="btn btn-sm btn-secondary" @click="askingToken = true">Trocar token</button>
       <button type="button" class="btn btn-sm btn-danger ml-auto" @click="disconnecting = true">Desconectar</button>
     </div>
-    <p v-if="note" class="text-xs text-emerald-300">{{ note }}</p>
+    <p v-if="note" class="text-xs text-success-300">{{ note }}</p>
     <p v-if="error" class="text-xs text-rose-300">{{ error }}</p>
 
     <ConfirmDialog

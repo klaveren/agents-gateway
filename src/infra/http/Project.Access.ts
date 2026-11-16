@@ -143,7 +143,7 @@ const CONNECTED_WRITABLE: readonly RegExp[] = [
   /^\/mcp-servers\/:id\/(env|secret|oauth|test|install|stop)(\/|$)/,
   // Os MCPs do projeto conectado são desta máquina (endereços e chaves do ambiente): chegam uma vez e mudam por aqui.
   /^\/mcp-servers(\/:id)?$/,
-  /^\/projects\/:id\/members$/,
+  /^\/projects\/:id\/(members|color)$/,
   /^\/projects\/:projectId\/(accounts|permissions\/test)(\/|$)/,
   // As secretas do projeto e os valores dos MCPs são desta máquina (o visível de MCP fica na conexão, por cima do da origem).
   /^\/projects\/:projectId\/(secrets|mcp-variables)(\/|$)/,

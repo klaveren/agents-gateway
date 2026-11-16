@@ -189,7 +189,7 @@
         </label>
         <div class="flex flex-wrap items-center gap-2">
           <span v-if="dirty" class="text-xs text-amber-300">Mudança não salva: o "Salvar agente" grava a sequência, que vale para todos os agentes que a usam.</span>
-          <span v-if="note" class="text-xs text-emerald-300">{{ note }}</span>
+          <span v-if="note" class="text-xs text-success-300">{{ note }}</span>
           <span v-if="failure" class="text-xs text-rose-300">{{ failure }}</span>
         </div>
       </div>

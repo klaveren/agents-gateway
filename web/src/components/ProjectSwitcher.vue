@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { lite } from '@/lib/edition'
 import { initials } from '@/lib/format'
+import { PALETTES } from '@/lib/projectColors'
 import { useAboveBar, usePopover } from '@/lib/popover'
 import { loadServers, serverList, switchServer } from '@/lib/servers'
 import { useAuthStore } from '@/stores/auth'
@@ -38,6 +39,9 @@ async function go(id: string) {
   // A falha de abrir é do app, que avisa na janela; aqui só sobra o servidor que saiu da lista, e não há o que mostrar.
   await switchServer(id).catch(() => undefined)
 }
+
+/** A paleta do projeto, se ele tem cor. */
+const paletteOf = (color: string | undefined) => (color && color in PALETTES ? PALETTES[color as keyof typeof PALETTES] : undefined)
 </script>
 
 <template>
@@ -98,7 +102,15 @@ async function go(id: string) {
           :class="project.id === projects.current ? 'text-emerald-300' : 'text-zinc-200'"
           @click="choose(project.id)"
         >
-          <span class="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-zinc-800 text-[10px] font-semibold">{{ initials(project.name) }}</span>
+          <!-- 🎨 As iniciais na cor do projeto: dá para achar o projeto pela cor. Sem cor, o cinza de antes. -->
+          <span
+            class="grid h-6 w-6 shrink-0 place-items-center rounded-md text-[10px] font-semibold"
+            :class="paletteOf(project.color) ? 'text-zinc-950' : 'bg-zinc-800'"
+            :style="paletteOf(project.color) ? { background: paletteOf(project.color)!['500'] } : undefined"
+            data-test="project-swatch"
+          >
+            {{ initials(project.name) }}
+          </span>
           <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
           <span v-if="project.id === projects.current" class="text-xs">✓</span>
         </button>

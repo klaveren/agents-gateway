@@ -94,8 +94,8 @@ async function revoke() {
       catálogo de um projeto. Revogue quando não usar mais.
     </p>
 
-    <div v-if="revealed" class="flex flex-col gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
-      <p class="text-emerald-200">Token <strong>{{ revealed.name }}</strong> criado. Copie agora: ele não aparece de novo.</p>
+    <div v-if="revealed" class="flex flex-col gap-2 rounded-xl border border-success-500/40 bg-success-500/10 p-3 text-sm">
+      <p class="text-success-200">Token <strong>{{ revealed.name }}</strong> criado. Copie agora: ele não aparece de novo.</p>
       <div class="flex min-w-0 items-center gap-2">
         <code class="min-w-0 flex-1 truncate rounded-lg bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100">{{ revealed.token }}</code>
         <button class="btn btn-sm btn-secondary" @click="copy('token', revealed.token)"><Icon :name="copied === 'token' ? 'check' : 'copy'" class="h-3.5 w-3.5" /> Copiar</button>

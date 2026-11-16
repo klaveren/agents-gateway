@@ -154,7 +154,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
     <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
       <li v-for="schedule in schedulePage.items.value" :key="schedule.name">
         <button type="button" class="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-800/40" @click="openSchedule(schedule.name)">
-          <span class="h-2 w-2 shrink-0 rounded-full" :class="schedule.enabled ? 'bg-emerald-400' : schedule.pausedReason ? 'bg-rose-400' : 'bg-zinc-600'" />
+          <span class="h-2 w-2 shrink-0 rounded-full" :class="schedule.enabled ? 'bg-success-400' : schedule.pausedReason ? 'bg-rose-400' : 'bg-zinc-600'" />
           <span class="min-w-0 flex-1">
             <span class="block truncate font-mono text-[13px] text-zinc-200">{{ schedule.name }}</span>
             <span class="block truncate text-xs text-zinc-500">
@@ -241,7 +241,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
         <template v-else>
           <button type="button" :disabled="busy" class="btn btn-primary" @click="save">Salvar agendamento</button>
           <button type="button" :disabled="busy" class="btn btn-secondary" @click="runNow">Rodar agora</button>
-          <span v-if="started" class="self-center text-xs text-emerald-300">começou — acompanhe abaixo</span>
+          <span v-if="started" class="self-center text-xs text-success-300">começou — acompanhe abaixo</span>
           <button type="button" :disabled="busy" class="btn btn-danger ml-auto" @click="confirm = selected.name">Apagar</button>
         </template>
       </div>

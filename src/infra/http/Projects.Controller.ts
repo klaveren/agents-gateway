@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { IProjectCaller, ProjectsService } from '@application/Projects.Service'
-import { IProject, PROJECT_ENV_LIMITS, PROJECT_ROLES, TProjectRole } from '@domain/models/Project.Model'
+import { IProject, PROJECT_COLORS, PROJECT_ENV_LIMITS, PROJECT_ROLES, TProjectRole } from '@domain/models/Project.Model'
 import { resolveCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
@@ -35,6 +35,7 @@ const updateSchema = z.object({
     .max(PROJECT_ENV_LIMITS.mcp)
     .optional(),
 })
+const colorSchema = z.object({ color: z.enum(PROJECT_COLORS).nullable() })
 /** A lista inteira de membros, com o papel (`members`); `userIds` (sem papel) segue aceito: cada um fica com o que tinha. */
 const membersSchema = z
   .object({
@@ -75,7 +76,7 @@ function setupFailure(error: unknown): unknown {
  */
 export class ProjectsController {
   constructor(private readonly deps: IProjectsControllerDeps) {
-    for (const name of ['list', 'create', 'update', 'remove', 'members', 'setMembers', 'repositories', 'addRepository', 'removeRepository'] as const)
+    for (const name of ['list', 'create', 'update', 'setColor', 'remove', 'members', 'setMembers', 'repositories', 'addRepository', 'removeRepository'] as const)
       this[name] = this[name].bind(this)
   }
 
@@ -181,6 +182,19 @@ export class ProjectsController {
     })
   }
 
+  /**
+   * `PUT /projects/:id/color { color }` — 🎨 a paleta do destaque da tela neste projeto (`null` = o verde do tema). O admin
+   * do projeto. Desta máquina: vale também no projeto conectado, e não vai no catálogo.
+   */
+  async setColor(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const by = await requireProjectAdmin(this.deps.proof, id, 'setProjectColor')
+      const { color } = parseBody(colorSchema, req.body)
+      return this.toDto(this.deps.projects.setColor(id, color ?? undefined, by), 'admin')
+    })
+  }
+
   async remove(req: Request, res: Response): Promise<void> {
     await this.respond(
       res,
@@ -216,6 +230,7 @@ export class ProjectsController {
       name: project.name,
       ...(role ? { role } : {}),
       ...(project.description ? { description: project.description } : {}),
+      ...(project.color ? { color: project.color } : {}),
       ...(admin ? { folder: this.deps.projects.folderOf(project.id), members: this.deps.projects.members(project.id).length } : {}),
       // As fixas e os valores visíveis dos MCPs são configuração de quem administra: o membro não lê.
       ...(admin ? { env: project.env ?? {}, mcpEnv: project.mcpEnv ?? [] } : {}),

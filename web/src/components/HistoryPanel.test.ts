@@ -164,7 +164,7 @@ describe('HistoryPanel', () => {
     expect(lines[1].textContent).toContain('allowedTools: []')
     expect(lines[1].className).toContain('rose')
     expect(lines[2].textContent).toContain('+')
-    expect(lines[2].className).toContain('emerald')
+    expect(lines[2].className).toContain('success')
     expect(vi.mocked(api)).toHaveBeenCalledWith('/catalog/history/diff', { query: { kind: 'agent', id: 'theo', from: 2, to: 3 } })
 
     await click(host.querySelector('[data-test="compare-current"]'))

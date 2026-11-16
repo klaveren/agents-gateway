@@ -75,7 +75,7 @@ export function initials(name: string): string {
 }
 
 export const CLASSIFICATION_COLOR: Record<string, string> = {
-  green: 'bg-emerald-500',
+  green: 'bg-success-500',
   blue: 'bg-sky-500',
   amber: 'bg-amber-500',
   red: 'bg-rose-500',

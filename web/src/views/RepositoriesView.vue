@@ -224,7 +224,7 @@ watch(
         <p v-if="!project" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">Escolha um projeto no seletor do topo.</p>
         <template v-else>
           <p v-if="error" class="text-sm text-rose-300" data-test="repository-error">{{ error }}</p>
-          <p v-if="notice" class="text-sm text-emerald-300" data-test="repository-notice">{{ notice }}</p>
+          <p v-if="notice" class="text-sm text-success-300" data-test="repository-notice">{{ notice }}</p>
 
           <form v-if="adding" class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3" data-test="repository-form" @submit.prevent="add">
             <div class="flex flex-wrap gap-x-5 gap-y-2 text-sm text-zinc-300">
@@ -314,7 +314,7 @@ watch(
             <input v-model="git.lockMainCheckout" type="checkbox" class="accent-emerald-500" />
             Travar a troca de branch na pasta principal do repositório
           </label>
-          <p v-if="rulesSaved" class="text-sm text-emerald-300" data-test="git-saved">{{ rulesSaved }}</p>
+          <p v-if="rulesSaved" class="text-sm text-success-300" data-test="git-saved">{{ rulesSaved }}</p>
           <p v-if="rulesFailure" class="text-sm text-rose-300">{{ rulesFailure }}</p>
           <ul v-if="rulesIssues.length" class="list-disc pl-5 text-xs text-rose-300">
             <li v-for="item in rulesIssues" :key="item.field + item.message">{{ item.field ? `${item.field}: ` : '' }}{{ item.message }}</li>

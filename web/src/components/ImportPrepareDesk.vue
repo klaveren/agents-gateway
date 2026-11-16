@@ -174,7 +174,7 @@ const RUN_LABEL: Record<NonNullable<IImportBatchRun['run']>['state'], string> = 
       <span v-if="gone.length" class="text-amber-200" data-test="desk-gone" :title="gone.join(', ')">{{ gone.length }} saíram da fonte: ficam fora do Preparar</span>
       <span v-if="totals.idle" class="text-orange-300">{{ totals.idle }} parados</span>
       <span class="text-amber-300">{{ totals.review }} a revisar</span>
-      <span class="text-emerald-300">{{ totals.done }} aprovados</span>
+      <span class="text-success-300">{{ totals.done }} aprovados</span>
       <span class="flex-1" />
       <template v-if="!readonly && toStart && !confirming">
         <label class="flex items-center gap-1 text-zinc-400" title="Quantas conversas o construtor toca ao mesmo tempo">

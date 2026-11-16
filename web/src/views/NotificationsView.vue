@@ -231,7 +231,7 @@
         </button>
       </div>
 
-      <p v-if="outcome" class="rounded-xl border border-zinc-800 px-3 py-2 text-sm" :class="outcome.failed ? 'text-amber-300' : 'text-emerald-300'" data-test="bulk-outcome">
+      <p v-if="outcome" class="rounded-xl border border-zinc-800 px-3 py-2 text-sm" :class="outcome.failed ? 'text-amber-300' : 'text-success-300'" data-test="bulk-outcome">
         {{ count(outcome.done, ...DONE[outcome.verb]) }}.
         <template v-if="outcome.failed">{{ count(outcome.failed, 'não passou', 'não passaram') }}: o motivo está em cada um.</template>
       </p>

@@ -132,7 +132,7 @@ function context(tokens?: number): string {
       </button>
     </div>
 
-    <p v-if="note" class="text-xs text-emerald-300">{{ note }}</p>
+    <p v-if="note" class="text-xs text-success-300">{{ note }}</p>
     <p v-if="error" class="text-xs text-rose-300">{{ error }}</p>
 
     <form class="flex flex-wrap items-center gap-2" @submit.prevent="addById">

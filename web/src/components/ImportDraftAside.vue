@@ -181,7 +181,7 @@ async function approveQuick() {
         </div>
       </template>
     </section>
-    <p v-if="bulk" class="text-xs" :class="bulk.failed.length ? 'text-amber-200' : 'text-emerald-300'" data-test="quick-approve-result">
+    <p v-if="bulk" class="text-xs" :class="bulk.failed.length ? 'text-amber-200' : 'text-success-300'" data-test="quick-approve-result">
       {{ bulk.done }}/{{ bulk.total }} aprovado(s)<template v-if="bulk.failed.length"> · {{ bulk.failed.length }} não: {{ bulk.failed.join('; ') }}</template>
     </p>
 
@@ -208,7 +208,7 @@ async function approveQuick() {
           <span
             v-else-if="statuses[key]"
             class="rounded-full px-1.5 text-[10px]"
-            :class="statuses[key].state === 'review' ? 'bg-amber-500/15 text-amber-200' : statuses[key].state === 'approved' ? 'bg-emerald-500/15 text-emerald-200' : 'bg-zinc-800 text-zinc-300'"
+            :class="statuses[key].state === 'review' ? 'bg-amber-500/15 text-amber-200' : statuses[key].state === 'approved' ? 'bg-success-500/15 text-success-200' : 'bg-zinc-800 text-zinc-300'"
             :title="STATE_HINT[statuses[key].state]"
             data-test="import-draft-state"
           >

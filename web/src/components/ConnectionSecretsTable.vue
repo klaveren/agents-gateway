@@ -52,7 +52,7 @@ const toSave = computed(() => Object.fromEntries(Object.entries(values.value).fi
 const count = computed(() => Object.keys(toSave.value).length)
 
 function status(row: IRow): { label: string; tone: string } {
-  if (row.filled === row.total) return { label: 'Preenchida', tone: 'bg-emerald-500/15 text-emerald-300' }
+  if (row.filled === row.total) return { label: 'Preenchida', tone: 'bg-success-500/15 text-success-300' }
   if (row.filled > 0) return { label: `Parcial · ${row.filled} de ${row.total}`, tone: 'bg-amber-500/15 text-amber-200' }
   return { label: 'Pendente', tone: 'bg-zinc-700/50 text-zinc-300' }
 }
@@ -94,7 +94,7 @@ async function save(): Promise<void> {
     <summary class="cursor-pointer text-zinc-300">
       {{ rows.length }} variável(is) que o projeto pede
       <span v-if="pending" class="ml-1 rounded-full bg-amber-500/15 px-1.5 text-amber-200" data-test="secrets-pending">{{ pending }} pendente(s)</span>
-      <span v-else class="ml-1 text-emerald-300">· todas preenchidas</span>
+      <span v-else class="ml-1 text-success-300">· todas preenchidas</span>
     </summary>
     <div class="mt-2 flex flex-col gap-2">
       <p class="text-zinc-500">
@@ -156,7 +156,7 @@ async function save(): Promise<void> {
         </table>
       </div>
       <p v-if="error" class="text-rose-300" role="alert">{{ error }}</p>
-      <p v-if="note" class="text-emerald-300" data-test="secrets-note">{{ note }}</p>
+      <p v-if="note" class="text-success-300" data-test="secrets-note">{{ note }}</p>
       <div class="flex justify-end">
         <button type="button" class="btn btn-sm btn-primary" :disabled="!count || saving" data-test="secrets-save" @click="save">
           {{ saving ? 'Salvando…' : count ? `Salvar ${count} variável(is)` : 'Salvar' }}

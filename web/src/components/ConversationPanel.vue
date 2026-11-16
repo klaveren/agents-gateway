@@ -275,7 +275,7 @@
           <span class="shrink-0 rounded-full px-2 py-0.5 text-xs" :class="PLAN_TONE[statusOfPlan(plan)]" data-test="plan-status">{{ PLAN_STATUS_LABEL[statusOfPlan(plan)] }}</span>
         </button>
         <div v-if="openPlan === plan.id" class="flex flex-col gap-3 border-t border-zinc-800 p-3">
-          <p v-if="plan.feedback" class="text-xs" :class="plan.feedback.kind === 'approved' ? 'text-emerald-300' : 'text-rose-200'">
+          <p v-if="plan.feedback" class="text-xs" :class="plan.feedback.kind === 'approved' ? 'text-success-300' : 'text-rose-200'">
             {{ plan.feedback.kind === 'approved' ? 'Aprovado' : 'Ajustes pedidos' }} por {{ plan.feedback.by }}<template v-if="plan.feedback.text">: {{ plan.feedback.text }}</template>
             <span v-if="plan.feedback.delivered === false" class="text-zinc-500">· o agente vê no próximo turno</span>
           </p>

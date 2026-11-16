@@ -89,7 +89,7 @@ function clip(text: string, max = 800): string {
     <p v-if="state === 'drafting' && review?.adjust" class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-100" data-test="adjust-pending">
       Ajuste pedido por {{ review.adjust.by }}: {{ review.adjust.comment }}
     </p>
-    <p v-if="state === 'approved'" class="text-xs text-emerald-200" data-test="approved">
+    <p v-if="state === 'approved'" class="text-xs text-success-200" data-test="approved">
       Aprovado<template v-if="approvedBy"> por {{ approvedBy }}</template><template v-if="approvedAt"> em {{ fullTime(approvedAt) }}</template>. Nada foi ao catálogo ainda.
     </p>
 
@@ -165,7 +165,7 @@ function clip(text: string, max = 800): string {
       <details v-for="entry in changed" :key="entry.source" class="rounded-lg border border-zinc-800 text-xs" open data-test="draft-diff">
         <summary class="cursor-pointer px-2 py-1 text-zinc-300">
           <code class="break-all">{{ entry.source }}</code>
-          <span class="ml-2 text-emerald-300">+{{ entry.diff.added }}</span>
+          <span class="ml-2 text-success-300">+{{ entry.diff.added }}</span>
           <span class="ml-1 text-rose-300">−{{ entry.diff.removed }}</span>
         </summary>
         <div class="max-h-96 overflow-auto font-mono text-[11px]">
@@ -175,7 +175,7 @@ function clip(text: string, max = 800): string {
               v-for="(line, l) in hunk.lines"
               :key="l"
               class="px-2 break-all whitespace-pre-wrap"
-              :class="line.op === 'add' ? 'bg-emerald-500/10 text-emerald-200' : line.op === 'remove' ? 'bg-rose-500/10 text-rose-200' : 'text-zinc-400'"
+              :class="line.op === 'add' ? 'bg-success-500/10 text-success-200' : line.op === 'remove' ? 'bg-rose-500/10 text-rose-200' : 'text-zinc-400'"
               :data-test="`diff-${line.op}`"
             >{{ line.op === 'add' ? '+' : line.op === 'remove' ? '−' : ' ' }}{{ line.text }}</p>
           </div>
