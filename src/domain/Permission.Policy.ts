@@ -34,6 +34,12 @@ export interface IPermissionRule {
 /** A regra de SISTEMA (fixa, nunca gravada): pode poupar o que o padrão pega mas ela não quer (os modelos `.env.example`). */
 export interface ISystemRule extends IPermissionRule {
   except?: readonly string[]
+  /**
+   * ⚖️ A ÚNICA trava do sistema que cede: a LEITURA dos `.env`, quando o admin do projeto liga "os agentes deste projeto
+   * leem os .env" (`IPermissionLayers.envFiles`) — o ambiente de desenvolvimento precisa deles para subir a aplicação.
+   * Escrever, as credenciais do gateway, chaves e `secrets.*` seguem fechados sempre.
+   */
+  opensWith?: 'envFiles'
 }
 
 /** O que se pede: um comando (as palavras dele), um caminho, um destino, uma ferramenta, uma skill, um agente. */
@@ -62,6 +68,8 @@ export interface IPermissionVerdict {
 export interface IPermissionLayers {
   agent?: readonly IPermissionRule[]
   project?: readonly IPermissionRule[]
+  /** O admin do projeto liberou a leitura dos `.env` (ver `ISystemRule.opensWith`). Só o projeto, nunca o agente. */
+  envFiles?: boolean
 }
 
 export const PERMISSION_LIMITS = { rules: 300, pattern: 300, note: 200 } as const
@@ -76,9 +84,9 @@ export const SECRET_TEMPLATES: readonly string[] = ['**/*.example', '**/*.sample
 /** `secrets.*` só em arquivo de DADOS: `secrets.js`, `secrets.sh` são código (quem lê o valor), não o segredo. */
 const SECRET_DATA = ['json', 'yaml', 'yml', 'toml', 'env', 'txt', 'ini'].map((extension) => `**/secrets.${extension}`)
 
-const SECRETS: readonly { pattern: string; except?: readonly string[] }[] = [
-  { pattern: '**/.env' },
-  { pattern: '**/.env.*', except: SECRET_TEMPLATES },
+const SECRETS: readonly { pattern: string; except?: readonly string[]; envFile?: boolean }[] = [
+  { pattern: '**/.env', envFile: true },
+  { pattern: '**/.env.*', except: SECRET_TEMPLATES, envFile: true },
   // ⛔ A pasta de credenciais: o env do PRÓPRIO gateway mora num `.credentials/` do repositório do projeto (lido no
   // cerco em 07/11). ⚖️ Não `**/*.env`: o repositório versiona perfis `*.env` sem segredo, e mascará-los suja o git.
   { pattern: '**/.credentials/**' },
@@ -93,6 +101,7 @@ export const SYSTEM_RULES: readonly ISystemRule[] = [
       decision: 'deny' as const,
       note: 'segredo',
       ...(secret.except ? { except: secret.except } : {}),
+      ...(secret.envFile && category === 'read' ? { opensWith: 'envFiles' as const } : {}),
     })),
   ),
   ...['rm -rf /', 'rm -rf /*', 'rm -fr /', 'mkfs*', 'mkfs* *', 'shutdown *', 'reboot *', 'halt *', 'poweroff *', 'sudo *', 'doas *', 'chmod -R 777 /', 'dd * of=/dev/*'].map(
@@ -102,12 +111,20 @@ export const SYSTEM_RULES: readonly ISystemRule[] = [
   ...['sh', 'bash', 'zsh', 'dash'].map((pattern) => ({ category: 'terminal' as const, pattern, decision: 'deny' as const, note: 'shell lendo da entrada' })),
 ]
 
+/** A trava do sistema que o projeto abriu (ver `ISystemRule.opensWith`). */
+export function opened(rule: ISystemRule, layers: IPermissionLayers): boolean {
+  return rule.opensWith === 'envFiles' && layers.envFiles === true
+}
+
+/** Os padrões dos `.env` que a liberação do projeto abre para leitura (sem os modelos, que já se leem). */
+export const ENV_FILE_PATTERNS: readonly string[] = SECRETS.filter((secret) => secret.envFile).map((secret) => secret.pattern)
+
 /**
  * A decisão para um pedido, com as camadas do agente e do projeto. `system` extra: regras de sistema da instalação
  * (a pasta de dados do gateway, em caminho absoluto), somadas às fixas.
  */
 export function decide(subject: IPermissionSubject, layers: IPermissionLayers, system: readonly IPermissionRule[] = []): IPermissionVerdict {
-  const floor = [...SYSTEM_RULES, ...system].find((rule) => rule.decision === 'deny' && matches(rule, subject))
+  const floor = [...SYSTEM_RULES, ...system].find((rule) => rule.decision === 'deny' && !opened(rule, layers) && matches(rule, subject))
   if (floor) return { allowed: false, layer: 'system', rule: floor, reason: `negado pelo sistema (${floor.pattern}${floor.note ? ` — ${floor.note}` : ''})` }
   for (const layer of ['agent', 'project'] as const) {
     const hit = (layers[layer] ?? []).filter((rule) => matches(rule, subject))

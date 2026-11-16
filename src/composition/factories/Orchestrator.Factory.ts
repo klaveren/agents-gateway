@@ -22,6 +22,10 @@ import { ProviderBench } from '@infra/providers/Provider.Bench'
 import { SessionStore } from '@infra/session/Session.Store'
 import { makeAgents } from './Agents.Factory'
 import { makeProjects } from './Projects.Factory'
+import { makeSecretMasker } from './SecretMask.Factory'
+import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
+import { parseEnvFile } from '@domain/Env.File'
+import { readFile } from 'node:fs/promises'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
@@ -128,6 +132,18 @@ export function makeOrchestrator(): AgentProvider {
     })
   // O começo do turno: os MCPs do agente que caíram e voltaram entram já (sem esperar o backoff); os que seguem fora, avisados.
   provider.useMcpWake((allowedTools, projectId) => catalog.wakeMcp(allowedTools, projectId))
+  // ⚠️ Os `.env` que o admin do projeto deixou os agentes lerem: os valores mascarados na conversa desde o começo do turno.
+  provider.useEnvMask(async (sessionId, projectId, dir) => {
+    const projects = makeProjects()
+    if (!projects.exists(projectId) || !projects.get(projectId).readEnvFiles) return
+    for (const file of (await projectSandbox().envFiles?.(dir)) ?? []) {
+      const text = await readFile(file, 'utf8').catch(() => '')
+      makeSecretMasker().register(
+        sessionId,
+        parseEnvFile(text).map((entry) => ({ value: entry.value, label: `${entry.name} (.env)` })),
+      )
+    }
+  })
   provider.useProjectEnv((projectId) => projectFixedEnv(projectId))
   provider.useSecrets({
     envFor: (agentId, sessionId, project) => makeResourceSecrets().envFor(agentId, sessionId, project),

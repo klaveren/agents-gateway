@@ -74,8 +74,16 @@ export class PermissionsService implements IPermissionChecker {
   layers(asker: IPermissionAsker): IPermissionLayers & { system: readonly IPermissionRule[] } {
     const agent = asker.agentId ? this.agentRules(asker.agentId, asker.projectId) : undefined
     const project = asker.projectId ? this.repository.projectRules(asker.projectId).rules : undefined
-    return { ...(agent ? { agent } : {}), ...(project ? { project } : {}), system: this.system() }
+    const envFiles = !!asker.projectId && this.envFilesOf?.(asker.projectId) === true
+    return { ...(agent ? { agent } : {}), ...(project ? { project } : {}), ...(envFiles ? { envFiles } : {}), system: this.system() }
   }
+
+  /** O projeto liberou a leitura dos `.env` para os agentes dele (ver `ISystemRule.opensWith`)? Ligado na composição. */
+  useEnvFiles(envFilesOf: (projectId: string) => boolean): void {
+    this.envFilesOf = envFilesOf
+  }
+
+  private envFilesOf?: (projectId: string) => boolean
 
   private evaluate(asker: IPermissionAsker, subject: IPermissionSubject): IPermissionVerdict {
     const { system, ...layers } = this.layers(asker)

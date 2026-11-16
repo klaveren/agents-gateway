@@ -257,6 +257,7 @@ export const PROJECT_SHAPE: TShape<IProject> = {
   env: 'record',
   mcpEnv: { set: { server: 'value', name: 'value', value: 'value' } },
   color: { omit: 'a cor do destaque da tela é desta instalação, não conteúdo do catálogo' },
+  readEnvFiles: { omit: 'a leitura dos .env é decisão de segurança desta instalação, não conteúdo do catálogo' },
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },

@@ -150,6 +150,12 @@ export class ProjectsService {
     return saved
   }
 
+  /** ⚠️ Os agentes do projeto passam a ler (ou deixam de ler) os `.env` (ver `IProject.readEnvFiles`). Desta máquina. */
+  setReadEnvFiles(id: string, read: boolean, by: string): IProject {
+    this.get(id)
+    return this.projects.update(id, { readEnvFiles: read, updatedAt: this.now(), updatedBy: by })!
+  }
+
   /** 🎨 A paleta do destaque da tela no projeto (`undefined` = o verde do tema). Desta máquina: sem revisão no catálogo. */
   setColor(id: string, color: TProjectColor | undefined, by: string): IProject {
     this.get(id)

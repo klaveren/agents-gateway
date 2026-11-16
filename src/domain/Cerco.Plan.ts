@@ -1,5 +1,5 @@
 import { isAbsolute, join, relative } from 'node:path'
-import { decide, globToRegex, IPermissionLayers, IPermissionRule, ISystemRule, SYSTEM_RULES } from './Permission.Policy'
+import { decide, globToRegex, IPermissionLayers, IPermissionRule, ISystemRule, opened, SYSTEM_RULES } from './Permission.Policy'
 
 /**
  * O CERCO MONTADO DAS REGRAS: as listas de leitura e escrita que o sistema operacional aplica ao comando do terminal
@@ -129,7 +129,7 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
   const lists = (category: 'read' | 'write') => {
     const agentAllow = pick(layers.agent, category, 'allow')
     const projectAllow = pick(layers.project, category, 'allow')
-    const system = [...SYSTEM_RULES, ...(base.system ?? [])].filter((rule) => rule.category === category && rule.decision === 'deny')
+    const system = [...SYSTEM_RULES, ...(base.system ?? [])].filter((rule) => rule.category === category && rule.decision === 'deny' && !opened(rule, layers))
     const deny = [...system, ...pick(layers.agent, category, 'deny'), ...pick(layers.project, category, 'deny').filter((rule) => !reopened(rule.pattern, agentAllow))]
     // ⚖️ Numa worktree ou num repositório, a regra escrita da pasta do projeto vale ancorada nela. A NEGAÇÃO vale também
     // ancorada na raiz (falha fechada); a LIBERAÇÃO, não: `<raiz>/repositories/x/infra` não existe, e o gateway criava a

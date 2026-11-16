@@ -9,6 +9,8 @@ import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { requireProjectAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
+import { viaAccessToken } from './Auth.Controller'
+import { viaSessionCookie } from './Session.Cookie'
 import { IRepositoryEntry, listRepositories } from '@infra/workspace/Work.Folder'
 import { cloneRepository, initRepository, removeRepository, repositoriesInSetup, RepositorySetupError } from '@infra/workspace/Repository.Setup'
 
@@ -36,6 +38,7 @@ const updateSchema = z.object({
     .optional(),
 })
 const colorSchema = z.object({ color: z.enum(PROJECT_COLORS).nullable() })
+const envFilesSchema = z.object({ read: z.boolean() })
 /** A lista inteira de membros, com o papel (`members`); `userIds` (sem papel) segue aceito: cada um fica com o que tinha. */
 const membersSchema = z
   .object({
@@ -76,7 +79,7 @@ function setupFailure(error: unknown): unknown {
  */
 export class ProjectsController {
   constructor(private readonly deps: IProjectsControllerDeps) {
-    for (const name of ['list', 'create', 'update', 'setColor', 'remove', 'members', 'setMembers', 'repositories', 'addRepository', 'removeRepository'] as const)
+    for (const name of ['list', 'create', 'update', 'setColor', 'setEnvFiles', 'remove', 'members', 'setMembers', 'repositories', 'addRepository', 'removeRepository'] as const)
       this[name] = this[name].bind(this)
   }
 
@@ -195,6 +198,20 @@ export class ProjectsController {
     })
   }
 
+  /**
+   * `PUT /projects/:id/env-files { read }` — ⚠️ os agentes do projeto passam a LER os `.env` (a trava do sistema que cede, ver
+   * `ISystemRule.opensWith`). ⛔ Só o admin do projeto e só na TELA (como gravar uma variável secreta): nem token de acesso
+   * nem agente liga — o agente não libera para si mesmo. Desta máquina: vale também no projeto conectado.
+   */
+  async setEnvFiles(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const by = await requireProjectAdmin(this.deps.proof, id, 'setProjectEnvFiles')
+      if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem administra o projeto, entrando pela tela, libera a leitura dos .env.')
+      return this.toDto(this.deps.projects.setReadEnvFiles(id, parseBody(envFilesSchema, req.body).read, by), 'admin')
+    })
+  }
+
   async remove(req: Request, res: Response): Promise<void> {
     await this.respond(
       res,
@@ -231,6 +248,7 @@ export class ProjectsController {
       ...(role ? { role } : {}),
       ...(project.description ? { description: project.description } : {}),
       ...(project.color ? { color: project.color } : {}),
+      ...(project.readEnvFiles ? { readEnvFiles: true } : {}),
       ...(admin ? { folder: this.deps.projects.folderOf(project.id), members: this.deps.projects.members(project.id).length } : {}),
       // As fixas e os valores visíveis dos MCPs são configuração de quem administra: o membro não lê.
       ...(admin ? { env: project.env ?? {}, mcpEnv: project.mcpEnv ?? [] } : {}),

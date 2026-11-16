@@ -6,6 +6,7 @@ import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepositor
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
 import { makeAgents } from './Agents.Factory'
 import { makeCatalogHistory } from './CatalogHistory.Factory'
+import { makeProjects } from './Projects.Factory'
 import { makeSecretMasker } from './SecretMask.Factory'
 
 let service: PermissionsService | undefined
@@ -41,6 +42,11 @@ export function makePermissions(): PermissionsService {
     (text, sessionId) => makeSecretMasker().text(text, sessionId),
   )
   service.history.use(() => makeCatalogHistory())
+  // ⚠️ A leitura dos `.env` que o admin do projeto liberou (ver `IProject.readEnvFiles`): lida a cada pedido, vale na hora.
+  service.useEnvFiles((projectId) => {
+    const projects = makeProjects()
+    return projects.exists(projectId) && projects.get(projectId).readEnvFiles === true
+  })
   return service
 }
 
