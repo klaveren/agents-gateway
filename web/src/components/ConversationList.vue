@@ -208,6 +208,7 @@ function pick(action: () => void) {
         :active="conversation.id === conversations.selectedId"
         :unread="conversations.unread.has(conversation.id)"
         :running="conversations.running.has(conversation.id)"
+        :activity="conversations.activity[conversation.id]"
         :show-owner="projects.seesAll && conversations.everyone"
       />
       <div ref="sentinel" class="h-6" />

@@ -6,12 +6,33 @@ import { gatewayNotice } from '@/lib/notice'
 import { usePopover } from '@/lib/popover'
 import type { IConversation } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
-import { useConversationsStore } from '@/stores/conversations'
+import { useConversationsStore, type IConversationActivity } from '@/stores/conversations'
 import AgentAvatar from './AgentAvatar.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import Icon from './Icon.vue'
 
-const props = defineProps<{ conversation: IConversation; active: boolean; unread: boolean; running?: boolean; showOwner: boolean; archived?: boolean }>()
+const props = defineProps<{
+  conversation: IConversation
+  active: boolean
+  unread: boolean
+  running?: boolean
+  /** O que roda em segundo plano nela (vigias, processos, outros agentes): os selos que dizem que ela não está parada. */
+  activity?: IConversationActivity
+  showOwner: boolean
+  archived?: boolean
+}>()
+
+/** Os selos do segundo plano, com o que cada um quer dizer (o `title`). */
+const badges = computed(() => {
+  const found = props.activity
+  if (!found) return []
+  const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
+  return [
+    found.agents ? { key: 'agents', icon: 'agents' as const, count: found.agents, title: `${plural(found.agents, 'agente trabalhando', 'agentes trabalhando')} num pedido desta conversa` } : undefined,
+    found.processes ? { key: 'processes', icon: 'bolt' as const, count: found.processes, title: `${plural(found.processes, 'processo rodando', 'processos rodando')} em segundo plano` } : undefined,
+    found.watches ? { key: 'watches', icon: 'clock' as const, count: found.watches, title: `${plural(found.watches, 'vigia armada', 'vigias armadas')}: o gateway confere e acorda a conversa` } : undefined,
+  ].filter((badge) => !!badge)
+})
 
 /** A largura das duas ações reveladas (2 × 72px). */
 const ACTIONS_WIDTH = 144
@@ -285,8 +306,14 @@ async function remove(): Promise<void> {
               :class="CLASSIFICATION_COLOR[conversation.classification]"
               :title="CLASSIFICATION_LABEL[conversation.classification]"
             />
-            <span v-if="running" class="ml-auto h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-400" :class="{ 'ml-0': conversation.classification }" title="Rodando agora" />
-            <span v-if="unread" class="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-400" :class="{ 'ml-0': conversation.classification || running }" title="Nova atividade" />
+            <span v-if="badges.length" class="ml-auto flex shrink-0 items-center gap-1.5" :class="{ 'ml-0': conversation.classification }" data-test="row-activity">
+              <span v-for="badge in badges" :key="badge.key" class="flex items-center gap-0.5 text-[11px] text-sky-300" :title="badge.title" :data-activity="badge.key">
+                <Icon :name="badge.icon" class="h-3.5 w-3.5" />
+                <span v-if="badge.count > 1">{{ badge.count }}</span>
+              </span>
+            </span>
+            <span v-if="running" class="ml-auto h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-400" :class="{ 'ml-0': conversation.classification || badges.length }" title="Rodando agora" />
+            <span v-if="unread" class="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-400" :class="{ 'ml-0': conversation.classification || running || badges.length }" title="Nova atividade" />
           </div>
         </div>
       </RouterLink>
