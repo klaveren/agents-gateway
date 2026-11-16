@@ -36,7 +36,7 @@ export interface ISystemRule extends IPermissionRule {
   except?: readonly string[]
   /**
    * ⚖️ A ÚNICA trava do sistema que cede: a LEITURA dos `.env`, quando o admin do projeto liga "os agentes deste projeto
-   * leem os .env" (`IPermissionLayers.envFiles`) — o ambiente de desenvolvimento precisa deles para subir a aplicação.
+   * leem os .env" para o agente (`IPermissionLayers.envFiles`) — o ambiente de desenvolvimento precisa deles para subir a aplicação.
    * Escrever, as credenciais do gateway, chaves e `secrets.*` seguem fechados sempre.
    */
   opensWith?: 'envFiles'
@@ -68,7 +68,7 @@ export interface IPermissionVerdict {
 export interface IPermissionLayers {
   agent?: readonly IPermissionRule[]
   project?: readonly IPermissionRule[]
-  /** O admin do projeto liberou a leitura dos `.env` (ver `ISystemRule.opensWith`). Só o projeto, nunca o agente. */
+  /** O admin do projeto liberou a leitura dos `.env` para ESTE agente (ver `ISystemRule.opensWith`). Nunca o próprio agente. */
   envFiles?: boolean
 }
 

@@ -2185,9 +2185,9 @@ export const OPENAPI_DOCUMENT = {
     '/projects/{id}/env-files': {
       put: {
         summary:
-          "Let the agents of this project READ its `.env` files (`{ read: true }`): the only system lock that opens, because a development environment needs them to run the application. Read only — writing `.env`, the gateway's own credentials (`.credentials/`), keys and `secrets.*` stay closed. The values are masked in everything the conversation shows and records. Project administrators, on the SCREEN only: an access token or an agent gets 403 (an agent never opens this for itself). Local to this installation",
+          "Choose which agents of this project READ its `.env` files (`{ agents: [agentId] }`, the WHOLE list; empty = none). Per agent: a delegated agent does not inherit it. The only system lock that opens, because a development environment needs them to run the application. Read only — writing `.env`, the gateway's own credentials (`.credentials/`), keys and `secrets.*` stay closed. The values are masked in everything the conversation shows and records. Project administrators, on the SCREEN only: an access token or an agent gets 403 (an agent never opens this for itself). Local to this installation",
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        requestBody: { required: true, ...json({ type: 'object', required: ['read'], properties: { read: { type: 'boolean' } } }) },
+        requestBody: { required: true, ...json({ type: 'object', required: ['agents'], properties: { agents: { type: 'array', items: { type: 'string' } } } }) },
         responses: { '200': { description: 'The project', ...json(envelope({ type: 'object' })) }, '403': failures['403'], '404': failures['404'], '422': failures['422'] },
       },
     },

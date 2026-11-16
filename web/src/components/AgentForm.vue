@@ -48,6 +48,7 @@
   import AgentModelGroup from './AgentModelGroup.vue'
   import PermissionCategoryTabs from './PermissionCategoryTabs.vue'
   import PermissionRules from './PermissionRules.vue'
+  import EnvFilesToggle from './EnvFilesToggle.vue'
   import PermissionTester from './PermissionTester.vue'
   import PermissionRequests from './PermissionRequests.vue'
   import type { IPermissionRequest } from '@/lib/permissionRequests'
@@ -1751,6 +1752,8 @@
         <p class="text-xs text-zinc-500">
           Valem antes das do projeto: liberam o que o projeto fechou, ou fecham mais. Sem regra no agente nem no projeto, negado. As do sistema valem sempre.
         </p>
+        <!-- ⚠️ A leitura dos `.env` por este agente no projeto: só quem administra o projeto, e só na tela. -->
+        <EnvFilesToggle v-if="agent && !creating && projects.manages && (agent.projectId ?? projects.current)" :project-id="(agent.projectId ?? projects.current)!" :agent-id="agent.id" />
         <PermissionCategoryTabs v-model="permissionSection" :rules="shownRules" :exclude="lite ? ['delegate', ...LITE_HIDDEN_PERMISSIONS] : ['delegate']" :active="permissionPane === 'rules'" @pick="permissionPane = 'rules'">
           <!-- O nível de acesso dos CLIs por assinatura (o sandbox deles): só quando algum provedor do agente o tem. -->
           <button

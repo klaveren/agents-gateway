@@ -1,6 +1,6 @@
 /**
  * Lê um arquivo `.env` (`NOME=valor`, uma por linha): os valores que a máscara da conversa registra quando o projeto libera
- * a leitura dos `.env` (ver `IProject.readEnvFiles`). Ignora vazias e comentários, aceita `export NOME=…` e tira as aspas
+ * a leitura dos `.env` (ver `IProject.envFileAgents`). Ignora vazias e comentários, aceita `export NOME=…` e tira as aspas
  * que cercam o valor inteiro. Sem interpolação (`${OUTRA}` fica como está).
  */
 export function parseEnvFile(text: string): Array<{ name: string; value: string }> {

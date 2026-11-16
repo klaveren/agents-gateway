@@ -33,11 +33,11 @@ export interface IProject {
   /** 🎨 A cor do destaque da tela neste projeto (uma paleta do Tailwind, ver `PROJECT_COLORS`). Desta máquina: não vai no catálogo. */
   color?: TProjectColor
   /**
-   * ⚠️ Os agentes do projeto LEEM os `.env` (a única trava do sistema que cede, ver `ISystemRule.opensWith`): o ambiente de
-   * desenvolvimento precisa deles para subir a aplicação. Só leitura; os valores são mascarados na conversa. Desta máquina,
-   * ligado pelo admin do projeto na tela.
+   * ⚠️ Os agentes do projeto que LEEM os `.env` (a única trava do sistema que cede, ver `ISystemRule.opensWith`): o ambiente
+   * de desenvolvimento precisa deles para subir a aplicação. Um a um, por id — o agente delegado não herda. Só leitura; os
+   * valores são mascarados na conversa. Desta máquina (nunca no catálogo), escolhidos pelo admin do projeto na tela.
    */
-  readEnvFiles?: boolean
+  envFileAgents?: string[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string
@@ -72,3 +72,8 @@ export interface IProjectMember {
 export const PROJECT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,31}$/
 /** O projeto que a migração cria para o que existia antes dos projetos. */
 export const DEFAULT_PROJECT_ID = 'geral'
+
+/** ⚠️ O agente lê os `.env` deste projeto (ver `IProject.envFileAgents`)? */
+export function readsEnvFiles(project: Pick<IProject, 'envFileAgents'> | undefined, agentId: string | undefined): boolean {
+  return !!agentId && !!project?.envFileAgents?.includes(agentId)
+}

@@ -13,6 +13,15 @@ const make = () =>
   )
 
 describe('PermissionsService', () => {
+  it('⚠️ a leitura dos .env é por AGENTE: só o liberado no projeto a recebe; sem agente, nunca', () => {
+    const service = make()
+    service.useEnvFiles((projectId, agentId) => projectId === 'xpto' && agentId === 'dev')
+    assert.strictEqual(service.layers({ agentId: 'dev', projectId: 'xpto' }).envFiles, true)
+    assert.strictEqual(service.layers({ agentId: 'outro', projectId: 'xpto' }).envFiles, undefined)
+    assert.strictEqual(service.layers({ agentId: 'dev', projectId: 'beta' }).envFiles, undefined)
+    assert.strictEqual(service.layers({ projectId: 'xpto' }).envFiles, undefined)
+  })
+
   it('projeto e agente em camadas; o registro guarda a decisão, com regra e camada', () => {
     const service = make()
     service.saveProjectRules(

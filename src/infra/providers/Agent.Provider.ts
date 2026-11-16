@@ -254,11 +254,11 @@ export class AgentProvider implements IAgentProvider {
     // ⚖️ Os servidores MCP do agente tentam conectar agora (ver `ToolCatalog.wakeMcp`); o que segue fora vira aviso, ao
     // agente (na entrada do modelo) e à pessoa (no turno).
     const mcpDown = this.mcpWake ? await this.mcpWake(agent.allowedTools, conversationProject).catch(() => []) : []
-    // ⚠️ O projeto liberou a leitura dos `.env`: os valores entram na máscara da conversa já no começo do turno — a leitura
+    // ⚠️ O projeto liberou a leitura dos `.env` para este agente: os valores entram na máscara da conversa já no começo do turno — a leitura
     // nativa do Claude e do Codex não passa pelo terminal do gateway (que também registra, a cada comando).
     if (this.envMask && conversationProject) {
       const dir = workFolderOf(record.metadata, conversationProject)?.dir ?? projectWorkspacePath(conversationProject)
-      await this.envMask(sessionId, conversationProject, dir).catch(() => undefined)
+      await this.envMask(sessionId, conversationProject, agent.id, dir).catch(() => undefined)
     }
     const lead = [panelNote, mcpDown.length ? mcpDownNote(mcpDown) : ''].filter(Boolean).join('\n\n')
     const message = lead ? { ...asked, text: `${lead}\n\n${asked.text}` } : asked
@@ -638,12 +638,12 @@ export class AgentProvider implements IAgentProvider {
     this.panels = panels
   }
 
-  /** Registra na máscara da conversa os valores dos `.env` que o projeto deixou ler (ver `IProject.readEnvFiles`). */
-  useEnvMask(register: (sessionId: string, projectId: string, dir: string) => Promise<void>): void {
+  /** Registra na máscara da conversa os valores dos `.env` que o projeto deixou ler (ver `IProject.envFileAgents`). */
+  useEnvMask(register: (sessionId: string, projectId: string, agentId: string, dir: string) => Promise<void>): void {
     this.envMask = register
   }
 
-  private envMask?: (sessionId: string, projectId: string, dir: string) => Promise<void>
+  private envMask?: (sessionId: string, projectId: string, agentId: string, dir: string) => Promise<void>
 
   /** Acorda os servidores MCP do agente no começo do turno; devolve os que seguem fora (ver `ToolCatalog.wakeMcp`). */
   useMcpWake(wake: (allowedTools: readonly string[], projectId?: string) => Promise<string[]>): void {

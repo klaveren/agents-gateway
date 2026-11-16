@@ -150,10 +150,11 @@ export class ProjectsService {
     return saved
   }
 
-  /** ⚠️ Os agentes do projeto passam a ler (ou deixam de ler) os `.env` (ver `IProject.readEnvFiles`). Desta máquina. */
-  setReadEnvFiles(id: string, read: boolean, by: string): IProject {
+  /** ⚠️ A lista INTEIRA dos agentes do projeto que leem os `.env` (ver `IProject.envFileAgents`); vazia = nenhum. Desta máquina. */
+  setEnvFileAgents(id: string, agents: string[], by: string): IProject {
     this.get(id)
-    return this.projects.update(id, { readEnvFiles: read, updatedAt: this.now(), updatedBy: by })!
+    const unique = [...new Set(agents.map((agent) => agent.trim()).filter(Boolean))].sort()
+    return this.projects.update(id, { envFileAgents: unique, updatedAt: this.now(), updatedBy: by })!
   }
 
   /** 🎨 A paleta do destaque da tela no projeto (`undefined` = o verde do tema). Desta máquina: sem revisão no catálogo. */
