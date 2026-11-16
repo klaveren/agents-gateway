@@ -34,11 +34,12 @@
   )
 
   // O cabeçalho acompanha a lista: o evento ao vivo traz título, contagem e rótulo novos.
+  // ⚖️ Só a conversa que MUDOU relê os turnos: a que acabou de ser aberta já vem lida pelo `open` (eram dois pedidos a cada troca).
   watch(
     () => (props.id ? conversations.find(props.id) : undefined),
-    (conversation) => {
+    (conversation, before) => {
       thread.setHeader(conversation)
-      if (conversation && !thread.sending) void thread.refresh()
+      if (conversation && before?.id === conversation.id && !thread.sending) void thread.refresh()
     },
   )
 </script>

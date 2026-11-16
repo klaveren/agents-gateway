@@ -1,4 +1,7 @@
 import assert from 'node:assert'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -15,6 +18,33 @@ describe('SqliteAgentRepository', () => {
     modes: [EMode.CHAT, EMode.AGENT],
     allowedTools: [],
   }
+
+  it('⚖️ a lista guardada vale até a tabela mudar: gravação desta conexão ou de outra no mesmo arquivo', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'gw-agents-')), 'gateway.db')
+    const repo = new SqliteAgentRepository(path)
+    const other = new SqliteAgentRepository(path)
+    try {
+      repo.save(agent, 'ana@x.test')
+      const first = repo.list()
+      assert.strictEqual(repo.list()[0], first[0], 'a mesma leitura, sem reler o banco')
+      repo.save({ ...agent, name: 'Jurídico 2' }, 'ana@x.test')
+      assert.strictEqual(repo.list()[0]?.name, 'Jurídico 2')
+      other.save({ ...agent, id: 'outro', name: 'Outro' }, 'bia@x.test')
+      assert.deepStrictEqual(
+        repo.list().map((item) => item.id),
+        ['juridico', 'outro'],
+      )
+      other.delete('outro')
+      assert.deepStrictEqual(
+        repo.list().map((item) => item.id),
+        ['juridico'],
+      )
+    } finally {
+      repo.close()
+      other.close()
+      rmSync(dirname(path), { recursive: true, force: true })
+    }
+  })
 
   it('grava, relê inteiro e atualiza sem trocar a data de criação', async () => {
     const repo = new SqliteAgentRepository(':memory:')

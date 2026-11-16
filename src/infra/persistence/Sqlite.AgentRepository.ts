@@ -40,14 +40,33 @@ export class SqliteAgentRepository implements IAgentRepository {
     this.db.exec(SCHEMA)
   }
 
+  /**
+   * ⚖️ A LISTA GUARDADA: o catálogo a lê a cada conferência de permissão (toda ferramenta de todo turno), e reler e
+   * reinterpretar o banco inteiro a cada vez custava ~1 s de servidor parado a cada 75 s (perfil de 16/11). Vale até a
+   * TABELA mudar: gravação desta conexão (os métodos de escrita limpam) ou de outra (a assinatura abaixo muda). O
+   * `PRAGMA data_version` não serve: muda com qualquer gravação no arquivo, e as conversas gravam o tempo todo.
+   * ⚠️ Os agentes voltam compartilhados entre as leituras: ninguém os altera depois de lidos (é cópia o que se grava).
+   */
+  private cached?: { version: string; agents: IStoredAgent[] }
+
+  /** A assinatura da tabela: quantos, a última alteração e o tamanho somado dos documentos. Uma linha, sem ler documento. */
+  private dataVersion(): string {
+    const row = this.db.prepare('SELECT count(*) AS n, max(updated_at) AS at, total(length(document)) AS size FROM agents').get() as TRow | undefined
+    return `${String(row?.n)}|${String(row?.at)}|${String(row?.size)}`
+  }
+
   list(): IStoredAgent[] {
     try {
+      const version = this.dataVersion()
+      if (this.cached && this.cached.version === version) return [...this.cached.agents]
       const rows = this.db.prepare('SELECT * FROM agents ORDER BY created_at ASC, id ASC').all() as TRow[]
 
-      return rows.flatMap((row) => {
+      const agents = rows.flatMap((row) => {
         const agent = this.toAgent(row)
         return agent ? [agent] : []
       })
+      this.cached = { version, agents }
+      return [...agents]
     } catch (error) {
       // ⛔ Ler não derruba: a lista vem vazia e o resto do gateway segue.
       console.warn('[sqlite] não foi possível ler os agentes; seguindo sem nenhum.', error)
@@ -57,6 +76,7 @@ export class SqliteAgentRepository implements IAgentRepository {
 
   /** ⛔ Lança: é ação de quem administra, e falhar em silêncio diria "salvo". */
   save(agent: IAgent, by: string): IStoredAgent {
+    this.cached = undefined
     const now = new Date().toISOString()
 
     this.db
@@ -75,6 +95,7 @@ export class SqliteAgentRepository implements IAgentRepository {
    * de voltar no boot seguinte; id que já existe não é sobrescrito.
    */
   seedOnce(agents: readonly IAgent[], by: string): void {
+    this.cached = undefined
     // ⚖️ A marca é POR AGENTE (`seeded:<id>`): um agente novo na semente chega a um banco antigo, e um
     // apagado não volta.
     const now = new Date().toISOString()
@@ -119,6 +140,7 @@ export class SqliteAgentRepository implements IAgentRepository {
   }
 
   migrateOnce(key: string, agentId: string, change: (agent: IAgent) => IAgent | undefined, by: string): void {
+    this.cached = undefined
     const mark = `migration:${key}:${agentId}`
     if (this.db.prepare('SELECT 1 FROM agent_meta WHERE key = ?').get(mark)) return
     const row = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId) as TRow | undefined
@@ -135,6 +157,7 @@ export class SqliteAgentRepository implements IAgentRepository {
   }
 
   migrateAllOnce(key: string, change: (agent: IAgent) => IAgent | undefined, by: string): void {
+    this.cached = undefined
     const mark = `migration:${key}`
     if (this.db.prepare('SELECT 1 FROM agent_meta WHERE key = ?').get(mark)) return
     for (const { createdAt: _created, updatedAt: _updated, updatedBy: _by, ...agent } of this.list()) {
@@ -147,6 +170,7 @@ export class SqliteAgentRepository implements IAgentRepository {
   }
 
   delete(id: string): boolean {
+    this.cached = undefined
     return this.db.prepare('DELETE FROM agents WHERE id = ?').run(id).changes > 0
   }
 

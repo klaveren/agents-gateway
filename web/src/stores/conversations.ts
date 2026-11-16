@@ -156,6 +156,8 @@ export const useConversationsStore = defineStore('conversations', () => {
   let streamId: string | undefined
   let followed: string | undefined
   let following = Promise.resolve()
+  /** O último `follow` enviado (o stream e a conversa): repetir o mesmo não vai ao servidor. */
+  let sentFollow: { stream: string | undefined; target: string | null } = { stream: undefined, target: null }
   const turnListeners = new Set<(frame: TTurnFrame) => void>()
   let generation = 0
 
@@ -385,16 +387,25 @@ export const useConversationsStore = defineStore('conversations', () => {
     sendFollow()
   }
 
-  /** Em fila: dois pedidos seguidos (sair de uma conversa, abrir outra) chegam na ordem. */
+  /**
+   * Em fila: dois pedidos seguidos (sair de uma conversa, abrir outra) chegam na ordem. ⚖️ O que vai é o `followed` da HORA
+   * do envio, e só se mudou desde o último: sair e abrir no mesmo instante viram um pedido só (eram dois a cada troca).
+   */
   function sendFollow(): void {
     const id = streamId
     if (!id) return
-    following = following.then(() =>
-      api(`/conversations/events/${encodeURIComponent(id)}/follow`, { method: 'PUT', body: { sessionId: followed ?? null } }).then(
+    following = following.then(() => {
+      const target = followed ?? null
+      if (id === sentFollow.stream && target === sentFollow.target) return undefined
+      sentFollow = { stream: id, target }
+      return api(`/conversations/events/${encodeURIComponent(id)}/follow`, { method: 'PUT', body: { sessionId: target } }).then(
         () => undefined,
-        () => undefined,
-      ),
-    )
+        () => {
+          // Falhou: o próximo pedido manda de novo.
+          sentFollow = { stream: undefined, target: null }
+        },
+      )
+    })
   }
 
   function onTurn(listener: (frame: TTurnFrame) => void): () => void {

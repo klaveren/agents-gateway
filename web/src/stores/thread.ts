@@ -170,11 +170,15 @@ export const useThreadStore = defineStore('thread', () => {
   /** Sessão que nasceu num envio que falhou depois: a próxima tentativa que der certo ainda tem de trocar a rota. */
   let unrouted: string | undefined
 
-  /** Passa para outra conversa: derruba o stream em andamento e invalida o que ele ainda entregar. */
-  function leave(): number {
+  /**
+   * Passa para outra conversa: derruba o stream em andamento e invalida o que ele ainda entregar. `switching`: vai abrir
+   * outra logo em seguida — não manda deixar de acompanhar (o `open` troca o acompanhamento depois do histórico; até lá,
+   * o turno ao vivo da de antes é ignorado em `onLive`). Eram dois pedidos a cada troca.
+   */
+  function leave(switching = false): number {
     inFlight?.abort()
     inFlight = undefined
-    inbox.follow(undefined)
+    if (!switching) inbox.follow(undefined)
     followed = undefined
     following.value = false
     sending.value = false
@@ -185,7 +189,7 @@ export const useThreadStore = defineStore('thread', () => {
   }
 
   async function open(id: string, known?: IConversation, options: { all?: boolean } = {}): Promise<void> {
-    const current = leave()
+    const current = leave(true)
     sessionId.value = id
     header.value = known
     agentId.value = undefined
