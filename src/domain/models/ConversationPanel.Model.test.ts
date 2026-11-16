@@ -69,7 +69,7 @@ describe('ConversationPanel.Model', () => {
     assert.match(note, /Perguntas para a pessoa \(.*feche com board answer\):\n- q1 Aprovar\?/)
     assert.doesNotMatch(note, /Ledgers/)
     assert.match(note, /\(1 entregue;/)
-    assert.match(note, /um item por pedido \(add\)\. Etapas do item em andamento: update_todos/)
+    assert.match(note, /um item por pedido \(add\) — o que vira plano ou passo de plano \(plan\) não ganha item: o passo já é o item\. Etapas do item em andamento: update_todos/)
     assert.match(panelTurnNote(panel, true), /não entrou no board/)
     assert.strictEqual(panelTurnNote(emptyPanel()), '')
     assert.match(panelTurnNote(emptyPanel(), true), /não entrou no board/)
