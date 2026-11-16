@@ -10,7 +10,7 @@ import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
 import { readFileSync, rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { parseEnvFile } from '@domain/Env.File'
+import { envSecrets } from '@domain/Env.File'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -307,10 +307,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       const files = await sandbox.envFiles(root).catch(() => [])
       for (const file of files) {
         const text = await readFile(file, 'utf8').catch(() => '')
-        deps.mask.register(
-          context.sessionId,
-          parseEnvFile(text).map((entry) => ({ value: entry.value, label: `${entry.name} (.env)` })),
-        )
+        deps.mask.register(context.sessionId, envSecrets(text))
       }
     }
     // As portas locais que as regras liberam EXATAS (`localhost:27017`): no Linux, um encaminhador por porta; no Mac, a porta
@@ -500,10 +497,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
               } catch {
                 // Sem o arquivo, nada a mascarar: a leitura responde o erro dela.
               }
-              deps.mask.register(
-                context.sessionId,
-                parseEnvFile(text).map((entry) => ({ value: entry.value, label: `${entry.name} (.env)` })),
-              )
+              deps.mask.register(context.sessionId, envSecrets(text))
             }
             return verdict.allowed ? undefined : verdict.reason
           },

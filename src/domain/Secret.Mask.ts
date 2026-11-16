@@ -135,7 +135,8 @@ export function maskText(text: string, known: readonly IKnownSecret[], options: 
   }
 }
 
-function sensitive(name: string, options: IMaskOptions): boolean {
+/** O nome do campo diz segredo (`…TOKEN`, `…PASSWORD`) e não termina num nome que nunca é (`…_URL`, `…_HOST`)? */
+export function sensitive(name: string, options: IMaskOptions = {}): boolean {
   const clean = name.replace(/^["']|["']$/g, '')
   if ((options.extraSafeNames ?? []).some((safe) => clean.toUpperCase().endsWith(safe.toUpperCase()))) return false
   if ((options.extraSecretNames ?? []).some((secret) => clean.toUpperCase().includes(secret.toUpperCase()))) return true

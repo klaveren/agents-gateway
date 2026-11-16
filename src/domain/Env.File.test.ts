@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { parseEnvFile } from './Env.File'
+import { envSecrets, parseEnvFile } from './Env.File'
 import { cercoPlan } from './Cerco.Plan'
 import { decide } from './Permission.Policy'
 
@@ -11,6 +11,36 @@ describe('Env.File — os valores de um .env', () => {
       { name: 'DB_URL', value: 'postgres://x' },
       { name: 'TOKEN', value: 't-1' },
     ])
+  })
+})
+
+describe('Env.File — só o segredo do .env vai para a máscara', () => {
+  const env = [
+    'MINIO_BUCKET=logiccus',
+    'KAFKA_CLIENT_ID=logiccus-api',
+    'MONGO_PROVIDER_DATABASE=logiccus',
+    'AGENTS_GATEWAY_BASE_URL=http://localhost:3210',
+    'AUTH_URL=http://localhost:4000/auth',
+    'PORT=4000',
+    'JWT_SECRET=um-segredo-qualquer-123',
+    'GITHUB_TOKEN=abc12345678',
+    'MINIO_SECRET_KEY=minio-secret-999',
+    'ENCRYPTION_KEY=0011223344556677',
+    'DB_PASSWORD=senha-do-banco',
+    'MONGO_URI=mongodb://app:S3nha%40forte@db:27017/logiccus',
+    'PAY_SK=Zx98Yw76Vu54Ts32Rq10Po98Nm',
+    'REQUEST_ID_HEADER=x-request-id',
+  ].join('\n')
+
+  it('⚖️ bucket, client id, banco, URL e porta NÃO entram (mascarar tudo deixava o board ilegível); token, senha, chave, sim', () => {
+    const labels = envSecrets(env).map((item) => item.label.replace(' (.env)', ''))
+    for (const name of ['MINIO_BUCKET', 'KAFKA_CLIENT_ID', 'MONGO_PROVIDER_DATABASE', 'AGENTS_GATEWAY_BASE_URL', 'AUTH_URL', 'PORT', 'REQUEST_ID_HEADER'])
+      assert.ok(!labels.includes(name), name)
+    for (const name of ['JWT_SECRET', 'GITHUB_TOKEN', 'MINIO_SECRET_KEY', 'ENCRYPTION_KEY', 'DB_PASSWORD', 'PAY_SK']) assert.ok(labels.includes(name), name)
+  })
+
+  it('a URL com senha entra só pela senha (decodificada): o resto da URL segue legível', () => {
+    assert.deepStrictEqual(envSecrets('MONGO_URI=mongodb://app:S3nha%40forte@db:27017/logiccus'), [{ value: 'S3nha@forte', label: 'MONGO_URI (.env)' }])
   })
 })
 
