@@ -6169,6 +6169,17 @@ export const OPENAPI_DOCUMENT = {
       },
     },
     '/conversations/{id}': {
+      patch: {
+        summary:
+          'Rename a conversation. The same people who can archive it. A conversation with no turn yet keeps the title for its first turn (instead of the first line of the first message)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', required: ['title'], properties: { title: { type: 'string', minLength: 1, maxLength: 120 } } }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } } })) },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
       delete: {
         summary: 'Delete the persisted record (header and turns). The owner or an administrator. A live session, if any, keeps running: end it with `DELETE /sessions/{id}`',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
@@ -6221,6 +6232,11 @@ export const OPENAPI_DOCUMENT = {
                       'A repository of the project (`<project>/repositories/<name>`). The agent works there: cwd, file tools and sandbox root. Needs the agent permission `repository <name>`. Fixed for the conversation.',
                   },
                   worktree: { type: 'string', description: 'A git worktree of that repository, by folder name or branch. Requires `repository`. The gateway does not create it.' },
+                  title: {
+                    type: 'string',
+                    maxLength: 120,
+                    description: 'The conversation title. Default: the first line of the first message. Rename later with `PATCH /conversations/{id}`.',
+                  },
                   callbackUrl: {
                     type: 'string',
                     format: 'uri',

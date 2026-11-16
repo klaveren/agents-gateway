@@ -98,6 +98,8 @@ export interface IConversationRepository {
   }): Promise<IConversationSession[]>
   /** Arquiva (ou desarquiva) a conversa: sai da caixa de entrada, não é retomada sozinha, nada some. */
   setArchived?(sessionId: string, archived: boolean, by?: string): Promise<void>
+  /** Renomeia a conversa. `false`: não está no banco (ainda sem turno, ou apagada). */
+  setTitle?(sessionId: string, title: string): Promise<boolean>
   /** Quantas arquivadas a pessoa tem. */
   countArchived?(owner?: IOwnerFilter | null): Promise<number>
 

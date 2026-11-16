@@ -437,6 +437,34 @@ describe('SendMessageUseCase', () => {
     )
   })
 
+  it('⚖️ o título escolhido antes do primeiro turno vence o tirado da pergunta, e vale só uma vez', async () => {
+    const repository = new RecordingRepository()
+    const build = (turns: number) =>
+      new SendMessageUseCase(
+        stubProvider({
+          describe: () => session({ turns }),
+          sendMessage: async function* () {
+            yield { type: 'text.delta' as const, sessionId: 's', timestamp: new Date(), payload: { text: 'ok' } }
+          },
+        }),
+        repository,
+      )
+    const useCase = build(0)
+    useCase.chooseTitle('s', '  Relatório de vendas  ')
+    let done = repository.recorded()
+    for await (const _event of useCase.execute('s', { text: 'primeira pergunta' })) void _event
+    await done
+    assert.deepStrictEqual(
+      repository.sessions.map((item) => item.title),
+      ['Relatório de vendas', 'Relatório de vendas'],
+    )
+    // Consumido: outra conversa (ou o mesmo id de novo) volta à regra de sempre.
+    done = repository.recorded()
+    for await (const _event of useCase.execute('s', { text: 'outra pergunta' })) void _event
+    await done
+    assert.strictEqual(repository.sessions.at(-1)?.title, 'outra pergunta')
+  })
+
   it('grava o cabeçalho antes do primeiro turno (a conversa do importador), com as marcas e sem título; sessão fora do store não grava', async () => {
     const repository = new RecordingRepository()
     const metadata = { builder: 'knowledge', import: { job: 'j', keys: ['knowledge:a'] } }

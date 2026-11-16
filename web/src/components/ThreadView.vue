@@ -53,6 +53,33 @@
 
   const header = computed(() => thread.header)
 
+  /** ⚖️ RENOMEAR: clicar no título abre o campo; Enter ou sair do campo grava, Esc desiste. Conversa só leitura não renomeia. */
+  const canRename = computed(() => !!thread.sessionId && !thread.readOnly)
+  const renaming = ref(false)
+  const renameDraft = ref('')
+  const renameError = ref<string>()
+  const renameInput = ref<HTMLInputElement>()
+  async function startRename(): Promise<void> {
+    renameDraft.value = header.value?.title ?? ''
+    renameError.value = undefined
+    renaming.value = true
+    await nextTick()
+    renameInput.value?.select()
+  }
+  async function saveTitle(): Promise<void> {
+    if (!renaming.value) return
+    renaming.value = false
+    const id = thread.sessionId
+    const title = renameDraft.value.trim()
+    if (!id || !title || title === header.value?.title) return
+    try {
+      await api(`/conversations/${encodeURIComponent(id)}`, { method: 'PATCH', body: { title } })
+      if (thread.header?.id === id) thread.header = { ...thread.header, title }
+    } catch (failure) {
+      renameError.value = failure instanceof Error ? failure.message : 'Não foi possível renomear.'
+    }
+  }
+
   /** As alterações (o painel tipo IDE): só numa conversa aberta num repositório. O diff (e o destaque) só carrega ao abrir. */
   const ChangesPanel = defineAsyncComponent(() => import('./ChangesPanel.vue'))
   const ConversationPanel = defineAsyncComponent(() => import('./ConversationPanel.vue'))
@@ -328,7 +355,30 @@
       </RouterLink>
       <AgentAvatar :name="agentName ?? '?'" :provider="currentProvider || 'claude'" size="sm" />
       <div class="min-w-0">
-        <div class="truncate font-medium">{{ header?.title || agentName || 'Conversa' }}</div>
+        <input
+          v-if="renaming"
+          ref="renameInput"
+          v-model="renameDraft"
+          class="input h-7 w-full py-0 font-medium"
+          maxlength="120"
+          aria-label="Título da conversa"
+          data-test="thread-title-input"
+          @keydown.enter.prevent="saveTitle"
+          @keydown.esc.prevent="renaming = false"
+          @blur="saveTitle"
+        />
+        <button
+          v-else-if="canRename"
+          type="button"
+          class="block max-w-full cursor-text truncate text-left font-medium hover:text-emerald-300"
+          title="Renomear"
+          data-test="thread-title"
+          @click="startRename"
+        >
+          {{ header?.title || agentName || 'Conversa' }}
+        </button>
+        <div v-else class="truncate font-medium">{{ header?.title || agentName || 'Conversa' }}</div>
+        <div v-if="renameError" class="truncate text-xs text-rose-300" data-test="thread-title-error">{{ renameError }}</div>
         <div class="truncate text-xs text-zinc-400">
           {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}
           <template v-if="thread.session?.reasoning">· raciocínio {{ effortLabel(thread.session.reasoning).toLowerCase() }}</template>
