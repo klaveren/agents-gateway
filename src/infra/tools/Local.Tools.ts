@@ -5,10 +5,12 @@ import { printsSecret } from '@domain/models/ResourceSecret.Model'
 import { terminalEnv } from '@domain/Agent.Identity'
 import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
 import { cercoPlan } from '@domain/Cerco.Plan'
-import { commandMatches, definesGitAlias, hasGitDeny, type IPermissionRule } from '@domain/Permission.Policy'
+import { commandMatches, definesGitAlias, ENV_FILE_PATTERNS, hasGitDeny, pathMatches, type IPermissionRule, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
-import { rmSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { parseEnvFile } from '@domain/Env.File'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -299,6 +301,18 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     if (git.refusal) return { status: 'error', result: `Not permitted: ${git.refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
     const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
+    // ⚠️ O projeto liberou a leitura dos `.env` (ver `IProject.readEnvFiles`): os valores deles passam a ser mascarados em tudo
+    // o que a conversa mostra e grava ANTES de o comando rodar (um `cat .env`, ou o log que imprime o valor).
+    if (layers.envFiles && context?.sessionId && deps.mask && sandbox.envFiles) {
+      const files = await sandbox.envFiles(root).catch(() => [])
+      for (const file of files) {
+        const text = await readFile(file, 'utf8').catch(() => '')
+        deps.mask.register(
+          context.sessionId,
+          parseEnvFile(text).map((entry) => ({ value: entry.value, label: `${entry.name} (.env)` })),
+        )
+      }
+    }
     // As portas locais que as regras liberam EXATAS (`localhost:27017`): no Linux, um encaminhador por porta; no Mac, a porta
     // aberta no perfil para ouvir e conectar (o servidor de desenvolvimento sobe nela).
     const localPorts = [...(layers.agent ?? []), ...(layers.project ?? [])]
@@ -477,6 +491,19 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
             // Numa worktree, o mesmo arquivo também a partir da pasta do projeto (ver `projectAliases`).
             const aliases = projectAliases(resolve(fileRoot(context), path), context?.workFolder)
             const verdict = deps.permissions!.check(askerOf(context), { category: kind, value: path, ...(aliases.length ? { aliases } : {}) }, { log })
+            // ⚠️ O `.env` que o projeto deixou ler: os valores entram na máscara da conversa antes de o conteúdo voltar.
+            if (verdict.allowed && kind === 'read' && context?.sessionId && deps.mask && isEnvFile(path)) {
+              let text = ''
+              try {
+                text = readFileSync(resolve(fileRoot(context), path), 'utf8')
+              } catch {
+                // Sem o arquivo, nada a mascarar: a leitura responde o erro dela.
+              }
+              deps.mask.register(
+                context.sessionId,
+                parseEnvFile(text).map((entry) => ({ value: entry.value, label: `${entry.name} (.env)` })),
+              )
+            }
             return verdict.allowed ? undefined : verdict.reason
           },
         }
@@ -1486,6 +1513,11 @@ function backgroundTools(
       },
     },
   ]
+}
+
+/** O caminho é um `.env` (não um modelo como `.env.example`)? */
+function isEnvFile(path: string): boolean {
+  return ENV_FILE_PATTERNS.some((pattern) => pathMatches(pattern, path)) && !SECRET_TEMPLATES.some((template) => pathMatches(template, path))
 }
 
 /** A máscara que as ferramentas usam (ver `Secret.Masker`). */

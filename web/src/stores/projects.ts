@@ -114,6 +114,11 @@ export const useProjectsStore = defineStore('projects', () => {
     putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}`, { method: 'PUT', body: change }))
   }
 
+  /** ⚠️ Libera (ou fecha) a leitura dos `.env` para os agentes do projeto. Só pela tela. */
+  async function setEnvFiles(id: string, read: boolean): Promise<void> {
+    putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}/env-files`, { method: 'PUT', body: { read } }))
+  }
+
   /** 🎨 A cor do destaque do projeto (`undefined` = o verde do tema). */
   async function setColor(id: string, color: string | undefined): Promise<void> {
     putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}/color`, { method: 'PUT', body: { color: color ?? null } }))
@@ -154,6 +159,7 @@ export const useProjectsStore = defineStore('projects', () => {
     create,
     update,
     setColor,
+    setEnvFiles,
     remove,
     memberLists,
     members,

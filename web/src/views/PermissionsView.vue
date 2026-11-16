@@ -7,6 +7,7 @@ import HistoryPanel from '@/components/HistoryPanel.vue'
 import ListPager from '@/components/ListPager.vue'
 import PermissionCategoryTabs from '@/components/PermissionCategoryTabs.vue'
 import SaveFooter from '@/components/SaveFooter.vue'
+import EnvFilesToggle from '@/components/EnvFilesToggle.vue'
 import PermissionRules from '@/components/PermissionRules.vue'
 import PermissionRequests from '@/components/PermissionRequests.vue'
 import PermissionRequestsBadge from '@/components/PermissionRequestsBadge.vue'
@@ -178,7 +179,8 @@ watch([decisionAgent, section], () => {
         </PermissionCategoryTabs>
         <HistoryPanel v-if="tab === 'history'" kind="project-permissions" :id="project.id" @restored="restored" />
         <section v-else-if="tab === 'system'" class="flex flex-col gap-2" data-test="system-rules">
-          <p class="text-xs text-zinc-500">Regras do sistema: valem sempre, sem exceção, antes das do agente e das do projeto. Não se editam.</p>
+          <p class="text-xs text-zinc-500">Regras do sistema: valem sempre, antes das do agente e das do projeto. Não se editam — a leitura dos .env é a única que o projeto pode abrir.</p>
+          <EnvFilesToggle :project-id="project.id" />
           <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800 text-xs">
             <li v-for="(rule, index) in systemPage.items.value" :key="index" class="flex items-baseline gap-3 px-3 py-1.5">
               <span class="w-28 shrink-0 text-zinc-500">{{ label(rule.category) }}</span>

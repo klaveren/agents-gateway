@@ -29,6 +29,16 @@ describe('ProjectsService', () => {
     return { service, repository, agents, root }
   }
 
+  it('⚠️ a leitura dos .env e a cor ficam gravadas; desligar volta ao padrão (fechado, verde)', () => {
+    const { service } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    assert.strictEqual(service.setReadEnvFiles('alfa', true, 'root').readEnvFiles, true)
+    assert.strictEqual(service.get('alfa').readEnvFiles, true)
+    assert.strictEqual(service.setReadEnvFiles('alfa', false, 'root').readEnvFiles, undefined)
+    assert.strictEqual(service.setColor('alfa', 'violet', 'root').color, 'violet')
+    assert.strictEqual(service.setColor('alfa', undefined, 'root').color, undefined)
+  })
+
   it('⛔ canUse: só os membros — também o admin do gateway; projeto inexistente, ninguém', () => {
     const { service } = build()
     service.create({ id: 'alfa', name: 'Alfa' }, 'root')

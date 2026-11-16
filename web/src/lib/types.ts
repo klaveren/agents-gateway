@@ -785,6 +785,8 @@ export interface IProject {
   mcpEnv?: IProjectMcpVar[]
   /** 🎨 A paleta do destaque da tela no projeto (ver `projectColors.ts`). Ausente: o verde do tema. */
   color?: string
+  /** ⚠️ Os agentes do projeto leem os `.env` (liberado pelo admin, na tela). */
+  readEnvFiles?: boolean
   createdAt: string
   updatedAt: string
   updatedBy?: string

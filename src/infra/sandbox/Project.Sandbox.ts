@@ -27,7 +27,7 @@ import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import { commandDirOf } from '@infra/accounts/Ssh.Kit'
 import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
-import { globToRegex, pathMatches } from '@domain/Permission.Policy'
+import { ENV_FILE_PATTERNS, globToRegex, pathMatches, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import { FILE_DIRS } from '@domain/models/ResourceFile.Model'
 import { discoveredGitSync } from '@infra/workspace/Git.Safe'
 import { agentFolders, globalResourcesDir, projectResourceDirs, readOnlyResourceDirs } from '@infra/workspace/Resource.Files'
@@ -75,6 +75,8 @@ export interface IProjectSandbox {
    * (`commands/<token>`). Na pasta do projeto, que os agentes dividem, outro comando leria tudo pelo terminal.
    */
   runDir?(): string
+  /** ⚠️ Os `.env` da raiz (caminhos absolutos, sem os modelos): o que a máscara registra quando o projeto liberou a leitura. */
+  envFiles?(root: string): Promise<string[]>
 }
 
 /** Onde ficam o rascunho (HOME, TMPDIR, caches) e o `.git` quando a raiz é um repositório ou uma worktree. */
@@ -256,6 +258,13 @@ export class ProjectSandbox implements IProjectSandbox {
       readOnly: existing([...readOnlyResourceDirs(root, this.env), ...(place.sharedFolders ?? [])]),
       find: (pattern) => this.trees.find(root, pattern),
     }
+  }
+
+  /** Os `.env` da raiz, da varredura guardada (ver `TreeIndexCache`), sem os modelos (`.env.example`…). */
+  async envFiles(root: string): Promise<string[]> {
+    await this.trees.warm(root)
+    const files = new Set(ENV_FILE_PATTERNS.flatMap((pattern) => this.trees.find(root, pattern)))
+    return [...files].filter((path) => !SECRET_TEMPLATES.some((template) => pathMatches(template, path))).map((path) => join(root, path))
   }
 
   async wrapWith(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string, place: ICercoPlace = {}): Promise<string> {

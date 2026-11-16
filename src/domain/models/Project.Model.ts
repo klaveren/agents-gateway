@@ -32,6 +32,12 @@ export interface IProject {
   mcpEnv?: IProjectMcpVar[]
   /** 🎨 A cor do destaque da tela neste projeto (uma paleta do Tailwind, ver `PROJECT_COLORS`). Desta máquina: não vai no catálogo. */
   color?: TProjectColor
+  /**
+   * ⚠️ Os agentes do projeto LEEM os `.env` (a única trava do sistema que cede, ver `ISystemRule.opensWith`): o ambiente de
+   * desenvolvimento precisa deles para subir a aplicação. Só leitura; os valores são mascarados na conversa. Desta máquina,
+   * ligado pelo admin do projeto na tela.
+   */
+  readEnvFiles?: boolean
   createdAt: Date
   updatedAt: Date
   updatedBy?: string
