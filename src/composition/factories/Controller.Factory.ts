@@ -651,5 +651,13 @@ export function makeProjectConnections(): ProjectConnectionService {
 }
 
 export function makeProjectConnectionsController(): ProjectConnectionsController {
-  return new ProjectConnectionsController({ connections: makeProjectConnections(), layers: makeAgentLocalLayers(), proof: makeAuth().proof })
+  return new ProjectConnectionsController({
+    connections: makeProjectConnections(),
+    layers: makeAgentLocalLayers(),
+    proof: makeAuth().proof,
+    secrets: {
+      list: (scope, scopeId) => makeResourceSecrets().list(scope, scopeId),
+      save: (scope, scopeId, input, by) => makeResourceSecrets().save(scope, scopeId, input, by),
+    },
+  })
 }
