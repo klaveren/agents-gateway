@@ -96,17 +96,43 @@ const GEMINI_UNSUPPORTED = new Set([
   'else',
   'allOf',
   'oneOf',
+  // Medidas em 16/11 (as ferramentas do MCP do gateway, de schema zod): `z.record` gera `propertyNames`.
+  'propertyNames',
 ])
 
-/** Copia a propriedade sem as chaves que o Gemini recusa, descendo em objetos e arrays. */
+/**
+ * Copia a propriedade sem as chaves que o Gemini recusa, descendo em objetos, arrays e `anyOf`.
+ *
+ * ⚖️ `const` não é só apagado: vira `enum` de um valor (o Gemini aceita `enum` em texto), senão a opção de um `anyOf`
+ * (`z.literal`) ficaria "qualquer texto". `const` que não é texto sai, como antes.
+ */
 function sanitizeProperty(property: Record<string, unknown>): Record<string, unknown> {
   const clean: Record<string, unknown> = {}
 
+  if (typeof property.const === 'string' && property.enum === undefined) {
+    clean.type = 'STRING'
+    clean.enum = [property.const]
+  }
+
   for (const [key, value] of Object.entries(property)) {
     if (GEMINI_UNSUPPORTED.has(key)) continue
+    if (key === 'type' && clean.enum !== undefined && property.enum === undefined) continue
+
+    if (key === 'anyOf' && Array.isArray(value)) {
+      clean[key] = value.map((option) => (option && typeof option === 'object' ? sanitizeProperty(option as Record<string, unknown>) : option))
+      continue
+    }
 
     if (key === 'type' && typeof value === 'string') {
       clean[key] = value.toUpperCase()
+      continue
+    }
+
+    // `["string", "null"]` (o `.nullable()` do zod): o Gemini quer UM tipo — o primeiro, com `nullable`.
+    if (key === 'type' && Array.isArray(value)) {
+      const kinds = value.filter((kind): kind is string => typeof kind === 'string' && kind !== 'null')
+      clean[key] = (kinds[0] ?? 'string').toUpperCase()
+      if (value.includes('null')) clean.nullable = true
       continue
     }
 
