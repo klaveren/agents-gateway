@@ -205,6 +205,24 @@ export class ToolCatalog {
     return tools.map((tool) => tool.name).filter((name) => !chosen.has(name))
   }
 
+  /**
+   * ⚖️ O COMEÇO DO TURNO: os servidores MCP compartilhados que o agente escolheu tentam conectar AGORA, mesmo no backoff
+   * (ver `McpRegistry.wake`). Devolve os ids que seguem fora do ar — o turno avisa o agente, que não confunde "não veio"
+   * com "não tenho acesso". O MCP `caller` (o do gateway) já conecta na hora com a credencial do turno; contêiner e
+   * processo sobem por conversa.
+   */
+  async wakeMcp(allowed: readonly string[], projectId?: string): Promise<string[]> {
+    const down: string[] = []
+    await Promise.all(
+      [...mcpSelection(allowed).keys()].map(async (id) => {
+        const config = this.mcp.resolve(id, projectId)
+        if (!config || config.auth === 'caller') return
+        if ((await this.mcp.wake(mcpServerKey(config)).catch(() => undefined)) === false) down.push(id)
+      }),
+    )
+    return down.sort()
+  }
+
   /** Os servidores MCP que um agente escolheu e que estão de pé agora — os SDKs agênticos conectam neles. */
   async mcpServersFor(allowed: readonly string[], context?: IExecutionContext): Promise<IAgentMcpServer[]> {
     const servers: IAgentMcpServer[] = []

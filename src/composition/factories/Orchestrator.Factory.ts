@@ -126,6 +126,8 @@ export function makeOrchestrator(): AgentProvider {
         ? { markDelivered: async (sessionId, ids) => panelRepository.savePanel!(sessionId, markAnswersDelivered(await panelRepository.panel!(sessionId), ids)) }
         : {}),
     })
+  // O começo do turno: os MCPs do agente que caíram e voltaram entram já (sem esperar o backoff); os que seguem fora, avisados.
+  provider.useMcpWake((allowedTools, projectId) => catalog.wakeMcp(allowedTools, projectId))
   provider.useProjectEnv((projectId) => projectFixedEnv(projectId))
   provider.useSecrets({
     envFor: (agentId, sessionId, project) => makeResourceSecrets().envFor(agentId, sessionId, project),

@@ -12,7 +12,7 @@ import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { IToolDefinition } from '@infra/tools/Tool.Types'
 import { INSTALL_PASSTHROUGH, isWritable } from '@infra/adapters/support/Subscription.Workspace'
 import { installDir, resolveCommand } from './Mcp.Install'
-import { IMcpClientOptions, McpServerClient } from './McpServer.Client'
+import { IMcpClientOptions, McpServerClient, TURN_WAKE_MS } from './McpServer.Client'
 
 export interface IMcpServerStatus {
   /** A chave (`mcpServerKey`). */
@@ -255,6 +255,16 @@ export class McpRegistry {
   /** Pela chave (`mcpServerKey`): um id solto só acha o global. */
   get(key: string): IMcpServerConfig | undefined {
     return this.servers.get(key)
+  }
+
+  /**
+   * O começo de um turno: o servidor COMPARTILHADO (remoto, sem OAuth) tenta conectar agora, mesmo no backoff (ver
+   * `connectWithin`). `false`: segue fora do ar. `undefined`: não se aplica (desligado, contêiner, processo, OAuth).
+   */
+  async wake(key: string, waitMs = TURN_WAKE_MS): Promise<boolean | undefined> {
+    const config = this.servers.get(key)
+    if (!config?.enabled || isLaunchedMcp(config) || config.auth === 'oauth') return undefined
+    return this.client(key)?.connectWithin(waitMs)
   }
 
   /** O cliente de um servidor LIGADO; `undefined` se não existe ou está desligado. */

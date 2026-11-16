@@ -10,7 +10,7 @@ export interface IPanelAccess {
 }
 import { DELEGATE_TOOL_NAME, DELEGATED_BY, delegatesOf, LEGACY_DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
 import { offers, targetFor } from '@domain/Agent.Policy'
-import { conversationNote, IAmbient, IAmbientSecrets } from '@domain/Ambient.Policy'
+import { conversationNote, IAmbient, IAmbientSecrets, mcpDownNote } from '@domain/Ambient.Policy'
 import { agentFolderAccess, hasTerminal, hasWatch, resolveCapabilities } from '@domain/Capability.Catalog'
 import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
 import { benchKeyOf, DEFAULT_COOLDOWN_MINUTES, fallbackChain, groupOf, IFallbackStep, IModelGroup, nextStep, stepKey, switchesOn, withGroupTargets } from '@domain/Fallback.Policy'
@@ -249,7 +249,11 @@ export class AgentProvider implements IAgentProvider {
     // A resposta que a pessoa deu no painel vai UMA vez: entregue neste turno, sai do próximo aviso.
     const delivered = panelNow ? freshAnswers(panelNow).map((question) => question.id) : []
     if (delivered.length) await this.panels?.markDelivered?.(record.id, delivered).catch(() => undefined)
-    const message = panelNote ? { ...asked, text: `${panelNote}\n\n${asked.text}` } : asked
+    // ⚖️ Os servidores MCP do agente tentam conectar agora (ver `ToolCatalog.wakeMcp`); o que segue fora vira aviso, ao
+    // agente (na entrada do modelo) e à pessoa (no turno).
+    const mcpDown = this.mcpWake ? await this.mcpWake(agent.allowedTools, conversationProject).catch(() => []) : []
+    const lead = [panelNote, mcpDown.length ? mcpDownNote(mcpDown) : ''].filter(Boolean).join('\n\n')
+    const message = lead ? { ...asked, text: `${lead}\n\n${asked.text}` } : asked
     let panelTouched = false
     // ⚖️ O id da conversa vai UMA VEZ por histórico do modelo: no primeiro turno e quando ele recomeça (repasse, compactação,
     // retomada, troca de provedor). Só na entrada do modelo: a transcrição e o turno gravado ficam com o `input`.
@@ -336,6 +340,7 @@ export class AgentProvider implements IAgentProvider {
       }
 
       if (swapped) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: swapped } }
+      if (mcpDown.length) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `MCP fora do ar neste turno: ${mcpDown.join(', ')}.` } }
 
       // O contexto passou do gatilho, ou a compactação foi pedida: o turno começa com o resumo (ver `Compaction.Policy`).
       // Com repasse pendente não: o provedor novo já recomeça só com a transcrição.
@@ -624,6 +629,13 @@ export class AgentProvider implements IAgentProvider {
   usePanels(panels: IPanelAccess): void {
     this.panels = panels
   }
+
+  /** Acorda os servidores MCP do agente no começo do turno; devolve os que seguem fora (ver `ToolCatalog.wakeMcp`). */
+  useMcpWake(wake: (allowedTools: readonly string[], projectId?: string) => Promise<string[]>): void {
+    this.mcpWake = wake
+  }
+
+  private mcpWake?: (allowedTools: readonly string[], projectId?: string) => Promise<string[]>
 
   private panels?: IPanelAccess
 

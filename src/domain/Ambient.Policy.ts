@@ -119,6 +119,15 @@ export function conversationNote(conversationId: string): string {
 }
 
 /**
+ * ⚖️ O MCP QUE NÃO RESPONDEU NO COMEÇO DO TURNO: as ferramentas dele não vieram. Sem o aviso, o agente concluía "não tenho
+ * acesso" e travava o pedido (a Maya, 16/11). Só na entrada do modelo, como o painel.
+ */
+export function mcpDownNote(servers: readonly string[]): string {
+  const list = servers.map((id) => `\`${id}\``).join(', ')
+  return `<contexto>Servidor MCP fora do ar agora: ${list}. As ferramentas dele não vieram neste turno — é indisponibilidade, não falta de acesso. Diga isso à pessoa se precisar delas; no próximo turno o gateway tenta de novo.</contexto>`
+}
+
+/**
  * ⛔ A pasta PRIVADA do agente, como ele a recebe: é dele, persistente e só dele (nenhum outro agente a alcança), e vale
  * em todas as conversas dele, de qualquer pessoa. Grava só com Escrever arquivos (`write`).
  */

@@ -112,6 +112,19 @@ describe('ToolCatalog', () => {
     assert.deepStrictEqual([...(sdk.hidden ?? [])].sort(), ['get_turn', 'send_message', 'start_conversation', 'talk'])
   })
 
+  it('⚖️ o começo do turno: devolve os MCPs do agente que seguem fora; o `caller` (o do gateway) e os não escolhidos ficam de fora da conta', async () => {
+    const withDown = new ToolCatalog(
+      fakeMcpRegistry([
+        { id: 'tickets', auth: 'none', connected: false },
+        { id: 'crm', auth: 'none' },
+        { id: 'gateway', connected: false },
+        { id: 'outro', auth: 'none', connected: false },
+      ]),
+      [],
+    )
+    assert.deepStrictEqual(await withDown.wakeMcp(['mcp:tickets/ticket_get', 'mcp:crm/*', 'mcp:gateway/*', 'run_bash']), ['tickets'])
+  })
+
   it('leva a credencial da chamada até o cliente MCP', async () => {
     contexts.length = 0
     const box = await catalog().toolbox(['mcp:crm/stats'])
