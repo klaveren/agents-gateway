@@ -304,7 +304,9 @@ export function panelTurnNote(panel: IConversationPanel | undefined, skippedLast
     )
   const done = open('done').length
   if (done) lines.push(`(${done} entregue${done > 1 ? 's' : ''}; decisões e histórico: ${BOARD_TOOL} read; planos: ${PLAN_TOOL} read)`)
-  lines.push('Pedido novo na mensagem abaixo: um item por pedido (add). Etapas do item em andamento: update_todos.')
+  lines.push(
+    `Pedido novo na mensagem abaixo: um item por pedido (add) — o que vira plano ou passo de plano (${PLAN_TOOL}) não ganha item: o passo já é o item. Etapas do item em andamento: update_todos.`,
+  )
   lines.push('</board da conversa>')
   return [reminder, lines.join('\n')].filter(Boolean).join('\n\n')
 }
