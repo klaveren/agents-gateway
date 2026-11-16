@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+  import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue'
   import { api } from '@/lib/api'
   import { useStickToBottom } from '@/composables/useStickToBottom'
   import { useDrawerWidth } from '@/composables/useDrawerWidth'
@@ -157,15 +157,27 @@
   })
   const children = ref<IConversation[]>([])
   // Relida também quando uma conversa começa ou para de rodar: a filha contactada no meio do turno aparece e sobe na hora.
+  // ⚖️ Os gatilhos que chegam juntos (abriu a conversa, os turnos carregaram, o cabeçalho veio) viram UMA leitura: eram três
+  // a cada troca de conversa.
+  let childrenTimer: ReturnType<typeof setTimeout> | undefined
+  async function loadChildren(): Promise<void> {
+    const id = header.value?.id
+    if (!id) return void (children.value = [])
+    const page = await api<{ sessions: IConversation[] }>('/conversations', { query: { delegatedBy: id, limit: 50 } }).catch(() => ({ sessions: [] }))
+    if (id === header.value?.id) children.value = page.sessions
+  }
   watch(
     () => [header.value?.id, thread.turns.length, conversations.running] as const,
-    async ([id]) => {
-      if (!id) return (children.value = [])
-      const page = await api<{ sessions: IConversation[] }>('/conversations', { query: { delegatedBy: id, limit: 50 } }).catch(() => ({ sessions: [] }))
-      if (id === header.value?.id) children.value = page.sessions
+    ([id], before) => {
+      clearTimeout(childrenTimer)
+      // Trocou de conversa: as filhas da anterior saem já, e a leitura nova vem logo em seguida.
+      if (id !== before?.[0]) children.value = []
+      if (!id) return
+      childrenTimer = setTimeout(() => void loadChildren(), 50)
     },
     { immediate: true },
   )
+  onBeforeUnmount(() => clearTimeout(childrenTimer))
   /** O provider e o modelo em vigor: os da sessão viva (podem ter trocado), senão os da conversa. */
   const currentModel = computed(() => thread.session?.model ?? header.value?.model)
   const currentProvider = computed(() => thread.session?.provider ?? header.value?.provider ?? agent.value?.providers[0]?.id ?? '')

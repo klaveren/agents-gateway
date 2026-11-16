@@ -1,10 +1,12 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { api } from '@/lib/api'
+import { api, openStream } from '@/lib/api'
+import { readSse } from '@/lib/sse'
 import type { IConversation, IConversationPage } from '@/lib/types'
 import { applyEvent, raise, useConversationsStore, type IConversationFilters } from './conversations'
 
 vi.mock('@/lib/api', () => ({ api: vi.fn(), openStream: vi.fn() }))
+vi.mock('@/lib/sse', () => ({ readSse: vi.fn() }))
 
 const conversation = (id: string, updatedAt: string, over: Partial<IConversation> = {}): IConversation => ({
   id,
@@ -233,5 +235,38 @@ describe('arquivadas', () => {
 
     expect(store.archivedItems).toEqual([])
     expect(store.archivedCount).toBe(0)
+  })
+})
+
+describe('store: acompanhar a conversa aberta', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(api).mockReset()
+    vi.mocked(api).mockResolvedValue(undefined as never)
+    vi.mocked(openStream).mockResolvedValue({} as never)
+    // O stream avisa que está pronto e fica aberto.
+    vi.mocked(readSse).mockImplementation(async function* () {
+      yield { data: { type: 'stream.ready', streamId: 's1' } } as never
+      await new Promise(() => undefined)
+    })
+  })
+
+  it('⚖️ sair de uma conversa e abrir outra no mesmo instante vira UM pedido; repetir a mesma não vai ao servidor', async () => {
+    const store = useConversationsStore()
+    store.subscribe(false)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    store.follow('a')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    store.follow(undefined)
+    store.follow('b')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    store.follow('b')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const follows = vi
+      .mocked(api)
+      .mock.calls.filter(([path]) => String(path).endsWith('/follow'))
+      .map(([, request]) => (request as { body: { sessionId: string | null } }).body.sessionId)
+    expect(follows).toEqual(['a', 'b'])
+    store.unsubscribe()
   })
 })
