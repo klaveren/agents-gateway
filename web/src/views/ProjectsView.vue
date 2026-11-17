@@ -1,27 +1,21 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
-import SaveFooter from '@/components/SaveFooter.vue'
-import ProjectConnectionCard from '@/components/ProjectConnectionCard.vue'
+import ProjectSettings from '@/components/ProjectSettings.vue'
 import { useConnectionsStore } from '@/stores/connections'
 import Icon from '@/components/Icon.vue'
 import ListFilter from '@/components/ListFilter.vue'
 import { countLabel, filterList, sortByName } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
-import { useResource } from '@/composables/useResource'
 import { ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
-import { applyAccent, PALETTES, PROJECT_COLOR_LABEL, PROJECT_COLORS, projectGradient } from '@/lib/projectColors'
-import type { IProject, TProjectRole } from '@/lib/types'
+import { PALETTES, projectGradient } from '@/lib/projectColors'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
-import { useUsersStore } from '@/stores/users'
-import { useSettingsStore } from '@/stores/settings'
 
 /**
- * A guia Projetos: cada projeto tem a sua pasta, os seus agentes e conversas, e os seus membros. Criar e apagar é do admin
- * do gateway; nome, descrição e membros, de quem administra o projeto (o admin do gateway também, como resgate).
+ * Sistema → Projetos: a lista de todos os projetos que a pessoa administra, criar e conectar (admin do gateway) e, ao
+ * abrir um, a mesma configuração de Projeto → Configurações (`ProjectSettings`), com usar e apagar.
  */
 const props = defineProps<{ id?: string }>()
 const route = useRoute()
@@ -36,23 +30,13 @@ const shownProjects = computed(() =>
     (project) => project.name,
   ),
 )
-const users = useUsersStore()
-/** As guias do projeto aberto, como no agente: os dados dele e quem o vê. */
-type TProjectTab = 'projeto' | 'membros'
-const tab = ref<TProjectTab>('projeto')
-const settings = useSettingsStore()
-const sandbox = computed(() => settings.current?.deployment?.sandbox)
 
 const adding = computed(() => route.name === 'project-new')
 const selected = computed(() => (props.id ? projects.list.find((project) => project.id === props.id) : undefined))
 /** Abre a guia: o admin do gateway, ou quem administra algum projeto. */
 const canOpen = computed(() => auth.isAdmin || projects.managesAny)
-/** Edita o projeto aberto (nome, descrição, membros): o admin dele ou o do gateway. */
-const canEdit = computed(() => !!selected.value && (selected.value.role === 'admin' || auth.isAdmin))
 
 const connections = useConnectionsStore()
-/** 🔌 O projeto aberto é a cópia só de leitura de um projeto de outro gateway. */
-const connected = computed(() => (selected.value ? connections.byProject.has(selected.value.id) : false))
 /** Criar do zero, ou conectar um projeto de outro gateway (a .4): o catálogo vem de lá, só leitura. */
 const mode = ref<'new' | 'connect'>('new')
 const link = ref({ url: '', projectId: '', token: '' })
@@ -62,46 +46,16 @@ const loadError = ref<string>()
 const form = ref({ id: '', name: '', description: '' })
 const formIssues = ref<Record<string, string[]>>({})
 const formError = ref<string>()
-const edit = ref({ name: '', description: '', color: 'emerald' })
-/** Os membros gravados do projeto aberto, da store (lidos uma vez; salvar põe a resposta lá). */
-const memberList = useResource(projects.memberLists, () => (canEdit.value ? selected.value?.id : undefined))
-const savedMembers = computed(() => new Map((memberList.data.value ?? []).map((member) => [member.userId, member.role] as const)))
-/** A marcação em edição (conta → papel): volta à gravada quando o projeto (ou o gravado) muda. */
-const members = ref<Map<string, TProjectRole>>(new Map())
-watch(savedMembers, (saved) => (members.value = new Map(saved)), { immediate: true })
-/** ⛔ Todo projeto fica com ao menos um administrador: sem nenhum, o salvar fica desligado e a guia avisa. */
-const noAdmin = computed(() => members.value.size > 0 && ![...members.value.values()].includes('admin'))
-const busy = ref(false)
-const error = ref<string>()
-const note = ref<string>()
-const removing = ref<IProject>()
-const removeError = ref<string>()
 
 onMounted(async () => {
   await projects.ensure().catch((failure) => (loadError.value = describe(failure)))
-  if (!canOpen.value) return
-  // As contas e as configurações são do gateway: quem só administra o projeto pode não ler (a lista de membros fica vazia).
-  await Promise.all([users.ensure(), auth.isAdmin ? settings.ensure() : undefined]).catch(() => undefined)
-  connections.follow()
 })
-
-watch(
-  selected,
-  (project, previous) => {
-    if (!project || project.id === previous?.id) return
-    edit.value = { name: project.name, description: project.description ?? '', color: project.color ?? 'emerald' }
-    error.value = undefined
-    note.value = undefined
-  },
-  { immediate: true },
-)
 
 function describe(failure: unknown): string {
   if (failure instanceof ApiError && failure.status === 422) {
     const items = Array.isArray(failure.details) ? (failure.details as Array<{ field?: string; message?: string }>) : []
     return items.map((item) => (item.field ? `${item.field}: ${item.message}` : item.message)).join('; ') || failure.message
   }
-  if (failure instanceof ApiError && failure.code === 'project_in_use') return `${failure.message}. Mova ou apague esses agentes antes.`
   return failure instanceof Error ? failure.message : String(failure)
 }
 
@@ -109,7 +63,7 @@ function slug() {
   if (form.value.id) return
   form.value.id = form.value.name
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
@@ -141,65 +95,6 @@ async function connectProject() {
     formError.value = describe(failure)
   } finally {
     connecting.value = false
-  }
-}
-
-async function run(work: () => Promise<void>, done?: string) {
-  busy.value = true
-  error.value = undefined
-  note.value = undefined
-  try {
-    await work()
-    note.value = done
-  } catch (failure) {
-    error.value = describe(failure)
-  } finally {
-    busy.value = false
-  }
-}
-
-const dirty = computed(() => !!selected.value && (edit.value.name !== selected.value.name || edit.value.description !== (selected.value.description ?? '')))
-/** 🎨 A cor escolhida e ainda não salva. Desta máquina: muda também no projeto conectado. */
-const colorDirty = computed(() => !!selected.value && edit.value.color !== (selected.value.color ?? 'emerald'))
-// A cor escolhida já aparece na tela (a prévia) quando o projeto é o atual; sair sem salvar volta a do projeto.
-watch(
-  () => [edit.value.color, selected.value?.id, projects.current] as const,
-  () => applyAccent(selected.value?.id === projects.current ? edit.value.color : projects.currentProject?.color),
-)
-onBeforeUnmount(() => applyAccent(projects.currentProject?.color))
-const membersDirty = computed(() => members.value.size !== savedMembers.value.size || [...members.value].some(([id, role]) => savedMembers.value.get(id) !== role))
-/** Um salvar só: o nome e a descrição (guia Projeto) e os membros (guia Membros), o que mudou. */
-const saveProject = () =>
-  run(async () => {
-    if (dirty.value) await projects.update(selected.value!.id, { name: edit.value.name, description: edit.value.description })
-    if (colorDirty.value) await projects.setColor(selected.value!.id, edit.value.color === 'emerald' ? undefined : edit.value.color)
-    if (membersDirty.value)
-      await projects.setMembers(
-        selected.value!.id,
-        [...members.value].map(([userId, role]) => ({ userId, role })),
-      )
-  }, 'Projeto salvo.')
-function toggleMember(id: string) {
-  const next = new Map(members.value)
-  if (next.has(id)) next.delete(id)
-  else next.set(id, 'member')
-  members.value = next
-}
-
-function setRole(id: string, role: TProjectRole) {
-  members.value = new Map(members.value).set(id, role)
-}
-
-async function confirmRemove() {
-  const target = removing.value
-  if (!target) return
-  removeError.value = undefined
-  try {
-    await projects.remove(target.id)
-    removing.value = undefined
-    await router.push('/projects')
-  } catch (failure) {
-    removeError.value = describe(failure)
   }
 }
 </script>
@@ -283,129 +178,8 @@ async function confirmRemove() {
         </form>
       </template>
 
-      <section v-else-if="selected" :key="selected.id" class="mx-auto flex max-w-3xl flex-col gap-4">
-        <div class="flex items-center gap-3">
-          <span :style="projectGradient(edit.color) ? { background: projectGradient(edit.color) } : undefined" class="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-400 to-accent-end text-base font-bold text-zinc-950">{{ initials(selected.name) }}</span>
-          <div class="min-w-0">
-            <h2 class="truncate text-lg font-semibold">{{ selected.name }}</h2>
-            <p class="truncate font-mono text-xs text-zinc-500">{{ selected.id }}</p>
-          </div>
-          <button v-if="selected.id !== projects.current" type="button" class="btn btn-secondary ml-auto" @click="projects.select(selected.id)">Usar este projeto</button>
-        </div>
-
-        <nav class="flex gap-1 border-b border-zinc-800" role="tablist">
-          <button
-            v-for="item in [
-              { id: 'projeto', label: 'Projeto', count: 0, unsaved: dirty },
-              { id: 'membros', label: 'Membros', count: members.size, unsaved: membersDirty },
-            ] as const"
-            :key="item.id"
-            type="button"
-            role="tab"
-            :aria-selected="tab === item.id"
-            class="flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
-            :class="tab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
-            @click="tab = item.id"
-          >
-            {{ item.label }}
-            <span v-if="item.count" class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">{{ item.count }}</span>
-            <span v-if="item.unsaved" class="h-1.5 w-1.5 rounded-full bg-amber-400" title="Mudança não salva" />
-          </button>
-        </nav>
-
-        <div v-show="tab === 'projeto'" class="flex flex-col gap-4" role="tabpanel">
-          <ProjectConnectionCard v-if="connected" :project-id="selected.id" />
-          <p class="text-xs text-zinc-500">
-            Regras e specs do projeto ficam em <RouterLink to="/environment" class="text-emerald-400 underline underline-offset-2">Projeto → Ambiente</RouterLink>.
-          </p>
-
-
-          <div class="rounded-xl border border-zinc-800 p-3 text-xs text-zinc-400">
-            <div class="mb-1 font-medium text-zinc-300">Pasta</div>
-            <code class="block truncate text-zinc-200">{{ selected.folder }}</code>
-            <p class="mt-2 text-zinc-400">Pasta de trabalho dos agentes deste projeto.</p>
-            <p v-if="sandbox?.available" class="mt-2 text-success-300">
-              ✓ Os agentes só acessam arquivos desta pasta.
-            </p>
-            <p v-else-if="sandbox" class="mt-2 text-amber-300">
-              ⚠ O isolamento da pasta não está disponível. Peça a quem cuida do servidor.
-            </p>
-          </div>
-
-          <div class="grid gap-3">
-            <label class="field">Nome<input v-model="edit.name" :disabled="!canEdit || connected" class="input" /></label>
-            <label class="field">Descrição<textarea v-model="edit.description" :disabled="!canEdit || connected" rows="2" class="input text-sm" /></label>
-            <div class="field" data-test="project-color">
-              Cor do projeto
-              <span class="hint">o destaque da tela neste projeto, só nesta máquina; mensagens de sucesso seguem verdes</span>
-              <div class="mt-1 flex flex-wrap gap-2" role="radiogroup" aria-label="Cor do projeto">
-                <button
-                  v-for="color in PROJECT_COLORS"
-                  :key="color"
-                  type="button"
-                  role="radio"
-                  :aria-checked="edit.color === color"
-                  :disabled="!canEdit"
-                  :title="PROJECT_COLOR_LABEL[color]"
-                  class="h-7 w-7 rounded-full ring-offset-2 ring-offset-zinc-950 transition"
-                  :class="edit.color === color ? 'ring-2 ring-zinc-100' : 'hover:ring-2 hover:ring-zinc-500'"
-                  :style="{ background: PALETTES[color]['500'] }"
-                  :data-color="color"
-                  @click="edit.color = color"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div v-show="tab === 'membros'" class="flex flex-col gap-2" role="tabpanel">
-          <p class="text-xs text-zinc-500">
-            Quem pode ver este projeto. O administrador do projeto cuida de tudo dele (agentes, catálogo, permissões, membros); o membro conversa com os agentes. Todo
-            projeto precisa de ao menos um administrador.
-          </p>
-          <p v-if="!canEdit" class="text-xs text-amber-300">Só quem administra este projeto altera.</p>
-          <fieldset :disabled="!canEdit" class="contents">
-          <ul class="divide-y divide-zinc-800">
-            <li v-for="user in users.list" :key="user.id" class="flex items-center gap-3 py-1.5">
-              <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-sm">
-                <input type="checkbox" class="accent-emerald-500" :checked="members.has(user.id)" @change="toggleMember(user.id)" />
-                <span class="min-w-0 flex-1 truncate">{{ user.name }} <span class="text-xs text-zinc-500">{{ user.email }}</span></span>
-                <span v-if="user.role === 'admin'" class="text-[10px] text-zinc-500" title="Administra o gateway (provedores, usuários, configurações)">gateway</span>
-              </label>
-              <select
-                v-if="members.has(user.id)"
-                :value="members.get(user.id)"
-                class="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs"
-                :aria-label="`Papel de ${user.name}`"
-                @change="setRole(user.id, ($event.target as HTMLSelectElement).value as TProjectRole)"
-              >
-                <option value="admin">Administrador</option>
-                <option value="member">Membro</option>
-              </select>
-            </li>
-          </ul>
-          </fieldset>
-          <p v-if="noAdmin" class="text-xs text-amber-300">Escolha ao menos um administrador para o projeto.</p>
-        </div>
-
-        <p v-if="note" class="text-sm text-success-300">{{ note }}</p>
-        <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-        <SaveFooter v-if="canEdit" label="Salvar projeto" :busy="busy" :disabled="(!dirty && !membersDirty && !colorDirty) || noAdmin" :pending="dirty || membersDirty || colorDirty" @save="saveProject">
-          <template #end>
-            <button v-if="auth.isAdmin && !connected" type="button" class="btn btn-danger" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
-          </template>
-        </SaveFooter>
-      </section>
+      <ProjectSettings v-else-if="selected" :key="selected.id" :project-id="selected.id" system />
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um projeto ou crie um novo.</div>
-
-      <ConfirmDialog
-        :open="!!removing"
-        :title="`Apagar o projeto ${removing?.name ?? ''}?`"
-        :message="removeError ?? 'Apaga o projeto, os membros e os arquivos da pasta. Só funciona sem agentes no projeto.'"
-        action="Apagar"
-        @confirm="confirmRemove"
-        @cancel="removing = undefined"
-      />
     </template>
   </MasterDetail>
 </template>

@@ -10,6 +10,7 @@ import PackagesView from './views/PackagesView.vue'
 import ProfileView from './views/ProfileView.vue'
 import DocsView from './views/DocsView.vue'
 import ProjectsView from './views/ProjectsView.vue'
+import ProjectSettingsView from './views/ProjectSettingsView.vue'
 import ResourcesView from './views/ResourcesView.vue'
 import BuildView from './views/BuildView.vue'
 import CatalogHistoryView from './views/CatalogHistoryView.vue'
@@ -69,6 +70,7 @@ export const router = createRouter({
     { path: '/usage', name: 'usage', component: UsageView },
     { path: '/mcp', name: 'mcp', component: McpView },
     { path: '/packages', name: 'packages', component: PackagesView },
+    { path: '/project', name: 'project-settings', component: ProjectSettingsView },
     { path: '/projects', name: 'projects', component: ProjectsView },
     { path: '/projects/new', name: 'project-new', component: ProjectsView },
     { path: '/projects/:id', name: 'project', component: ProjectsView, props: true },

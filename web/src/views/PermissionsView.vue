@@ -7,7 +7,6 @@ import HistoryPanel from '@/components/HistoryPanel.vue'
 import ListPager from '@/components/ListPager.vue'
 import PermissionCategoryTabs from '@/components/PermissionCategoryTabs.vue'
 import SaveFooter from '@/components/SaveFooter.vue'
-import EnvFilesAgents from '@/components/EnvFilesAgents.vue'
 import PermissionRules from '@/components/PermissionRules.vue'
 import PermissionRequests from '@/components/PermissionRequests.vue'
 import PermissionRequestsBadge from '@/components/PermissionRequestsBadge.vue'
@@ -180,7 +179,10 @@ watch([decisionAgent, section], () => {
         <HistoryPanel v-if="tab === 'history'" kind="project-permissions" :id="project.id" @restored="restored" />
         <section v-else-if="tab === 'system'" class="flex flex-col gap-2" data-test="system-rules">
           <p class="text-xs text-zinc-500">Regras do sistema: valem sempre, antes das do agente e das do projeto. Não se editam — a leitura dos .env é a única que o projeto pode abrir, agente por agente.</p>
-          <EnvFilesAgents :project-id="project.id" />
+          <p class="rounded-xl border border-zinc-800 p-3 text-xs text-zinc-400" data-test="env-files-link">
+            A leitura dos .env se abre, agente por agente, em
+            <RouterLink to="/project" class="text-emerald-400 underline underline-offset-2">Projeto → Configurações → Arquivos .env</RouterLink>.
+          </p>
           <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800 text-xs">
             <li v-for="(rule, index) in systemPage.items.value" :key="index" class="flex items-baseline gap-3 px-3 py-1.5">
               <span class="w-28 shrink-0 text-zinc-500">{{ label(rule.category) }}</span>
