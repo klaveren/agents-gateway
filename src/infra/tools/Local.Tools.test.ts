@@ -235,6 +235,59 @@ describe('LocalTools', () => {
     })
   })
 
+  describe('🖥️ agente de máquina: o comando que o cerco sempre recusa pede a pessoa', () => {
+    const permissions = (machine: boolean): IPermissionChecker => ({
+      check: () => ({ allowed: true, layer: 'default', reason: 'teste' }),
+      layers: () => ({ ...(machine ? { machine } : {}), system: [] }),
+    })
+    const approvals = (approved: boolean, seen: string[] = []) => ({
+      request: async (input: { command: string }) => (seen.push(input.command), { approved, by: 'ana@x.test' }),
+      pending: () => [],
+      answer: () => true,
+    })
+
+    it('aprovado: roda FORA do cerco, na pasta do comando, e diz que foi a pessoa', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gw-host-'))
+      mkdirSync(join(dir, 'lixo', 'dentro'), { recursive: true })
+      const seen: string[] = []
+      const tools = makeLocalTools({ fetchHtml: async () => '', policy, permissions: permissions(true), hostApprovals: approvals(true, seen) })
+      try {
+        const outcome = await find(tools, 'run_bash').execute(
+          { command: 'rm -rf ./lixo && echo apagado' },
+          { sessionId: 's1', projectId: 'xpto', workFolder: { dir, projectDir: dir } },
+        )
+        assert.strictEqual(outcome.status, 'success', String(outcome.result))
+        assert.match(String(outcome.result), /Aprovado pela pessoa \(ana@x\.test\): rodou fora do cerco[\s\S]*apagado/)
+        assert.deepStrictEqual(seen, ['rm -rf ./lixo && echo apagado'])
+        assert.ok(!existsSync(join(dir, 'lixo')))
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('⛔ recusado: nada roda; sem ser agente de máquina, nem pergunta', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gw-host-'))
+      mkdirSync(join(dir, 'lixo'))
+      const seen: string[] = []
+      try {
+        const refused = await find(makeLocalTools({ fetchHtml: async () => '', policy, permissions: permissions(true), hostApprovals: approvals(false) }), 'run_bash').execute(
+          { command: 'rm -rf ./lixo' },
+          { sessionId: 's1', projectId: 'xpto', workFolder: { dir, projectDir: dir } },
+        )
+        assert.match(String(refused.result), /não aprovou/)
+        const normal = await find(makeLocalTools({ fetchHtml: async () => '', policy, permissions: permissions(false), hostApprovals: approvals(true, seen) }), 'run_bash').execute(
+          { command: 'rm -rf ./lixo' },
+          { sessionId: 's1', projectId: 'xpto', workFolder: { dir, projectDir: dir } },
+        )
+        assert.match(String(normal.result), /Refused by the gateway tool policy/)
+        assert.deepStrictEqual(seen, [])
+        assert.ok(existsSync(join(dir, 'lixo')))
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+  })
+
   describe('⛔ com permissões: a análise por partes, o cerco das regras e a rede', () => {
     const root = mkdtempSync(join(tmpdir(), 'gw-local-perm-'))
     after(() => rmSync(root, { recursive: true, force: true }))

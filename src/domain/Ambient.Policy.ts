@@ -61,7 +61,7 @@ export function ambientSection(ambient: IAmbient): string {
     lines.push(`- Repositório: ${repository.name}${repository.worktree ? `, worktree ${repository.worktree}` : ''}${repository.branch ? ` (branch ${repository.branch})` : ''}.`)
   if (ambient.machine && directory)
     lines.push(
-      `- Diretório de trabalho: ${directory}, o ponto de partida. Você é um AGENTE DE MÁQUINA: lê e grava tudo o que o usuário desta máquina pode (a casa dele, outros repositórios, \`/opt\`), usa a rede sem regra e vê os processos dele. Ficam fechados os dados e a configuração do gateway e os segredos (\`.env\`, chaves). \`sudo\` não roda.`,
+      `- Diretório de trabalho: ${directory}, o ponto de partida. Você é um AGENTE DE MÁQUINA: lê e grava tudo o que o usuário desta máquina pode (a casa dele, outros repositórios, \`/opt\`), usa a rede sem regra e vê os processos dele. Ficam fechados os dados e a configuração do gateway e os segredos (\`.env\`, chaves). \`sudo\` e o que apaga ou desliga a máquina param e pedem a aprovação da pessoa na conversa (o \`sudo\`, com a senha dela): aprovado, roda fora do cerco; recusado, não insista.`,
     )
   else if (!directory) lines.push('- Diretório de trabalho: uma pasta vazia, só desta conversa.')
   else if (repository) lines.push(`- Diretório de trabalho: ${directory}. Fora dele você não lê nem grava; o git dele funciona (status, commit, push).`)

@@ -8,10 +8,10 @@ import { cercoPlan, machinePlan } from '@domain/Cerco.Plan'
 import { commandMatches, definesGitAlias, ENV_FILE_PATTERNS, hasGitDeny, pathMatches, type IPermissionRule, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
-import { readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { envSecrets } from '@domain/Env.File'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { networkGate } from '@infra/permissions/Network.Gate'
@@ -33,6 +33,7 @@ import {
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { cliToolResultDirs } from '@infra/adapters/support/Cli.ToolResults'
 import { projectAliases } from '@infra/workspace/Work.Folder'
+import type { IHostApprovals } from '@application/HostApprovals.Service'
 import { commandDirOf, ISshKitIdentity, removeSshKit, writeSshKit, writeSshRoute } from '@infra/accounts/Ssh.Kit'
 import { CLUSTER_SECRET_REFUSAL, dumpsClusterSecret } from '@domain/Secret.Mask'
 import { BACKGROUND_LIMITS, backgroundMaxProcesses, BackgroundProcesses, backgroundProcesses, clipOutput, startCommand, tailOf } from './Background.Processes'
@@ -142,6 +143,11 @@ export interface ILocalToolDeps {
   deliveries?: IFileDeliveries
   /** O balcão das vigias (ver `Watch.Tools`). Ausente = sem `watch_start`, `wake_me`, `watch_list` nem `watch_stop`. */
   watches?: WatchDesk
+  /**
+   * 🖥️ A aprovação da pessoa para o comando que o cerco sempre recusa (o `sudo`, o que apaga ou desliga a máquina), só no
+   * agente de máquina: aprovado, roda fora do cerco (ver `HostApproval.Model`). Ausente = a recusa de sempre.
+   */
+  hostApprovals?: IHostApprovals
   /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
   permissions?: IPermissionChecker
   /** As variáveis de ambiente fixas de cada agente (o campo `env` dele). Ausente = nenhuma. */
@@ -441,6 +447,55 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     return { status: 'success', result: prepared.notes + body + note }
   }
 
+  /**
+   * 🖥️ O COMANDO APROVADO PELA PESSOA, FORA DO CERCO: só o agente de máquina, só o comando exato que ela viu no cartão. Com
+   * `sudo`, a senha vai por um auxiliar (`SUDO_ASKPASS`) numa pasta privada que some no fim; o `sudo` do comando vira
+   * `sudo -A`. ⛔ A senha entra na máscara da conversa antes de o comando rodar e nunca volta pela API. Sem resposta no
+   * prazo, ou recusado, nada roda.
+   */
+  async function onHost(command: string, reason: string, context: IExecutionContext, askedSeconds?: number): Promise<IToolResult> {
+    const password = /\bsudo\b/.test(command)
+    const answer = await deps.hostApprovals!.request({
+      sessionId: context.sessionId!,
+      ...(context.agentId ? { agentId: context.agentId } : {}),
+      ...(askerOf(context).projectId ? { projectId: askerOf(context).projectId } : {}),
+      command,
+      reason,
+      password,
+    })
+    if (!answer.approved) return { status: 'error', result: `Not permitted: ${reason}. A pessoa não aprovou (ou não respondeu a tempo): não rode de novo sem ela pedir.` }
+    if (password && !answer.password) return { status: 'error', result: 'Aprovado sem a senha: o sudo não roda. Peça de novo se for preciso.' }
+    const limits = terminalOf(context)
+    const timeoutMs = askedSeconds && askedSeconds > 0 ? Math.min(askedSeconds * 1000, Math.max(limits.timeoutMs, policy.timeoutMs)) : limits.timeoutMs
+    const own = commandDirOf(runDir(), `host-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const env: Record<string, string> = { ...terminalEnv(envOf(context), subscriptionEnv({ HOME: homedir() }), context) }
+    let line = command
+    try {
+      if (password) {
+        mkdirSync(own, { recursive: true, mode: 0o700 })
+        const secret = join(own, 'senha')
+        writeFileSync(secret, `${answer.password}\n`, { mode: 0o600 })
+        const helper = join(own, 'askpass')
+        writeFileSync(helper, `#!/bin/sh\ncat '${secret.replace(/'/g, "'\\''")}'\n`, { mode: 0o700 })
+        env.SUDO_ASKPASS = helper
+        deps.mask?.register(context.sessionId!, [{ value: answer.password!, label: 'senha da máquina' }])
+        line = `sudo() { command sudo -A "$@"; }; ${command}`
+      }
+      const logDir = logDirOf(context.sessionId)
+      mkdirSync(logDir, { recursive: true })
+      const logFile = join(logDir, `host-${Date.now()}.log`)
+      const result = await startCommand(line, { cwd: fileRoot(context), env, shell: SANDBOX_SHELL, timeoutMs, logFile }).done
+      rmSync(logFile, { force: true })
+      const body = clipOutput(masked(result.output, context) || (result.timedOut ? '' : 'Command executed successfully with no output.'), limits.maxOutputChars)
+      const head = `Aprovado pela pessoa${answer.by ? ` (${answer.by})` : ''}: rodou fora do cerco.\n`
+      if (result.timedOut) return { status: 'error', result: `${head}Tempo esgotado (${Math.round(timeoutMs / 1000)}s).\n${body}` }
+      if (result.code !== 0) return { status: 'error', result: `${head}Exit code ${result.code ?? 1}: ${body.trim()}` }
+      return { status: 'success', result: head + body }
+    } finally {
+      rmSync(own, { recursive: true, force: true })
+    }
+  }
+
   /** O caminho do `exec` injetado (os testes): a mesma preparação, a saída de uma vez. */
   async function legacyRun(prepared: IPrepared, timeoutMs: number, maxOutputChars: number): Promise<IToolResult> {
     try {
@@ -522,6 +577,9 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
   async function bashCore(command: string, context: IExecutionContext | undefined, askedSeconds?: number): Promise<IToolResult> {
     const denied = await guardRefusal(command, context)
     if (denied) {
+      // 🖥️ O agente de máquina pede à pessoa: aprovado, roda fora do cerco (com a senha dela, se é `sudo`).
+      const machine = !!deps.permissions && deps.permissions.layers?.(askerOf(context)).machine === true
+      if (machine && deps.hostApprovals && context?.sessionId) return onHost(command, denied, context, askedSeconds)
       return { status: 'error', result: policyRefusal(denied, command) }
     }
     if (dumpsClusterSecret(command)) return { status: 'error', result: CLUSTER_SECRET_REFUSAL }
