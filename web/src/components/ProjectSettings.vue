@@ -13,6 +13,8 @@ import { useSettingsStore } from '@/stores/settings'
 import { useUsersStore } from '@/stores/users'
 import ConfirmDialog from './ConfirmDialog.vue'
 import EnvFilesAgents from './EnvFilesAgents.vue'
+import MachineAgents from './MachineAgents.vue'
+import { machineAgentsOn } from '@/lib/machine'
 import ProjectConnectionCard from './ProjectConnectionCard.vue'
 import ProjectServices from './ProjectServices.vue'
 import SaveFooter from './SaveFooter.vue'
@@ -31,7 +33,7 @@ const users = useUsersStore()
 const settings = useSettingsStore()
 const connections = useConnectionsStore()
 
-type TProjectTab = 'projeto' | 'membros' | 'servicos' | 'env'
+type TProjectTab = 'projeto' | 'membros' | 'servicos' | 'env' | 'maquina'
 const tab = ref<TProjectTab>('projeto')
 const sandbox = computed(() => settings.current?.deployment?.sandbox)
 
@@ -73,8 +75,10 @@ watch(
   },
   { immediate: true },
 )
-watch(envTab, (open) => {
-  if (!open && tab.value === 'env') tab.value = 'projeto'
+/** 🖥️ Os agentes de máquina: a mesma lista de agentes do `.env`, e só com o sistema permitindo. */
+const machineTab = computed(() => envTab.value && machineAgentsOn.value)
+watch([envTab, machineTab], ([env, machine]) => {
+  if ((!env && tab.value === 'env') || (!machine && tab.value === 'maquina')) tab.value = 'projeto'
 })
 
 function describe(failure: unknown): string {
@@ -144,6 +148,7 @@ const tabs = computed(() => [
   { id: 'membros' as const, label: 'Membros', count: members.value.size, unsaved: membersDirty.value },
   ...(managesThis.value ? [{ id: 'servicos' as const, label: 'Serviços', count: 0, unsaved: false }] : []),
   ...(envTab.value ? [{ id: 'env' as const, label: 'Arquivos .env', count: selected.value?.envFileAgents?.length ?? 0, unsaved: false }] : []),
+  ...(machineTab.value ? [{ id: 'maquina' as const, label: 'Agentes de máquina', count: selected.value?.machineAgents?.length ?? 0, unsaved: false }] : []),
 ])
 </script>
 
@@ -257,6 +262,10 @@ const tabs = computed(() => [
     <div v-if="tab === 'env'" class="flex flex-col gap-2" role="tabpanel">
       <p class="text-xs text-zinc-500">Os .env ficam fechados para todo agente. Aqui você abre a leitura, agente por agente, para o ambiente de desenvolvimento subir.</p>
       <EnvFilesAgents :project-id="selected.id" />
+    </div>
+
+    <div v-if="tab === 'maquina'" class="flex flex-col gap-2" role="tabpanel">
+      <MachineAgents :project-id="selected.id" />
     </div>
 
     <template v-if="tab === 'projeto' || tab === 'membros'">

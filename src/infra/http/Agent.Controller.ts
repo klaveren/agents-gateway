@@ -1313,6 +1313,8 @@ export class AgentController {
         deployment: {
           localToolsEnabled: process.env.LOCAL_TOOLS_ENABLED?.trim() || undefined,
           allowAnonymous: process.env.ALLOW_ANONYMOUS === '1',
+          // 🖥️ O deploy escondeu "Permitir agentes de máquina" (`MACHINE_AGENTS=off`): a tela não oferece a opção.
+          machineAgentsLocked: process.env.MACHINE_AGENTS?.trim().toLowerCase() === 'off',
           // O cerco dos agentes de projeto funciona AQUI? Sem ele, o Bash deles fica bloqueado.
           ...(this.usecases.sandbox ? { sandbox: await this.usecases.sandbox.status() } : {}),
           // Sem Docker, o MCP em contêiner não sobe: a tela desliga a opção e avisa nos que existem.

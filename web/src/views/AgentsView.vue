@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import MachineBadge from '@/components/MachineBadge.vue'
 import { useConnectionsStore } from '@/stores/connections'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -205,6 +206,7 @@ watch(creating, (value) => {
               <span v-if="!agent.projectId" class="shrink-0 text-sky-300" title="Global: aparece em todos os projetos" aria-label="Global"><Icon name="globe" class="h-3.5 w-3.5" /></span>
               <SharedBadge :from="agent.sharedFrom" />
               <span v-if="agent.adminOnly" class="shrink-0 text-zinc-400" title="Administradores: só eles conversam com este agente" aria-label="Administradores"><Icon name="shield" class="h-3.5 w-3.5" /></span>
+              <MachineBadge :project-id="projects.current" :agent-id="agent.id" />
             </span>
             <span class="block truncate text-xs text-zinc-500">{{ providersLine(agent) }}</span>
             <span v-if="agent.unavailable || pendingCount(openRequests, { agentId: agent.id }) || agent.importIssueCount" class="mt-1 flex flex-wrap gap-1">

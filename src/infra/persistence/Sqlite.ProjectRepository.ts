@@ -49,6 +49,8 @@ const ADDED_COLUMNS: ReadonlyArray<{ column: string; definition: string }> = [
   { column: 'read_env_files', definition: 'INTEGER' },
   // JSON `[agentId]` (os agentes que leem os `.env`, ver `IProject.envFileAgents`); NULL = nenhum.
   { column: 'env_file_agents', definition: 'TEXT' },
+  // JSON `[agentId]` (os agentes de máquina, ver `IProject.machineAgents`); NULL = nenhum.
+  { column: 'machine_agents', definition: 'TEXT' },
 ]
 
 /** Os projetos e os membros, no mesmo arquivo das conversas. Sem arquivo, em memória (`:memory:`). */
@@ -86,7 +88,9 @@ export class SqliteProjectRepository implements IProjectRepository {
 
   update(
     id: string,
-    patch: Partial<Pick<IProject, 'name' | 'description' | 'importIgnore' | 'importScope' | 'env' | 'mcpEnv' | 'color' | 'envFileAgents' | 'updatedAt' | 'updatedBy'>>,
+    patch: Partial<
+      Pick<IProject, 'name' | 'description' | 'importIgnore' | 'importScope' | 'env' | 'mcpEnv' | 'color' | 'envFileAgents' | 'machineAgents' | 'updatedAt' | 'updatedBy'>
+    >,
   ): IProject | undefined {
     if (patch.name !== undefined) this.db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(patch.name, id)
     if ('description' in patch) this.db.prepare('UPDATE projects SET description = ? WHERE id = ?').run(patch.description ?? null, id)
@@ -101,6 +105,8 @@ export class SqliteProjectRepository implements IProjectRepository {
     if ('color' in patch) this.db.prepare('UPDATE projects SET color = ? WHERE id = ?').run(patch.color ?? null, id)
     if ('envFileAgents' in patch)
       this.db.prepare('UPDATE projects SET env_file_agents = ? WHERE id = ?').run(patch.envFileAgents?.length ? JSON.stringify(patch.envFileAgents) : null, id)
+    if ('machineAgents' in patch)
+      this.db.prepare('UPDATE projects SET machine_agents = ? WHERE id = ?').run(patch.machineAgents?.length ? JSON.stringify(patch.machineAgents) : null, id)
     if (patch.updatedAt) this.db.prepare('UPDATE projects SET updated_at = ?, updated_by = ? WHERE id = ?').run(patch.updatedAt.toISOString(), patch.updatedBy ?? null, id)
     return this.get(id)
   }
@@ -154,6 +160,7 @@ function toProject(row: TRow): IProject {
     ...(envOf(row.env) ? { env: envOf(row.env) } : {}),
     ...(mcpEnvOf(row.mcp_env).length ? { mcpEnv: mcpEnvOf(row.mcp_env) } : {}),
     ...(envFileAgentsOf(row.env_file_agents).length ? { envFileAgents: envFileAgentsOf(row.env_file_agents) } : {}),
+    ...(envFileAgentsOf(row.machine_agents).length ? { machineAgents: envFileAgentsOf(row.machine_agents) } : {}),
     ...(typeof row.color === 'string' && (PROJECT_COLORS as readonly string[]).includes(row.color) ? { color: row.color as TProjectColor } : {}),
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),

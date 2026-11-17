@@ -1632,7 +1632,7 @@ export const OPENAPI_DOCUMENT = {
             ...json(
               envelope({
                 type: 'object',
-                properties: { localAccounts: { type: 'boolean' }, setupRequired: { type: 'boolean' }, edition: { type: 'string', enum: ['pro', 'lite'] } },
+                properties: { localAccounts: { type: 'boolean' }, setupRequired: { type: 'boolean' }, edition: { type: 'string', enum: ['pro', 'lite'] }, machineAgents: { type: 'boolean' } },
               }),
             ),
           },
@@ -2186,6 +2186,15 @@ export const OPENAPI_DOCUMENT = {
       put: {
         summary:
           "Choose which agents of this project READ its `.env` files (`{ agents: [agentId] }`, the WHOLE list; empty = none). Per agent: a delegated agent does not inherit it. The only system lock that opens, because a development environment needs them to run the application. Read only — writing `.env`, the gateway's own credentials (`.credentials/`), keys and `secrets.*` stay closed. The values are masked in everything the conversation shows and records. Project administrators, on the SCREEN only: an access token or an agent gets 403 (an agent never opens this for itself). Local to this installation",
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', required: ['agents'], properties: { agents: { type: 'array', items: { type: 'string' } } } }) },
+        responses: { '200': { description: 'The project', ...json(envelope({ type: 'object' })) }, '403': failures['403'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/projects/{id}/machine-agents': {
+      put: {
+        summary:
+          'Choose the MACHINE agents of this project (`{ agents: [agentId] }`, the WHOLE list; empty = none). A machine agent runs in the open sandbox: everything the gateway user reads and writes, free network, no rule needed for terminal, files and network (a deny rule still wins). The gateway data and secrets stay closed. Only works with "Allow machine agents" on in the settings (409 `machine_agents_off` otherwise). Project administrators, on the SCREEN only: an access token or an agent gets 403. Local to this installation',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json({ type: 'object', required: ['agents'], properties: { agents: { type: 'array', items: { type: 'string' } } } }) },
         responses: { '200': { description: 'The project', ...json(envelope({ type: 'object' })) }, '403': failures['403'], '404': failures['404'], '422': failures['422'] },

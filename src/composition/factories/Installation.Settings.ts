@@ -31,3 +31,16 @@ export function gitGuardOptions(): IGitGuardOptions {
     ...(current?.branchPrefix ? { branchPrefix: current.branchPrefix } : {}),
   }
 }
+
+/** 🖥️ A variável do deploy que esconde "Permitir agentes de máquina" (o servidor onde ninguém deve ligar o modo pela tela). */
+export function machineAgentsLocked(): boolean {
+  return process.env.MACHINE_AGENTS?.trim().toLowerCase() === 'off'
+}
+
+/**
+ * 🖥️ Os agentes de máquina valem NESTA instalação? Ligado nas Configurações e não travado pelo deploy. Antes da primeira
+ * leitura das Configurações, não (falha fechada).
+ */
+export function machineAgentsOn(): boolean {
+  return !machineAgentsLocked() && installationSettings()?.machineAgents === true
+}

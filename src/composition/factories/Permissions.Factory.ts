@@ -1,4 +1,5 @@
-import { readsEnvFiles } from '@domain/models/Project.Model'
+import { marksMachine, readsEnvFiles } from '@domain/models/Project.Model'
+import { machineAgentsOn } from './Installation.Settings'
 import { makeAgentProjectLayers } from './AgentProjectLayers.Factory'
 import { PermissionsService } from '@application/Permissions.Service'
 import { IPermissionRule } from '@domain/Permission.Policy'
@@ -47,6 +48,12 @@ export function makePermissions(): PermissionsService {
   service.useEnvFiles((projectId, agentId) => {
     const projects = makeProjects()
     return projects.exists(projectId) && readsEnvFiles(projects.get(projectId), agentId)
+  })
+  // 🖥️ O agente de máquina: marcado pelo admin do projeto E permitido pelo sistema; desligar o sistema vale no próximo pedido.
+  service.useMachine((projectId, agentId) => {
+    if (!machineAgentsOn()) return false
+    const projects = makeProjects()
+    return projects.exists(projectId) && marksMachine(projects.get(projectId), agentId)
   })
   return service
 }

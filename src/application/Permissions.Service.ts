@@ -75,7 +75,8 @@ export class PermissionsService implements IPermissionChecker {
     const agent = asker.agentId ? this.agentRules(asker.agentId, asker.projectId) : undefined
     const project = asker.projectId ? this.repository.projectRules(asker.projectId).rules : undefined
     const envFiles = !!asker.projectId && !!asker.agentId && this.envFilesOf?.(asker.projectId, asker.agentId) === true
-    return { ...(agent ? { agent } : {}), ...(project ? { project } : {}), ...(envFiles ? { envFiles } : {}), system: this.system() }
+    const machine = !!asker.projectId && !!asker.agentId && this.machineOf?.(asker.projectId, asker.agentId) === true
+    return { ...(agent ? { agent } : {}), ...(project ? { project } : {}), ...(envFiles ? { envFiles } : {}), ...(machine ? { machine } : {}), system: this.system() }
   }
 
   /** O projeto liberou a leitura dos `.env` para ESTE agente (ver `ISystemRule.opensWith`)? Ligado na composição. */
@@ -84,6 +85,13 @@ export class PermissionsService implements IPermissionChecker {
   }
 
   private envFilesOf?: (projectId: string, agentId: string) => boolean
+
+  /** 🖥️ O agente é de máquina NESTE projeto, com o sistema permitindo? Ligado na composição. */
+  useMachine(machineOf: (projectId: string, agentId: string) => boolean): void {
+    this.machineOf = machineOf
+  }
+
+  private machineOf?: (projectId: string, agentId: string) => boolean
 
   private evaluate(asker: IPermissionAsker, subject: IPermissionSubject): IPermissionVerdict {
     const { system, ...layers } = this.layers(asker)

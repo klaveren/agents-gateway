@@ -22,6 +22,16 @@ describe('PermissionsService', () => {
     assert.strictEqual(service.layers({ projectId: 'xpto' }).envFiles, undefined)
   })
 
+  it('🖥️ o agente de máquina é por agente e por projeto, como os .env; sem projeto ou sem agente, nunca', () => {
+    const service = make()
+    service.useMachine((projectId, agentId) => projectId === 'xpto' && agentId === 'dev')
+    assert.strictEqual(service.layers({ agentId: 'dev', projectId: 'xpto' }).machine, true)
+    assert.strictEqual(service.layers({ agentId: 'outro', projectId: 'xpto' }).machine, undefined)
+    assert.strictEqual(service.layers({ agentId: 'dev', projectId: 'beta' }).machine, undefined)
+    assert.strictEqual(service.layers({ agentId: 'dev' }).machine, undefined)
+    assert.ok(service.check({ agentId: 'dev', projectId: 'xpto' }, { category: 'terminal', value: 'brew install jq', argv: ['brew', 'install', 'jq'] }).allowed)
+  })
+
   it('projeto e agente em camadas; o registro guarda a decisão, com regra e camada', () => {
     const service = make()
     service.saveProjectRules(

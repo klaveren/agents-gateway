@@ -49,6 +49,8 @@
   import PermissionCategoryTabs from './PermissionCategoryTabs.vue'
   import PermissionRules from './PermissionRules.vue'
   import EnvFilesToggle from './EnvFilesToggle.vue'
+  import MachineToggle from './MachineToggle.vue'
+  import { machineAgentsOn } from '@/lib/machine'
   import PermissionTester from './PermissionTester.vue'
   import PermissionRequests from './PermissionRequests.vue'
   import type { IPermissionRequest } from '@/lib/permissionRequests'
@@ -1754,6 +1756,7 @@
         </p>
         <!-- ⚠️ A leitura dos `.env` por este agente no projeto: só quem administra o projeto, e só na tela. -->
         <EnvFilesToggle v-if="agent && !creating && projects.manages && (agent.projectId ?? projects.current)" :project-id="(agent.projectId ?? projects.current)!" :agent-id="agent.id" />
+        <MachineToggle v-if="machineAgentsOn && agent && !creating && projects.manages && (agent.projectId ?? projects.current)" :project-id="(agent.projectId ?? projects.current)!" :agent-id="agent.id" />
         <PermissionCategoryTabs v-model="permissionSection" :rules="shownRules" :exclude="lite ? ['delegate', ...LITE_HIDDEN_PERMISSIONS] : ['delegate']" :active="permissionPane === 'rules'" @pick="permissionPane = 'rules'">
           <!-- O nível de acesso dos CLIs por assinatura (o sandbox deles): só quando algum provedor do agente o tem. -->
           <button

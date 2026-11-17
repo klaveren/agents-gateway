@@ -258,6 +258,7 @@ export const PROJECT_SHAPE: TShape<IProject> = {
   mcpEnv: { set: { server: 'value', name: 'value', value: 'value' } },
   color: { omit: 'a cor do destaque da tela é desta instalação, não conteúdo do catálogo' },
   envFileAgents: { omit: 'a leitura dos .env é decisão de segurança desta instalação, não conteúdo do catálogo' },
+  machineAgents: { omit: 'o agente de máquina é decisão desta instalação, não conteúdo do catálogo' },
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },

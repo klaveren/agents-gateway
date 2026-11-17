@@ -18,6 +18,8 @@ import { CALLER_HEADER } from './Security.Middleware'
 import { createAccessTokenSchema, changePasswordSchema, createUserSchema, loginSchema, resetPasswordSchema, setupSchema, updateUserSchema } from './Request.Schema'
 
 export interface IAuthControllerDeps {
+  /** 🖥️ Os agentes de máquina valem nesta instalação? Vai no status, para a tela oferecer a marcação. Ausente = não. */
+  machineAgentsOn?: () => boolean
   /** Ausente = sem contas locais (`CONVERSATIONS_DB=off`): as rotas respondem 404, o status diz que não há. */
   accounts?: AccountsService
   proof?: ICallerProof
@@ -149,7 +151,12 @@ export class AuthController {
 
   /** Público: a tela pergunta se precisa mostrar o setup e qual é a edição (a casca da tela). Nada sobre quem são as contas. */
   async status(_req: Request, res: Response) {
-    await this.respond(res, async () => ({ localAccounts: !!this.deps.accounts, setupRequired: this.deps.accounts?.setupRequired() ?? false, edition: gatewayEdition() }))
+    await this.respond(res, async () => ({
+      localAccounts: !!this.deps.accounts,
+      setupRequired: this.deps.accounts?.setupRequired() ?? false,
+      edition: gatewayEdition(),
+      machineAgents: this.deps.machineAgentsOn?.() === true,
+    }))
   }
 
   async setup(req: Request, res: Response) {

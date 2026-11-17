@@ -98,6 +98,7 @@ export type TErrorCode =
   | 'usage_cap_reached'
   | 'unauthorized'
   | 'forbidden'
+  | 'machine_agents_off'
   | 'not_found'
   | 'revision_conflict'
   | 'widening_confirmation_required'

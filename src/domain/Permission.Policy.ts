@@ -70,6 +70,11 @@ export interface IPermissionLayers {
   project?: readonly IPermissionRule[]
   /** O admin do projeto liberou a leitura dos `.env` para ESTE agente (ver `ISystemRule.opensWith`). Nunca o próprio agente. */
   envFiles?: boolean
+  /**
+   * 🖥️ Agente de máquina (o projeto o marcou e o sistema permite, ver `IProject.machineAgents`): sem regra, o terminal, os
+   * arquivos e a rede valem. Uma regra de negar (do agente ou do projeto) e as do sistema continuam vencendo.
+   */
+  machine?: boolean
 }
 
 export const PERMISSION_LIMITS = { rules: 300, pattern: 300, note: 200 } as const
@@ -135,6 +140,8 @@ export function decide(subject: IPermissionSubject, layers: IPermissionLayers, s
     const where = layer === 'agent' ? 'do agente' : 'do projeto'
     return { allowed: rule.decision === 'allow', layer, rule, reason: `${rule.decision === 'allow' ? 'permitido' : 'negado'} pela regra ${where} "${rule.pattern}"` }
   }
+  if (layers.machine && MACHINE_OPEN.includes(subject.category))
+    return { allowed: true, layer: 'default', reason: `permitido: agente de máquina, sem regra de ${CATEGORY_LABEL[subject.category]} que negue` }
   if (OPEN_BY_DEFAULT.includes(subject.category) || (subject.category === 'delegate' && gatewayEdition() === 'lite'))
     return { allowed: true, layer: 'default', reason: `permitido: sem regra, ${CATEGORY_LABEL[subject.category]} do projeto vale para os agentes dele` }
   return { allowed: false, layer: 'default', reason: `negado: nenhuma regra de ${CATEGORY_LABEL[subject.category]} permite "${subject.value}"` }
@@ -147,6 +154,8 @@ export function decide(subject: IPermissionSubject, layers: IPermissionLayers, s
  * a liberação. Exigir ainda uma regra fazia o MCP marcado não funcionar. A regra `mcp` serve para RESTRINGIR (Negar).
  */
 const OPEN_BY_DEFAULT: readonly TPermissionCategory[] = ['repository', 'mcp']
+/** 🖥️ O que o agente de máquina tem sem regra: o que o usuário faz no terminal. Contas, MCP, delegação seguem como sempre. */
+const MACHINE_OPEN: readonly TPermissionCategory[] = ['terminal', 'read', 'write', 'network']
 // ⚖️ Na LITE, a delegação também: a tela dela não tem regra de delegação — marcar o agente na guia Delegação já libera.
 // Negar continua valendo (regra de negar vence), e a PRO segue pedindo a regra.
 
