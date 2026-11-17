@@ -1,3 +1,4 @@
+import { homedir } from 'node:os'
 import { marksMachine, readsEnvFiles } from '@domain/models/Project.Model'
 import { machineAgentsOn } from './Installation.Settings'
 import { makeAgentProjectLayers } from './AgentProjectLayers.Factory'
@@ -20,7 +21,10 @@ let repository: SqlitePermissionRepository | undefined
  */
 export function installationRules(): IPermissionRule[] {
   const data = dataDir().replace(/\/+$/, '')
-  return [`${data}/*.db`, `${data}/*.db-*`, `${data}/secrets*`, `${data}/backup*/**`, `${data}/*-home/**`].flatMap((pattern) => [
+  // 🖥️ A configuração do app no Mac (o `config.env`) e o LaunchAgent dele: o agente de máquina alcança a casa inteira.
+  const mac =
+    process.platform === 'darwin' ? [`${homedir()}/Library/Application Support/Agents Gateway/**`, `${homedir()}/Library/LaunchAgents/com.agents-gateway.server.plist`] : []
+  return [`${data}/*.db`, `${data}/*.db-*`, `${data}/secrets*`, `${data}/backup*/**`, `${data}/*-home/**`, ...mac].flatMap((pattern) => [
     { category: 'read' as const, pattern, decision: 'deny' as const, note: 'dados do gateway' },
     { category: 'write' as const, pattern, decision: 'deny' as const, note: 'dados do gateway' },
   ])

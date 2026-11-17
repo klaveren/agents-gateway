@@ -26,6 +26,8 @@ import {
   sweepMountPoints,
   systemReadAllowlist,
   withMacLocalPorts,
+  machineDenied,
+  withMacOpenNetwork,
   withMacProcessList,
   withMacTcpPorts,
   writeFolders,
@@ -441,6 +443,52 @@ describe('ProjectSandbox', () => {
       servers.kill()
       outsider.kill()
     }
+  })
+
+  it('🖥️ Mac de verdade (sandbox-exec): a rede livre do agente de máquina conecta na LAN e no loopback sem regra; a porta do gateway, não; sem encaixe, lança', () => {
+    assert.throws(() => withMacOpenNetwork("sandbox-exec -p '(version 1)' sh -c ls", 3999, [3000]), /rede do agente de máquina não foi aberta/)
+    if (process.platform !== 'darwin') return
+    const lan = Object.values(networkInterfaces())
+      .flat()
+      .find((info) => info && info.family === 'IPv4' && !info.internal)?.address
+    if (!lan) return
+    const [gate, free, gateway] = [47_341, 47_342, 47_343]
+    const servers = spawn(process.execPath, [
+      '-e',
+      `const n=require('net');for(const p of [${free},${gateway}])n.createServer(s=>s.end('oi')).listen(p,'0.0.0.0');setTimeout(()=>{},20000)`,
+    ])
+    try {
+      execFileSync('/bin/sleep', ['0.5'])
+      const base = `(version 1)\n(allow default)\n(deny network*)\n(allow network-outbound (remote unix-socket (path-regex #"^/")))\n(allow network-outbound (remote ip "localhost:${gate}"))`
+      const profile = withMacOpenNetwork(base, gate, [gateway])
+      const probe = `const net=require('net');net.connect(Number(process.argv[1]),process.argv[2]).on('data',()=>{console.log('ok');process.exit(0)}).on('error',e=>{console.log(e.code);process.exit(0)})`
+      const run = (port: number, host: string) =>
+        execFileSync('/usr/bin/sandbox-exec', ['-p', profile, process.execPath, '-e', probe, String(port), host], { encoding: 'utf8' }).trim()
+      assert.strictEqual(run(free, lan), 'ok')
+      assert.strictEqual(run(free, '127.0.0.1'), 'ok')
+      assert.strictEqual(run(gateway, '127.0.0.1'), 'EPERM')
+    } finally {
+      servers.kill()
+    }
+  })
+
+  it('🖥️ o que o agente de máquina nunca alcança: dados, a pasta dos comandos, a configuração e o app do gateway', () => {
+    const denied = machineDenied(
+      { CONVERSATIONS_DB: '/srv/dados/conversations.db' },
+      ['/srv/dados/agents/outro'],
+      '/Applications/Agents Gateway.app/Contents/Resources/runtime/bin/node',
+    )
+    for (const path of [
+      '/srv/dados/*.db',
+      '/srv/dados/secrets*',
+      '/srv/dados/run',
+      join(homedir(), 'Library', 'Application Support', 'Agents Gateway'),
+      '/Applications/Agents Gateway.app',
+      '/srv/dados/agents/outro',
+    ])
+      assert.ok(denied.includes(path), path)
+    assert.ok(!denied.includes(homedir()), 'a casa abre')
+    assert.ok(!denied.includes('/srv/dados'), 'a pasta de dados (os projetos) abre')
   })
 
   it('⚖️ o prelúdio: no Linux o loopback do cerco vai direto (NO_PROXY); no Mac segue pelo portão (vazio)', async () => {

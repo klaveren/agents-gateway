@@ -11,6 +11,11 @@ export interface INetworkVerdict {
   reason: string
   /** O padrão que decidiu. Destino na rede LOCAL só passa com padrão exato (sem `*`). */
   pattern?: string
+  /**
+   * 🖥️ Agente de máquina: o loopback e a rede local passam sem a regra exata. As portas do gateway, o link-local e o
+   * endereço de metadados seguem negados sempre.
+   */
+  open?: boolean
 }
 
 export type TNetworkDecide = (host: string, port: number) => INetworkVerdict
@@ -96,6 +101,7 @@ export class NetworkGate {
     const verdict = decide(name, port)
     if (!verdict.allowed) return verdict
     if (loopbackName) {
+      if (verdict.open) return { ...verdict, address: '127.0.0.1' }
       // ⛔ Serviço LOCAL (o Mongo, o Redis, a API no mesmo host) só com a regra EXATA dele: `localhost:<porta>`.
       if (verdict.pattern !== `localhost:${port}` && verdict.pattern !== `127.0.0.1:${port}`)
         return { allowed: false, reason: `localhost:${port} só com a regra exata localhost:${port}` }
@@ -111,7 +117,7 @@ export class NetworkGate {
     if (kind === 'blocked') return { allowed: false, reason: `${name} aponta para ${address}, sempre negado` }
     // ⛔ As portas do gateway valem pelo ENDEREÇO resolvido também: o IP da LAN da própria máquina não é um atalho.
     if (kind === 'private' && this.protectedPorts().includes(port)) return { allowed: false, reason: `${name}:${port} é do próprio gateway: sempre negado` }
-    if (kind === 'private' && (!verdict.pattern || verdict.pattern.includes('*'))) return { allowed: false, reason: `${name} é rede local: só com regra exata` }
+    if (kind === 'private' && !verdict.open && (!verdict.pattern || verdict.pattern.includes('*'))) return { allowed: false, reason: `${name} é rede local: só com regra exata` }
     return { ...verdict, address }
   }
 

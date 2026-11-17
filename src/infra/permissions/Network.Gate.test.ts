@@ -99,6 +99,17 @@ describe('Network.Gate', () => {
     gate.release(exact)
   })
 
+  it('🖥️ agente de máquina (open): loopback e rede local sem regra exata; o gateway, o link-local e os metadados seguem negados', async () => {
+    const gatewayPort = Number(process.env.PORT) || 3000
+    const token = gate.register(() => ({ allowed: true, reason: 'agente de máquina', open: true }))
+    assert.strictEqual((await gate.decide(token, 'localhost', 5432)).address, '127.0.0.1')
+    assert.strictEqual((await gate.decide(token, '10.10.0.3', 6379)).allowed, true)
+    assert.strictEqual((await gate.decide(token, 'localhost', gatewayPort)).allowed, false)
+    assert.strictEqual((await gate.decide(token, '10.10.0.3', gatewayPort)).allowed, false)
+    for (const host of ['169.254.169.254', 'metadata.google.internal', 'api.localhost']) assert.strictEqual((await gate.decide(token, host, 80)).allowed, false, host)
+    gate.release(token)
+  })
+
   it('⛔ a porta do gateway vale também para o IP privado resolvido (a LAN da própria máquina)', async () => {
     const gatewayPort = Number(process.env.PORT) || 3000
     const token = gate.register(() => ({ allowed: true, reason: 'x', pattern: `10.0.0.5:${gatewayPort}` }))

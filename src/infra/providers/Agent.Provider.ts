@@ -685,6 +685,13 @@ export class AgentProvider implements IAgentProvider {
     this.projectEnv = projectEnv
   }
 
+  /** 🖥️ O agente é de máquina no projeto da conversa (marcado e o sistema permite)? Vai no "## Ambiente". Ligado na composição. */
+  useMachine(machineOf: (projectId: string, agentId: string) => boolean): void {
+    this.machineOf = machineOf
+  }
+
+  private machineOf?: (projectId: string, agentId: string) => boolean
+
   /** A pasta privada no "## Ambiente", só para o agente que a alcança (Ler, Escrever arquivos ou Terminal). */
   private agentFolderOf(agent: IAgent, conversationProject?: string): { files?: { dir: string; write: boolean } } {
     const dir = this.agentFiles?.(agent)
@@ -720,6 +727,7 @@ export class AgentProvider implements IAgentProvider {
       ...(hasWatch(agent.allowedTools) && !metadata?.[DELEGATED_BY] ? { watch: true } : {}),
       ...(this.secrets?.ambientFor(agent, projectOf(metadata)) ? { secrets: this.secrets.ambientFor(agent, projectOf(metadata))! } : {}),
       ...(this.panels ? { panel: true } : {}),
+      ...(projectId && this.machineOf?.(projectId, agent.id) ? { machine: true } : {}),
     }
   }
 

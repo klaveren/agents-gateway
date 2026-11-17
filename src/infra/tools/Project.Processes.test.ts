@@ -37,6 +37,11 @@ describe('eligibleProcesses — o que o agente pode ver e parar', () => {
     assert.deepEqual(eligibleProcesses(tree, ROOT, 100), [])
   })
 
+  it('🖥️ agente de máquina: qualquer processo do usuário (a IDE, o terminal, outro projeto); nunca o gateway nem o executor', () => {
+    const pids = eligibleProcesses(TREE, ROOT, 100, true).map((info) => info.pid)
+    assert.deepEqual(pids, [120, 121, 122, 200, 201, 202, 300, 301, 400, 401, 500])
+  })
+
   it('withDescendants: o escolhido leva junto os filhos do projeto', () => {
     const eligible = eligibleProcesses(TREE, ROOT, 100)
     const picked = withDescendants(

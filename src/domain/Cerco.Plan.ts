@@ -67,6 +67,11 @@ export interface ICercoBase {
    * (`.env.example` sob `**\/.env.*`) é reaberto para leitura, um a um: o runtime não tem negação no padrão.
    */
   find?: (pattern: string) => string[]
+  /**
+   * 🖥️ Onde as regras sem caminho absoluto (`**\/.env`, os segredos) valem no CERCO ABERTO, além da raiz: a máquina toda
+   * no Mac (`/`, o perfil aceita o padrão); no Linux, a casa e a pasta de dados (lá o runtime percorre as pastas).
+   */
+  anywhere?: readonly string[]
 }
 
 /**
@@ -196,4 +201,31 @@ function own(base: ICercoBase, access: 'read' | 'write'): string[] {
 function contains(parent: string, child: string): boolean {
   const rel = relative(parent, child)
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+/**
+ * 🖥️ O CERCO ABERTO do agente de máquina: lê e grava tudo o que o usuário do servidor pode (`/`), menos o que `alwaysDeny`
+ * fecha (os dados do gateway, a configuração dele, as pastas privadas dos outros agentes), os segredos do sistema
+ * (`.env`, chaves) e o que uma regra de NEGAR do agente ou do projeto fecha. O `.git` do projeto segue sem config e hooks:
+ * eles rodam no próximo git do gateway, fora do cerco.
+ */
+export function machinePlan(layers: IPermissionLayers, base: ICercoBase): ICercoPlan {
+  const deny = (category: 'read' | 'write') =>
+    [
+      ...[...SYSTEM_RULES, ...(base.system ?? [])].filter((rule) => rule.category === category && rule.decision === 'deny' && !opened(rule, layers)),
+      ...[...(layers.agent ?? []), ...(layers.project ?? [])].filter((rule) => rule.category === category && rule.decision === 'deny'),
+    ].flatMap((rule) => [base.root, ...(base.anywhere ?? [])].map((anchor) => toSandboxPath(rule.pattern, anchor)))
+  return {
+    readDeny: [...new Set([...base.alwaysDeny, ...deny('read')])],
+    readAllow: [...new Set([...base.scratch, ...base.alwaysRead, ...(base.gitCommonDir ? [base.gitCommonDir] : []), ...own(base, 'read'), ...sparedTemplates(layers, base)])],
+    writeAllow: ['/'],
+    writeDeny: [
+      ...new Set([
+        ...base.alwaysDeny,
+        ...deny('write'),
+        ...(base.gitCommonDir ? gitWriteDenies(base.gitCommonDir, base.worktreeGitDir ? { dir: base.root, gitDir: base.worktreeGitDir } : undefined) : []),
+        ...(base.readOnly ?? []),
+      ]),
+    ],
+  }
 }

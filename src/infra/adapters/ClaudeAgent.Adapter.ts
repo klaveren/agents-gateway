@@ -536,7 +536,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         // ⛔ O WebFetch passa pelo MESMO portão de rede do cerco (loopback, porta do gateway, link-local/metadados, rede local só com regra exata).
         const fetchRefused = bare === 'WebFetch' ? await this.fetchRefusal(input, who) : undefined
         if (fetchRefused) return { behavior: 'deny', message: fetchRefused }
-        return project ? this.confined(bare, input, project) : { behavior: 'allow' }
+        // 🖥️ O agente de máquina não fica na pasta do projeto: as regras (e as do sistema, com os dados do gateway) já decidiram.
+        const machine = !!who && this.permissions?.layers?.(who.asker).machine === true
+        return project && !machine ? this.confined(bare, input, project) : { behavior: 'allow' }
       }
 
       return { behavior: 'deny', message: `Tool "${bare}" is not enabled for this agent.` }

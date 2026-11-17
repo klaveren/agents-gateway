@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { cercoPlan, projectAnchored, toSandboxPath } from './Cerco.Plan'
+import { cercoPlan, machinePlan, projectAnchored, toSandboxPath } from './Cerco.Plan'
 import { IPermissionRule } from './Permission.Policy'
 
 const rule = (category: IPermissionRule['category'], pattern: string, decision: IPermissionRule['decision'] = 'allow'): IPermissionRule => ({ category, pattern, decision })
@@ -146,5 +146,29 @@ describe('Cerco.Plan', () => {
     for (const path of ['/usr', '/etc/ssl', '/w/p/.home', '/tools']) assert.ok(on.readAllow.includes(path), path)
     assert.ok(on.readDeny.includes('/w/p') && on.readDeny.includes('/home/gw'), 'as negações de antes seguem')
     assert.deepStrictEqual({ ...on, readDeny: on.readDeny.filter((p) => p !== '/'), readAllow: on.readAllow.filter((p) => p !== '/usr' && p !== '/etc/ssl') }, off)
+  })
+})
+
+describe('machinePlan — o cerco aberto do agente de máquina', () => {
+  const open = {
+    root: '/w/p',
+    scratch: ['/w/p/.home'],
+    alwaysRead: ['/tools'],
+    alwaysDeny: ['/srv/data/run', '/home/gw/Library/Application Support/Agents Gateway'],
+    anywhere: ['/'],
+  }
+  it('🖥️ grava em tudo (`/`), lê tudo; fecha o que alwaysDeny fecha, os segredos na máquina toda e o que uma regra nega', () => {
+    const plan = machinePlan({ machine: true, project: [{ category: 'write', pattern: '/etc/**', decision: 'deny' }] }, { ...open, system: [] })
+    assert.deepStrictEqual(plan.writeAllow, ['/'])
+    for (const path of ['/srv/data/run', '/home/gw/Library/Application Support/Agents Gateway', '/**/.env', '/w/p/**/.env', '/**/*.key'])
+      assert.ok(plan.readDeny.includes(path), path)
+    assert.ok(plan.writeDeny.includes('/etc/**'))
+    assert.ok(!plan.readDeny.includes('/w/p'), 'a raiz não fecha: o agente de máquina lê o projeto sem regra')
+    assert.ok(!plan.readDeny.includes('/home/gw'), 'a casa abre')
+  })
+  it('o git do projeto segue sem config e hooks', () => {
+    const plan = machinePlan({ machine: true }, { ...open, gitCommonDir: '/w/p/.git', system: [] })
+    assert.ok(plan.writeDeny.includes('/w/p/.git/hooks'))
+    assert.ok(plan.readAllow.includes('/w/p/.git'))
   })
 })

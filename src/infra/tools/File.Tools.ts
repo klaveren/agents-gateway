@@ -1,3 +1,4 @@
+import { homedir } from 'node:os'
 import { constants as fsc, existsSync, realpathSync } from 'node:fs'
 import { FileHandle, glob, lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
@@ -36,6 +37,11 @@ export interface IFileToolDeps {
    * list_files, search_files, pelo caminho absoluto), sem regra; a escrita nunca as alcança. Ausente = nenhuma.
    */
   sharedFolders?: (context?: IExecutionContext) => readonly string[]
+  /**
+   * 🖥️ O agente da conversa é de máquina (ver `IProject.machineAgents`): o caminho ABSOLUTO fora da raiz vale (a raiz da
+   * chamada vira `/`), com os dados e a configuração do gateway ainda protegidos (`deniedPath`). Ausente = não.
+   */
+  machine?: (context?: IExecutionContext) => boolean
 }
 
 export interface IOwnFolder {
@@ -113,7 +119,7 @@ export function resolveInside(root: string, path: string): string | undefined {
 }
 
 /** ⛔ Os arquivos sempre protegidos: segredos e o dado interno do gateway (fora da raiz das tools). */
-export function deniedPath(absPath: string, root: string): string | undefined {
+export function deniedPath(absPath: string, root: string, machine = false): string | undefined {
   // ⛔ Sem distinção de caixa: no disco do Mac (APFS) `.ENV` é o `.env` e `.GIT/config` é o `.git/config`.
   const name = basename(absPath).toLowerCase()
   if (name === '.env' || name.startsWith('.env.')) return 'environment file'
@@ -127,6 +133,10 @@ export function deniedPath(absPath: string, root: string): string | undefined {
   const real = realOf(resolve(absPath))
   // Os arquivos de recurso globais se LEEM (a gravação é recusada à parte: `isResourceFilePath`).
   if (isInside(realOf(dataDir()), real) && !isInside(realOf(resolve(root)), real) && !isInside(realOf(globalResourcesDir()), real)) return 'gateway data'
+  // 🖥️ No agente de máquina a raiz é `/`: a pasta de dados vale pelo que é dela (só os projetos se alcançam), e a configuração
+  // do gateway (no Mac, `config.env` e a chave) nunca.
+  if (machine && isInside(realOf(dataDir()), real) && !isInside(realOf(join(dataDir(), 'projects')), real) && !isInside(realOf(globalResourcesDir()), real)) return 'gateway data'
+  if (machine && isInside(realOf(join(homedir(), 'Library', 'Application Support', 'Agents Gateway')), real)) return 'gateway configuration'
   return undefined
 }
 
@@ -142,9 +152,12 @@ function placeOf(
   context: IExecutionContext | undefined,
   path: unknown,
   reading = false,
-): { root: string; own?: IOwnFolder; shared?: true; show: (abs: string) => string } {
+): { root: string; own?: IOwnFolder; shared?: true; machine?: true; show: (abs: string) => string } {
   const own = deps.ownFolder?.(context)
   const root = deps.rootFor(context)
+  // 🖥️ O agente de máquina: o caminho absoluto fora da raiz tem a raiz `/` (os dados do gateway seguem protegidos).
+  if (typeof path === 'string' && isAbsolute(path) && deps.machine?.(context) && !isInside(realOf(resolve(root)), realOf(resolve(path))))
+    return { root: '/', ...(own ? { own } : {}), machine: true, show: (abs) => abs }
   if (own && typeof path === 'string' && isAbsolute(path) && isInside(realOf(resolve(own.dir)), realOf(resolve(path))))
     return { root: realOf(resolve(own.dir)), own, show: (abs) => abs }
   // ⛔ Só LEITURA: a pasta de um item compartilhado com o projeto vira a raiz da chamada (nada fora dela). Escrever nunca entra aqui.
@@ -174,11 +187,12 @@ function guard(
   write = false,
   own?: IOwnFolder,
   shared = false,
+  machine = false,
 ): { abs: string } | { error: IToolResult } {
   if (typeof path !== 'string' || !path.trim()) return { error: fail('path is required.') }
   const abs = resolveInside(root, path)
   if (!abs) return { error: fail('path is outside the allowed folder') }
-  const reason = deniedPath(abs, root)
+  const reason = deniedPath(abs, root, machine)
   if (reason) return { error: fail(`${reason}: this file is protected`) }
   // ⛔ A pasta privada: a de outro agente nunca; a própria pela capacidade, sem regra.
   const folder = folderOf(abs, own)
@@ -191,7 +205,8 @@ function guard(
   if (write && isResourceFilePath(abs)) return { error: fail('resource files are read-only: they are edited in the gateway (the skill, command or agent page)') }
   // A pasta compartilhada é lida sem regra (como a global): o gateway a mantém, e a raiz da chamada já é ela.
   if (shared && !write) return { abs }
-  const denied = permit?.(relOf(root, abs))
+  // 🖥️ Fora da raiz (agente de máquina), a regra recebe o caminho absoluto: as do sistema e as absolutas casam por ele.
+  const denied = permit?.(machine ? abs : relOf(root, abs))
   if (denied) return { error: fail(`Not permitted: ${denied}`) }
   return { abs }
 }
@@ -313,8 +328,8 @@ function readFileTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const { root, own, shared, show } = placeOf(deps, context, args.path, true)
-      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, own, !!shared)
+      const { root, own, shared, machine, show } = placeOf(deps, context, args.path, true)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, own, !!shared, !!machine)
       if ('error' in checked) return checked.error
       try {
         const { handle, size } = await openChecked(checked.abs, fsc.O_RDONLY)
@@ -357,10 +372,10 @@ function listFilesTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const { root, own, shared, show } = placeOf(deps, context, args.path, true)
+      const { root, own, shared, machine, show } = placeOf(deps, context, args.path, true)
       const pattern = typeof args.pattern === 'string' ? args.pattern.trim() : ''
       if (!pattern) return fail('pattern is required.')
-      const checked = guard(root, args.path ?? '.', undefined, false, own, !!shared)
+      const checked = guard(root, args.path ?? '.', undefined, false, own, !!shared, !!machine)
       if ('error' in checked) return checked.error
       try {
         const names: string[] = []
@@ -396,7 +411,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const { root, own, shared, show } = placeOf(deps, context, args.path, true)
+      const { root, own, shared, machine, show } = placeOf(deps, context, args.path, true)
       const source = typeof args.pattern === 'string' ? args.pattern : ''
       if (!source) return fail('pattern is required.')
       if (source.length > SEARCH_PATTERN_MAX_CHARS) return fail(`pattern is too long (limit ${SEARCH_PATTERN_MAX_CHARS} characters).`)
@@ -406,7 +421,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
       } catch (error: unknown) {
         return fail(`invalid regular expression: ${toMessage(error)}`)
       }
-      const checked = guard(root, args.path ?? '.', undefined, false, own, !!shared)
+      const checked = guard(root, args.path ?? '.', undefined, false, own, !!shared, !!machine)
       if ('error' in checked) return checked.error
       const fileGlob = typeof args.glob === 'string' && args.glob.trim() ? args.glob.trim() : '**/*'
       try {
@@ -469,8 +484,8 @@ function writeFileTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const { root, own, show } = placeOf(deps, context, args.path)
-      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true), true, own)
+      const { root, own, machine, show } = placeOf(deps, context, args.path)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true), true, own, false, !!machine)
       if ('error' in checked) return checked.error
       if (typeof args.content !== 'string') return fail('content is required.')
       const bytes = Buffer.byteLength(args.content)
@@ -478,7 +493,7 @@ function writeFileTool(deps: IFileToolDeps): ILocalTool {
       try {
         await mkdir(dirname(checked.abs), { recursive: true })
         // Revalida depois do mkdir: o pai agora existe e pode ser um symlink que escapa.
-        const again = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, false), true, own)
+        const again = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, false), true, own, false, !!machine)
         if ('error' in again) return again.error
         await writeChecked(again.abs, args.content)
         return { status: 'success', result: `Wrote ${bytes} bytes to ${show(again.abs)}` }
@@ -507,8 +522,8 @@ function editFileTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const { root, own, show } = placeOf(deps, context, args.path)
-      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true), true, own)
+      const { root, own, machine, show } = placeOf(deps, context, args.path)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true), true, own, false, !!machine)
       if ('error' in checked) return checked.error
       const { old_string: from, new_string: to } = args
       if (typeof from !== 'string' || typeof to !== 'string' || !from) return fail('old_string and new_string are required (old_string cannot be empty).')
@@ -583,7 +598,7 @@ export function deliverFileTool(deps: IFileToolDeps, deliveries: IFileDeliveries
       const inConversation = isAbsolute(args.path) ? isInside(own, realOf(resolve(args.path))) : realOf(resolve(place.root)) === own
       const checked = inConversation
         ? guard(own, args.path, undefined, false, place.own)
-        : guard(place.root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, place.own, !!place.shared)
+        : guard(place.root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, place.own, !!place.shared, !!place.machine)
       if ('error' in checked) return checked.error
       try {
         if ((await deliveries.files(sessionId)).length >= DELIVERED_FILES_PER_CONVERSATION)
