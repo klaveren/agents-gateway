@@ -5,7 +5,8 @@ import { useProjectsStore } from '@/stores/projects'
 import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 
 /**
- * O menu PROJETO: o que vale para as conversas do projeto em uso — o Ambiente (o que toda conversa recebe:
+ * O menu PROJETO: o que vale para as conversas do projeto em uso — as Configurações (os dados dele, membros, os serviços
+ * do ambiente e os `.env`), o Ambiente (o que toda conversa recebe:
  * rules e specs inteiras, com o peso), as Rules (o cadastro, globais e do projeto, com o construtor) e os Agendamentos
  * (o que os agentes rodam sozinhos no projeto, pela próxima execução), as Permissões, as Contas (as credenciais do
  * terminal do projeto) e os Repositórios (onde as conversas abrem). E o Importador: o que um repositório do projeto tem de recurso agêntico, só para ler.
@@ -15,6 +16,7 @@ import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 defineProps<{ placement: 'side' | 'up'; active?: string }>()
 
 const ITEMS: IRailMenuItem[] = [
+  { to: '/project', key: 'project-settings', label: 'Configurações', hint: 'Nome, membros, serviços do ambiente e leitura dos .env', icon: 'settings' },
   { to: '/environment', key: 'environment', label: 'Ambiente', hint: 'O que toda conversa do projeto recebe', icon: 'folder' },
   { to: '/rules', key: 'rules', label: 'Rules', hint: 'Regras que todo agente respeita', icon: 'rule' },
   { to: '/permissions', key: 'permissions', label: 'Permissões', hint: 'O que os agentes podem fazer: comandos, arquivos, MCP', icon: 'shield' },
