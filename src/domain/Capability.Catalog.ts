@@ -35,9 +35,10 @@ export const CAPABILITIES: readonly ICapability[] = [
   {
     id: 'terminal',
     label: 'Terminal',
-    description: 'Roda comandos na pasta da conversa (ou do projeto), com trava de comandos perigosos e teto de tempo; processos longos em segundo plano.',
+    description:
+      'Roda comandos na pasta da conversa (ou do projeto), com trava de comandos perigosos e teto de tempo; processos longos em segundo plano; ver e parar os processos do projeto.',
     risk: 'server-exec',
-    local: ['run_bash', 'bash_start', 'bash_logs', 'bash_stop', 'bash_list'],
+    local: ['run_bash', 'bash_start', 'bash_logs', 'bash_stop', 'bash_list', 'processes'],
     // ⛔ Os terminais do Codex e do Gemini não seguem as permissões: os dois recebem o do gateway, por MCP (`Turn.Grants`).
     runs: {},
   },

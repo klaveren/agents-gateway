@@ -403,12 +403,14 @@ export class AgentProvider implements IAgentProvider {
         return
       }
 
+      let textGap = false
       for (;;) {
         let exhausted: { message: string; resetsAt?: string; kind: TProviderFailure; next: IFallbackStep } | undefined
         // O fim da rodada fica retido: com mensagem na fila, o turno ainda não acabou.
         let completed: IAgentEvent | undefined
         let stopped = false
         for await (const event of adapter.sendMessage(agent, sessionId, { ...sent, interjections: take }, context)) {
+          let shown: IAgentEvent = event
           // ⚖️ A FALHA QUE O GRUPO TROCA (cota, limite, modelo fora…) com um próximo nele: o erro não sai, o turno segue no
           // próximo (ver `Fallback.Policy`). O passo que falhou sai do turno: o provedor inteiro na cota, só o modelo no erro dele.
           const kind = event.type === 'error' ? event.payload.kind : undefined
@@ -440,12 +442,19 @@ export class AgentProvider implements IAgentProvider {
           if (event.type === 'message.aborted' || event.type === 'error') stopped = true
           // Somar o usage aqui vale para as seis implementações de uma vez.
           if (event.type === 'usage') this.noteUsage(record, event.payload)
-          else if (event.type === 'text.delta') turn.text += event.payload.text
+          else if (event.type === 'text.delta') {
+            // ⚖️ O TEXTO DEPOIS DE UMA FERRAMENTA (ou de uma mensagem que entrou no meio) é outro parágrafo: sem a quebra, o
+            // fim do anterior colava no começo dele ("…no sandbox.Entendido: …"), na tela e no que fica gravado.
+            const text = textGap && turn.text && !/\s$/.test(turn.text) && !/^\s/.test(event.payload.text) ? `\n\n${event.payload.text}` : event.payload.text
+            if (text !== event.payload.text) shown = { ...event, payload: { text } }
+            textGap = false
+            turn.text += text
+          } else if (event.type === 'tool.result' || event.type === 'tool.error' || event.type === 'message.injected') textGap = true
           else if (event.type === 'tool.started') turn.tools.push(event.payload.tool)
           if (event.type === 'tool.started') this.loops?.observe(sessionId, { type: 'tool.started', tool: event.payload.tool, args: event.payload.args })
           if (event.type === 'tool.started' && [BOARD_TOOL, LEGACY_BOARD_TOOL, PLAN_TOOL].includes(event.payload.tool)) panelTouched = true
           else if (event.type === 'tool.error' || event.type === 'tool.result') this.loops?.observe(sessionId, { type: event.type })
-          yield event
+          yield shown
           if (toolEnd) yield* announce()
           // ⛔ LAÇO: a mesma chamada repetida (ou erros seguidos) além do limite para o turno (ver `Loop.Policy`).
           const loop = this.loops?.stopReason(sessionId)
