@@ -38,6 +38,12 @@ export interface IProject {
    * valores são mascarados na conversa. Desta máquina (nunca no catálogo), escolhidos pelo admin do projeto na tela.
    */
   envFileAgents?: string[]
+  /**
+   * 🖥️ Os AGENTES DE MÁQUINA do projeto: rodam no cerco aberto (tudo o que o usuário do gateway lê e grava, rede livre),
+   * com os dados do gateway e os segredos ainda fechados. Só valem com "Permitir agentes de máquina" ligado nas
+   * Configurações (`machineAgentsOn`). Desta máquina (nunca no catálogo), escolhidos pelo admin do projeto na tela.
+   */
+  machineAgents?: string[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string
@@ -74,6 +80,11 @@ export const PROJECT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,31}$/
 export const DEFAULT_PROJECT_ID = 'geral'
 
 /** ⚠️ O agente lê os `.env` deste projeto (ver `IProject.envFileAgents`)? */
+/** 🖥️ O agente está marcado como de máquina neste projeto (ver `IProject.machineAgents`)? Sozinho não liga nada: falta o sistema. */
+export function marksMachine(project: Pick<IProject, 'machineAgents'> | undefined, agentId: string | undefined): boolean {
+  return !!agentId && !!project?.machineAgents?.includes(agentId)
+}
+
 export function readsEnvFiles(project: Pick<IProject, 'envFileAgents'> | undefined, agentId: string | undefined): boolean {
   return !!agentId && !!project?.envFileAgents?.includes(agentId)
 }

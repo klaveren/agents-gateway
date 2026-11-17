@@ -119,6 +119,11 @@ export const useProjectsStore = defineStore('projects', () => {
     putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}/env-files`, { method: 'PUT', body: { agents } }))
   }
 
+  /** 🖥️ A lista INTEIRA dos agentes de máquina do projeto (vazia = nenhum). Só pela tela. */
+  async function setMachineAgents(id: string, agents: string[]): Promise<void> {
+    putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}/machine-agents`, { method: 'PUT', body: { agents } }))
+  }
+
   /** 🎨 A cor do destaque do projeto (`undefined` = o verde do tema). */
   async function setColor(id: string, color: string | undefined): Promise<void> {
     putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}/color`, { method: 'PUT', body: { color: color ?? null } }))
@@ -160,6 +165,7 @@ export const useProjectsStore = defineStore('projects', () => {
     update,
     setColor,
     setEnvFileAgents,
+    setMachineAgents,
     remove,
     memberLists,
     members,

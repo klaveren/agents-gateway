@@ -170,6 +170,7 @@ export const updateSettingsSchema = z.object({
     .nullable()
     .optional(),
   lockMainCheckout: z.boolean().nullable().optional(),
+  machineAgents: z.boolean().nullable().optional(),
 })
 
 /**

@@ -485,6 +485,7 @@ function buildRoutes(
     { method: 'put', path: '/projects/:id', handler: projects.update },
     { method: 'put', path: '/projects/:id/color', handler: projects.setColor },
     { method: 'put', path: '/projects/:id/env-files', handler: projects.setEnvFiles },
+    { method: 'put', path: '/projects/:id/machine-agents', handler: projects.setMachineAgents },
     { method: 'delete', path: '/projects/:id', handler: projects.remove },
     { method: 'get', path: '/projects/:id/members', handler: projects.members },
     { method: 'get', path: '/projects/:id/repositories', handler: projects.repositories },

@@ -6,6 +6,21 @@ const rule = (category: IPermissionRule['category'], pattern: string, decision: 
 const cmd = (text: string) => ({ category: 'terminal' as const, value: text, argv: text.split(' ') })
 
 describe('Permission.Policy', () => {
+  it('🖥️ agente de máquina: sem regra, terminal, arquivos e rede valem; negar (agente ou projeto) e o sistema seguem vencendo; o resto, como sempre', () => {
+    const machine = { machine: true }
+    assert.ok(decide(cmd('brew install jq'), machine).allowed)
+    assert.ok(decide({ category: 'read', value: '/Users/ana/notas.txt' }, machine).allowed)
+    assert.ok(decide({ category: 'write', value: '/opt/app/conf.yml' }, machine).allowed)
+    assert.ok(decide({ category: 'network', value: '10.10.0.3:6379' }, machine).allowed)
+    assert.strictEqual(decide({ category: 'account', value: 'github' }, machine).allowed, false)
+    assert.strictEqual(decide(cmd('brew install jq'), { ...machine, project: [rule('terminal', 'brew *', 'deny')] }).allowed, false)
+    assert.strictEqual(decide(cmd('brew install jq'), { ...machine, agent: [rule('terminal', 'brew *', 'deny')] }).allowed, false)
+    assert.strictEqual(decide(cmd('sudo ls'), machine).layer, 'system')
+    assert.strictEqual(decide({ category: 'read', value: '/Users/ana/projeto/.env' }, machine).layer, 'system')
+    assert.strictEqual(decide({ category: 'read', value: '/srv/gw/conversations.db' }, machine, [rule('read', '/srv/gw/*.db', 'deny')]).layer, 'system')
+    assert.strictEqual(decide(cmd('brew install jq'), {}).allowed, false, 'sem a marca, a regra de sempre')
+  })
+
   it('sem regra, negado; o projeto fecha e o agente libera; dentro da camada, negar vence permitir', () => {
     assert.strictEqual(decide(cmd('git status'), {}).layer, 'default')
     // `**` no terminal casa uma palavra só: o salvamento recusa e manda usar `*`.

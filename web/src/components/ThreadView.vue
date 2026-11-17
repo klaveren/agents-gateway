@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import MachineBadge from './MachineBadge.vue'
   import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue'
   import { api } from '@/lib/api'
   import { useStickToBottom } from '@/composables/useStickToBottom'
@@ -140,6 +141,8 @@
   /** Os `/commands` que a pessoa pode usar com este agente (o autocompletar da caixa). */
   // ⚠️ Pelo agente da CONVERSA (o cabeçalho), não só pela lista de agentes: ela vem recortada pelo projeto atual, e a
   // conversa pode ser de outro projeto. Quem diz o que a pessoa pode usar é o servidor.
+  /** O projeto DA CONVERSA (o do cabeçalho); conversa nova, o atual. */
+  const conversationProject = computed(() => (typeof header.value?.metadata?.project === 'string' ? header.value.metadata.project : (projects.current ?? undefined)))
   const commands = useAgentCommands(
     computed(() => agent.value?.id ?? header.value?.agentId ?? thread.agentId),
     // Os documentos do `/` são os do projeto DA CONVERSA (o do cabeçalho); conversa nova, o projeto atual.
@@ -391,6 +394,7 @@
         <div v-else class="truncate font-medium">{{ header?.title || agentName || 'Conversa' }}</div>
         <div v-if="renameError" class="truncate text-xs text-rose-300" data-test="thread-title-error">{{ renameError }}</div>
         <div class="truncate text-xs text-zinc-400">
+          <MachineBadge :project-id="conversationProject" :agent-id="agent?.id ?? header?.agentId ?? thread.agentId" />
           {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}
           <template v-if="thread.session?.reasoning">· raciocínio {{ effortLabel(thread.session.reasoning).toLowerCase() }}</template>
           <template v-if="typeof header?.metadata?.repository === 'string'">

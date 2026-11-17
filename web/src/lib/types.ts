@@ -392,6 +392,8 @@ export interface ISettings {
   protectedBranches?: string[]
   /** Trocar de branch na pasta principal do repositório. Ausente = travado. */
   lockMainCheckout?: boolean
+  /** 🖥️ "Permitir agentes de máquina" (os que o admin do projeto marcar rodam no cerco aberto). Ausente = não. */
+  machineAgents?: boolean
   /** Os provedores sem cota agora, e quando voltam (só leitura). */
   benched?: Array<{ provider: string; until: string }>
   updatedAt?: string
@@ -411,6 +413,8 @@ export interface ISettings {
     sandbox?: ISandboxStatus
     /** O Docker responde neste servidor? Sem ele, o MCP "Contêiner isolado" não sobe. */
     docker?: { available: boolean; reason?: string }
+    /** 🖥️ O deploy escondeu "Permitir agentes de máquina" (`MACHINE_AGENTS=off`). */
+    machineAgentsLocked?: boolean
   }
 }
 
@@ -787,6 +791,8 @@ export interface IProject {
   color?: string
   /** ⚠️ Só admin: os agentes do projeto que leem os `.env` (um a um, liberados pelo admin, na tela). */
   envFileAgents?: string[]
+  /** 🖥️ Os agentes de máquina do projeto; só vem quando o sistema os permite (desligado, ninguém é). */
+  machineAgents?: string[]
   createdAt: string
   updatedAt: string
   updatedBy?: string

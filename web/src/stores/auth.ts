@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { api, ApiError, authHeaders, CALLER_TOKEN_KEY, setUnauthorizedHandler } from '@/lib/api'
 import { clearResources } from '@/lib/resource'
 import { setEdition, type TEdition } from '@/lib/edition'
+import { machineAgentsOn } from '@/lib/machine'
 import { readLocal, writeLocal } from '@/lib/storage'
 import type { ISession, ISettings, IUser } from '@/lib/types'
 import { useAgentsStore } from './agents'
@@ -108,10 +109,11 @@ export const useAuthStore = defineStore('auth', () => {
   async function scan(): Promise<void> {
     try {
       // ⚖️ As três de uma vez: o gateway pode estar longe (~220 ms de ida e volta), e cada espera em fila soma isso.
-      const status = api<{ localAccounts: boolean; setupRequired: boolean; edition?: TEdition }>('/auth/status').catch(() => ({
+      const status = api<{ localAccounts: boolean; setupRequired: boolean; edition?: TEdition; machineAgents?: boolean }>('/auth/status').catch(() => ({
         localAccounts: false,
         setupRequired: false,
         edition: undefined,
+        machineAgents: false,
       }))
       // O token antigo vira cookie ANTES de perguntar quem é (só quando há um no navegador).
       await migrateStoredSession()
@@ -127,6 +129,7 @@ export const useAuthStore = defineStore('auth', () => {
       localAccounts.value = found.localAccounts
       setupRequired.value = found.setupRequired
       setEdition(found.edition)
+      machineAgentsOn.value = found.machineAgents === true
       user.value = me
       isAdmin.value = admin === undefined
       unauthorized.value = admin instanceof ApiError && admin.status === 401

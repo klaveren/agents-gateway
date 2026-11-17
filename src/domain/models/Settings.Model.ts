@@ -101,6 +101,12 @@ export interface IAgentSettings {
   protectedBranches?: string[]
   /** Trocar de branch na pasta principal de um repositório. Ausente = travado; `false` libera. */
   lockMainCheckout?: boolean
+  /**
+   * 🖥️ "Permitir agentes de máquina": os agentes que o admin do projeto marcar (`IProject.machineAgents`) rodam no cerco
+   * aberto. Ausente/`false` = ninguém, e desligar devolve todos ao cerco na hora (a marcação fica guardada). A variável
+   * `MACHINE_AGENTS=off` do deploy esconde a opção (ver `machineAgentsOn`).
+   */
+  machineAgents?: boolean
 
   updatedAt?: Date
   updatedBy?: string
@@ -162,6 +168,7 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
         ? stored.protectedBranches.filter((branch): branch is string => typeof branch === 'string' && !!branch.trim())
         : undefined,
     lockMainCheckout: typeof stored.lockMainCheckout === 'boolean' ? stored.lockMainCheckout : undefined,
+    machineAgents: typeof stored.machineAgents === 'boolean' ? stored.machineAgents : undefined,
     updatedAt: date(stored.updatedAt),
     updatedBy: text(stored.updatedBy),
   }
@@ -226,6 +233,7 @@ const EDITABLE = [
   'baseBranch',
   'protectedBranches',
   'lockMainCheckout',
+  'machineAgents',
 ] as const
 const REQUIRED = ['audience'] as const
 

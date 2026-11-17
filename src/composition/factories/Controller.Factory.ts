@@ -1,3 +1,4 @@
+import { machineAgentsOn } from './Installation.Settings'
 import { RESOURCE_KINDS } from '@domain/models/Resource.Model'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { AuditController } from '@infra/http/Audit.Controller'
@@ -262,7 +263,7 @@ export function makeSecretMaskController(): SecretMaskController {
 
 export function makeAuthController(): AuthController {
   const { accounts, proof, accessTokens } = makeAuth()
-  return new AuthController({ accounts, proof, accessTokens, projectRole: (projectId, userId) => makeProjects().roleOf(projectId, userId) })
+  return new AuthController({ accounts, proof, accessTokens, machineAgentsOn, projectRole: (projectId, userId) => makeProjects().roleOf(projectId, userId) })
 }
 
 /** ⚠️ Uma só: lê as mesmas configurações e o mesmo catálogo que o resto. */
@@ -343,6 +344,7 @@ export function makeProjectsController(): ProjectsController {
     projects: makeProjects(),
     proof: makeAuth().proof,
     gitCredentials: (projectId, accountId) => makeProjectAccounts().gitEnv(projectId, accountId),
+    machineAgentsOn,
     busy: (projectId, repository) =>
       makeSessionStore()
         .list()

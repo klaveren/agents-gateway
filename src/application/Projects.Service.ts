@@ -157,6 +157,13 @@ export class ProjectsService {
     return this.projects.update(id, { envFileAgents: unique, updatedAt: this.now(), updatedBy: by })!
   }
 
+  /** 🖥️ A lista INTEIRA dos agentes de máquina do projeto (ver `IProject.machineAgents`); vazia = nenhum. Desta máquina. */
+  setMachineAgents(id: string, agents: string[], by: string): IProject {
+    this.get(id)
+    const unique = [...new Set(agents.map((agent) => agent.trim()).filter(Boolean))].sort()
+    return this.projects.update(id, { machineAgents: unique, updatedAt: this.now(), updatedBy: by })!
+  }
+
   /** 🎨 A paleta do destaque da tela no projeto (`undefined` = o verde do tema). Desta máquina: sem revisão no catálogo. */
   setColor(id: string, color: TProjectColor | undefined, by: string): IProject {
     this.get(id)

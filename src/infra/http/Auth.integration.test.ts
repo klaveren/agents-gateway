@@ -47,7 +47,7 @@ describe('contas locais (integração)', () => {
   let anaId = ''
 
   it('o status pede setup enquanto não há conta', async () => {
-    assert.deepStrictEqual((await call('/auth/status')).body.result, { localAccounts: true, setupRequired: true, edition: 'pro' })
+    assert.deepStrictEqual((await call('/auth/status')).body.result, { localAccounts: true, setupRequired: true, edition: 'pro', machineAgents: false })
   })
 
   it('⛔ setup sem o código do log (ou com outro) é recusado, mesmo vindo desta máquina', async () => {

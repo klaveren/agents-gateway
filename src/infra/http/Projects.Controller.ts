@@ -23,6 +23,8 @@ export interface IProjectsControllerDeps {
   busy?: (projectId: string, repository: string) => boolean
   /** A branch base e o nome desta instalação (Configurações), para o git local. */
   installation?: () => Promise<{ baseBranch?: string; name?: string }>
+  /** 🖥️ Os agentes de máquina valem nesta instalação (Configurações, sem a trava do deploy)? Ausente = não. */
+  machineAgentsOn?: () => boolean
 }
 
 const createSchema = z.object({ id: z.string().max(64), name: z.string().max(200), description: z.string().max(4000).optional() })
@@ -79,7 +81,20 @@ function setupFailure(error: unknown): unknown {
  */
 export class ProjectsController {
   constructor(private readonly deps: IProjectsControllerDeps) {
-    for (const name of ['list', 'create', 'update', 'setColor', 'setEnvFiles', 'remove', 'members', 'setMembers', 'repositories', 'addRepository', 'removeRepository'] as const)
+    for (const name of [
+      'list',
+      'create',
+      'update',
+      'setColor',
+      'setEnvFiles',
+      'setMachineAgents',
+      'remove',
+      'members',
+      'setMembers',
+      'repositories',
+      'addRepository',
+      'removeRepository',
+    ] as const)
       this[name] = this[name].bind(this)
   }
 
@@ -212,6 +227,26 @@ export class ProjectsController {
     })
   }
 
+  /**
+   * `PUT /projects/:id/machine-agents { agents }` — 🖥️ a lista INTEIRA dos agentes de máquina do projeto (ver
+   * `IProject.machineAgents`); vazia = nenhum. ⛔ Como os `.env`: só o admin do projeto e só na TELA — nem token nem agente
+   * se promove. Sem "Permitir agentes de máquina" nas Configurações, recusa (e o que já estava marcado não vale).
+   */
+  async setMachineAgents(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const by = await requireProjectAdmin(this.deps.proof, id, 'setProjectMachineAgents')
+      if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem administra o projeto, entrando pela tela, marca agentes de máquina.')
+      const agents = parseBody(envFilesSchema, req.body).agents
+      if (agents.length && !this.machineOn()) throw new HttpError(409, 'machine_agents_off', 'Os agentes de máquina estão desligados: ligue em Sistema → Configurações.')
+      return this.toDto(this.deps.projects.setMachineAgents(id, agents, by), 'admin')
+    })
+  }
+
+  private machineOn(): boolean {
+    return this.deps.machineAgentsOn?.() === true
+  }
+
   async remove(req: Request, res: Response): Promise<void> {
     await this.respond(
       res,
@@ -249,6 +284,8 @@ export class ProjectsController {
       ...(project.description ? { description: project.description } : {}),
       ...(project.color ? { color: project.color } : {}),
       ...(admin && project.envFileAgents?.length ? { envFileAgents: project.envFileAgents } : {}),
+      // 🖥️ Todos veem quem é de máquina (o selo na conversa), e só quando o sistema permite: desligado, ninguém é.
+      ...(project.machineAgents?.length && this.machineOn() ? { machineAgents: project.machineAgents } : {}),
       ...(admin ? { folder: this.deps.projects.folderOf(project.id), members: this.deps.projects.members(project.id).length } : {}),
       // As fixas e os valores visíveis dos MCPs são configuração de quem administra: o membro não lê.
       ...(admin ? { env: project.env ?? {}, mcpEnv: project.mcpEnv ?? [] } : {}),
