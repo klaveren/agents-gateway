@@ -7,6 +7,7 @@ import { after, describe, it } from 'node:test'
 import { cercoPlan } from '@domain/Cerco.Plan'
 import { commandDirOf } from '@infra/accounts/Ssh.Kit'
 import {
+  DEV_HMR_PORTS,
   ensureEmptyAttributes,
   cleanLegacyScratch,
   ensureGitProxyAuth,
@@ -25,6 +26,7 @@ import {
   sweepCommandLogs,
   sweepMountPoints,
   systemReadAllowlist,
+  withMacFileEvents,
   withMacLocalPorts,
   machineDenied,
   withMacOpenNetwork,
@@ -369,12 +371,15 @@ describe('ProjectSandbox', () => {
     assert.match(
       line,
       new RegExp(
-        `localhost:${gatePort}"\\)\\)\\n\\(allow network-bind \\(local ip "localhost:4000"\\)\\)\\n\\(allow network-inbound \\(local ip "localhost:4000"\\)\\)\\n\\(allow network-outbound \\(remote ip "localhost:4000"\\)\\)\\n; fim`,
+        `localhost:${gatePort}"\\)\\)\\n\\(allow network-bind \\(local ip "localhost:4000"\\)\\)\\n\\(allow network-inbound \\(local ip "localhost:4000"\\)\\)\\n\\(allow network-outbound \\(remote ip "localhost:4000"\\)\\)\\n\\(allow network-bind \\(local ip "localhost:24678"\\)\\)`,
       ),
     )
     // A porta do gateway é sorteada (40001 também começa com 4000): conta só a 4000 inteira.
     assert.strictEqual(line.match(/localhost:4000"/g)?.length, 3)
     assert.doesNotMatch(line, /70000/)
+    // ⚖️ Com servidor de desenvolvimento, a faixa do HMR (24678–24698) abre junto; fora dela, nada.
+    assert.strictEqual(line.match(/local ip "localhost:246(7[89]|8\d|9[0-8])"/g)?.length, DEV_HMR_PORTS.length * 2)
+    assert.doesNotMatch(line, /localhost:24699"/)
     // No Linux a porta vira encaminhador, não regra de perfil.
     const linux = new ProjectSandbox(env, load, 'linux')
     assert.doesNotMatch(await linux.wrapWith('ls', project, (base) => cercoPlan({}, { ...base, system: [] }), 'tok-portas-l', { localPorts: [4000] }), /network-bind/)
@@ -383,6 +388,25 @@ describe('ProjectSandbox', () => {
     assert.throws(() => withMacLocalPorts("sandbox-exec -p '(version 1)' sh -c ls", 3999, [4000]), /portas locais \(4000\) não foram abertas/)
     assert.strictEqual(withMacLocalPorts('igual', 3999, []), 'igual')
     assert.strictEqual(withMacLocalPorts('igual', 3999, [3999]), 'igual')
+  })
+
+  it('⚖️ Mac: o vigia de arquivos (FSEvents) abre uma vez; sem o trecho esperado, o perfil fica como está', () => {
+    const base = '(allow mach-lookup (global-name "com.apple.SecurityServer"))\n; fim'
+    const profile = withMacFileEvents(base)
+    assert.match(profile, /^\(allow mach-lookup \(global-name "com\.apple\.FSEvents"\)\)$/m)
+    assert.strictEqual(withMacFileEvents(profile), profile)
+    assert.strictEqual(withMacFileEvents('igual'), 'igual')
+  })
+
+  it('⚖️ Mac de verdade (sandbox-exec): o fs.watch recebe o evento com o FSEvents; sem ele, EMFILE', () => {
+    if (process.platform !== 'darwin') return
+    const dir = mkdtempSync(join(tmpdir(), 'gw-fsevents-'))
+    const base = '(version 1)\n(allow default)\n(deny mach-lookup)\n(allow mach-lookup (global-name "com.apple.SecurityServer"))'
+    const probe = `const fs=require('fs');const w=fs.watch(process.argv[1],()=>{console.log('evento');process.exit(0)});w.on('error',e=>{console.log(e.code);process.exit(0)});setTimeout(()=>fs.writeFileSync(process.argv[1]+'/x','1'),300);setTimeout(()=>{console.log('nada');process.exit(0)},4000)`
+    const run = (profile: string) => execFileSync('/usr/bin/sandbox-exec', ['-p', profile, process.execPath, '-e', probe, dir], { encoding: 'utf8' }).trim()
+    assert.strictEqual(run(base), 'EMFILE')
+    assert.strictEqual(run(withMacFileEvents(base)), 'evento')
+    rmSync(dir, { recursive: true, force: true })
   })
 
   it('⚖️ Mac de verdade (sandbox-exec): a porta liberada ouve e conecta; a vizinha, não', () => {
