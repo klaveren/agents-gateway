@@ -370,7 +370,8 @@ describe('ProjectSandbox', () => {
         `localhost:${gatePort}"\\)\\)\\n\\(allow network-bind \\(local ip "localhost:4000"\\)\\)\\n\\(allow network-inbound \\(local ip "localhost:4000"\\)\\)\\n\\(allow network-outbound \\(remote ip "localhost:4000"\\)\\)\\n; fim`,
       ),
     )
-    assert.strictEqual(line.match(/localhost:4000/g)?.length, 3)
+    // A porta do gateway é sorteada (40001 também começa com 4000): conta só a 4000 inteira.
+    assert.strictEqual(line.match(/localhost:4000"/g)?.length, 3)
     assert.doesNotMatch(line, /70000/)
     // No Linux a porta vira encaminhador, não regra de perfil.
     const linux = new ProjectSandbox(env, load, 'linux')
