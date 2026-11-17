@@ -160,6 +160,13 @@ export function localForwards(ports: readonly number[], token: string, bridgePor
 }
 
 /**
+ * ⚖️ As portas do HMR do servidor de desenvolvimento (a faixa do Vite, que o Nuxt usa para o HMR do lado do servidor): o
+ * `nuxi dev` sorteia uma delas e, sem nenhuma livre, cai numa porta aleatória e não sobe (o 502 na porta do projeto). Abrem
+ * junto com qualquer porta local liberada — quem tem servidor de desenvolvimento tem HMR.
+ */
+export const DEV_HMR_PORTS: readonly number[] = Array.from({ length: 21 }, (_, index) => 24_678 + index)
+
+/**
  * ⚖️ AS PORTAS LOCAIS NO MAC: o seatbelt divide a rede com o host, e o perfil do runtime só abre a porta do gateway. Cada
  * porta que a regra EXATA libera (`localhost:4000`) ganha no perfil ouvir, receber e conectar NAQUELA porta do loopback —
  * o servidor de desenvolvimento sobe, e o cliente que não fala proxy alcança o serviço local. As outras seguem fechadas.
@@ -169,11 +176,12 @@ export function localForwards(ports: readonly number[], token: string, bridgePor
  * abre sem saber onde entra.
  */
 export function withMacLocalPorts(wrapped: string, gatePort: number, ports: readonly number[]): string {
-  const unique = [...new Set(ports)].filter((port) => Number.isInteger(port) && port > 0 && port < 65536 && port !== gatePort)
-  if (!unique.length) return wrapped
+  const exact = [...new Set(ports)].filter((port) => Number.isInteger(port) && port > 0 && port < 65536 && port !== gatePort)
+  if (!exact.length) return wrapped
   const anchor = `(allow network-outbound (remote ip "localhost:${gatePort}"))`
   const at = wrapped.indexOf(anchor)
-  if (at < 0) throw new Error(`${SANDBOX_UNAVAILABLE}: o perfil do cerco não tem a regra da porta do gateway; as portas locais (${unique.join(', ')}) não foram abertas`)
+  if (at < 0) throw new Error(`${SANDBOX_UNAVAILABLE}: o perfil do cerco não tem a regra da porta do gateway; as portas locais (${exact.join(', ')}) não foram abertas`)
+  const unique = [...new Set([...exact, ...DEV_HMR_PORTS])].filter((port) => port !== gatePort)
   const rules = unique.flatMap((port) => [
     `(allow network-bind (local ip "localhost:${port}"))`,
     `(allow network-inbound (local ip "localhost:${port}"))`,
@@ -224,6 +232,18 @@ export function withMacOpenNetwork(wrapped: string, gatePort: number, gatewayPor
   const closed = [...new Set([gatePort, ...gatewayPorts])].map((port) => `(deny network-outbound (remote ip "localhost:${port}"))`)
   const lines = [anchor, '(allow network*)', '(allow system-socket)', '(allow mach-lookup (global-name "com.apple.dnssd.service"))', ...closed]
   return wrapped.replace(anchor, lines.join('\n'))
+}
+
+/**
+ * ⚖️ VIGIAR ARQUIVOS NO MAC: o `fs.watch` do Node (o Vite, o Nuxt, o `tsc --watch`, o nodemon) usa o FSEvents, e o perfil
+ * do runtime não deixa falar com ele — o vigia quebra com EMFILE e o servidor de desenvolvimento reinicia sem parar. O
+ * `fseventsd` filtra pelo cerco do cliente: quem vigia uma pasta acima não recebe o que muda nas pastas fechadas.
+ * Sem o trecho esperado, o perfil fica como está (só o vigia deixa de funcionar).
+ */
+export function withMacFileEvents(wrapped: string): string {
+  const anchor = '(allow mach-lookup (global-name "com.apple.SecurityServer"))'
+  if (!wrapped.includes(anchor) || wrapped.includes('"com.apple.FSEvents"')) return wrapped
+  return wrapped.replace(anchor, `${anchor}\n(allow mach-lookup (global-name "com.apple.FSEvents"))`)
 }
 
 export function withMacProcessList(wrapped: string): string {
@@ -415,8 +435,8 @@ export class ProjectSandbox implements IProjectSandbox {
       filesystem: { denyRead: cerco.readDeny, allowRead: cerco.readAllow, allowWrite: cerco.writeAllow, denyWrite: cerco.writeDeny },
     })
     if (this.platform !== 'darwin') return wrapped
-    if (place.machine) return withMacProcessList(withMacOpenNetwork(wrapped, port, [Number(process.env.PORT) || 3000]))
-    return withMacProcessList(withMacTcpPorts(withMacLocalPorts(wrapped, port, place.localPorts ?? []), port, place.tcpPorts ?? []))
+    if (place.machine) return withMacFileEvents(withMacProcessList(withMacOpenNetwork(wrapped, port, [Number(process.env.PORT) || 3000])))
+    return withMacFileEvents(withMacProcessList(withMacTcpPorts(withMacLocalPorts(wrapped, port, place.localPorts ?? []), port, place.tcpPorts ?? [])))
   }
 
   runDir(): string {
