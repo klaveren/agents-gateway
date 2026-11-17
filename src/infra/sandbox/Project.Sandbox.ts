@@ -99,6 +99,11 @@ export interface ICercoPlace {
    * interceptador (`tcpInterceptor`), que leva a conexão de qualquer cliente (mongosh, psql, ssh) pelo portão.
    */
   tcp?: boolean
+  /**
+   * As portas das regras EXATAS de TCP fora do HTTP. No Mac não há interceptador (o macOS tira o `DYLD_INSERT_LIBRARIES`
+   * ao rodar o `/bin/bash`): o perfil abre a saída direta nessas portas (ver `withMacTcpPorts`).
+   */
+  tcpPorts?: readonly number[]
 }
 
 /** A biblioteca do proxychains-ng (Debian/Ubuntu). Sem ela, o TCP fora do HTTP segue sem caminho (como antes). */
@@ -170,6 +175,42 @@ export function withMacLocalPorts(wrapped: string, gatePort: number, ports: read
   ])
   const end = at + anchor.length
   return `${wrapped.slice(0, end)}\n${rules.join('\n')}${wrapped.slice(end)}`
+}
+
+/**
+ * ⚖️ O TCP FORA DO HTTP NO MAC: o cliente de Redis, Kafka ou Mongo não fala proxy, e o interceptador do Linux não vale aqui
+ * (o macOS tira o `DYLD_INSERT_LIBRARIES` ao rodar o `/bin/bash`, então o `start.sh` perderia o desvio). Cada porta de uma
+ * regra EXATA liberada (`10.10.0.3:6379`) ganha no perfil a saída direta, e o DNS do sistema passa a responder.
+ * ⚠️ O seatbelt só aceita `localhost` ou `*` como host: a porta abre para QUALQUER host, e essa conexão não passa pelo
+ * portão (não há registro nem regra de negação por host nela). 80 e 443 nunca: o HTTP segue pelo portão.
+ * ⛔ Sem o ponto de encaixe, lança, como em `withMacLocalPorts`.
+ */
+export function withMacTcpPorts(wrapped: string, gatePort: number, ports: readonly number[]): string {
+  const unique = [...new Set(ports)].filter((port) => Number.isInteger(port) && port > 0 && port < 65536 && port !== gatePort && port !== 80 && port !== 443)
+  if (!unique.length) return wrapped
+  const anchor = `(allow network-outbound (remote ip "localhost:${gatePort}"))`
+  const at = wrapped.indexOf(anchor)
+  if (at < 0) throw new Error(`${SANDBOX_UNAVAILABLE}: o perfil do cerco não tem a regra da porta do gateway; as portas TCP (${unique.join(', ')}) não foram abertas`)
+  const rules = [
+    ...unique.map((port) => `(allow network-outbound (remote ip "*:${port}"))`),
+    '(allow system-socket (socket-domain AF_UNIX))',
+    '(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))',
+    '(allow mach-lookup (global-name "com.apple.dnssd.service"))',
+  ]
+  const end = at + anchor.length
+  return `${wrapped.slice(0, end)}\n${rules.join('\n')}${wrapped.slice(end)}`
+}
+
+/**
+ * ⚖️ VER OS PROCESSOS NO MAC: o perfil do runtime só deixa o comando ver os do próprio cerco, e o `ps`, o `pgrep` e o
+ * `stop.sh` do projeto falham ("Operation not permitted", "sysmond service not found"). A leitura passa a valer para todos
+ * os processos do usuário. ⛔ Sinal, não: parar processo é pela ferramenta `processes`, presa à pasta do projeto.
+ * Sem o trecho esperado, o perfil fica como está (só a listagem deixa de funcionar).
+ */
+export function withMacProcessList(wrapped: string): string {
+  const own = '(allow process-info* (target same-sandbox))'
+  if (!wrapped.includes(own)) return wrapped
+  return wrapped.replace(own, `(allow process-info*)\n(allow mach-lookup (global-name "com.apple.sysmond"))`)
 }
 
 /** O `NO_PROXY` do comando: no Linux o loopback dele (rede própria) vai direto; no Mac, nada escapa do portão. */
@@ -349,7 +390,7 @@ export class ProjectSandbox implements IProjectSandbox {
       ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
       filesystem: { denyRead: cerco.readDeny, allowRead: cerco.readAllow, allowWrite: cerco.writeAllow, denyWrite: cerco.writeDeny },
     })
-    return this.platform === 'darwin' ? withMacLocalPorts(wrapped, port, place.localPorts ?? []) : wrapped
+    return this.platform === 'darwin' ? withMacProcessList(withMacTcpPorts(withMacLocalPorts(wrapped, port, place.localPorts ?? []), port, place.tcpPorts ?? [])) : wrapped
   }
 
   runDir(): string {

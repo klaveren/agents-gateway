@@ -1,7 +1,7 @@
 import assert from 'node:assert'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { homedir, networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { cercoPlan } from '@domain/Cerco.Plan'
@@ -26,6 +26,8 @@ import {
   sweepMountPoints,
   systemReadAllowlist,
   withMacLocalPorts,
+  withMacProcessList,
+  withMacTcpPorts,
   writeFolders,
 } from './Project.Sandbox'
 
@@ -389,6 +391,55 @@ describe('ProjectSandbox', () => {
     const run = (port: number) => execFileSync('/usr/bin/sandbox-exec', ['-p', profile, process.execPath, '-e', probe, String(port)], { encoding: 'utf8' }).trim()
     assert.strictEqual(run(open), 'ok')
     assert.strictEqual(run(closed), 'EPERM')
+  })
+
+  it('⚖️ Mac: a porta da regra TCP exata abre a saída (com o DNS); 80, 443 e a do gateway, nunca; sem encaixe, lança', () => {
+    const base = `(version 1)\n(allow network-outbound (remote ip "localhost:3999"))\n; fim`
+    const profile = withMacTcpPorts(base, 3999, [6379, 6379, 80, 443, 3999, 9092])
+    assert.equal(profile.match(/remote ip "\*:6379"/g)?.length, 1)
+    assert.match(profile, /remote ip "\*:9092"/)
+    assert.doesNotMatch(profile, /"\*:(80|443|3999)"/)
+    assert.match(profile, /mDNSResponder/)
+    assert.strictEqual(withMacTcpPorts(base, 3999, [443]), base)
+    assert.throws(() => withMacTcpPorts('(version 1)', 3999, [6379]), /portas TCP \(6379\) não foram abertas/)
+  })
+
+  it('⚖️ Mac: a listagem de processos vale para todos; o sinal segue preso ao próprio cerco', () => {
+    const base = '(allow process-info* (target same-sandbox))\n(allow signal (target same-sandbox))'
+    const profile = withMacProcessList(base)
+    assert.match(profile, /^\(allow process-info\*\)$/m)
+    assert.match(profile, /com\.apple\.sysmond/)
+    assert.match(profile, /\(allow signal \(target same-sandbox\)\)/)
+    assert.strictEqual(withMacProcessList('igual'), 'igual')
+  })
+
+  it('⚖️ Mac de verdade (sandbox-exec): a porta TCP liberada conecta fora do loopback; a vizinha, não; o pgrep lista; o kill de fora, não', () => {
+    if (process.platform !== 'darwin') return
+    const lan = Object.values(networkInterfaces())
+      .flat()
+      .find((info) => info && info.family === 'IPv4' && !info.internal)?.address
+    if (!lan) return
+    const [gate, open, closed] = [47_321, 47_322, 47_323]
+    const servers = spawn(process.execPath, [
+      '-e',
+      `const n=require('net');for(const p of [${open},${closed}])n.createServer(s=>s.end('oi')).listen(p,'0.0.0.0');setTimeout(()=>{},20000)`,
+    ])
+    const outsider = spawn('sleep', ['20'], { detached: true })
+    try {
+      execFileSync('/bin/sleep', ['0.5'])
+      const base = `(version 1)\n(allow default)\n(deny network*)\n(allow network-outbound (remote unix-socket (path-regex #"^/")))\n(deny process-info* (target others))\n(allow process-info* (target same-sandbox))\n(deny signal (target others))\n(allow network-outbound (remote ip "localhost:${gate}"))`
+      const profile = withMacProcessList(withMacTcpPorts(base, gate, [open]))
+      const probe = `const net=require('net');const p=Number(process.argv[1]);net.connect(p,'${lan}').on('data',()=>{console.log('ok');process.exit(0)}).on('error',e=>{console.log(e.code);process.exit(0)})`
+      const run = (port: number) => execFileSync('/usr/bin/sandbox-exec', ['-p', profile, process.execPath, '-e', probe, String(port)], { encoding: 'utf8' }).trim()
+      assert.strictEqual(run(open), 'ok')
+      assert.strictEqual(run(closed), 'EPERM')
+      const shell = (line: string) => execFileSync('/usr/bin/sandbox-exec', ['-p', profile, '/bin/bash', '-c', line], { encoding: 'utf8' }).trim()
+      assert.strictEqual(shell(`pgrep -x sleep | grep -qx ${outsider.pid} && echo visto`), 'visto')
+      assert.strictEqual(shell(`kill ${outsider.pid} 2>/dev/null && echo morto || echo recusado`), 'recusado')
+    } finally {
+      servers.kill()
+      outsider.kill()
+    }
   })
 
   it('⚖️ o prelúdio: no Linux o loopback do cerco vai direto (NO_PROXY); no Mac segue pelo portão (vazio)', async () => {

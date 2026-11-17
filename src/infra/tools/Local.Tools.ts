@@ -49,6 +49,7 @@ import type { IEditDiagnostics } from './Edit.Diagnostics'
 import type { IAgentDiagnostics } from '@domain/models/Agent.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
 import { fetchUrlTool } from './Web.Fetch'
+import { processesTool } from './Project.Processes'
 import { discoveredGitSync } from '@infra/workspace/Git.Safe'
 import { gitGuard, IGitGuardOptions } from './Git.Guard'
 import { IImportDesk, IRepositoryBrowser, makeImportTools } from './Import.Tools'
@@ -320,7 +321,10 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       // ⛔ A porta do próprio gateway nunca ganha encaminhador (o portão também a nega): o cliente recebe a recusa.
       .filter((port) => port !== (Number(process.env.PORT) || 3000))
     // TCP fora do HTTP liberado por regra EXATA (`10.10.0.1:32017`): o comando ganha o interceptador (ver `tcpInterceptor`).
-    const tcp = [...(layers.agent ?? []), ...(layers.project ?? [])].some((rule) => rule.category === 'network' && rule.decision === 'allow' && exactTcpTarget(rule.pattern))
+    // No Mac, as portas dessas regras abrem direto no perfil (ver `withMacTcpPorts`).
+    const tcpRules = [...(layers.agent ?? []), ...(layers.project ?? [])].filter((rule) => rule.category === 'network' && rule.decision === 'allow' && exactTcpTarget(rule.pattern))
+    const tcp = tcpRules.length > 0
+    const tcpPorts = tcpRules.map((rule) => Number(/:(\d{1,5})$/.exec(rule.pattern.trim())?.[1])).filter((port) => port > 0)
     // ⛔ As contas do projeto DA CONVERSA que este agente pode usar (`account <id>`), em variáveis do processo — nunca na
     // linha do comando, que aparece na lista de processos.
     const accounts =
@@ -367,7 +371,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       const viaGate = `"${process.execPath}" "${join(place.scratchBase ?? root, '.home', '.gateway-connect.cjs')}" %h %p`
       // No Mac, sem conta SSH, o ssh comum também sai pela porta do gateway (lá não há o interceptador de TCP do Linux).
       const kitBin = accounts?.ssh?.length ? writeSshKit(privateDir, accounts.ssh, viaGate).bin : process.platform === 'darwin' ? writeSshRoute(privateDir, viaGate).bin : undefined
-      const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts, tcp })
+      const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts, tcp, tcpPorts })
       wrapped = true
       // As variáveis do agente por baixo, a identidade de quem chama por cima (ver `Agent.Identity`); as contas do projeto vêm depois.
       // ⛔ As variáveis secretas por cima das contas (a do recurso é mais específica), lidas AGORA: a skill carregada no meio
@@ -600,6 +604,15 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       },
     },
     ...(deps.permissions && !deps.exec ? backgroundTools(processes, (command, name, context) => startBackground(command, name, context, deps.permissions!), guardRefusal) : []),
+    // ⛔ Os processos do PROJETO (a pasta dele, não a da conversa): o cerco não deixa o comando sinalizar os de fora dele.
+    ...(deps.permissions && !deps.exec
+      ? [
+          processesTool(
+            (context) => (context?.workFolder?.projectDir ? realOf(context.workFolder.projectDir) : context?.projectId ? realOf(workspaceFor(context.projectId, '')) : undefined),
+            masked,
+          ),
+        ]
+      : []),
     ...(deps.accounts?.sign && deps.permissions ? [sshSignTool(deps.accounts.sign.bind(deps.accounts), deps.permissions)] : []),
     ...makeFileTools(fileDeps),
     ...(deps.docs ? [readDocTool(deps.docs, deps.permissions)] : []),

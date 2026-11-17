@@ -201,6 +201,23 @@ describe('AgentProvider', () => {
     assert.deepStrictEqual(chat.calls, [])
   })
 
+  it('⚖️ o texto depois de uma ferramenta vira outro parágrafo; o que já começa ou termina com quebra fica como veio', async () => {
+    const at = new Date()
+    const { provider } = setup([
+      { type: 'text.delta', sessionId: 's', timestamp: at, payload: { text: 'tento parar os serviços.' } },
+      { type: 'tool.started', sessionId: 's', timestamp: at, payload: { tool: 'run_bash', args: {} } },
+      { type: 'tool.result', sessionId: 's', timestamp: at, payload: { tool: 'run_bash', result: 'ok' } },
+      { type: 'text.delta', sessionId: 's', timestamp: at, payload: { text: 'Entendido:' } },
+      { type: 'text.delta', sessionId: 's', timestamp: at, payload: { text: ' segue.' } },
+      { type: 'tool.result', sessionId: 's', timestamp: at, payload: { tool: 'run_bash', result: 'ok' } },
+      { type: 'text.delta', sessionId: 's', timestamp: at, payload: { text: '\nJá quebrado.' } },
+    ])
+    const session = await provider.createSession({ agentId: 'pesquisa-teste' })
+    const events = await drain(provider.sendMessage(session.id, { text: 'oi' }))
+    const text = events.map((event) => (event.type === 'text.delta' ? event.payload.text : '')).join('')
+    assert.strictEqual(text, 'tento parar os serviços.\n\nEntendido: segue.\nJá quebrado.')
+  })
+
   it('⚖️ modelo da conversa desativado no meio dela: a mensagem seguinte segue no modelo de hoje, com aviso; sem nenhum, model_disabled', async () => {
     const store = new SessionStore()
     const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
