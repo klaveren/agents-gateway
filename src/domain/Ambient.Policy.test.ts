@@ -87,3 +87,13 @@ describe('Ambient.Policy', () => {
     assert.doesNotMatch(alarm, /watch_start/)
   })
 })
+
+describe('Ambient — agente de máquina', () => {
+  it('🖥️ diz que a pasta é só o ponto de partida, o que segue fechado e que o sudo não roda', () => {
+    const text = ambientSection({ agentId: 'zeus', project: { id: 'xpto', own: true }, directory: '/dados/projects/xpto', machine: true })
+    assert.match(text, /ponto de partida/)
+    assert.match(text, /AGENTE DE MÁQUINA/)
+    assert.match(text, /sudo/)
+    assert.doesNotMatch(text, /Fora dele você não lê nem grava/)
+  })
+})

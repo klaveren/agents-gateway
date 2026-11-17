@@ -332,3 +332,47 @@ describe('File.Tools — ⛔ a pasta de uma skill compartilhada com o projeto (s
     assert.equal((await run([skill], 'read_file', { path: join(skill, 'atalho.md') })).status, 'error')
   })
 })
+
+describe('File.Tools — agente de máquina', () => {
+  it('🖥️ o caminho absoluto fora da pasta vale; o relativo segue na pasta; a regra recebe o caminho absoluto', async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'file-tools-machine-')))
+    const dir = join(base, 'projeto')
+    const fora = join(base, 'fora')
+    mkdirSync(dir)
+    mkdirSync(fora)
+    writeFileSync(join(fora, 'nota.txt'), 'de fora')
+    writeFileSync(join(fora, '.env'), 'X=1')
+    const asked: string[] = []
+    const tools = (machine: boolean) => makeFileTools({ rootFor: () => dir, machine: () => machine, access: (_context, _kind, path) => (asked.push(path), undefined) })
+    const read = (machine: boolean, path: string) =>
+      tools(machine)
+        .find((tool) => tool.name === 'read_file')!
+        .execute({ path })
+    try {
+      assert.match(String((await read(true, join(fora, 'nota.txt'))).result), /de fora/)
+      assert.ok(asked.includes(join(fora, 'nota.txt')))
+      assert.equal((await read(false, join(fora, 'nota.txt'))).status, 'error')
+      assert.match(String((await read(true, join(fora, '.env'))).result), /protected/)
+      const write = await tools(true)
+        .find((tool) => tool.name === 'write_file')!
+        .execute({ path: join(fora, 'novo.txt'), content: 'ok' })
+      assert.equal(write.status, 'success')
+      assert.equal(readFileSync(join(fora, 'novo.txt'), 'utf8'), 'ok')
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('⛔ os dados do gateway seguem protegidos com a raiz `/`; os projetos dentro deles, não', () => {
+    const data = realpathSync(dataDirForTest())
+    assert.equal(deniedPath(join(data, 'conversations.db'), '/', true), 'gateway data')
+    assert.equal(deniedPath(join(data, 'run', 'commands', 'x', 'id'), '/', true), 'gateway data')
+    assert.equal(deniedPath(join(data, 'projects', 'xpto', 'a.txt'), '/', true), undefined)
+  })
+})
+
+function dataDirForTest(): string {
+  const dir = join(tmpdir(), `agents-gateway-memory-${process.pid}`)
+  mkdirSync(dir, { recursive: true })
+  return dir
+}

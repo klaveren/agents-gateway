@@ -143,6 +143,8 @@ export function makeOrchestrator(): AgentProvider {
     }
   })
   provider.useProjectEnv((projectId) => projectFixedEnv(projectId))
+  // 🖥️ O agente de máquina sabe que é (o "## Ambiente"): a mesma decisão das permissões.
+  provider.useMachine((projectId, agentId) => makePermissions().layers({ projectId, agentId }).machine === true)
   provider.useSecrets({
     envFor: (agentId, sessionId, project) => makeResourceSecrets().envFor(agentId, sessionId, project),
     // Os nomes das skills e commands que o agente pode carregar: os liberados para ele (o índice do prompt).

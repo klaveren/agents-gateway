@@ -104,6 +104,12 @@ export interface ICercoPlace {
    * ao rodar o `/bin/bash`): o perfil abre a saída direta nessas portas (ver `withMacTcpPorts`).
    */
   tcpPorts?: readonly number[]
+  /**
+   * 🖥️ Agente de máquina: o cerco aberto (ver `machinePlan`). A casa de quem roda o gateway e a pasta de dados abrem; ficam
+   * fechados os dados do gateway, a configuração dele e as pastas privadas dos outros agentes. A rede sai livre no Mac
+   * (`withMacOpenNetwork`); no Linux, toda conexão TCP passa pelo portão (o interceptador vai sempre).
+   */
+  machine?: boolean
 }
 
 /** A biblioteca do proxychains-ng (Debian/Ubuntu). Sem ela, o TCP fora do HTTP segue sem caminho (como antes). */
@@ -207,6 +213,19 @@ export function withMacTcpPorts(wrapped: string, gatePort: number, ports: readon
  * os processos do usuário. ⛔ Sinal, não: parar processo é pela ferramenta `processes`, presa à pasta do projeto.
  * Sem o trecho esperado, o perfil fica como está (só a listagem deixa de funcionar).
  */
+/**
+ * 🖥️ A REDE LIVRE do agente de máquina no Mac: sair, ouvir e receber em qualquer porta, depois do encaixe da porta do
+ * portão. ⛔ As portas do gateway (a dele e a do portão) seguem fechadas no loopback: a negação vem por último e vence.
+ * Sem o encaixe, nada abre e o comando não sai.
+ */
+export function withMacOpenNetwork(wrapped: string, gatePort: number, gatewayPorts: readonly number[]): string {
+  const anchor = `(allow network-outbound (remote ip "localhost:${gatePort}"))`
+  if (!wrapped.includes(anchor)) throw new Error(`${SANDBOX_UNAVAILABLE}: o perfil do cerco mudou e a rede do agente de máquina não foi aberta`)
+  const closed = [...new Set([gatePort, ...gatewayPorts])].map((port) => `(deny network-outbound (remote ip "localhost:${port}"))`)
+  const lines = [anchor, '(allow network*)', '(allow system-socket)', '(allow mach-lookup (global-name "com.apple.dnssd.service"))', ...closed]
+  return wrapped.replace(anchor, lines.join('\n'))
+}
+
 export function withMacProcessList(wrapped: string): string {
   const own = '(allow process-info* (target same-sandbox))'
   if (!wrapped.includes(own)) return wrapped
@@ -292,9 +311,13 @@ export class ProjectSandbox implements IProjectSandbox {
       // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.
       alwaysRead: [join(dataDir(this.env), 'tools'), dirname(dirname(process.execPath)), ...runtimeHelpers()],
       // ⛔ As pastas privadas dos OUTROS agentes: fechadas para ler e gravar, mesmo com regra que as cubra (`**`).
-      alwaysDeny: [dataDir(this.env), process.cwd(), homedir(), ...hostSocketDirs(), ...agentFolders(root, place.agentFolder?.dir, this.env).others],
+      alwaysDeny: place.machine
+        ? // ⛔ Nunca o que contém a pasta de trabalho (o `/`, a casa de quem roda num servidor de desenvolvimento): fecharia tudo.
+          machineDenied(this.env, agentFolders(root, place.agentFolder?.dir, this.env).others).filter((path) => path !== '/' && !isAtOrUnder(root, path))
+        : [dataDir(this.env), process.cwd(), homedir(), ...hostSocketDirs(), ...agentFolders(root, place.agentFolder?.dir, this.env).others],
       ...(place.agentFolder ? { agentFolder: place.agentFolder } : {}),
-      ...(this.readAllowlistOn() ? { readAllowlist: systemReadAllowlist() } : {}),
+      ...(this.readAllowlistOn() && !place.machine ? { readAllowlist: systemReadAllowlist() } : {}),
+      ...(place.machine ? { anywhere: this.platform === 'darwin' ? ['/'] : [homedir(), dataDir(this.env)] } : {}),
       // Os arquivos de recurso: o global sempre; os do projeto quando a raiz é dele. Lê, não grava.
       readOnly: existing([...readOnlyResourceDirs(root, this.env), ...(place.sharedFolders ?? [])]),
       find: (pattern) => this.trees.find(root, pattern),
@@ -330,7 +353,7 @@ export class ProjectSandbox implements IProjectSandbox {
     planned.readAllow.push(...bridgeSockets(manager))
     // ⛔ Só ESTE comando lê o que o servidor guardou para ele (a chave SSH, o proxychains): a pasta de dados segue negada aos outros.
     const own = commandDirOf(this.runDir(), networkToken)
-    const wantsTcp = process.platform === 'linux' && place.tcp
+    const wantsTcp = process.platform === 'linux' && (place.tcp || place.machine)
     if (wantsTcp) mkdirSync(own, { recursive: true, mode: 0o700 })
     if (existsSync(own)) planned.readAllow.push(own)
     const cerco = this.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir)) : planned
@@ -355,7 +378,8 @@ export class ProjectSandbox implements IProjectSandbox {
     const connector = writeConnector(home)
     ensureGitProxyAuth(home)
     const scoped: Record<string, string> = {
-      HOME: home,
+      // 🖥️ O agente de máquina usa a casa de verdade (o git, o brew, as configurações de quem roda o gateway).
+      HOME: place.machine ? homedir() : home,
       TMPDIR: scratch('.tmp'),
       npm_config_cache: join(cache, 'npm'),
       PIP_CACHE_DIR: join(cache, 'pip'),
@@ -390,7 +414,9 @@ export class ProjectSandbox implements IProjectSandbox {
       ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
       filesystem: { denyRead: cerco.readDeny, allowRead: cerco.readAllow, allowWrite: cerco.writeAllow, denyWrite: cerco.writeDeny },
     })
-    return this.platform === 'darwin' ? withMacProcessList(withMacTcpPorts(withMacLocalPorts(wrapped, port, place.localPorts ?? []), port, place.tcpPorts ?? [])) : wrapped
+    if (this.platform !== 'darwin') return wrapped
+    if (place.machine) return withMacProcessList(withMacOpenNetwork(wrapped, port, [Number(process.env.PORT) || 3000]))
+    return withMacProcessList(withMacTcpPorts(withMacLocalPorts(wrapped, port, place.localPorts ?? []), port, place.tcpPorts ?? []))
   }
 
   runDir(): string {
@@ -1340,4 +1366,23 @@ function realOrNearest(path: string): string {
     current = dirname(current)
   }
   return join(realOrSelf(current), ...rest)
+}
+
+/**
+ * 🖥️ O que o agente de máquina NUNCA alcança, mesmo no cerco aberto: o banco, as chaves e os backups do gateway (as regras
+ * da instalação fazem o mesmo pelo padrão), a pasta privada de cada comando (a chave SSH e o token de rede dos outros), a
+ * configuração do gateway (no Mac, `~/Library/Application Support/Agents Gateway`, com o `config.env`), o LaunchAgent dele,
+ * a pasta de onde ele roda (o app, ou o repositório com o `.env`) e as pastas privadas dos outros agentes.
+ */
+export function machineDenied(env: NodeJS.ProcessEnv = process.env, others: readonly string[] = [], execPath: string = process.execPath): string[] {
+  const data = dataDir(env)
+  const app = /^(.*?\.app)\//.exec(execPath)?.[1]
+  return [
+    ...['*.db', '*.db-*', 'secrets*', 'backup*', '*-home', 'run'].map((name) => join(data, name)),
+    join(homedir(), 'Library', 'Application Support', 'Agents Gateway'),
+    join(homedir(), 'Library', 'LaunchAgents', 'com.agents-gateway.server.plist'),
+    process.cwd(),
+    ...(app ? [app] : []),
+    ...others,
+  ]
 }

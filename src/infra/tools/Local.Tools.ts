@@ -4,7 +4,7 @@ import { aliasWarning, deprecatedTool } from '@domain/Tool.Deprecations'
 import { printsSecret } from '@domain/models/ResourceSecret.Model'
 import { terminalEnv } from '@domain/Agent.Identity'
 import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
-import { cercoPlan } from '@domain/Cerco.Plan'
+import { cercoPlan, machinePlan } from '@domain/Cerco.Plan'
 import { commandMatches, definesGitAlias, ENV_FILE_PATTERNS, hasGitDeny, pathMatches, type IPermissionRule, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
@@ -286,9 +286,11 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       ...(own ? { agentFolder: { ...own, dir: realOf(own.dir) } } : {}),
       ...(shared.length ? { sharedFolders: shared } : {}),
     }
+    // 🖥️ O agente de máquina (o projeto o marcou e o sistema permite): o cerco aberto, o `/tmp` do host e a casa de verdade.
+    const machine = permissions.layers?.(asker).machine === true
     // O `/tmp` do comando só é privado onde o cerco o monta vazio (Linux, ver `hostSocketDirs`); no Mac é o do host.
     const refusal = await terminalRefusal(command, root, permissions, asker, folder, {
-      privateTmp: !!sandbox.wrapWith && process.platform === 'linux',
+      privateTmp: !!sandbox.wrapWith && process.platform === 'linux' && !machine,
       // ⚖️ O que o cerco define para ESTE comando (ver `scoped` em `wrapWithPlan`): `> $TMPDIR/x` vale o caminho real.
       variables: { TMPDIR: join(place.scratchBase ?? root, '.tmp'), HOME: join(place.scratchBase ?? root, '.home') },
       // As pastas de rascunho que o cerco deixa gravar sempre (`$TMPDIR`, `$HOME`): sem regra, como no próprio cerco.
@@ -351,7 +353,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const token = gate.register((host, port) => {
       // O portão quer o PADRÃO que liberou: rede local só passa com regra exata (sem `*`).
       const verdict = permissions.check(asker, { category: 'network', value: `${host}:${port}` }, { log: true })
-      return { allowed: verdict.allowed, reason: verdict.reason, ...(verdict.rule ? { pattern: verdict.rule.pattern } : {}) }
+      return { allowed: verdict.allowed, reason: verdict.reason, ...(verdict.rule ? { pattern: verdict.rule.pattern } : {}), ...(machine && verdict.allowed ? { open: true } : {}) }
     })
     // ⛔ A pasta PRIVADA deste comando (a chave SSH, o proxychains com o token de rede): na pasta de dados, que nenhum comando
     // lê; o cerco libera só esta, só para ele. Sai com o comando.
@@ -371,7 +373,13 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       const viaGate = `"${process.execPath}" "${join(place.scratchBase ?? root, '.home', '.gateway-connect.cjs')}" %h %p`
       // No Mac, sem conta SSH, o ssh comum também sai pela porta do gateway (lá não há o interceptador de TCP do Linux).
       const kitBin = accounts?.ssh?.length ? writeSshKit(privateDir, accounts.ssh, viaGate).bin : process.platform === 'darwin' ? writeSshRoute(privateDir, viaGate).bin : undefined
-      const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts, tcp, tcpPorts })
+      const line = await sandbox.wrapWith(command, root, (base) => (machine ? machinePlan(layers, { ...base, system }) : cercoPlan(layers, { ...base, system })), token, {
+        ...place,
+        localPorts,
+        tcp,
+        tcpPorts,
+        ...(machine ? { machine } : {}),
+      })
       wrapped = true
       // As variáveis do agente por baixo, a identidade de quem chama por cima (ver `Agent.Identity`); as contas do projeto vêm depois.
       // ⛔ As variáveis secretas por cima das contas (a do recurso é mais específica), lidas AGORA: a skill carregada no meio
@@ -484,6 +492,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
   // As travas dos arquivos: as mesmas no `read_file` e no `deliver_file`.
   const fileDeps: IFileToolDeps = {
     rootFor: fileRoot,
+    // 🖥️ O agente de máquina: o caminho absoluto fora da pasta vale (ver `IFileToolDeps.machine`).
+    machine: (context) => deps.permissions?.layers?.(askerOf(context)).machine === true,
     ownFolder: (context) => (context?.agentId ? deps.agentFolder?.(context.agentId, context.conversationProjectId) : undefined),
     // Junto das pastas compartilhadas, a saída grande que o CLI do Claude guardou DESTA conversa (ver `Cli.ToolResults`).
     sharedFolders: (context) => [...(deps.sharedFolders?.(askerOf(context).projectId, context?.agentId) ?? []), ...cliToolResultDirs(context?.sessionId)],
@@ -610,6 +620,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
           processesTool(
             (context) => (context?.workFolder?.projectDir ? realOf(context.workFolder.projectDir) : context?.projectId ? realOf(workspaceFor(context.projectId, '')) : undefined),
             masked,
+            undefined,
+            (context) => deps.permissions?.layers?.(askerOf(context)).machine === true,
           ),
         ]
       : []),

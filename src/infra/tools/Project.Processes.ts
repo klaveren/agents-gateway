@@ -32,7 +32,7 @@ function inside(dir: string, root: string): boolean {
  * Ficam de fora o gateway, quem o iniciou, o executor do agente (o CLI do modelo, filho do gateway mas fora do cerco) e o
  * que a pessoa abriu (a IDE, o terminal): o primeiro da cadeia deles não roda dentro do projeto.
  */
-export function eligibleProcesses(all: readonly IProcessInfo[], root: string, self: number = process.pid): IProcessInfo[] {
+export function eligibleProcesses(all: readonly IProcessInfo[], root: string, self: number = process.pid, machine = false): IProcessInfo[] {
   const byPid = new Map(all.map((info) => [info.pid, info]))
   const chainOf = (pid: number): IProcessInfo[] => {
     const chain: IProcessInfo[] = []
@@ -46,11 +46,13 @@ export function eligibleProcesses(all: readonly IProcessInfo[], root: string, se
   const gateway = new Set(chainOf(self).map((info) => info.pid))
   gateway.add(self)
   return all.filter((info) => {
-    if (gateway.has(info.pid) || !inside(info.cwd, root)) return false
+    if (gateway.has(info.pid) || (!machine && !inside(info.cwd, root))) return false
     const chain = chainOf(info.pid)
     const viaGateway = chain.findIndex((link) => link.pid === self)
     if (viaGateway >= 0) return chain.slice(0, viaGateway).some((link) => SANDBOX_WRAPPERS.test(link.command))
     if (chain.some((link) => gateway.has(link.pid))) return false
+    // 🖥️ O agente de máquina: qualquer processo do usuário fora do gateway (a IDE e o terminal da pessoa também).
+    if (machine) return true
     const top = chain.at(-1)
     return !!top && inside(top.cwd, root)
   })
@@ -129,6 +131,8 @@ export function processesTool(
   rootOf: (context: IExecutionContext | undefined) => string | undefined,
   masked: (text: string, context: IExecutionContext | undefined) => string,
   snapshot: () => Promise<IProcessInfo[]> = processSnapshot,
+  /** 🖥️ O agente da conversa é de máquina: vê e para qualquer processo do usuário, menos o gateway e o executor dele. */
+  machineOf: (context: IExecutionContext | undefined) => boolean = () => false,
 ): ILocalTool {
   return {
     origin: 'local',
@@ -151,7 +155,7 @@ export function processesTool(
       if (!root) return { status: 'error', result: 'Esta conversa não tem pasta de projeto: não há processos do projeto para ver.' }
       const match = typeof args.match === 'string' && args.match ? args.match : undefined
       const pids = Array.isArray(args.pids) ? args.pids.map(Number).filter((pid) => Number.isInteger(pid) && pid > 1) : undefined
-      const eligible = eligibleProcesses(await snapshot(), root)
+      const eligible = eligibleProcesses(await snapshot(), root, process.pid, machineOf(context))
       const own = new Set(eligible.map((info) => info.pid))
       const picked = eligible.filter((info) => (!match || info.command.includes(match)) && (!pids || pids.includes(info.pid)))
       const outside = (pids ?? []).filter((pid) => !own.has(pid))

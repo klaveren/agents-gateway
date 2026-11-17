@@ -29,6 +29,8 @@ export interface IAmbient {
   deprecated?: IDeprecatedTool[]
   /** O agente arma vigia nesta conversa (ver `Watch.Model`): a regra de espera cita as ferramentas. Ausente: só a proibição. */
   watch?: boolean
+  /** 🖥️ Agente de máquina nesta conversa (ver `IProject.machineAgents`): a pasta de trabalho é só o ponto de partida. */
+  machine?: boolean
 }
 
 /** Os NOMES das variáveis secretas: as do agente e as de cada skill ou command que ele pode carregar. */
@@ -57,7 +59,11 @@ export function ambientSection(ambient: IAmbient): string {
   }
   if (repository)
     lines.push(`- Repositório: ${repository.name}${repository.worktree ? `, worktree ${repository.worktree}` : ''}${repository.branch ? ` (branch ${repository.branch})` : ''}.`)
-  if (!directory) lines.push('- Diretório de trabalho: uma pasta vazia, só desta conversa.')
+  if (ambient.machine && directory)
+    lines.push(
+      `- Diretório de trabalho: ${directory}, o ponto de partida. Você é um AGENTE DE MÁQUINA: lê e grava tudo o que o usuário desta máquina pode (a casa dele, outros repositórios, \`/opt\`), usa a rede sem regra e vê os processos dele. Ficam fechados os dados e a configuração do gateway e os segredos (\`.env\`, chaves). \`sudo\` não roda.`,
+    )
+  else if (!directory) lines.push('- Diretório de trabalho: uma pasta vazia, só desta conversa.')
   else if (repository) lines.push(`- Diretório de trabalho: ${directory}. Fora dele você não lê nem grava; o git dele funciona (status, commit, push).`)
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
   if (ambient.files) lines.push(agentFolderLine(ambient.files))
