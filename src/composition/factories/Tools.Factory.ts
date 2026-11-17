@@ -1,3 +1,4 @@
+import { makeHostApprovals } from './HostApprovals.Factory'
 import { projectFixedEnv } from './ProjectVariables.Factory'
 import { realAgentFolder } from '@infra/workspace/Resource.Files'
 import { McpOAuth } from '@infra/mcp/Mcp.OAuth'
@@ -125,6 +126,8 @@ export function makeTools(): ITools {
             panels: panelStore(),
             deliveries: deliveryStore(),
             watches: watchDesk(),
+            // 🖥️ O agente de máquina pede à pessoa o comando que o cerco sempre recusa (ver `HostApproval.Model`).
+            hostApprovals: makeHostApprovals(),
             permissions: lazyPermissions,
             agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
             agentFolder: (agentId, conversationProject) => agentFolderOf(agentId, conversationProject),

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import HostApprovals from './HostApprovals.vue'
   import MachineBadge from './MachineBadge.vue'
   import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue'
   import { api } from '@/lib/api'
@@ -634,6 +635,7 @@
     <p v-if="thread.readOnly" class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3 text-center text-xs text-zinc-400" data-test="thread-read-only">
       Conversa de {{ owner?.email ?? owner?.id ?? 'outra pessoa' }} — só leitura.
     </p>
+    <HostApprovals v-if="!thread.readOnly" :session-id="thread.sessionId" :running="!!thread.pending || !!thread.following" />
     <SessionTuner v-if="thread.liveSession && agent && !thread.readOnly" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
     <Composer
       v-if="!thread.readOnly"

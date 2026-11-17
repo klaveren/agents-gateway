@@ -1,3 +1,4 @@
+import { makeHostApprovals } from './HostApprovals.Factory'
 import { machineAgentsOn } from './Installation.Settings'
 import { RESOURCE_KINDS } from '@domain/models/Resource.Model'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
@@ -170,6 +171,7 @@ export function makeController(): AgentController {
       makeWatches().cancelSession(sessionId)
     },
     watches: makeWatches(),
+    hostApprovals: makeHostApprovals(),
     processes: (sessionId) => backgroundProcesses().running(sessionId).length,
   })
   // ⛔ O turno de fundo do Importador amarrado ao contexto de quem pediu (a identidade da requisição): a fila roda depois,

@@ -104,6 +104,8 @@ import { SseStream } from './Sse.Stream'
 import { NextFunction, Request, Response } from 'express'
 import { viaAccessToken } from './Auth.Controller'
 import { viaSessionCookie } from './Session.Cookie'
+import { z } from 'zod'
+import type { IHostApprovals } from '@application/HostApprovals.Service'
 
 /**
  * As tools LOCAIS que um agente PODE receber — o perímetro, decidido no deploy.
@@ -120,6 +122,9 @@ export function localToolPerimeter(all: readonly string[], env: NodeJS.ProcessEn
   return [...all]
 }
 const STARTED_AT = Date.now()
+
+/** 🖥️ A resposta da pessoa a um pedido do agente de máquina. A senha só com `sudo`; o tamanho é o de uma senha. */
+const hostApprovalSchema = z.object({ approve: z.boolean(), password: z.string().min(1).max(512).optional() })
 
 export interface IAgentControllerDeps {
   /** Injetado, e não buscado no singleton da composição: é o que torna o controller testável sem rede. */
@@ -195,6 +200,8 @@ export interface IAgentControllerDeps {
   callbackSecret?: (url: string, projectId?: string) => string | undefined
   /** ⛔ A máscara de segredos (`SecretMasker.text`) da mensagem das recusas de turno. Ausente = só as camadas de forma e de formato. */
   maskText?: (text: string) => string
+  /** 🖥️ Os pedidos do agente de máquina para rodar fora do cerco (ver `HostApproval.Model`). Ausente = a rota responde vazio. */
+  hostApprovals?: IHostApprovals
 }
 
 /**
@@ -318,6 +325,8 @@ export class AgentController {
     this.getConversationTurns = this.getConversationTurns.bind(this)
     this.getConversationTodos = this.getConversationTodos.bind(this)
     this.listWatches = this.listWatches.bind(this)
+    this.listHostApprovals = this.listHostApprovals.bind(this)
+    this.answerHostApproval = this.answerHostApproval.bind(this)
     this.stopWatch = this.stopWatch.bind(this)
     this.shareConversation = this.shareConversation.bind(this)
     this.deleteConversation = this.deleteConversation.bind(this)
@@ -1793,6 +1802,44 @@ export class AgentController {
    * As vigias ATIVAS da conversa (ver `Watch.Model`): o que o agente deixou o gateway conferindo. ⛔ Só a conversa de quem
    * pede (de outra pessoa é 404, como o resto da sessão): a vigia mostra o comando que o agente roda.
    */
+  /** `GET /sessions/:id/host-approvals` — 🖥️ os comandos que o agente de máquina espera a pessoa aprovar (sem nada secreto). */
+  async listHostApprovals(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      await this.requireOwnedConversation(id)
+      return (this.usecases.hostApprovals?.pending(id) ?? []).map((approval) => ({
+        id: approval.id,
+        ...(approval.agentId ? { agentId: approval.agentId } : {}),
+        command: this.usecases.maskText?.(approval.command) ?? approval.command,
+        reason: approval.reason,
+        password: approval.password,
+        createdAt: approval.createdAt,
+        expiresAt: approval.expiresAt,
+      }))
+    })
+  }
+
+  /**
+   * `POST /sessions/:id/host-approvals/:approvalId { approve, password? }` — 🖥️ a resposta da pessoa. ⛔ Só de quem é a
+   * conversa e só na TELA (token e agente: 403): o agente não aprova o próprio pedido. A senha vai direto para o comando.
+   */
+  async answerHostApproval(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const { resolved } = await this.requireOwnedConversation(id)
+      if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem é dono da conversa, entrando pela tela, aprova o comando.')
+      const body = parseBody(hostApprovalSchema, req.body)
+      const by = resolved.identity?.email ?? resolved.identity?.id
+      const answered = this.usecases.hostApprovals?.answer(id, req.params.approvalId as string, {
+        approved: body.approve,
+        ...(body.approve && body.password ? { password: body.password } : {}),
+        ...(by ? { by } : {}),
+      })
+      if (!answered) throw new HttpError(404, 'not_found', 'Este pedido já não existe: foi respondido, venceu ou o turno acabou.')
+      return { approved: body.approve }
+    })
+  }
+
   async listWatches(req: Request, res: Response) {
     await this.respond(res, async () => {
       const id = req.params.id as string

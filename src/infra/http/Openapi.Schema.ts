@@ -6480,6 +6480,24 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/sessions/{id}/host-approvals': {
+      get: {
+        summary: 'The commands a MACHINE agent of this conversation is waiting to run outside the sandbox (`sudo`, deleting or powering off the host): the exact command, why the sandbox refuses it, and whether it needs the machine password. Nothing secret. Owner of the conversation',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'The open requests', ...json(envelope({ type: 'array', items: { type: 'object' } })) }, '404': failures['404'] },
+      },
+    },
+    '/sessions/{id}/host-approvals/{approvalId}': {
+      post: {
+        summary: 'Answer a request of a machine agent (`{ approve, password? }`). Approved, the exact command runs OUTSIDE the sandbox, as the gateway user; with `sudo`, the password goes straight to it (`SUDO_ASKPASS`) and is never stored nor returned. Owner of the conversation, on the SCREEN only: an access token or an agent gets 403. 404 when the request is gone (answered, expired, turn over)',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'approvalId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: { required: true, ...json({ type: 'object', required: ['approve'], properties: { approve: { type: 'boolean' }, password: { type: 'string' } } }) },
+        responses: { '200': { description: 'Answered', ...json(envelope({ type: 'object' })) }, '403': failures['403'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/sessions/{id}/watches': {
       get: {
         summary:
