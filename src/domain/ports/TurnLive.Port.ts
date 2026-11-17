@@ -25,6 +25,11 @@ export interface ITurnLive {
   start(sessionId: string, request: string, metadata?: Record<string, unknown>): number
   push(sessionId: string, event: IAgentEvent): void
   finish(sessionId: string, ticket: number): void
+  /**
+   * ⛔ O turno que NÃO chegou a rodar (a conversa já respondia): sai sem apagar o que roda de verdade. O turno anterior
+   * volta a ser o ao vivo, e quem acompanha o recebe de novo.
+   */
+  withdraw?(sessionId: string, ticket: number): void
   /** A sugestão de próximo passo do turno já gravado: para quem está com a conversa aberta. */
   suggest?(sessionId: string, index: number, text: string): void
   snapshot(sessionId: string): ILiveTurnSnapshot | undefined

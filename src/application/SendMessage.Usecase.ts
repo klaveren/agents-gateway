@@ -1,5 +1,5 @@
 import type { INextStepSuggester } from '@domain/ports/NextStepSuggester.Port'
-import { UsageCapReachedError } from '@domain/errors/Domain.Error'
+import { SessionBusyError, UsageCapReachedError } from '@domain/errors/Domain.Error'
 import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IStoredUsage } from '@domain/models/Conversation.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
@@ -119,6 +119,9 @@ export class SendMessageUseCase {
     const described = this.describeQuietly(sessionId)
     // ⛔ O TETO vem antes de tudo: nem o turno ao vivo nem o cabeçalho nascem para o que não vai rodar. Vale para todo
     // turno (tela, API, delegação, hook, agendamento): todos passam por aqui. O dono é o da conversa.
+    // ⛔ A CONVERSA JÁ RESPONDE: recusa ANTES do turno ao vivo. Aberto e fechado, ele apagava o turno que roda de verdade
+    // — a tela via a conversa parada e cada mensagem nova dava 409.
+    if (described?.status === 'running') throw new SessionBusyError(sessionId)
     const refused = await this.cap?.refusal((described?.metadata?.owner as { id?: string } | undefined)?.id)
     if (refused) throw new UsageCapReachedError(refused)
     const index = described?.turns
@@ -130,6 +133,7 @@ export class SendMessageUseCase {
     // ⚖️ E TODO TURNO SOBE A CONVERSA NA LISTA AO COMEÇAR (`updatedAt`), não só ao acabar: a ordem é a da última interação.
     void this.saveHeader(sessionId, index === 0 ? this.firstTitle(sessionId, recorded.recordAs ?? recorded.text) : undefined).catch(() => undefined)
 
+    let busy = false
     try {
       for await (const event of this.agentProvider.sendMessage(sessionId, sent)) {
         // ⛔ O que sai daqui (a tela, o histórico) já sai mascarado: o argumento e o resultado das ferramentas e o texto.
@@ -138,10 +142,15 @@ export class SendMessageUseCase {
         this.live?.push(sessionId, shown)
         yield shown
       }
+    } catch (error: unknown) {
+      // Dois pedidos juntos passaram pela conferência acima: o segundo sai sem tocar no turno ao vivo do primeiro.
+      busy = error instanceof SessionBusyError && !events.length
+      throw error
     } finally {
       // `void`: gravação não segura a resposta de quem está lendo o stream, e o repositório já
       // engole o próprio erro — banco fora do ar não pode derrubar a conversa.
-      if (index === undefined) finished()
+      if (busy && ticket !== undefined && this.live?.withdraw) this.live.withdraw(sessionId, ticket)
+      else if (index === undefined) finished()
       else
         void this.record(sessionId, index, recorded, events, startedAt, finished)
           .catch(() => undefined)
