@@ -6,6 +6,8 @@ import { ILiveTurnSnapshot, ITurnLive, TLiveTurnSignal } from '@domain/ports/Tur
 interface IRunning extends ILiveTurnSnapshot {
   ticket: number
   metadata?: Record<string, unknown>
+  /** O turno que este substituiu (o fim atrasado de um, ou o que roda quando este é recusado): volta no `withdraw`. */
+  previous?: IRunning
 }
 
 /**
@@ -26,7 +28,15 @@ export class TurnLive implements ITurnLive {
 
   start(sessionId: string, request: string, metadata?: Record<string, unknown>): number {
     const ticket = ++this.tickets
-    const turn: IRunning = { ticket, request, startedAt: new Date(), events: [], ...(metadata ? { metadata } : {}) }
+    const previous = this.turns.get(sessionId)
+    const turn: IRunning = {
+      ticket,
+      request,
+      startedAt: new Date(),
+      events: [],
+      ...(metadata ? { metadata } : {}),
+      ...(previous ? { previous: { ...previous, previous: undefined } } : {}),
+    }
     this.turns.set(sessionId, turn)
     this.signal(sessionId, { type: 'turn.started', turn: this.view(turn) })
     this.conversations?.publish({ type: 'conversation.running', sessionId, at: turn.startedAt, ...(metadata ? { metadata } : {}) })
@@ -49,6 +59,16 @@ export class TurnLive implements ITurnLive {
     this.turns.delete(sessionId)
     this.signal(sessionId, { type: 'turn.finished' })
     this.conversations?.publish({ type: 'conversation.idle', sessionId, ...(turn.metadata ? { metadata: turn.metadata } : {}) })
+  }
+
+  withdraw(sessionId: string, ticket: number): void {
+    const turn = this.turns.get(sessionId)
+    if (turn?.ticket !== ticket) return
+    const previous = turn.previous
+    if (!previous) return this.finish(sessionId, ticket)
+    this.turns.set(sessionId, previous)
+    this.signal(sessionId, { type: 'turn.started', turn: this.view(previous) })
+    this.conversations?.publish({ type: 'conversation.running', sessionId, at: previous.startedAt, ...(previous.metadata ? { metadata: previous.metadata } : {}) })
   }
 
   suggest(sessionId: string, index: number, text: string): void {

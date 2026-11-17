@@ -1,5 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
+import { SessionBusyError } from '@domain/errors/Domain.Error'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
@@ -214,6 +215,70 @@ describe('SendMessageUseCase', () => {
       live.running().map((turn) => [turn.sessionId, turn.startedAt instanceof Date]),
       [['s', true]],
     )
+  })
+
+  it('⛔ a conversa já respondendo: a mensagem nova é recusada sem apagar o turno ao vivo que roda', async () => {
+    const live = new TurnLive()
+    const running = live.start('s', 'o turno de verdade')
+    let reached = false
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => session({ status: 'running' }),
+        // eslint-disable-next-line require-yield
+        sendMessage: async function* () {
+          reached = true
+        },
+      }),
+      new RecordingRepository(),
+      undefined,
+      undefined,
+      live,
+    )
+    await assert.rejects(async () => {
+      for await (const _ of usecase.execute('s', { text: 'outra' })) void _
+    }, SessionBusyError)
+    assert.strictEqual(reached, false)
+    assert.strictEqual(live.snapshot('s')?.request, 'o turno de verdade')
+    live.finish('s', running)
+    assert.strictEqual(live.snapshot('s'), undefined)
+  })
+
+  it('⛔ dois pedidos juntos: o recusado pelo provedor sai e o turno ao vivo do primeiro volta', async () => {
+    const live = new TurnLive()
+    live.start('s', 'o turno de verdade')
+    const signals: TLiveTurnSignal[] = []
+    live.subscribe('s', (signal) => signals.push(signal))
+    const repository = new RecordingRepository()
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => session(),
+        // eslint-disable-next-line require-yield
+        sendMessage: async function* (sessionId) {
+          throw new SessionBusyError(sessionId)
+        },
+      }),
+      repository,
+      undefined,
+      undefined,
+      live,
+    )
+    await assert.rejects(async () => {
+      for await (const _ of usecase.execute('s', { text: 'outra' })) void _
+    }, SessionBusyError)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.strictEqual(live.snapshot('s')?.request, 'o turno de verdade')
+    assert.deepStrictEqual(
+      signals.map((signal) => (signal.type === 'turn.started' ? `${signal.type}:${signal.turn.request}` : signal.type)),
+      ['turn.started:outra', 'turn.started:o turno de verdade'],
+    )
+    assert.strictEqual(repository.turns.length, 0)
+  })
+
+  it('o turno recusado sem outro antes dele sai como fim', () => {
+    const live = new TurnLive()
+    const ticket = live.start('s', 'sozinho')
+    live.withdraw('s', ticket)
+    assert.strictEqual(live.snapshot('s'), undefined)
   })
 
   it('passes the stream through in order, keyed only by session id', async () => {
