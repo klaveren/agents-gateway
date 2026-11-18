@@ -93,3 +93,49 @@ describe('Composer — a sugestão de próximo passo', () => {
     expect(area().value).toBe('Rode os testes')
   })
 })
+
+describe('anexar sem o clipe', () => {
+  const settle = async () => {
+    for (let index = 0; index < 10; index++) await new Promise((resolve) => setTimeout(resolve, 0))
+    await nextTick()
+  }
+  const chips = (host: HTMLElement) => Array.from(host.querySelectorAll('form span.rounded-full')).map((chip) => chip.textContent?.trim())
+  const withData = (type: string, field: 'clipboardData' | 'dataTransfer', files: File[]) => {
+    const event = new Event(type, { bubbles: true, cancelable: true })
+    Object.defineProperty(event, field, { value: { files, types: files.length ? ['Files'] : ['text/plain'] } })
+    return event
+  }
+
+  it('colar um print anexa a imagem, com nome próprio no lugar de image.png', async () => {
+    const { host, area } = await mount({ value: 'P' })
+    const event = withData('paste', 'clipboardData', [new File(['x'], 'image.png', { type: 'image/png' })])
+    area().dispatchEvent(event)
+    await settle()
+    expect(event.defaultPrevented).toBe(true)
+    expect(chips(host)).toEqual([expect.stringMatching(/^imagem-\d{6}-1\.png$/)])
+  })
+
+  it('colar só texto não mexe nos anexos', async () => {
+    const { host, area } = await mount({ value: 'Q' })
+    const event = withData('paste', 'clipboardData', [])
+    area().dispatchEvent(event)
+    await settle()
+    expect(event.defaultPrevented).toBe(false)
+    expect(chips(host)).toEqual([])
+  })
+
+  it('soltar arquivos em cima da caixa anexa todos, com o nome original', async () => {
+    const { host } = await mount({ value: 'R' })
+    const form = host.querySelector('[data-test="composer"]')!
+    const files = [new File(['a'], 'relatorio.pdf', { type: 'application/pdf' }), new File(['b'], 'dados.csv', { type: 'text/csv' })]
+    form.dispatchEvent(withData('dragover', 'dataTransfer', files))
+    await nextTick()
+    expect(form.className).toContain('outline-dashed')
+    const drop = withData('drop', 'dataTransfer', files)
+    form.dispatchEvent(drop)
+    await settle()
+    expect(drop.defaultPrevented).toBe(true)
+    expect(form.className).not.toContain('outline-dashed')
+    expect(chips(host)).toEqual(['relatorio.pdf', 'dados.csv'])
+  })
+})
