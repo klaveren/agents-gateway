@@ -24,6 +24,8 @@ export interface IUsageControllerDeps {
   accounts?: AccountsService
   /** O teto de uso do mês (o mesmo que trava o turno). Ausente = a rota diz que não há teto. */
   cap?: UsageCapService
+  /** O nome de cada projeto, na aba do ambiente. */
+  projects?: { all(): Array<{ id: string; name: string }> }
   now?: () => Date
 }
 
@@ -65,7 +67,7 @@ export class UsageController {
   private readonly service = new UsageService()
 
   constructor(private readonly deps: IUsageControllerDeps) {
-    for (const name of ['mine', 'users', 'user', 'byKey', 'byKeyValue', 'cap'] as const) this[name] = this[name].bind(this)
+    for (const name of ['mine', 'all', 'users', 'user', 'byKey', 'byKeyValue', 'cap'] as const) this[name] = this[name].bind(this)
   }
 
   /** O meu uso. Exige identidade: o anônimo não tem "meu". */
@@ -104,6 +106,28 @@ export class UsageController {
         since,
         user: { tokens: user?.tokens ?? 0, costPercent: percent(user?.costUsd, caps.userMonthlyCostUsd), ...(user?.costIsFloor ? { costIsFloor: true } : {}) },
         ...(reached ? { reached: { scope: reached.scope, kind: reached.kind } } : {}),
+      }
+    })
+  }
+
+  /**
+   * 🌐 O AMBIENTE INTEIRO: tudo o que se gastou no gateway (dia, agente, modelo, provedor, ferramenta, conversas) e por
+   * projeto, com custo. Só admin; quem administra só alguns projetos vê os deles (o mesmo recorte das outras abas).
+   */
+  async all(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const scope = await this.scopeOf(req, 'usageAll')
+      const { query, days, period } = this.range(req)
+      const pricingOf = (provider: string) => this.pricingOf(provider)
+      const tagged = await this.rows({ ...query, groupBy: 'project' }, scope)
+      const rows = tagged.map(({ group: _group, ...row }) => row)
+      const names = new Map((this.deps.projects?.all() ?? []).map((project) => [project.id, project.name]))
+      const byProject = this.service.byGroup(tagged, pricingOf).map((group) => ({ ...group, projectId: group.value, name: group.value ? names.get(group.value) : undefined }))
+      return {
+        period,
+        ...this.service.summarize(rows, { days }, pricingOf),
+        byProject,
+        ...(await this.toolsOf(query, scope).then((byTool) => (byTool ? { byTool } : {}))),
       }
     })
   }

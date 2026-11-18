@@ -533,6 +533,8 @@ export interface IUsageSummary {
   top: Array<IUsageFigure & { id: string; title?: string; agentId: string; provider: string; model: string }>
   /** ESTIMATIVA por ferramenta (o provedor não separa): diretos = argumentos + resultado; contexto = o resultado relido no turno. */
   byTool?: IToolUsage[]
+  /** 🌐 Só na aba do ambiente: o gasto de cada projeto (`projectId` ausente = conversas sem projeto). */
+  byProject?: Array<IUsageFigure & { projectId?: string; name?: string }>
 }
 
 export interface IToolUsage {

@@ -136,6 +136,19 @@ describe('uso (integração)', () => {
     assert.strictEqual(users.body.result.totals.costUsd, 6)
   })
 
+  it('🌐 o ambiente: 404 para membro; para o admin, tudo com custo e o gasto de cada projeto', async () => {
+    assert.strictEqual((await call('/usage/all', { token: member })).status, 404)
+
+    const all = (await call('/usage/all?days=30&tz=-180', { token: admin })).body.result
+    assert.deepStrictEqual([all.totals.conversations, all.totals.costUsd, all.daily.length], [2, 6, 30])
+    assert.deepStrictEqual(all.byProject.map((item: { projectId?: string; name?: string; costUsd?: number }) => [item.projectId, item.name, item.costUsd]).sort(), [
+      ['alfa', 'alfa', 3],
+      ['beta', 'beta', 3],
+    ])
+    assert.ok(all.byModel.length && all.byAgent.length && all.top.length)
+    assert.strictEqual((await call('/usage/all?project=alfa', { token: admin })).body.result.totals.costUsd, 3)
+  })
+
   it('o detalhe de um usuário, para o admin, vem com custo; para o membro, 404', async () => {
     const detail = await call(`/usage/users/${memberId}`, { token: admin })
     assert.deepStrictEqual([detail.body.result.name, detail.body.result.totals.costUsd, detail.body.result.byModel[0].model], ['Ana', 3, 'claude-sonnet-5'])

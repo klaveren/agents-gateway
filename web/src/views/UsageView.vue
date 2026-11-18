@@ -32,7 +32,7 @@
    */
   const selectedProject = computed(() => (!lite.value && typeof route.query.project === 'string' && route.query.project ? route.query.project : undefined))
   const shownProject = computed(() => (lite.value ? projects.current : selectedProject.value))
-  const tab = computed(() => (auth.isAdmin && (route.query.tab === 'users' || route.query.tab === 'keys') ? route.query.tab : 'mine'))
+  const tab = computed(() => (auth.isAdmin && (route.query.tab === 'all' || route.query.tab === 'users' || route.query.tab === 'keys') ? route.query.tab : 'mine'))
   const selectedUser = computed(() => (typeof route.query.user === 'string' ? route.query.user : undefined))
 
   /** A chave do `metadata` agrupada na aba "Por chave"; lembrada neste navegador. */
@@ -50,7 +50,7 @@
   const NO_VALUE = '~none'
 
   // ⚠️ Os dados moram na store: ela descarta resposta velha e limpa o que era de outro usuário/chave/período.
-  const { mine, users, detail, groups, valueDetail, loading, error } = storeToRefs(usage)
+  const { mine, all, users, detail, groups, valueDetail, loading, error } = storeToRefs(usage)
   // 10 por página, como os outros relatórios.
   const groupPage = usePaged(computed(() => groups.value?.groups ?? []))
   const userPage = usePaged(computed(() => users.value?.users ?? []))
@@ -102,6 +102,7 @@
           <button class="rounded-full px-3 py-1" :class="tab === 'mine' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: undefined, user: undefined })">
             Meu uso
           </button>
+          <button class="rounded-full px-3 py-1" :class="tab === 'all' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: 'all', user: undefined })">Ambiente</button>
           <button class="rounded-full px-3 py-1" :class="tab === 'users' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: 'users', user: undefined })">
             Por usuário
           </button>
@@ -144,11 +145,16 @@
 
       <UsageCapBar />
       <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-      <p v-if="loading && !mine && !users && !detail && !groups && !valueDetail" class="text-sm text-zinc-500">Carregando…</p>
+      <p v-if="loading && !mine && !all && !users && !detail && !groups && !valueDetail" class="text-sm text-zinc-500">Carregando…</p>
 
       <template v-if="tab === 'mine' && mine">
         <p class="text-xs text-zinc-500">Quanto você usou nas suas conversas.{{ auth.isAdmin ? '' : ' O custo aparece só para quem administra.' }}</p>
         <UsageSummaryView :summary="mine" :show-cost="auth.isAdmin" />
+      </template>
+
+      <template v-else-if="tab === 'all' && all">
+        <p class="text-xs text-zinc-500">Tudo o que se gastou {{ shownProject ? 'neste projeto' : 'no gateway' }}, de todas as pessoas, agendamentos e integrações.</p>
+        <UsageSummaryView :summary="all" :show-cost="true" />
       </template>
 
       <template v-else-if="tab === 'keys' && selectedValue && valueDetail">

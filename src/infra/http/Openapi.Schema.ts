@@ -5872,6 +5872,20 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/usage/all': {
+      get: {
+        summary:
+          'The whole environment: everything spent in the gateway (per day, agent, model, provider, tool, top conversations) plus `byProject`, with estimated cost. Administrators only; a project administrator sees the projects they administer',
+        parameters: usageParams,
+        responses: {
+          '200': {
+            description: 'OK: the usage summary (as `/usage/me`, with cost) plus `byProject` (`projectId` absent = conversations without a project)',
+            ...json(envelope({ type: 'object' })),
+          },
+          '404': { description: 'Not an administrator', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
     '/usage/users': {
       get: {
         summary: 'Usage per user with estimated cost, most expensive first. Conversations without an owner come as one row with no `ownerId`. Administrators only',
