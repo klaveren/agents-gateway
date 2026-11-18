@@ -61,7 +61,7 @@
         class="relative grid place-items-center rounded-full text-xs font-semibold"
         :class="[
           auth.isAdmin ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-300',
-          placement === 'up' ? 'h-[22px] w-[22px] text-[9px]' : 'h-9 w-9',
+          placement === 'up' ? 'h-[22px] w-[22px] text-[9px]' : 'h-7 w-7 text-[11px]',
           open ? 'ring-2 ring-emerald-500/60' : '',
         ]"
       >
