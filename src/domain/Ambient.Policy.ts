@@ -126,6 +126,31 @@ export function conversationNote(conversationId: string): string {
   return `<contexto>id desta conversa: ${conversationId}</contexto>`
 }
 
+/** Os nomes das variáveis secretas do ambiente, numa lista só (as do agente, as do projeto e as de cada skill/command). */
+export function secretNamesOf(secrets: IAmbientSecrets | undefined): string[] {
+  if (!secrets) return []
+  return [...new Set([...secrets.agent, ...(secrets.project ?? []), ...secrets.resources.flatMap((resource) => resource.names)])].sort()
+}
+
+/**
+ * 🔑 AS VARIÁVEIS SECRETAS MUDARAM DEPOIS QUE A CONVERSA ABRIU. O valor já entra no terminal a cada turno (ver
+ * `ResourceSecrets.envFor`), mas a lista de NOMES do prompt é a da abertura: sem o aviso, o agente lia a lista velha e
+ * dizia que a variável nova não existia (o Zeus, 18/11, com o `E2E_PROVIDER_PASSWORD`). Só na entrada do modelo.
+ * `before` ausente (conversa de antes deste aviso) = diz a lista inteira de agora, uma vez.
+ */
+export function secretsChangedNote(before: readonly string[] | undefined, now: readonly string[]): string {
+  const code = (names: readonly string[]) => names.map((name) => `\`${name}\``).join(', ')
+  if (!before)
+    return now.length
+      ? `<contexto>Variáveis secretas no ambiente dos seus comandos agora (use \`$NOME\`; esta lista vale mais que a do começo da conversa): ${code(now)}.</contexto>`
+      : ''
+  const added = now.filter((name) => !before.includes(name))
+  const removed = before.filter((name) => !now.includes(name))
+  if (!added.length && !removed.length) return ''
+  const parts = [added.length ? `novas, já no ambiente dos seus comandos (use \`$NOME\`): ${code(added)}` : '', removed.length ? `removidas: ${code(removed)}` : ''].filter(Boolean)
+  return `<contexto>As variáveis secretas mudaram desde o começo desta conversa — ${parts.join('; ')}. Vale isto, não a lista do começo.</contexto>`
+}
+
 /**
  * ⚖️ O MCP QUE NÃO RESPONDEU NO COMEÇO DO TURNO: as ferramentas dele não vieram. Sem o aviso, o agente concluía "não tenho
  * acesso" e travava o pedido (a Maya, 16/11). Só na entrada do modelo, como o painel.
