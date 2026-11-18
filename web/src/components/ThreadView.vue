@@ -547,6 +547,7 @@
     <DelegationsPanel v-if="children.length" :items="children" :show-cost="projects.manages" />
     <!-- Logo abaixo das delegações: o que a conversa espera fica no alto, junto do que ela pediu a outros. -->
     <WatchesPanel v-if="thread.watches.length" :items="thread.watches" :stop="thread.stopWatch" />
+    <TodoPanel v-if="thread.todos.length" :items="thread.todos" />
 
     <div v-if="compactNotice && thread.session?.compactNext" class="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">
       {{ compactNotice }}
@@ -622,7 +623,6 @@
         </div>
       </aside>
     </div>
-    <TodoPanel v-if="thread.todos.length" :items="thread.todos" />
     <ChangesPanel v-if="changesOpen && thread.sessionId" :session-id="thread.sessionId" :refresh-key="changesRefresh" @close="changesOpen = false" @count="changesCount = $event" />
     <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
     <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">

@@ -1,28 +1,29 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import type { ITodoItem } from '@/lib/types'
+  import { computed, ref, watch } from 'vue'
+  import type { ITodoItem } from '@/lib/types'
+  import Icon from './Icon.vue'
 
-/**
- * A lista de tarefas que o agente mantém na conversa (`update_todos`), logo acima da caixa de mensagem. Recolhida, mostra
- * a contagem e o que está em andamento; aberta, a lista inteira.
- * ⚖️ Tudo concluído, ela recolhe sozinha (não ocupa a tela à toa); com tarefa por fazer, volta a abrir. No meio, vale o
- * clique de quem lê.
- */
-const props = defineProps<{ items: ITodoItem[] }>()
+  /**
+   * A lista de tarefas que o agente mantém na conversa (`update_todos`), logo acima da caixa de mensagem. Recolhida, mostra
+   * a contagem e o que está em andamento; aberta, a lista inteira.
+   * ⚖️ Tudo concluído, ela recolhe sozinha (não ocupa a tela à toa); com tarefa por fazer, volta a abrir. No meio, vale o
+   * clique de quem lê.
+   */
+  const props = defineProps<{ items: ITodoItem[] }>()
 
-const done = computed(() => props.items.filter((item) => item.status === 'done').length)
-const current = computed(() => props.items.find((item) => item.status === 'in_progress'))
-const finished = computed(() => props.items.every((item) => item.status === 'done' || item.status === 'cancelled'))
-const open = ref(!finished.value)
-watch(finished, (value) => (open.value = !value))
+  const done = computed(() => props.items.filter((item) => item.status === 'done').length)
+  const current = computed(() => props.items.find((item) => item.status === 'in_progress'))
+  const finished = computed(() => props.items.every((item) => item.status === 'done' || item.status === 'cancelled'))
+  const open = ref(!finished.value)
+  watch(finished, (value) => (open.value = !value))
 </script>
 
 <template>
-  <div class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-sm">
+  <div class="border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2 text-sm" data-test="todos">
     <button type="button" class="flex w-full items-center gap-2 text-left" :aria-expanded="open" @click="open = !open">
-      <span class="text-xs font-semibold tracking-wide text-zinc-400 uppercase">Tarefas</span>
+      <Icon name="list" class="h-4 w-4 shrink-0 text-zinc-400" title="Tarefas" aria-label="Tarefas" />
       <span class="text-xs text-zinc-500">{{ done }} de {{ items.length }}{{ finished ? ' · concluídas' : '' }}</span>
-      <span v-if="!open && current" class="min-w-0 flex-1 truncate text-xs text-emerald-300">{{ current.title }}</span>
+      <span v-if="!open && current" class="min-w-0 flex-1 truncate text-xs text-zinc-400">{{ current.title }}</span>
       <span class="ml-auto text-xs text-zinc-500">{{ open ? '▾' : '▴' }}</span>
     </button>
     <ol v-if="open" class="mt-1.5 flex max-h-44 flex-col gap-1 overflow-y-auto">
@@ -36,8 +37,9 @@ watch(finished, (value) => (open.value = !value))
             'border-zinc-700 text-zinc-600': item.status === 'cancelled',
           }"
           aria-hidden="true"
-          >{{ item.status === 'done' ? '✓' : item.status === 'cancelled' ? '–' : '' }}</span
         >
+          {{ item.status === 'done' ? '✓' : item.status === 'cancelled' ? '–' : '' }}
+        </span>
         <span
           class="min-w-0 flex-1 text-[13px] leading-snug"
           :class="{
@@ -45,8 +47,9 @@ watch(finished, (value) => (open.value = !value))
             'font-medium text-emerald-200': item.status === 'in_progress',
             'text-zinc-500 line-through': item.status === 'done' || item.status === 'cancelled',
           }"
-          >{{ item.title }}</span
         >
+          {{ item.title }}
+        </span>
       </li>
     </ol>
   </div>
