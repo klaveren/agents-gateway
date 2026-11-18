@@ -1,20 +1,21 @@
 import { EProvider } from './enums/EProvider.Enum'
 
 /**
- * ⚖️ A TRAVA TÉCNICA DO PROMPT NAS LANES DE CLI: o Codex e o Antigravity recebem o prompt montado (soul, instrução,
+ * ⚖️ A TRAVA TÉCNICA DO PROMPT NA LANE DO CODEX: ele recebe o prompt montado (soul, instrução,
  * rules, índices, contexto inicial e ambiente) como UM argumento de linha de comando, e o Linux recusa um argumento
  * acima de 128 KiB (`MAX_ARG_STRLEN`, com o NUL do fim). Passou, o `spawn` falha com `E2BIG` — sem dizer o porquê.
  *
  * ⛔ NÃO É TETO DE CONTEÚDO: o tamanho é de quem cria o agente. Daqui sai só o erro claro antes do `spawn` (nas duas
- * lanes de CLI, nunca nas outras) e o aviso da tela. O mesmo número em todo lugar: o gateway roda em Linux, e um agente
+ * lane do Codex, nunca nas outras) e o aviso da tela. O Antigravity recebe o prompt pela entrada padrão (`--input-format
+ * stream-json`) e não tem esse teto. O mesmo número em todo lugar: o gateway roda em Linux, e um agente
  * que passa no Mac e quebra na VM é pior.
  */
 export const CLI_ARG_MAX_BYTES = 128 * 1024 - 1
 /** A partir daqui a tela avisa (sem bloquear): no Antigravity a primeira mensagem vai no mesmo argumento. */
 export const CLI_ARG_WARN_RATIO = 0.8
 
-/** As lanes que passam o prompt como argumento de linha de comando. */
-export const CLI_ARG_PROTOCOLS: readonly EProvider[] = [EProvider.CODEX, EProvider.ANTIGRAVITY]
+/** As lanes que passam o prompt como argumento de linha de comando. O Antigravity saiu: o prompt vai pela entrada padrão. */
+export const CLI_ARG_PROTOCOLS: readonly EProvider[] = [EProvider.CODEX]
 
 /**
  * O argumento que um prompt vira em cada CLI, em bytes. Codex: `developer_instructions=` e o texto como string TOML (o
@@ -81,7 +82,7 @@ export function cliArgumentIssue(cli: string, argBytes: number, parts: readonly 
   return (
     `O prompt não cabe no ${cli}: ${kb(argBytes)} (${argBytes.toLocaleString('pt-BR')} bytes) num argumento de linha de comando, ` +
     `e o Linux aceita até ${kb(limit)} (${limit.toLocaleString('pt-BR')} bytes).${weights} ` +
-    `Enxugue essas partes ou use este agente num provedor que não seja Codex nem Antigravity.`
+    `Enxugue essas partes ou use este agente num provedor que não seja o Codex.`
   )
 }
 

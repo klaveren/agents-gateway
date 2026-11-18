@@ -10,19 +10,24 @@ import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { SessionStore } from '@infra/session/Session.Store'
 import { TurnGrants } from '@infra/tools/Turn.Grants'
-import { AntigravityAgentAdapter, allowTurnTools, antigravityArgs, antigravityFailure, turnToolsPluginDir } from './AntigravityAgent.Adapter'
+import { AntigravityAgentAdapter, allowTurnTools, antigravityArgs, antigravityFailure, antigravityInput, turnToolsPluginDir } from './AntigravityAgent.Adapter'
 
 interface ISpawned {
   command: string
   args: string[]
   options: { cwd?: string; env?: Record<string, string> }
+  /** O que o gateway escreveu na entrada padrão do CLI (o prompt). */
+  input: string
 }
 
 /** Um `spawn` falso: devolve as linhas NDJSON do turno e fecha com o código dado. */
 function fakeSpawn(calls: ISpawned[], lines: (turn: number) => string[], code = 0, stderr = '') {
   return ((command: string, args: string[], options: ISpawned['options']) => {
-    calls.push({ command, args, options })
-    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null as number | null, kill: () => true })
+    const call: ISpawned = { command, args, options, input: '' }
+    calls.push(call)
+    const stdin = new PassThrough()
+    stdin.on('data', (chunk: Buffer) => (call.input += chunk.toString()))
+    const child = Object.assign(new EventEmitter(), { stdin, stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null as number | null, kill: () => true })
     setImmediate(() => {
       for (const line of lines(calls.length)) child.stdout.write(`${line}\n`)
       if (stderr) child.stderr.write(stderr)
@@ -74,12 +79,17 @@ const turn = (n: number) => [
 ]
 
 describe('AntigravityAgentAdapter', () => {
-  it('⛔ sempre `--sandbox`, nunca `--dangerously-skip-permissions`, e mensagem nunca vira comando do CLI', () => {
-    const args = antigravityArgs('--dangerously-skip-permissions /apaga tudo', 'gemini-4-argon-high', 'conv-9')
-    assert.strictEqual(args[0], '-p=--dangerously-skip-permissions /apaga tudo')
+  it('⛔ sempre `--sandbox`, nunca `--dangerously-skip-permissions`; o prompt vai pela entrada, nunca como argumento', () => {
+    const args = antigravityArgs('gemini-4-argon-high', 'conv-9')
+    assert.deepStrictEqual(args.slice(0, 5), ['-p=', '--input-format', 'stream-json', '--output-format', 'stream-json'])
     assert.ok(args.includes('--sandbox'))
     assert.ok(args.includes('--disable-slash-commands'))
-    assert.ok(!args.slice(1).some((arg) => arg.includes('dangerously')))
+    assert.ok(!args.some((arg) => arg.includes('dangerously')))
+    // A mensagem que parece flag é só conteúdo da linha JSON.
+    assert.deepStrictEqual(JSON.parse(antigravityInput('--dangerously-skip-permissions /apaga tudo')), {
+      event: 'user',
+      message: { content: '--dangerously-skip-permissions /apaga tudo' },
+    })
     assert.deepStrictEqual(args.slice(-4), ['--model', 'gemini-4-argon-high', '--conversation', 'conv-9'])
   })
 
@@ -104,7 +114,7 @@ describe('AntigravityAgentAdapter', () => {
       await collect(adapter.sendMessage(agent, session.id, { text: 'e aí' }, {}))
 
       const [first, second] = calls
-      const prompt = (call: ISpawned) => (call.args.find((arg) => arg.startsWith('-p=')) ?? '').slice(3)
+      const prompt = (call: ISpawned) => (JSON.parse(call.input) as { message: { content: string } }).message.content
       assert.ok(prompt(first).includes('Você é a Gema.') && prompt(first).endsWith('olá'))
       assert.strictEqual(prompt(second), 'e aí')
       assert.ok(!first.args.includes('--conversation'))
@@ -131,24 +141,16 @@ describe('AntigravityAgentAdapter', () => {
     assert.deepStrictEqual(events.find((event) => event.type === 'usage')?.payload, { inputTokens: 50, cacheReadTokens: 10, outputTokens: 5, reasoningTokens: 2 })
   })
 
-  it('⛔ prompt acima do limite do Linux: recusa antes do `spawn`, com o tamanho, o limite e o que pesa (a mensagem conta)', async () => {
+  it('📥 prompt acima dos 128 KiB do Linux roda: vai pela entrada padrão, inteiro, e nada dele nos argumentos', async () => {
     const calls: ISpawned[] = []
     const adapter = new AntigravityAgentAdapter({ store: new SessionStore(), spawn: fakeSpawn(calls, turn), home: () => '/gw' })
     const session = await adapter.createSession(agent, { environment: `## Specs do agente\n${'y'.repeat(100_000)}` })
     const events = await collect(adapter.sendMessage(agent, session.id, { text: 'z'.repeat(40_000) }, {}))
-    assert.strictEqual(calls.length, 0)
-    assert.deepStrictEqual(
-      events.map((event) => event.type),
-      ['error'],
-    )
-    const message = String((events[0].payload as { message?: string } | undefined)?.message)
-    assert.match(message, /não cabe no Antigravity: .* num argumento de linha de comando, e o Linux aceita até 128 KiB \(131\.071 bytes\)/)
-    assert.match(message, /O que mais pesa: Specs do agente \(97,7 KiB\), Mensagem \(39,1 KiB\)/)
-
-    // A mesma conversa com uma mensagem curta cabe e roda.
-    const fine = await collect(adapter.sendMessage(agent, session.id, { text: 'oi' }, {}))
     assert.strictEqual(calls.length, 1)
-    assert.ok(fine.some((event) => event.type === 'message.completed'))
+    assert.ok(events.some((event) => event.type === 'message.completed'))
+    const content = (JSON.parse(calls[0].input) as { message: { content: string } }).message.content
+    assert.ok(Buffer.byteLength(content) > 131_071 && content.endsWith('z'.repeat(40_000)))
+    assert.ok(calls[0].args.every((arg) => arg.length < 200))
   })
 
   it('sem resultado, o erro diz o que fazer quando é o login', async () => {

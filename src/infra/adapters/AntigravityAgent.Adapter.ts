@@ -1,7 +1,6 @@
 import { cliTerminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
-import { cliArgumentIssue, promptParts } from '@domain/CliArgument.Policy'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -57,11 +56,15 @@ const TURN_TIMEOUT_S = 600
  * `agy` 0.65 deixou passar um `ls` "inofensivo". `--disable-slash-commands`: a mensagem de quem conversa nunca vira
  * comando do CLI.
  */
-export function antigravityArgs(prompt: string, model: string, conversationId?: string): string[] {
+export function antigravityArgs(model: string, conversationId?: string): string[] {
   return [
-    // ⛔ `-p=<texto>` e não `-p <texto>`: separado, um texto que começa com `--` vira flag do CLI
-    // (verificado: `-p "--help"` imprimia a ajuda). Colado, é sempre o valor.
-    `-p=${prompt}`,
+    // 📥 O prompt vai pela ENTRADA PADRÃO (`--input-format stream-json`, uma linha `{"event":"user","message":{"content"}}`),
+    // e não como argumento: o Linux recusa um argumento acima de 128 KiB (`MAX_ARG_STRLEN`) e o prompt de um agente com
+    // rules, specs e contexto passava disso. `-p=` vazio liga o modo print; texto no `-p` com stdin o CLI recusa.
+    // Verificado no `agy` 1.4.10 (o formato existe desde o 1.1.15): 172 KB de prompt, turno inteiro, sai no fim da entrada.
+    '-p=',
+    '--input-format',
+    'stream-json',
     '--output-format',
     'stream-json',
     '--print-timeout',
@@ -71,6 +74,11 @@ export function antigravityArgs(prompt: string, model: string, conversationId?: 
     ...(model ? ['--model', model] : []),
     ...(conversationId ? ['--conversation', conversationId] : []),
   ]
+}
+
+/** A linha que leva o prompt ao `agy` pela entrada padrão (ver `antigravityArgs`). */
+export function antigravityInput(prompt: string): string {
+  return `${JSON.stringify({ event: 'user', message: { content: prompt } })}\n`
 }
 
 /**
@@ -134,14 +142,6 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
 
     const native = this.nativeOf(record)
     const prompt = native.conversationId ? input.text : `${record.systemPrompt}\n\n---\n\n${input.text}`
-    // ⛔ O prompt vai no `-p=`: acima do limite do Linux, o `spawn` falha com `E2BIG` e a pessoa leria "instale o agy".
-    // Recusa antes, dizendo o tamanho e o que pesa (no primeiro turno, o prompt do agente e a mensagem).
-    const parts = native.conversationId ? [] : promptParts(record.systemPrompt)
-    const tooBig = cliArgumentIssue('Antigravity', Buffer.byteLength(antigravityArgs(prompt, '')[0]), [...parts, { label: 'Mensagem', bytes: Buffer.byteLength(input.text) }])
-    if (tooBig) {
-      yield { type: 'error', sessionId, timestamp: now(), payload: { message: tooBig } }
-      return
-    }
     const abort = new AbortController()
     record.abort = abort
     yield { type: 'message.started', sessionId, timestamp: now() }
@@ -159,12 +159,15 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     const plugin = turnToolsPluginDir(workspace)
     rmSync(plugin, { recursive: true, force: true })
     if (grant) writeTurnToolsPlugin(workspace, this.turnTools!.url, { 'X-Turn-Grant': grant })
-    const child = this.spawn(antigravityBin(), antigravityArgs(prompt, record.model, native.conversationId), {
+    const child = this.spawn(antigravityBin(), antigravityArgs(record.model, native.conversationId), {
       cwd: workspace,
       env: cliTerminalEnv(agent.env, subscriptionEnv({ HOME: home }), context),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       signal: abort.signal,
     })
+    // Uma mensagem e o fim da entrada: o `agy` roda o turno e sai. CLI que morre antes de ler não derruba o gateway.
+    child.stdin?.on('error', () => undefined)
+    child.stdin?.end(antigravityInput(prompt))
     let stderr = ''
     child.stderr?.on('data', (chunk: Buffer) => (stderr = (stderr + chunk.toString()).slice(-4000)))
     const exited = new Promise<number | null>((resolve) => {
