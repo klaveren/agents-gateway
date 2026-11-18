@@ -60,50 +60,57 @@
   <nav
     class="fixed inset-x-0 bottom-0 z-30 flex shrink-0 items-stretch border-t border-zinc-800/80 bg-zinc-900/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:static md:w-[52px] md:flex-col md:items-center md:gap-1 md:border-t-0 md:border-r md:bg-zinc-900/60 md:py-2.5 md:pb-2.5 md:backdrop-blur-none"
   >
-    <!-- O seletor de projeto no lugar do logo: o projeto atual recorta o resto da tela. -->
-    <div v-if="auth.user" class="flex min-w-0 flex-1 md:hidden"><ProjectSwitcher placement="up" /></div>
-    <div v-if="auth.user" class="mb-2 hidden md:block"><ProjectSwitcher placement="side" /></div>
-    <div
-      v-else
-      class="mb-2 hidden h-8 w-8 place-items-center rounded-lg md:grid bg-gradient-to-br from-emerald-400 to-accent-end text-sm font-bold text-zinc-950"
-      title="Agents Gateway"
-    >
-      AG
-    </div>
-    <RouterLink
-      v-for="link in links"
-      :key="link.key"
-      :to="link.to"
-      :title="link.label"
-      class="relative flex min-w-0 flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-medium transition-colors md:h-9 md:w-9 md:flex-none md:justify-center md:gap-0 md:rounded-lg md:py-0"
-      :class="section === link.key ? 'bg-zinc-800 text-emerald-300 md:text-zinc-50' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'"
-    >
-      <Icon :name="link.icon" class="h-[22px] w-[22px] md:h-[18px] md:w-[18px]" />
-      <span class="max-w-full truncate md:hidden">{{ link.short ?? link.label }}</span>
-      <span
-        v-if="link.badge"
-        class="absolute top-0.5 right-[calc(50%-20px)] md:-top-1 md:-right-1.5 md:min-w-[16px] md:text-[9px] md:leading-4 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950"
+    <!-- 📱 No celular os itens não se espremem: cada um tem largura mínima e a barra rola de lado. No computador, `md:contents` some com esta camada. -->
+    <div class="flex min-w-0 flex-1 items-stretch overflow-x-auto overscroll-x-contain [scrollbar-width:none] md:contents [&::-webkit-scrollbar]:hidden">
+      <!-- O seletor de projeto no lugar do logo: o projeto atual recorta o resto da tela. -->
+      <div v-if="auth.user" class="flex min-w-[64px] flex-1 shrink-0 md:hidden"><ProjectSwitcher placement="up" /></div>
+      <div v-if="auth.user" class="mb-2 hidden md:block"><ProjectSwitcher placement="side" /></div>
+      <div
+        v-else
+        class="mb-2 hidden h-8 w-8 place-items-center rounded-lg md:grid bg-gradient-to-br from-emerald-400 to-accent-end text-sm font-bold text-zinc-950"
+        title="Agents Gateway"
       >
-        {{ link.badge > 99 ? '99+' : link.badge }}
-      </span>
-    </RouterLink>
-    <!-- Duas instâncias (barra do celular abre para cima; trilho, para o lado), cada uma só no seu tamanho. -->
-    <div v-if="projectMenu" class="flex min-w-0 flex-1 md:hidden"><ProjectMenu placement="up" :active="section" /></div>
-    <div v-if="projectMenu" class="hidden md:block"><ProjectMenu placement="side" :active="section" /></div>
-    <div v-if="projects.manages" class="flex min-w-0 flex-1 md:hidden"><ResourcesMenu placement="up" :active="section" /></div>
-    <div v-if="projects.manages" class="hidden md:block"><ResourcesMenu placement="side" :active="section" /></div>
-    <div v-if="projects.manages" class="flex min-w-0 flex-1 md:hidden"><DocsMenu placement="up" :active="section" /></div>
-    <div v-if="projects.manages" class="hidden md:block"><DocsMenu placement="side" :active="section" /></div>
-    <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><SystemMenu placement="up" :active="section" /></div>
-    <div v-if="auth.isAdmin" class="hidden md:block"><SystemMenu placement="side" :active="section" /></div>
-    <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />
-    <RouterLink v-else-if="auth.localAccounts" to="/login" class="flex flex-1 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden">
-      Entrar
-    </RouterLink>
-    <div class="mt-auto hidden flex-col items-center gap-2 pb-1 text-[10px] text-zinc-500 md:flex">
-      <span class="h-2 w-2 rounded-full" :class="conversations.live ? 'bg-success-400' : 'bg-zinc-600'" :title="conversations.live ? 'Ao vivo' : 'Sem conexão ao vivo'" />
-      <AccountMenu v-if="auth.user" placement="side" />
-      <RouterLink v-else-if="auth.localAccounts" to="/login" class="rounded-lg px-2 py-1 text-zinc-300 hover:bg-zinc-800">Entrar</RouterLink>
+        AG
+      </div>
+      <RouterLink
+        v-for="link in links"
+        :key="link.key"
+        :to="link.to"
+        :title="link.label"
+        class="relative flex min-w-[64px] flex-1 shrink-0 flex-col items-center md:min-w-0 gap-0.5 py-1.5 text-[10px] font-medium transition-colors md:h-9 md:w-9 md:flex-none md:justify-center md:gap-0 md:rounded-lg md:py-0"
+        :class="section === link.key ? 'bg-zinc-800 text-emerald-300 md:text-zinc-50' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'"
+      >
+        <Icon :name="link.icon" class="h-[22px] w-[22px] md:h-[18px] md:w-[18px]" />
+        <span class="max-w-full truncate md:hidden">{{ link.short ?? link.label }}</span>
+        <span
+          v-if="link.badge"
+          class="absolute top-0.5 right-[calc(50%-20px)] md:-top-1 md:-right-1.5 md:min-w-[16px] md:text-[9px] md:leading-4 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950"
+        >
+          {{ link.badge > 99 ? '99+' : link.badge }}
+        </span>
+      </RouterLink>
+      <!-- Duas instâncias (barra do celular abre para cima; trilho, para o lado), cada uma só no seu tamanho. -->
+      <div v-if="projectMenu" class="flex min-w-[64px] flex-1 shrink-0 md:hidden"><ProjectMenu placement="up" :active="section" /></div>
+      <div v-if="projectMenu" class="hidden md:block"><ProjectMenu placement="side" :active="section" /></div>
+      <div v-if="projects.manages" class="flex min-w-[64px] flex-1 shrink-0 md:hidden"><ResourcesMenu placement="up" :active="section" /></div>
+      <div v-if="projects.manages" class="hidden md:block"><ResourcesMenu placement="side" :active="section" /></div>
+      <div v-if="projects.manages" class="flex min-w-[64px] flex-1 shrink-0 md:hidden"><DocsMenu placement="up" :active="section" /></div>
+      <div v-if="projects.manages" class="hidden md:block"><DocsMenu placement="side" :active="section" /></div>
+      <div v-if="auth.isAdmin" class="flex min-w-[64px] flex-1 shrink-0 md:hidden"><SystemMenu placement="up" :active="section" /></div>
+      <div v-if="auth.isAdmin" class="hidden md:block"><SystemMenu placement="side" :active="section" /></div>
+      <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />
+      <RouterLink
+        v-else-if="auth.localAccounts"
+        to="/login"
+        class="flex min-w-[64px] flex-1 shrink-0 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden"
+      >
+        Entrar
+      </RouterLink>
+      <div class="mt-auto hidden flex-col items-center gap-2 pb-1 text-[10px] text-zinc-500 md:flex">
+        <span class="h-2 w-2 rounded-full" :class="conversations.live ? 'bg-success-400' : 'bg-zinc-600'" :title="conversations.live ? 'Ao vivo' : 'Sem conexão ao vivo'" />
+        <AccountMenu v-if="auth.user" placement="side" />
+        <RouterLink v-else-if="auth.localAccounts" to="/login" class="rounded-lg px-2 py-1 text-zinc-300 hover:bg-zinc-800">Entrar</RouterLink>
+      </div>
     </div>
   </nav>
 </template>
