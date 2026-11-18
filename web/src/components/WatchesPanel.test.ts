@@ -41,13 +41,12 @@ describe('WatchesPanel', () => {
     // Fechada: a linha de cima é a próxima a acordar (o despertador), com o ícone no lugar do rótulo.
     const toggle = host.querySelector<HTMLButtonElement>('[data-test="watches-toggle"]')!
     expect(toggle.textContent).toContain('ticket fechar')
-    expect(toggle.textContent).toContain('acorda em 28 min')
-    expect(toggle.textContent).not.toContain('Despertador')
+    expect(toggle.textContent).toContain('1 despertador · 1 vigia · acorda em 28 min')
     expect(host.querySelector('li')).toBeNull()
 
     toggle.click()
     await nextTick()
-    const lines = [...host.querySelectorAll('li')].map((line) => [...line.querySelectorAll('span:not(:has(span))')].map((part) => part.textContent?.trim()))
+    const lines = [...host.querySelectorAll('li')].map((line) => [...line.querySelectorAll('span')].map((part) => part.textContent?.trim()))
     expect(lines[0]).toEqual(['servidor voltar', 'há 2 min · confere a cada 1 min · prazo em 58 min'])
     expect(lines[1]).toEqual(['ticket fechar', 'agora · acorda em 28 min'])
     expect(host.querySelector('li svg')?.getAttribute('aria-label')).toBe('Vigiando')
