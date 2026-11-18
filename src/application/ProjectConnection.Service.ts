@@ -6,7 +6,7 @@ import { forLocal, ILocalModels } from '@domain/Connect.Policy'
 import { InvalidLedgerError, InvalidProjectError, LedgerQueuedError, ProjectConnectionError } from '@domain/errors/Domain.Error'
 import { projectEnvIssues, projectMcpEnvIssues } from './Projects.Service'
 import { IProjectMcpVar, PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
-import { IConnectionChange, IConnectionSkipped, IProjectConnection } from '@domain/models/ProjectConnection.Model'
+import { hasUpdate, IConnectionChange, IConnectionSkipped, IConnectionUpdate, IProjectConnection } from '@domain/models/ProjectConnection.Model'
 import type { IProjectConnectionRepository, TConnectionPatch } from '@domain/ports/ProjectConnectionRepository.Port'
 import { IRemoteCatalog, IRemoteChanges, RemoteRequestError, RemoteUnauthorizedError, RemoteUnavailableError } from '@domain/ports/RemoteCatalog.Port'
 import type { ILedgerWrite } from '@domain/models/Ledger.Model'
@@ -134,6 +134,7 @@ export class ProjectConnectionService {
         skipped: [],
         secrets: [],
         modelMap: {},
+        autoUpdate: true,
         createdAt: this.now(),
         createdBy: by.email,
       },
@@ -199,8 +200,54 @@ export class ProjectConnectionService {
       this.deps.repository.update(projectId, { ...this.notice(connection.syncedVersion, result), lastCheckedAt: this.now() })
       // A origem respondeu: a fila do ledger sai agora.
       await this.flushLedger(projectId).catch(() => undefined)
+      await this.autoSync(projectId)
     }
     return this.require(projectId)
+  }
+
+  /** 🔄 Liga ou desliga a atualização automática desta conexão; ligar com versão nova esperando já atualiza. */
+  async setAutoUpdate(projectId: string, on: boolean): Promise<IProjectConnection> {
+    this.require(projectId)
+    this.deps.repository.update(projectId, { autoUpdate: on })
+    if (on) await this.autoSync(projectId)
+    return this.require(projectId)
+  }
+
+  /** A pessoa viu o aviso "atualizado": ele sai da tela (a última atualização fica registrada). */
+  markUpdateSeen(projectId: string): IProjectConnection {
+    const connection = this.require(projectId)
+    if (connection.lastUpdate && !connection.lastUpdate.seen) this.deps.repository.update(projectId, { lastUpdate: { ...connection.lastUpdate, seen: true } })
+    return this.require(projectId)
+  }
+
+  /**
+   * 🔄 A ATUALIZAÇÃO AUTOMÁTICA: com versão nova na origem e a conexão ligada, aplica a última — o mesmo do botão Atualizar
+   * (o turno em andamento termina na versão de antes). Deu certo: o aviso vira "atualizado vX → vY". Falhou: fica o aviso
+   * de atualização disponível, com o motivo, e a próxima conferência tenta de novo. Mudou de novo durante a atualização:
+   * mais uma volta (até três), e o que sobrar a conferência seguinte pega.
+   */
+  private async autoSync(projectId: string): Promise<void> {
+    for (let round = 0; round < 3; round++) {
+      const before = this.deps.repository.get(projectId)
+      if (!before?.autoUpdate || !hasUpdate(before) || before.state !== 'ok' || this.syncing.has(projectId)) return
+      try {
+        const result = await this.sync(projectId, 'atualização automática')
+        const pending = before.lastUpdate && !before.lastUpdate.seen ? before.lastUpdate : undefined
+        const update: IConnectionUpdate = {
+          from: pending?.from ?? before.syncedVersion,
+          to: result.version,
+          changes: mergeChanges(pending?.changes ?? [], before.changes),
+          ...(pending?.changesTruncated || before.changesTruncated ? { changesTruncated: true } : {}),
+          at: this.now().toISOString(),
+          seen: false,
+        }
+        this.deps.repository.update(projectId, { lastUpdate: update })
+      } catch (error) {
+        if (this.deps.repository.get(projectId))
+          this.deps.repository.update(projectId, { lastError: `atualização automática: ${error instanceof Error ? error.message : String(error)}` })
+        return
+      }
+    }
   }
 
   /** Atualiza para a ÚLTIMA versão da origem, em espelho. */
@@ -619,4 +666,15 @@ interface ICachedContext {
 /** As datas do JSON guardado voltam a ser `Date` (as ferramentas formatam). */
 function revive(key: string, value: unknown): unknown {
   return (key === 'createdAt' || key === 'updatedAt' || key === 'at') && typeof value === 'string' ? new Date(value) : value
+}
+
+/** As mudanças de duas atualizações seguidas numa lista só: um item por vez, com a última operação e as revisões somadas. */
+function mergeChanges(earlier: readonly IConnectionChange[], later: readonly IConnectionChange[]): IConnectionChange[] {
+  const merged = new Map<string, IConnectionChange>()
+  for (const change of [...earlier, ...later]) {
+    const key = `${change.kind}/${change.id}`
+    const previous = merged.get(key)
+    merged.set(key, previous ? { ...change, revisions: previous.revisions + change.revisions } : change)
+  }
+  return [...merged.values()]
 }

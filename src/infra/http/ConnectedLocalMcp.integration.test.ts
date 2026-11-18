@@ -128,6 +128,7 @@ describe('projeto conectado: o MCP desta máquina (integração)', () => {
         skipped: [],
         secrets: [],
         modelMap: {},
+        autoUpdate: true,
         createdAt: new Date(),
         createdBy: 'dev',
       },

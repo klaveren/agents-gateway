@@ -81,6 +81,7 @@ function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[
       skipped: [],
       secrets: [],
       modelMap: {},
+      autoUpdate: true,
       createdAt: new Date(),
       createdBy: 'dev',
     },
@@ -167,5 +168,31 @@ describe('projeto conectado: a cópia', () => {
     assert.equal(other.repository.get('logiccus')?.localEnv, undefined)
     other.service.disconnect('logiccus', 'dev')
     assert.deepEqual(other.steps, ['apply logiccus', 'release logiccus'])
+  })
+})
+
+describe('projeto conectado: a atualização automática', () => {
+  it('🔄 ligada: a conferência que acha versão nova já atualiza, e o aviso vira "atualizado v1 → v2" até a pessoa ver', async () => {
+    const { service, written, repository } = build([])
+    repository.update('logiccus', { syncedVersion: 1 })
+    const connection = await service.check('logiccus')
+    assert.equal(connection.syncedVersion, 2)
+    assert.ok(written.length > 0)
+    assert.deepEqual({ from: connection.lastUpdate?.from, to: connection.lastUpdate?.to, seen: connection.lastUpdate?.seen }, { from: 1, to: 2, seen: false })
+    assert.equal(service.markUpdateSeen('logiccus').lastUpdate?.seen, true)
+  })
+
+  it('desligada: fica o aviso de atualização disponível; ligar com versão esperando já atualiza', async () => {
+    const { service, repository, written } = build([])
+    repository.update('logiccus', { autoUpdate: false, syncedVersion: 1 })
+    const checked = await service.check('logiccus')
+    assert.deepEqual([checked.syncedVersion, checked.latestVersion, checked.lastUpdate, written.length], [1, 2, undefined, 0])
+    const on = await service.setAutoUpdate('logiccus', true)
+    assert.deepEqual([on.autoUpdate, on.syncedVersion, on.lastUpdate?.to], [true, 2, 2])
+  })
+
+  it('a conexão nova e a que já existia no banco nascem com a atualização automática ligada', () => {
+    const { repository } = build([])
+    assert.equal(repository.get('logiccus')?.autoUpdate, true)
   })
 })

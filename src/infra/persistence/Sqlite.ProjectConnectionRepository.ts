@@ -2,7 +2,7 @@ import type { IProjectMcpVar } from '@domain/models/Project.Model'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { IProjectConnection } from '@domain/models/ProjectConnection.Model'
+import { IConnectionUpdate, IProjectConnection } from '@domain/models/ProjectConnection.Model'
 import { ILedgerOutboxEntry, IProjectConnectionRepository, TConnectionPatch } from '@domain/ports/ProjectConnectionRepository.Port'
 
 /** ⛔ O token da conexão fica SELADO (`SecretBox`, dono `connect:<projeto>`): com o banco nas mãos, ninguém o usa. */
@@ -62,6 +62,9 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
     if (!columns.some((column) => column.name === 'local_env')) this.db.exec("ALTER TABLE project_connections ADD COLUMN local_env TEXT NOT NULL DEFAULT '{}'")
     // Os valores "Do projeto" dos MCPs desta máquina (ver `IProjectConnection.localMcpEnv`).
     if (!columns.some((column) => column.name === 'local_mcp_env')) this.db.exec("ALTER TABLE project_connections ADD COLUMN local_mcp_env TEXT NOT NULL DEFAULT '[]'")
+    // 🔄 A atualização automática: ligada também nas conexões que já existiam (ver `IProjectConnection.autoUpdate`).
+    if (!columns.some((column) => column.name === 'auto_update')) this.db.exec('ALTER TABLE project_connections ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 1')
+    if (!columns.some((column) => column.name === 'last_update')) this.db.exec('ALTER TABLE project_connections ADD COLUMN last_update TEXT')
   }
 
   insert(connection: IProjectConnection, tokenSealed: string): void {
@@ -113,6 +116,8 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
     set('last_checked_at', patch.lastCheckedAt?.toISOString())
     set('last_synced_at', patch.lastSyncedAt?.toISOString())
     set('usage_sent_at', patch.usageSentAt?.toISOString())
+    if (patch.autoUpdate !== undefined) columns.push(['auto_update', patch.autoUpdate ? 1 : 0])
+    if ('lastUpdate' in patch) columns.push(['last_update', patch.lastUpdate ? JSON.stringify(patch.lastUpdate) : null])
     if (!columns.length) return
     this.db
       .prepare(`UPDATE project_connections SET ${columns.map(([column]) => `${column} = ?`).join(', ')} WHERE project_id = ?`)
@@ -182,6 +187,7 @@ function toConnection(row: TRow): IProjectConnection {
   const usageSentAt = date(row.usage_sent_at)
   const localEnv = json<Record<string, string>>(row.local_env, {})
   const localMcpEnv = json<IProjectMcpVar[]>(row.local_mcp_env, [])
+  const lastUpdate = json<IConnectionUpdate | undefined>(row.last_update, undefined)
   return {
     projectId: String(row.project_id),
     url: String(row.url),
@@ -197,6 +203,8 @@ function toConnection(row: TRow): IProjectConnection {
     modelMap: json(row.model_map, {}),
     ...(localEnv && typeof localEnv === 'object' && Object.keys(localEnv).length ? { localEnv } : {}),
     ...(Array.isArray(localMcpEnv) && localMcpEnv.length ? { localMcpEnv } : {}),
+    autoUpdate: row.auto_update === undefined || row.auto_update === null ? true : Number(row.auto_update) === 1,
+    ...(lastUpdate ? { lastUpdate } : {}),
     createdAt: new Date(String(row.created_at)),
     createdBy: String(row.created_by),
     ...(lastCheckedAt ? { lastCheckedAt } : {}),
