@@ -83,7 +83,7 @@ function pickReasoning(event: Event) {
         :value="current"
         :disabled="busy"
         :blocked="blocked"
-        select-class="rounded-md bg-zinc-800 px-1.5 py-0.5 font-mono text-zinc-100 disabled:opacity-60"
+        select-class="rounded-md bg-zinc-800 px-1.5 py-0.5 text-zinc-100 disabled:opacity-60"
         @pick="pickModel"
       />
     </label>
