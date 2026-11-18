@@ -288,7 +288,14 @@ export function makeProvidersController(): ProvidersController {
 }
 
 export function makeUsageController(conversations: AgentController['conversations'], cap?: UsageCapService): UsageController {
-  return new UsageController({ conversations: withRemoteUsage(conversations), proof: makeAuth().proof, models: makeModelCatalog(), accounts: makeAuth().accounts, cap })
+  return new UsageController({
+    conversations: withRemoteUsage(conversations),
+    proof: makeAuth().proof,
+    models: makeModelCatalog(),
+    accounts: makeAuth().accounts,
+    cap,
+    projects: makeProjects(),
+  })
 }
 
 let remoteUsage: SqliteRemoteUsageRepository | undefined

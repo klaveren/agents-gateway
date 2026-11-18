@@ -54,6 +54,22 @@
     <template v-else>
       <UsageTiles :figure="t" :show-cost="showCost" />
 
+      <section v-if="summary.byProject?.length" class="card" data-test="by-project">
+        <h2 class="card-title">Por projeto</h2>
+        <ul class="flex flex-col gap-2.5">
+          <li v-for="item in summary.byProject" :key="item.projectId ?? '~none'">
+            <div class="flex items-baseline gap-2 text-sm">
+              <span class="truncate" :class="item.projectId ? 'text-zinc-200' : 'text-zinc-500'">{{ item.name ?? item.projectId ?? 'Sem projeto' }}</span>
+              <span class="ml-auto shrink-0 text-xs text-zinc-400">
+                {{ tokens(item.usage.totalTokens) }}
+                <template v-if="showCost">· {{ cost(item) }}</template>
+              </span>
+            </div>
+            <div class="mt-1 h-1.5 rounded-full bg-zinc-800"><div class="h-1.5 rounded-full bg-emerald-500/70" :style="{ width: share(item, summary.byProject) }" /></div>
+          </li>
+        </ul>
+      </section>
+
       <section class="card">
         <h2 class="card-title">Por dia</h2>
         <UsageDailyChart :days="summary.daily" :show-cost="showCost" />

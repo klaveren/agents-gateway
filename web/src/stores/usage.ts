@@ -8,7 +8,7 @@ const tz = () => -new Date().getTimezoneOffset()
 
 /** O que a tela de uso quer ver: a aba, o período e — conforme a aba — o usuário, a chave e o valor. */
 export interface IUsageTarget {
-  tab: 'mine' | 'users' | 'keys'
+  tab: 'mine' | 'all' | 'users' | 'keys'
   days: number
   user?: string
   key?: string
@@ -19,6 +19,8 @@ export interface IUsageTarget {
 
 export const useUsageStore = defineStore('usage', () => {
   const mine = ref<IUsageSummary>()
+  /** 🌐 O ambiente inteiro (só admin). */
+  const all = ref<IUsageSummary>()
   const users = ref<{ totals: IUsageFigure; users: IUserUsage[] }>()
   const detail = ref<IUsageSummary & { ownerId: string; name?: string; email?: string }>()
   const groups = ref<{ key: string; totals: IUsageFigure; groups: IGroupUsage[] }>()
@@ -31,6 +33,10 @@ export const useUsageStore = defineStore('usage', () => {
 
   function fetchMine(days: number, scope: Record<string, string> = {}): Promise<IUsageSummary> {
     return api<IUsageSummary>('/usage/me', { query: { days, tz: tz(), ...scope } })
+  }
+
+  function fetchAll(days: number, scope: Record<string, string> = {}): Promise<IUsageSummary> {
+    return api<IUsageSummary>('/usage/all', { query: { days, tz: tz(), ...scope } })
   }
 
   function fetchUsers(days: number, scope: Record<string, string> = {}): Promise<{ totals: IUsageFigure; users: IUserUsage[] }> {
@@ -53,6 +59,7 @@ export const useUsageStore = defineStore('usage', () => {
 
   function clear(): void {
     mine.value = undefined
+    all.value = undefined
     users.value = undefined
     detail.value = undefined
     groups.value = undefined
@@ -83,6 +90,9 @@ export const useUsageStore = defineStore('usage', () => {
       if (tab === 'mine') {
         const result = await fetchMine(days, scope)
         if (mineGeneration === generation) mine.value = result
+      } else if (tab === 'all') {
+        const result = await fetchAll(days, scope)
+        if (mineGeneration === generation) all.value = result
       } else if (tab === 'keys') {
         const key = target.key ?? ''
         if (target.value) {
@@ -106,5 +116,5 @@ export const useUsageStore = defineStore('usage', () => {
     }
   }
 
-  return { mine, users, detail, groups, valueDetail, loading, error, load, reset }
+  return { mine, all, users, detail, groups, valueDetail, loading, error, load, reset }
 })

@@ -559,6 +559,7 @@ function buildRoutes(
     { method: 'get', path: '/mcp', handler: rejectSelfMcp },
     { method: 'delete', path: '/mcp', handler: rejectSelfMcp },
     { method: 'get', path: '/usage/me', handler: usage.mine },
+    { method: 'get', path: '/usage/all', handler: usage.all },
     { method: 'get', path: '/usage/cap', handler: usage.cap },
     { method: 'get', path: '/usage/users', handler: usage.users },
     { method: 'get', path: '/usage/users/:ownerId', handler: usage.user },
