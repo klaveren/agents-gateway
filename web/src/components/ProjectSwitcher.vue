@@ -58,7 +58,7 @@ const paletteOf = (color: string | undefined) => (color && color in PALETTES ? P
     >
       <span
         class="grid place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-accent-end font-bold text-zinc-950"
-        :class="[placement === 'up' ? 'h-[22px] w-[22px] rounded-md text-[9px]' : 'h-10 w-10 text-sm', open ? 'ring-2 ring-emerald-300/60' : '']"
+        :class="[placement === 'up' ? 'h-[22px] w-[22px] rounded-md text-[9px]' : 'h-8 w-8 text-xs', open ? 'ring-2 ring-emerald-300/60' : '']"
         >{{ projects.currentProject ? initials(projects.currentProject.name) : 'AG' }}</span
       >
       <span v-if="placement === 'up'" class="max-w-full truncate px-0.5">{{ label }}</span>

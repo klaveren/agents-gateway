@@ -75,15 +75,15 @@
   <div ref="root" class="relative flex justify-center" :class="placement === 'up' ? 'min-w-0 flex-1' : ''">
     <button
       type="button"
-      class="flex w-full flex-col items-center gap-0.5 py-1.5 text-[10px] font-medium transition-colors md:w-14 md:gap-1 md:rounded-xl md:py-2"
-      :class="lit || open ? 'bg-zinc-800 text-emerald-300' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'"
+      class="flex w-full flex-col items-center gap-0.5 py-1.5 text-[10px] font-medium transition-colors md:h-9 md:w-9 md:justify-center md:gap-0 md:rounded-lg md:py-0"
+      :class="lit || open ? 'bg-zinc-800 text-emerald-300 md:text-zinc-50' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'"
       :aria-expanded="open"
       aria-haspopup="menu"
       :title="title"
       @click="open = !open"
     >
-      <Icon :name="icon" class="h-[22px] w-[22px]" />
-      <span>{{ title }}</span>
+      <Icon :name="icon" class="h-[22px] w-[22px] md:h-[18px] md:w-[18px]" />
+      <span class="md:hidden">{{ title }}</span>
     </button>
 
     <div
