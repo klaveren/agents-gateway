@@ -48,6 +48,8 @@ export interface ISessionRecord {
   compactNext?: boolean
   /** O turno anterior teve mensagem da pessoa e o agente não mexeu no painel da conversa (o próximo começa com o aviso). */
   panelSkipped?: boolean
+  /** 🔑 Os nomes das variáveis secretas que o agente já conhece (o prompt da abertura e os avisos depois). Ver `secretsChangedNote`. */
+  secretNames?: string[]
   /** As mensagens que esperam o turno rodando (ver `Interjection.Policy`). */
   queued?: string[]
   metadata?: Record<string, unknown>

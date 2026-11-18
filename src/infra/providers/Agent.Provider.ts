@@ -12,7 +12,7 @@ export interface IPanelAccess {
 }
 import { DELEGATE_TOOL_NAME, DELEGATED_BY, delegatesOf } from '@domain/models/Delegation.Model'
 import { offers, targetFor } from '@domain/Agent.Policy'
-import { conversationNote, IAmbient, IAmbientSecrets, mcpDownNote } from '@domain/Ambient.Policy'
+import { conversationNote, IAmbient, IAmbientSecrets, mcpDownNote, secretNamesOf, secretsChangedNote } from '@domain/Ambient.Policy'
 import { agentFolderAccess, hasTerminal, hasWatch, resolveCapabilities } from '@domain/Capability.Catalog'
 import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
 import { benchKeyOf, DEFAULT_COOLDOWN_MINUTES, fallbackChain, groupOf, IFallbackStep, IModelGroup, nextStep, stepKey, switchesOn, withGroupTargets } from '@domain/Fallback.Policy'
@@ -193,15 +193,19 @@ export class AgentProvider implements IAgentProvider {
     const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, environment: _environment, ambient: _ambient, ...rest } = input
     // ⚖️ O projeto da CONVERSA (o controller o carimba), não o do agente: o Atlas no XPTO recebe as do XPTO.
     const environment = this.guidance?.environmentFor(projectOf(input.metadata), agent.id)
+    const ambient = this.ambientOf(agent, input.metadata)
     const created = await this.getAdapter(protocol, mode).createSession(this.prepare(agent, projectOf(input.metadata), choice.provider, protocol, mode).agent, {
       ...rest,
       ...(environment ? { environment } : {}),
-      ambient: this.ambientOf(agent, input.metadata),
+      ambient,
       agentId: agent.id,
       provider: choice.provider,
       model: choice.model,
       mode,
     })
+    // 🔑 Os nomes que o prompt da abertura levou: o turno compara com os de agora (ver `secretsChangedNote`).
+    const opened = this.sessions.get(created.id)
+    if (opened) opened.secretNames = secretNamesOf(ambient.secrets)
     if (admin) {
       this.adminSessions.set(created.id, scope)
       // Sessão que o store já despejou não precisa mais da marca.
@@ -260,7 +264,11 @@ export class AgentProvider implements IAgentProvider {
       const dir = workFolderOf(record.metadata, conversationProject)?.dir ?? projectWorkspacePath(conversationProject)
       await this.envMask(sessionId, conversationProject, agent.id, dir).catch(() => undefined)
     }
-    const lead = [panelNote, mcpDown.length ? mcpDownNote(mcpDown) : ''].filter(Boolean).join('\n\n')
+    // 🔑 Secreta criada ou apagada depois da abertura: o valor já está no terminal, mas a lista de nomes do prompt é a velha.
+    const secretsNow = this.secrets ? secretNamesOf(this.secrets.ambientFor(agent, conversationProject)) : undefined
+    const secretsNote = secretsNow ? secretsChangedNote(record.secretNames, secretsNow) : ''
+    if (secretsNow) record.secretNames = secretsNow
+    const lead = [panelNote, mcpDown.length ? mcpDownNote(mcpDown) : '', secretsNote].filter(Boolean).join('\n\n')
     const message = lead ? { ...asked, text: `${lead}\n\n${asked.text}` } : asked
     let panelTouched = false
     // ⚖️ O id da conversa vai UMA VEZ por histórico do modelo: no primeiro turno e quando ele recomeça (repasse, compactação,

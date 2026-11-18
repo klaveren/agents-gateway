@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { ambientSection, conversationNote, waitLine } from './Ambient.Policy'
+import { ambientSection, conversationNote, secretNamesOf, secretsChangedNote, waitLine } from './Ambient.Policy'
 
 /** A linha de todo agente sem vigia: não promete avisar depois. */
 const NO_WATCH = waitLine({})
@@ -95,5 +95,25 @@ describe('Ambient — agente de máquina', () => {
     assert.match(text, /AGENTE DE MÁQUINA/)
     assert.match(text, /sudo/)
     assert.doesNotMatch(text, /Fora dele você não lê nem grava/)
+  })
+})
+
+describe('🔑 variáveis secretas que mudam no meio da conversa', () => {
+  it('junta os nomes do agente, do projeto e das skills, sem repetir', () => {
+    assert.deepStrictEqual(secretNamesOf({ agent: ['B'], project: ['A', 'B'], resources: [{ kind: 'skill', id: 's', names: ['C'] }] }), ['A', 'B', 'C'])
+    assert.deepStrictEqual(secretNamesOf(undefined), [])
+  })
+
+  it('diz as novas e as removidas; sem mudança, nada', () => {
+    const note = secretsChangedNote(['LOGICCUS_CD_CI'], ['E2E_PROVIDER_PASSWORD', 'LOGICCUS_CD_CI'])
+    assert.match(note, /novas, já no ambiente dos seus comandos.*`E2E_PROVIDER_PASSWORD`/)
+    assert.doesNotMatch(note, /removidas/)
+    assert.match(secretsChangedNote(['A', 'B'], ['A']), /removidas: `B`/)
+    assert.strictEqual(secretsChangedNote(['A'], ['A']), '')
+  })
+
+  it('conversa de antes do aviso: a lista inteira de agora, uma vez; sem nenhuma, nada', () => {
+    assert.match(secretsChangedNote(undefined, ['A', 'B']), /agora .*`A`, `B`/)
+    assert.strictEqual(secretsChangedNote(undefined, []), '')
   })
 })
