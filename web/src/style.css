@@ -30,6 +30,23 @@ body,
   height: 100%;
 }
 
+/*
+ * 📱 O espaço da barra de gestos do iPhone. No app da tela de início (standalone), o iOS às vezes já termina a tela
+ * ACIMA dela: somar o env() de novo empurrava a barra de baixo para cima e deixava uma faixa preta (ver `main.ts`,
+ * `data-short-viewport`). Ali o espaço é zero, e a faixa que sobra fora da tela pega a cor da barra.
+ */
+:root {
+  --safe-bottom: env(safe-area-inset-bottom);
+}
+html[data-short-viewport] {
+  --safe-bottom: 0px;
+}
+@media (display-mode: standalone) {
+  html {
+    background-color: var(--color-zinc-900);
+  }
+}
+
 body {
   @apply bg-zinc-950 text-zinc-100 antialiased;
 }

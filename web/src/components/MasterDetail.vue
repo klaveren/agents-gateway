@@ -25,7 +25,7 @@
     </aside>
     <section
       class="h-full min-w-0 flex-1 flex-col bg-zinc-950"
-      :class="open ? 'flex max-md:fixed max-md:inset-0 max-md:z-40 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]' : 'hidden lg:flex'"
+      :class="open ? 'flex max-md:fixed max-md:inset-0 max-md:z-40 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[var(--safe-bottom)]' : 'hidden lg:flex'"
     >
       <header v-if="open" class="flex shrink-0 items-center gap-1 border-b border-zinc-800/80 px-2 py-2 lg:hidden">
         <RouterLink :to="backTo" class="flex items-center gap-1 rounded-full px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">

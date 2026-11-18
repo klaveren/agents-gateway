@@ -22,4 +22,17 @@ window.addEventListener('vite:preloadError', (event) => {
   window.location.reload()
 })
 
+/**
+ * 📱 No app da tela de início do iPhone, a tela às vezes termina antes do fim físico (acima da barra de gestos): aí o
+ * `env(safe-area-inset-bottom)` contaria duas vezes. Confere a altura de verdade e marca o `<html>` (ver `style.css`).
+ */
+function markShortViewport(): void {
+  const standalone = window.matchMedia?.('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true
+  const portrait = window.innerHeight > window.innerWidth
+  const short = standalone && portrait && window.screen.height - window.innerHeight > 1
+  document.documentElement.toggleAttribute('data-short-viewport', short)
+}
+markShortViewport()
+window.addEventListener('resize', markShortViewport)
+
 createApp(App).use(createPinia()).use(router).mount('#app')
