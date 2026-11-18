@@ -1,240 +1,273 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { openRowId } from '@/composables/useOpenRow'
-import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime } from '@/lib/format'
-import { gatewayNotice } from '@/lib/notice'
-import { usePopover } from '@/lib/popover'
-import type { IConversation } from '@/lib/types'
-import { useAgentsStore } from '@/stores/agents'
-import { useConversationsStore, type IConversationActivity } from '@/stores/conversations'
-import AgentAvatar from './AgentAvatar.vue'
-import ConfirmDialog from './ConfirmDialog.vue'
-import Icon from './Icon.vue'
+  import { computed, onBeforeUnmount, ref, watch } from 'vue'
+  import { openRowId } from '@/composables/useOpenRow'
+  import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime } from '@/lib/format'
+  import { gatewayNotice } from '@/lib/notice'
+  import { usePopover } from '@/lib/popover'
+  import type { IConversation } from '@/lib/types'
+  import { useAgentsStore } from '@/stores/agents'
+  import { useConversationsStore, type IConversationActivity } from '@/stores/conversations'
+  import AgentAvatar from './AgentAvatar.vue'
+  import ConfirmDialog from './ConfirmDialog.vue'
+  import Icon from './Icon.vue'
 
-const props = defineProps<{
-  conversation: IConversation
-  active: boolean
-  unread: boolean
-  running?: boolean
-  /** O que roda em segundo plano nela (vigias, processos, outros agentes): os selos que dizem que ela não está parada. */
-  activity?: IConversationActivity
-  showOwner: boolean
-  archived?: boolean
-}>()
+  const props = defineProps<{
+    conversation: IConversation
+    active: boolean
+    unread: boolean
+    running?: boolean
+    /** O que roda em segundo plano nela (vigias, processos, outros agentes): os selos que dizem que ela não está parada. */
+    activity?: IConversationActivity
+    showOwner: boolean
+    archived?: boolean
+  }>()
 
-/** Os selos do segundo plano, com o que cada um quer dizer (o `title`). */
-const badges = computed(() => {
-  const found = props.activity
-  if (!found) return []
-  const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
-  return [
-    found.agents ? { key: 'agents', icon: 'agents' as const, count: found.agents, title: `${plural(found.agents, 'agente trabalhando', 'agentes trabalhando')} num pedido desta conversa` } : undefined,
-    found.processes ? { key: 'processes', icon: 'bolt' as const, count: found.processes, title: `${plural(found.processes, 'processo rodando', 'processos rodando')} em segundo plano` } : undefined,
-    found.watches ? { key: 'watches', icon: 'clock' as const, count: found.watches, title: `${plural(found.watches, 'vigia armada', 'vigias armadas')}: o gateway confere e acorda a conversa` } : undefined,
-  ].filter((badge) => !!badge)
-})
+  /** Os selos do segundo plano, com o que cada um quer dizer (o `title`). */
+  const badges = computed(() => {
+    const found = props.activity
+    if (!found) return []
+    const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
+    return [
+      found.agents
+        ? { key: 'agents', icon: 'agents' as const, count: found.agents, title: `${plural(found.agents, 'agente trabalhando', 'agentes trabalhando')} num pedido desta conversa` }
+        : undefined,
+      found.processes
+        ? { key: 'processes', icon: 'bolt' as const, count: found.processes, title: `${plural(found.processes, 'processo rodando', 'processos rodando')} em segundo plano` }
+        : undefined,
+      found.watches
+        ? {
+            key: 'watches',
+            icon: 'clock' as const,
+            count: found.watches,
+            title: `${plural(found.watches, 'vigia armada', 'vigias armadas')}: o gateway confere e acorda a conversa`,
+          }
+        : undefined,
+    ].filter((badge) => !!badge)
+  })
 
-/** A largura das duas ações reveladas (2 × 72px). */
-const ACTIONS_WIDTH = 144
-/** Passou disso (em fração da linha), soltar já arquiva — o "deslizar até o fim" do WhatsApp. */
-const FULL_SWIPE = 0.7
-/** Quanto o dedo/mouse anda antes de virar arrasto: abaixo disso, ainda é um clique. */
-const THRESHOLD = 6
-/** Fim do gesto de rolagem horizontal (o trackpad não avisa quando soltou). */
-const WHEEL_SETTLE_MS = 140
+  /** A largura das duas ações reveladas (2 × 72px). */
+  const ACTIONS_WIDTH = 144
+  /** Passou disso (em fração da linha), soltar já arquiva — o "deslizar até o fim" do WhatsApp. */
+  const FULL_SWIPE = 0.7
+  /** Quanto o dedo/mouse anda antes de virar arrasto: abaixo disso, ainda é um clique. */
+  const THRESHOLD = 6
+  /** Fim do gesto de rolagem horizontal (o trackpad não avisa quando soltou). */
+  const WHEEL_SETTLE_MS = 140
 
-const agents = useAgentsStore()
-const conversations = useConversationsStore()
-const agentName = computed(() => agents.byId.get(props.conversation.agentId)?.name ?? props.conversation.agentId)
-const owner = computed(() => props.conversation.metadata?.owner?.email ?? props.conversation.metadata?.owner?.id)
-const archiveLabel = computed(() => (props.archived ? 'Desarquivar' : 'Arquivar'))
+  const agents = useAgentsStore()
+  const conversations = useConversationsStore()
+  const agentName = computed(() => agents.byId.get(props.conversation.agentId)?.name ?? props.conversation.agentId)
+  const owner = computed(() => props.conversation.metadata?.owner?.email ?? props.conversation.metadata?.owner?.id)
+  const archiveLabel = computed(() => (props.archived ? 'Desarquivar' : 'Arquivar'))
 
-/** A última fala: a do agente, se respondeu; senão, a pergunta que ficou sem resposta. */
-const preview = computed(() => {
-  const last = props.conversation.preview
-  if (!last) return 'Sem mensagens ainda'
-  if (plain(last.text)) return plain(last.text)
-  // O turno que o gateway abriu (uma vigia que disparou) e ainda não teve resposta: não foi "Você" quem falou.
-  const notice = gatewayNotice(last.request)
-  return notice ? `Gateway: ${notice.what}` : `Você: ${plain(last.request)}`
-})
+  /** A última fala: a do agente, se respondeu; senão, a pergunta que ficou sem resposta. */
+  const preview = computed(() => {
+    const last = props.conversation.preview
+    if (!last) return 'Sem mensagens ainda'
+    if (plain(last.text)) return plain(last.text)
+    // O turno que o gateway abriu (uma vigia que disparou) e ainda não teve resposta: não foi "Você" quem falou.
+    const notice = gatewayNotice(last.request)
+    return notice ? `Gateway: ${notice.what}` : `Você: ${plain(last.request)}`
+  })
 
-/** A prévia é uma linha de texto: a marcação do markdown (cercas, asteriscos) só atrapalha ali. */
-function plain(text: string): string {
-  return text
-    .replace(/```\w*/g, ' ')
-    .replace(/[*_`#>]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
+  /** A prévia é uma linha de texto: a marcação do markdown (cercas, asteriscos) só atrapalha ali. */
+  function plain(text: string): string {
+    return text
+      .replace(/```\w*/g, ' ')
+      .replace(/[*_`#>]+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
 
-// ── Deslizar para revelar ────────────────────────────────────────────────────────────────────────
+  // ── Deslizar para revelar ────────────────────────────────────────────────────────────────────────
 
-const root = ref<HTMLElement>()
-/** Deslocamento da linha em px: 0 (fechada) até -largura (fora da tela). */
-const offset = ref(0)
-const dragging = ref(false)
-const confirming = ref(false)
-const deleting = ref(false)
-const deleteError = ref<string>()
+  const root = ref<HTMLElement>()
+  /** Deslocamento da linha em px: 0 (fechada) até -largura (fora da tela). */
+  const offset = ref(0)
+  const dragging = ref(false)
+  const confirming = ref(false)
+  const deleting = ref(false)
+  const deleteError = ref<string>()
 
-const isOpen = computed(() => offset.value <= -ACTIONS_WIDTH / 2 && !dragging.value)
-const rowWidth = () => root.value?.offsetWidth || 320
+  const isOpen = computed(() => offset.value <= -ACTIONS_WIDTH / 2 && !dragging.value)
+  const rowWidth = () => root.value?.offsetWidth || 320
 
-let startX = 0
-let startY = 0
-let startOffset = 0
-let pointerId: number | undefined
-let tracking = false
-/** O arrasto acabou de soltar: o `click` que o navegador dispara em seguida não pode abrir a conversa. */
-let suppressClick = false
-let wheelTimer: ReturnType<typeof setTimeout> | undefined
+  let startX = 0
+  let startY = 0
+  let startOffset = 0
+  let pointerId: number | undefined
+  let tracking = false
+  /** O arrasto acabou de soltar: o `click` que o navegador dispara em seguida não pode abrir a conversa. */
+  let suppressClick = false
+  let wheelTimer: ReturnType<typeof setTimeout> | undefined
 
-const clamp = (value: number) => Math.min(0, Math.max(-rowWidth(), value))
+  const clamp = (value: number) => Math.min(0, Math.max(-rowWidth(), value))
 
-function setOpen(open: boolean): void {
-  offset.value = open ? -ACTIONS_WIDTH : 0
-  if (open) openRowId.value = props.conversation.id
-  else if (openRowId.value === props.conversation.id) openRowId.value = undefined
-}
+  function setOpen(open: boolean): void {
+    offset.value = open ? -ACTIONS_WIDTH : 0
+    if (open) openRowId.value = props.conversation.id
+    else if (openRowId.value === props.conversation.id) openRowId.value = undefined
+  }
 
-/** ⚖️ Solta: passou de 70% da linha arquiva; passou da metade das ações fica aberta; senão volta. */
-function settle(): void {
-  const travelled = -offset.value
-  if (travelled > rowWidth() * FULL_SWIPE) {
-    // Sai da tela deslizando: a linha some quando a store a tira da lista (e volta, se o servidor recusar).
-    offset.value = -rowWidth()
-    void archive()
-  } else setOpen(travelled > ACTIONS_WIDTH / 2)
-}
+  /** ⚖️ Solta: passou de 70% da linha arquiva; passou da metade das ações fica aberta; senão volta. */
+  function settle(): void {
+    const travelled = -offset.value
+    if (travelled > rowWidth() * FULL_SWIPE) {
+      // Sai da tela deslizando: a linha some quando a store a tira da lista (e volta, se o servidor recusar).
+      offset.value = -rowWidth()
+      void archive()
+    } else setOpen(travelled > ACTIONS_WIDTH / 2)
+  }
 
-function onPointerDown(event: PointerEvent): void {
-  if (event.pointerType === 'mouse' && event.button !== 0) return
-  tracking = true
-  dragging.value = false
-  startX = event.clientX
-  startY = event.clientY
-  startOffset = offset.value
-  pointerId = event.pointerId
-}
+  function onPointerDown(event: PointerEvent): void {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    tracking = true
+    dragging.value = false
+    startX = event.clientX
+    startY = event.clientY
+    startOffset = offset.value
+    pointerId = event.pointerId
+  }
 
-function onPointerMove(event: PointerEvent): void {
-  if (!tracking) return
-  const dx = event.clientX - startX
-  if (!dragging.value) {
-    if (Math.abs(dx) < THRESHOLD && Math.abs(event.clientY - startY) < THRESHOLD) return
-    // Mais vertical que horizontal: é rolagem da lista, não é com a linha.
-    if (Math.abs(event.clientY - startY) > Math.abs(dx)) {
+  function onPointerMove(event: PointerEvent): void {
+    if (!tracking) return
+    const dx = event.clientX - startX
+    if (!dragging.value) {
+      if (Math.abs(dx) < THRESHOLD && Math.abs(event.clientY - startY) < THRESHOLD) return
+      // Mais vertical que horizontal: é rolagem da lista, não é com a linha.
+      if (Math.abs(event.clientY - startY) > Math.abs(dx)) {
+        tracking = false
+        return
+      }
+      dragging.value = true
+      openRowId.value = props.conversation.id
+      if (pointerId !== undefined) (event.currentTarget as HTMLElement | null)?.setPointerCapture?.(pointerId)
+    }
+    offset.value = clamp(startOffset + dx)
+  }
+
+  function onPointerUp(): void {
+    if (!tracking) return
+    tracking = false
+    if (!dragging.value) return
+    dragging.value = false
+    suppressClick = true
+    setTimeout(() => (suppressClick = false), 0)
+    settle()
+  }
+
+  function onPointerCancel(): void {
+    if (!dragging.value) {
       tracking = false
       return
     }
+    tracking = false
+    dragging.value = false
+    settle()
+  }
+
+  /** Trackpad: rolar com dois dedos para o lado arrasta a linha; quando para de chegar `wheel`, assenta. */
+  function onWheel(event: WheelEvent): void {
+    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY) || event.deltaX === 0) return
+    // ⚠️ Sem isso o navegador usa o gesto para voltar de página.
+    event.preventDefault()
     dragging.value = true
     openRowId.value = props.conversation.id
-    if (pointerId !== undefined) (event.currentTarget as HTMLElement | null)?.setPointerCapture?.(pointerId)
+    offset.value = clamp(offset.value - event.deltaX)
+    clearTimeout(wheelTimer)
+    wheelTimer = setTimeout(() => {
+      dragging.value = false
+      suppressClick = false
+      settle()
+    }, WHEEL_SETTLE_MS)
   }
-  offset.value = clamp(startOffset + dx)
-}
 
-function onPointerUp(): void {
-  if (!tracking) return
-  tracking = false
-  if (!dragging.value) return
-  dragging.value = false
-  suppressClick = true
-  setTimeout(() => (suppressClick = false), 0)
-  settle()
-}
-
-function onPointerCancel(): void {
-  if (!dragging.value) {
-    tracking = false
-    return
+  /** Clique na linha: aberta, só fecha; logo depois de arrastar, não faz nada; fechada, deixa o link navegar. */
+  function onClickCapture(event: MouseEvent): void {
+    if (suppressClick || dragging.value) {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+    if (offset.value !== 0) {
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(false)
+    }
   }
-  tracking = false
-  dragging.value = false
-  settle()
-}
 
-/** Trackpad: rolar com dois dedos para o lado arrasta a linha; quando para de chegar `wheel`, assenta. */
-function onWheel(event: WheelEvent): void {
-  if (Math.abs(event.deltaX) <= Math.abs(event.deltaY) || event.deltaX === 0) return
-  // ⚠️ Sem isso o navegador usa o gesto para voltar de página.
-  event.preventDefault()
-  dragging.value = true
-  openRowId.value = props.conversation.id
-  offset.value = clamp(offset.value - event.deltaX)
-  clearTimeout(wheelTimer)
-  wheelTimer = setTimeout(() => {
-    dragging.value = false
-    suppressClick = false
-    settle()
-  }, WHEEL_SETTLE_MS)
-}
+  // Outra linha abriu (ou a lista pediu para fechar): esta volta.
+  watch(openRowId, (id) => {
+    if (id !== props.conversation.id && offset.value !== 0 && !dragging.value) offset.value = 0
+  })
 
-/** Clique na linha: aberta, só fecha; logo depois de arrastar, não faz nada; fechada, deixa o link navegar. */
-function onClickCapture(event: MouseEvent): void {
-  if (suppressClick || dragging.value) {
-    event.preventDefault()
-    event.stopPropagation()
-    return
+  onBeforeUnmount(() => {
+    clearTimeout(wheelTimer)
+    if (openRowId.value === props.conversation.id) openRowId.value = undefined
+  })
+
+  // ── Ações ────────────────────────────────────────────────────────────────────────────────────────
+
+  const { open: menuOpen, root: menuRoot } = usePopover()
+
+  /**
+   * ⚠️ O menu sai da linha (`Teleport` para o `body`, `fixed`): dentro dela, o `overflow-x-clip` (que esconde as ações do
+   * gesto) virava `hidden` em alguns navegadores e cortava o menu na altura da linha — sobrava uma caixa vazia.
+   * A posição é a do botão, medida ao abrir; rolar ou redimensionar fecha (o menu ficaria solto).
+   */
+  const menuPlace = ref<{ top: number; right: number }>()
+  watch(menuOpen, (open) => {
+    const rect = menuRoot.value?.getBoundingClientRect()
+    menuPlace.value = open && rect ? { top: rect.bottom + 4, right: window.innerWidth - rect.right } : undefined
+    if (open) {
+      window.addEventListener('scroll', closeMenu, true)
+      window.addEventListener('resize', closeMenu)
+    } else {
+      window.removeEventListener('scroll', closeMenu, true)
+      window.removeEventListener('resize', closeMenu)
+    }
+  })
+  function closeMenu(): void {
+    menuOpen.value = false
   }
-  if (offset.value !== 0) {
-    event.preventDefault()
-    event.stopPropagation()
+  onBeforeUnmount(closeMenu)
+
+  /** Otimista: a linha some na hora; se o servidor recusar, a store devolve e a lista mostra o erro. */
+  async function archive(): Promise<void> {
+    menuOpen.value = false
+    if (openRowId.value === props.conversation.id) openRowId.value = undefined
+    try {
+      await conversations.archive(props.conversation.id, !props.archived)
+    } catch {
+      // A store já desfez e guardou a mensagem.
+      offset.value = 0
+    }
+  }
+
+  function askDelete(): void {
+    menuOpen.value = false
+    confirming.value = true
+  }
+
+  function cancelDelete(): void {
+    confirming.value = false
+    deleteError.value = undefined
     setOpen(false)
   }
-}
 
-// Outra linha abriu (ou a lista pediu para fechar): esta volta.
-watch(openRowId, (id) => {
-  if (id !== props.conversation.id && offset.value !== 0 && !dragging.value) offset.value = 0
-})
-
-onBeforeUnmount(() => {
-  clearTimeout(wheelTimer)
-  if (openRowId.value === props.conversation.id) openRowId.value = undefined
-})
-
-// ── Ações ────────────────────────────────────────────────────────────────────────────────────────
-
-const { open: menuOpen, root: menuRoot } = usePopover()
-
-/** Otimista: a linha some na hora; se o servidor recusar, a store devolve e a lista mostra o erro. */
-async function archive(): Promise<void> {
-  menuOpen.value = false
-  if (openRowId.value === props.conversation.id) openRowId.value = undefined
-  try {
-    await conversations.archive(props.conversation.id, !props.archived)
-  } catch {
-    // A store já desfez e guardou a mensagem.
-    offset.value = 0
+  async function remove(): Promise<void> {
+    deleting.value = true
+    deleteError.value = undefined
+    try {
+      await conversations.remove(props.conversation.id)
+      confirming.value = false
+      if (openRowId.value === props.conversation.id) openRowId.value = undefined
+    } catch (error) {
+      deleteError.value = error instanceof Error ? error.message : String(error)
+    } finally {
+      deleting.value = false
+    }
   }
-}
-
-function askDelete(): void {
-  menuOpen.value = false
-  confirming.value = true
-}
-
-function cancelDelete(): void {
-  confirming.value = false
-  deleteError.value = undefined
-  setOpen(false)
-}
-
-async function remove(): Promise<void> {
-  deleting.value = true
-  deleteError.value = undefined
-  try {
-    await conversations.remove(props.conversation.id)
-    confirming.value = false
-    if (openRowId.value === props.conversation.id) openRowId.value = undefined
-  } catch (error) {
-    deleteError.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    deleting.value = false
-  }
-}
 </script>
 
 <template>
@@ -293,11 +326,17 @@ async function remove(): Promise<void> {
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-2">
             <span class="truncate text-sm font-medium" :class="unread ? 'text-white' : 'text-zinc-100'">{{ conversation.title || 'Conversa sem título' }}</span>
-            <span class="ml-auto shrink-0 text-[11px]" :class="unread ? 'text-emerald-400' : 'text-zinc-500'">{{ shortTime(conversation.preview?.at ?? conversation.updatedAt) }}</span>
+            <span class="ml-auto shrink-0 text-[11px]" :class="unread ? 'text-emerald-400' : 'text-zinc-500'">
+              {{ shortTime(conversation.preview?.at ?? conversation.updatedAt) }}
+            </span>
           </div>
           <div class="flex items-center gap-2">
             <span class="truncate text-xs" :class="unread ? 'text-zinc-200' : 'text-zinc-400'">
-              <span class="text-zinc-500">{{ agentName }}<template v-if="showOwner && owner"> · {{ owner }}</template>:</span>
+              <span class="text-zinc-500">
+                {{ agentName }}
+                <template v-if="showOwner && owner">· {{ owner }}</template>
+                :
+              </span>
               {{ preview }}
             </span>
             <span
@@ -312,8 +351,18 @@ async function remove(): Promise<void> {
                 <span v-if="badge.count > 1">{{ badge.count }}</span>
               </span>
             </span>
-            <span v-if="running" class="ml-auto h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-400" :class="{ 'ml-0': conversation.classification || badges.length }" title="Rodando agora" />
-            <span v-if="unread" class="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-400" :class="{ 'ml-0': conversation.classification || running || badges.length }" title="Nova atividade" />
+            <span
+              v-if="running"
+              class="ml-auto h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-400"
+              :class="{ 'ml-0': conversation.classification || badges.length }"
+              title="Rodando agora"
+            />
+            <span
+              v-if="unread"
+              class="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-400"
+              :class="{ 'ml-0': conversation.classification || running || badges.length }"
+              title="Nova atividade"
+            />
           </div>
         </div>
       </RouterLink>
@@ -334,14 +383,31 @@ async function remove(): Promise<void> {
         >
           <Icon name="more" class="h-4 w-4" />
         </button>
-        <div v-if="menuOpen" role="menu" class="absolute right-0 z-20 mt-1 w-40 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 py-1 text-sm shadow-xl" @pointerdown.stop>
-          <button type="button" role="menuitem" class="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-zinc-800" data-action="menu-archive" @click="archive">
-            <Icon name="archive" class="h-4 w-4 text-emerald-400" /> {{ archiveLabel }}
-          </button>
-          <button type="button" role="menuitem" class="flex w-full items-center gap-2 px-3 py-2 text-left text-rose-300 hover:bg-zinc-800" data-action="menu-delete" @click="askDelete">
-            <Icon name="trash" class="h-4 w-4" /> Excluir
-          </button>
-        </div>
+        <Teleport to="body">
+          <div
+            v-if="menuOpen && menuPlace"
+            role="menu"
+            class="fixed z-50 w-40 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 py-1 text-sm shadow-xl"
+            :style="{ top: `${menuPlace.top}px`, right: `${menuPlace.right}px` }"
+            @pointerdown.stop
+            @mousedown.stop
+          >
+            <button type="button" role="menuitem" class="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-zinc-800" data-action="menu-archive" @click="archive">
+              <Icon name="archive" class="h-4 w-4 text-emerald-400" />
+              {{ archiveLabel }}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-rose-300 hover:bg-zinc-800"
+              data-action="menu-delete"
+              @click="askDelete"
+            >
+              <Icon name="trash" class="h-4 w-4" />
+              Excluir
+            </button>
+          </div>
+        </Teleport>
       </div>
     </div>
 

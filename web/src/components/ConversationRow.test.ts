@@ -292,8 +292,10 @@ describe('ConversationRow: ações', () => {
 
     host.querySelector<HTMLElement>('[data-action=menu]')!.click()
     await flush()
-    expect(host.querySelector('[data-action=menu-delete]')).not.toBeNull()
-    host.querySelector<HTMLElement>('[data-action=menu-archive]')!.click()
+    // O menu vai para o `body` (fora da linha, para nenhum `overflow` o cortar).
+    expect(host.querySelector('[data-action=menu-delete]')).toBeNull()
+    expect(document.body.querySelector('[data-action=menu-delete]')).not.toBeNull()
+    document.body.querySelector<HTMLElement>('[data-action=menu-archive]')!.click()
     await flush()
 
     expect(api).toHaveBeenCalledWith('/conversations/a/archive', { method: 'PUT', body: { archived: true } })
