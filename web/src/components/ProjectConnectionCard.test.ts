@@ -29,6 +29,7 @@ const connection = (over: Partial<IProjectConnection> = {}): IProjectConnection 
   skipped: [],
   secrets: [],
   modelMap: {},
+  autoUpdate: false,
   ...over,
 })
 
@@ -64,6 +65,40 @@ describe('ProjectConnectionCard', () => {
     await vi.waitFor(() => expect(host.querySelector('[data-test="connection-update"]')).toBeNull())
     expect(vi.mocked(api)).toHaveBeenCalledWith('/connections/logiccus/sync', { method: 'POST' })
     expect(host.textContent).toContain('Atualizado para a v45')
+  })
+
+  it('🔄 atualizou sozinho: "Atualizado v42 → v45" com o que mudou; Ok o dá por visto', async () => {
+    const { host, app } = (await mount()) as unknown as { host: HTMLElement; app: ReturnType<typeof createApp> }
+    const changes = connection().changes
+    useConnectionsStore().list = [
+      connection({ autoUpdate: true, syncedVersion: 45, updateAvailable: false, changes: [], lastUpdate: { from: 42, to: 45, changes, at: '2026-11-18T10:00:00Z', seen: false } }),
+    ]
+    app.mount(host)
+    await nextTick()
+    const updated = host.querySelector('[data-test="connection-updated"]')!
+    expect(updated.textContent).toContain('Atualizado: v42 → v45')
+    expect(updated.textContent).toContain('Skill banco: alterado (3×)')
+    expect(host.querySelector('[data-test="connection-update"]')).toBeNull()
+
+    vi.mocked(api).mockResolvedValueOnce(
+      connection({ autoUpdate: true, syncedVersion: 45, updateAvailable: false, changes: [], lastUpdate: { from: 42, to: 45, changes, at: '2026-11-18T10:00:00Z', seen: true } }),
+    )
+    ;(updated.querySelector('button') as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(host.querySelector('[data-test="connection-updated"]')).toBeNull())
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/connections/logiccus/update-seen', { method: 'POST' })
+  })
+
+  it('🔄 o interruptor liga a atualização automática', async () => {
+    const { host, app } = (await mount()) as unknown as { host: HTMLElement; app: ReturnType<typeof createApp> }
+    useConnectionsStore().list = [connection()]
+    app.mount(host)
+    await nextTick()
+    const toggle = host.querySelector('[data-test="connection-auto-update"]') as HTMLButtonElement
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    vi.mocked(api).mockResolvedValueOnce(connection({ autoUpdate: true, syncedVersion: 45, updateAvailable: false }))
+    toggle.click()
+    await vi.waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'))
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/connections/logiccus/auto-update', { method: 'PUT', body: { autoUpdate: true } })
   })
 
   it('o token que caiu aparece com o motivo', async () => {

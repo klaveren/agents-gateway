@@ -91,6 +91,7 @@ function build() {
       skipped: [],
       secrets: [],
       modelMap: {},
+      autoUpdate: true,
       createdAt: new Date(),
       createdBy: 'dev',
     },

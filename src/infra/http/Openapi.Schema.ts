@@ -1632,7 +1632,12 @@ export const OPENAPI_DOCUMENT = {
             ...json(
               envelope({
                 type: 'object',
-                properties: { localAccounts: { type: 'boolean' }, setupRequired: { type: 'boolean' }, edition: { type: 'string', enum: ['pro', 'lite'] }, machineAgents: { type: 'boolean' } },
+                properties: {
+                  localAccounts: { type: 'boolean' },
+                  setupRequired: { type: 'boolean' },
+                  edition: { type: 'string', enum: ['pro', 'lite'] },
+                  machineAgents: { type: 'boolean' },
+                },
               }),
             ),
           },
@@ -2210,7 +2215,9 @@ export const OPENAPI_DOCUMENT = {
           ...json({
             type: 'object',
             required: ['color'],
-            properties: { color: { type: ['string', 'null'], enum: ['emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'orange', 'lime', null] } },
+            properties: {
+              color: { type: ['string', 'null'], enum: ['emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'orange', 'lime', null] },
+            },
           }),
         },
         responses: { '200': { description: 'The project', ...json(envelope({ type: 'object' })) }, '404': failures['404'], '422': failures['422'] },
@@ -5410,6 +5417,30 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/connections/{projectId}/auto-update': {
+      put: {
+        summary:
+          'Turn the automatic update on or off: with it on, a new version at the origin is applied as soon as it arrives (the notice becomes "updated vX → vY"). Turning it on with a version waiting applies it now',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { autoUpdate: { type: 'boolean' } }, required: ['autoUpdate'] }) },
+        responses: {
+          '200': { description: 'OK: the connection, with `autoUpdate` and `lastUpdate`', ...json(envelope({ type: 'object' })) },
+          '403': { description: 'Not an administrator of the project', content: { 'application/json': { schema: failureEnvelope } } },
+          '404': { description: 'No connection for this project', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/connections/{projectId}/update-seen': {
+      post: {
+        summary: 'The person saw the "updated vX → vY" notice of the last automatic update: it leaves the screen',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK: the connection', ...json(envelope({ type: 'object' })) },
+          '403': { description: 'Not an administrator of the project', content: { 'application/json': { schema: failureEnvelope } } },
+          '404': { description: 'No connection for this project', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
     '/connections/{projectId}/models': {
       put: {
         summary: 'The model map: `provider/model` of the origin → `provider/model` here, for agents whose model does not run here. Applies on the next update',
@@ -6482,14 +6513,16 @@ export const OPENAPI_DOCUMENT = {
     },
     '/sessions/{id}/host-approvals': {
       get: {
-        summary: 'The commands a MACHINE agent of this conversation is waiting to run outside the sandbox (`sudo`, deleting or powering off the host): the exact command, why the sandbox refuses it, and whether it needs the machine password. Nothing secret. Owner of the conversation',
+        summary:
+          'The commands a MACHINE agent of this conversation is waiting to run outside the sandbox (`sudo`, deleting or powering off the host): the exact command, why the sandbox refuses it, and whether it needs the machine password. Nothing secret. Owner of the conversation',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'The open requests', ...json(envelope({ type: 'array', items: { type: 'object' } })) }, '404': failures['404'] },
       },
     },
     '/sessions/{id}/host-approvals/{approvalId}': {
       post: {
-        summary: 'Answer a request of a machine agent (`{ approve, password? }`). Approved, the exact command runs OUTSIDE the sandbox, as the gateway user; with `sudo`, the password goes straight to it (`SUDO_ASKPASS`) and is never stored nor returned. Owner of the conversation, on the SCREEN only: an access token or an agent gets 403. 404 when the request is gone (answered, expired, turn over)',
+        summary:
+          'Answer a request of a machine agent (`{ approve, password? }`). Approved, the exact command runs OUTSIDE the sandbox, as the gateway user; with `sudo`, the password goes straight to it (`SUDO_ASKPASS`) and is never stored nor returned. Owner of the conversation, on the SCREEN only: an access token or an agent gets 403. 404 when the request is gone (answered, expired, turn over)',
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'approvalId', in: 'path', required: true, schema: { type: 'string' } },

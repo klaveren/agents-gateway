@@ -238,6 +238,8 @@ export class HttpServer {
       { method: 'post', path: '/connections/:projectId/sync', handler: connections.sync },
       { method: 'put', path: '/connections/:projectId/token', handler: connections.replaceToken },
       { method: 'put', path: '/connections/:projectId/models', handler: connections.setModels },
+      { method: 'put', path: '/connections/:projectId/auto-update', handler: connections.setAutoUpdate },
+      { method: 'post', path: '/connections/:projectId/update-seen', handler: connections.markUpdateSeen },
       { method: 'put', path: '/connections/:projectId/env', handler: connections.setEnv },
       { method: 'put', path: '/connections/:projectId/secrets', handler: connections.setSecrets },
       { method: 'delete', path: '/connections/:projectId', handler: connections.disconnect },

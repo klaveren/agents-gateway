@@ -1,65 +1,73 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { changeLabel, originLabel } from '@/lib/connection'
-import { fullTime } from '@/lib/format'
-import { useConnectionsStore } from '@/stores/connections'
-import ConfirmDialog from './ConfirmDialog.vue'
-import ConnectionSecretsTable from './ConnectionSecretsTable.vue'
+  import { computed, ref } from 'vue'
+  import { changeLabel, originLabel } from '@/lib/connection'
+  import { fullTime } from '@/lib/format'
+  import { useConnectionsStore } from '@/stores/connections'
+  import ConfirmDialog from './ConfirmDialog.vue'
+  import ConnectionSecretsTable from './ConnectionSecretsTable.vue'
 
-/**
- * 🔌 O projeto conectado: de onde vem, a versão daqui e a da origem, o aviso de atualização (um só, sempre para a
- * última), o que não entrou e as variáveis que o projeto pede. O catálogo é só leitura: mudar é na origem.
- */
-const props = defineProps<{ projectId: string }>()
-const connections = useConnectionsStore()
-const connection = computed(() => connections.byProject.get(props.projectId))
-const busy = ref<'sync' | 'check' | 'token'>()
-const error = ref<string>()
-const note = ref<string>()
-const token = ref('')
-const askingToken = ref(false)
-const disconnecting = ref(false)
+  /**
+   * 🔌 O projeto conectado: de onde vem, a versão daqui e a da origem, o aviso de atualização (um só, sempre para a
+   * última), o que não entrou e as variáveis que o projeto pede. O catálogo é só leitura: mudar é na origem.
+   */
+  const props = defineProps<{ projectId: string }>()
+  const connections = useConnectionsStore()
+  const connection = computed(() => connections.byProject.get(props.projectId))
+  const busy = ref<'sync' | 'check' | 'token'>()
+  const error = ref<string>()
+  const note = ref<string>()
+  const token = ref('')
+  const askingToken = ref(false)
+  const disconnecting = ref(false)
 
-const STATE = { ok: 'Conectado', offline: 'Origem fora do ar', unauthorized: 'Token não vale mais' } as const
+  const STATE = { ok: 'Conectado', offline: 'Origem fora do ar', unauthorized: 'Token não vale mais' } as const
 
-async function run(kind: 'sync' | 'check' | 'token', work: () => Promise<string | undefined>) {
-  busy.value = kind
-  error.value = undefined
-  note.value = undefined
-  try {
-    note.value = await work()
-  } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
-  } finally {
-    busy.value = undefined
+  async function run(kind: 'sync' | 'check' | 'token', work: () => Promise<string | undefined>) {
+    busy.value = kind
+    error.value = undefined
+    note.value = undefined
+    try {
+      note.value = await work()
+    } catch (failure) {
+      error.value = failure instanceof Error ? failure.message : String(failure)
+    } finally {
+      busy.value = undefined
+    }
   }
-}
 
-const update = () =>
-  run('sync', async () => {
-    const result = await connections.sync(props.projectId)
-    const removed = result.removed.length ? `, ${result.removed.length} removido(s)` : ''
-    return `Atualizado para a v${result.version}: ${result.applied} item(ns) gravado(s)${removed}.`
-  })
-const check = () =>
-  run('check', async () => {
-    await connections.check(props.projectId)
-    return undefined
-  })
-const saveToken = () =>
-  run('token', async () => {
-    await connections.replaceToken(props.projectId, token.value)
-    token.value = ''
-    askingToken.value = false
-    return 'Token trocado.'
-  })
-async function disconnect() {
-  disconnecting.value = false
-  await run('check', async () => {
-    await connections.disconnect(props.projectId)
-    return 'Desconectado: o projeto agora é comum daqui.'
-  })
-}
+  const update = () =>
+    run('sync', async () => {
+      const result = await connections.sync(props.projectId)
+      const removed = result.removed.length ? `, ${result.removed.length} removido(s)` : ''
+      return `Atualizado para a v${result.version}: ${result.applied} item(ns) gravado(s)${removed}.`
+    })
+  const check = () =>
+    run('check', async () => {
+      await connections.check(props.projectId)
+      return undefined
+    })
+  const saveToken = () =>
+    run('token', async () => {
+      await connections.replaceToken(props.projectId, token.value)
+      token.value = ''
+      askingToken.value = false
+      return 'Token trocado.'
+    })
+  /** 🔄 Liga ou desliga a atualização automática; ligar com versão esperando já atualiza. */
+  const toggleAuto = () =>
+    run('check', async () => {
+      await connections.setAutoUpdate(props.projectId, !connection.value?.autoUpdate)
+      return undefined
+    })
+  const seen = () => void connections.markUpdateSeen(props.projectId).catch(() => undefined)
+
+  async function disconnect() {
+    disconnecting.value = false
+    await run('check', async () => {
+      await connections.disconnect(props.projectId)
+      return 'Desconectado: o projeto agora é comum daqui.'
+    })
+  }
 </script>
 
 <template>
@@ -67,15 +75,50 @@ async function disconnect() {
     <div class="flex flex-wrap items-center gap-2">
       <span class="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-200">Conectado · só leitura</span>
       <span class="truncate text-xs text-zinc-400">
-        origem <code class="text-zinc-200">{{ originLabel(connection.url) }}</code> · projeto <code class="text-zinc-200">{{ connection.remoteProjectId }}</code>
+        origem
+        <code class="text-zinc-200">{{ originLabel(connection.url) }}</code>
+        · projeto
+        <code class="text-zinc-200">{{ connection.remoteProjectId }}</code>
       </span>
       <span class="ml-auto text-xs" :class="connection.state === 'ok' ? 'text-success-300' : 'text-amber-300'">{{ STATE[connection.state] }}</span>
     </div>
-    <p class="text-xs text-zinc-400">
-      Agentes, skills, comandos, specs e regras vêm da origem. A mudança é feita lá e chega aqui pela atualização.
-    </p>
+    <p class="text-xs text-zinc-400">Agentes, skills, comandos, specs e regras vêm da origem. A mudança é feita lá e chega aqui pela atualização.</p>
     <p v-if="connection.state !== 'ok' && connection.lastError" class="text-xs text-amber-300">{{ connection.lastError }}</p>
 
+    <label class="flex items-center gap-2 text-xs text-zinc-300">
+      <button
+        type="button"
+        role="switch"
+        :aria-checked="connection.autoUpdate"
+        aria-label="Atualizar sozinho"
+        class="switch shrink-0"
+        :class="{ on: connection.autoUpdate }"
+        :disabled="!!busy"
+        data-test="connection-auto-update"
+        @click="toggleAuto"
+      >
+        <span />
+      </button>
+      Atualizar sozinho: versão nova da origem entra assim que chega.
+    </label>
+
+    <div
+      v-if="connection.lastUpdate && !connection.lastUpdate.seen"
+      class="flex flex-col gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3"
+      data-test="connection-updated"
+    >
+      <div class="flex flex-wrap items-center gap-2">
+        <strong class="text-emerald-200">Atualizado: v{{ connection.lastUpdate.from }} → v{{ connection.lastUpdate.to }}</strong>
+        <span class="text-xs text-zinc-400">{{ fullTime(connection.lastUpdate.at) }}</span>
+        <button type="button" class="btn btn-sm btn-ghost ml-auto" @click="seen">Ok</button>
+      </div>
+      <ul class="flex flex-col gap-0.5 text-xs text-zinc-300">
+        <li v-for="change in connection.lastUpdate.changes" :key="`${change.kind}/${change.id}`">{{ changeLabel(change) }}</li>
+      </ul>
+      <p v-if="connection.lastUpdate.changesTruncated" class="text-xs text-zinc-500">E mais mudanças.</p>
+    </div>
+
+    <p v-if="connection.updateAvailable && connection.autoUpdate && connection.lastError" class="text-xs text-amber-300">{{ connection.lastError }}</p>
     <div v-if="connection.updateAvailable" class="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3" data-test="connection-update">
       <div class="flex flex-wrap items-center gap-2">
         <strong class="text-amber-200">Atualização disponível: v{{ connection.syncedVersion }} → v{{ connection.latestVersion }}</strong>
@@ -97,7 +140,10 @@ async function disconnect() {
         {{ busy === 'sync' ? 'Tentando…' : 'Tentar de novo' }}
       </button>
       <ul class="mt-1 flex flex-col gap-0.5 text-zinc-400">
-        <li v-for="item in connection.skipped" :key="item.ref"><code class="text-zinc-300">{{ item.ref }}</code>: {{ item.message }}</li>
+        <li v-for="item in connection.skipped" :key="item.ref">
+          <code class="text-zinc-300">{{ item.ref }}</code>
+          : {{ item.message }}
+        </li>
       </ul>
     </details>
     <ConnectionSecretsTable :project-id="projectId" />
@@ -129,3 +175,20 @@ async function disconnect() {
     />
   </div>
 </template>
+
+<style scoped>
+  @reference '../style.css';
+
+  .switch {
+    @apply relative h-5 w-9 rounded-full bg-zinc-700 transition-colors disabled:opacity-50;
+  }
+  .switch span {
+    @apply absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform;
+  }
+  .switch.on {
+    @apply bg-emerald-500;
+  }
+  .switch.on span {
+    @apply translate-x-4;
+  }
+</style>

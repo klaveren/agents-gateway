@@ -35,6 +35,19 @@ export interface IProjectConnection {
   localEnv?: Record<string, string>
   lastCheckedAt?: string
   lastSyncedAt?: string
+  /** 🔄 Versão nova entra sozinha (ligada por padrão). */
+  autoUpdate: boolean
+  lastUpdate?: IConnectionUpdate
+}
+
+/** 🔄 A última atualização automática: o aviso "atualizado vX → vY" até a pessoa ver (`seen`). */
+export interface IConnectionUpdate {
+  from: number
+  to: number
+  changes: IConnectionChange[]
+  changesTruncated?: boolean
+  at: string
+  seen: boolean
 }
 
 export interface ISyncResult {
@@ -58,6 +71,9 @@ export const useConnectionsStore = defineStore('connections', () => {
   const byProject = computed(() => new Map(list.value.map((connection) => [connection.projectId, connection])))
   /** O que pede atenção no aviso global: atualização disponível ou conexão que parou de valer. */
   const attention = computed(() => list.value.filter((connection) => connection.updateAvailable || connection.state === 'unauthorized'))
+
+  /** 🔄 O que atualizou sozinho e a pessoa ainda não viu. */
+  const updated = computed(() => list.value.filter((connection) => connection.lastUpdate && !connection.lastUpdate.seen))
 
   /** 🔌 A origem do projeto conectado (o que a faixa mostra), ou nada: o item desse projeto é só leitura aqui. */
   function originOf(projectId: string | undefined): string | undefined {
@@ -129,6 +145,15 @@ export const useConnectionsStore = defineStore('connections', () => {
     return failed ?? []
   }
 
+  async function setAutoUpdate(projectId: string, autoUpdate: boolean): Promise<void> {
+    put(await api<IProjectConnection>(`/connections/${encodeURIComponent(projectId)}/auto-update`, { method: 'PUT', body: { autoUpdate } }))
+  }
+
+  /** A pessoa viu o aviso "atualizado": ele sai. */
+  async function markUpdateSeen(projectId: string): Promise<void> {
+    put(await api<IProjectConnection>(`/connections/${encodeURIComponent(projectId)}/update-seen`, { method: 'POST' }))
+  }
+
   async function disconnect(projectId: string): Promise<void> {
     await api(`/connections/${encodeURIComponent(projectId)}`, { method: 'DELETE' })
     list.value = list.value.filter((item) => item.projectId !== projectId)
@@ -153,6 +178,9 @@ export const useConnectionsStore = defineStore('connections', () => {
     list,
     byProject,
     attention,
+    updated,
+    setAutoUpdate,
+    markUpdateSeen,
     originOf,
     refresh,
     reset,

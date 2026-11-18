@@ -31,6 +31,8 @@ export interface IProjectConnectionsControllerDeps {
 
 const connectSchema = z.object({ url: z.string().min(1).max(500), projectId: z.string().min(1).max(64), token: z.string().min(1).max(200) })
 const tokenSchema = z.object({ token: z.string().min(1).max(200) })
+/** 🔄 A atualização automática da conexão: ligada ou não. */
+const autoUpdateSchema = z.object({ autoUpdate: z.boolean() })
 const modelsSchema = z.object({ map: z.record(z.string().max(300), z.string().max(300)) })
 /** As fixas desta máquina (`{ NOME: valor }`): a lista inteira. As regras de nome e tamanho são as do projeto. */
 const envSchema = z.object({ env: z.record(z.string().max(80), z.string().max(5_000)) })
@@ -97,6 +99,8 @@ export class ProjectConnectionsController {
       'sync',
       'replaceToken',
       'setModels',
+      'setAutoUpdate',
+      'markUpdateSeen',
       'setEnv',
       'setSecrets',
       'disconnect',
@@ -161,6 +165,23 @@ export class ProjectConnectionsController {
     await this.respond(res, async () => {
       const { projectId } = await this.owned(req, 'replaceConnectionToken')
       return this.dto(await this.service().replaceToken(projectId, parseBody(tokenSchema, req.body).token))
+    })
+  }
+
+  /** `PUT /connections/:projectId/auto-update { autoUpdate }` — versão nova entra sozinha (ligar com uma esperando já atualiza). */
+  async setAutoUpdate(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const connection = await this.owned(req, 'setConnectionAutoUpdate')
+      await requireProjectAdmin(this.deps.proof, connection.projectId, 'setConnectionAutoUpdate')
+      return this.dto(await this.service().setAutoUpdate(connection.projectId, parseBody(autoUpdateSchema, req.body).autoUpdate))
+    })
+  }
+
+  /** `POST /connections/:projectId/update-seen` — a pessoa viu o aviso "atualizado". */
+  async markUpdateSeen(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { projectId } = await this.owned(req, 'markConnectionUpdateSeen')
+      return this.dto(this.service().markUpdateSeen(projectId))
     })
   }
 

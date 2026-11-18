@@ -28,6 +28,19 @@ export interface IConnectionSkipped {
   message: string
 }
 
+/**
+ * 🔄 A última atualização AUTOMÁTICA (`autoUpdate`): o aviso "atualizado vX → vY" até a pessoa vê-lo (`seen`). Duas
+ * seguidas sem ninguém ver viram uma só (de onde a primeira partiu até a última).
+ */
+export interface IConnectionUpdate {
+  from: number
+  to: number
+  changes: IConnectionChange[]
+  changesTruncated?: boolean
+  at: string
+  seen: boolean
+}
+
 /** Uma variável que o projeto pede (o nome; o valor cada instalação preenche). */
 export interface IConnectionSecret {
   kind: 'agent' | 'skill' | 'command'
@@ -64,6 +77,9 @@ export interface IProjectConnection {
    * projeto. Ausente = nenhum.
    */
   localMcpEnv?: IProjectMcpVar[]
+  /** 🔄 Versão nova na origem entra sozinha (ligada por padrão); desligada, fica o aviso com o botão Atualizar. */
+  autoUpdate: boolean
+  lastUpdate?: IConnectionUpdate
   createdAt: Date
   createdBy: string
   lastCheckedAt?: Date

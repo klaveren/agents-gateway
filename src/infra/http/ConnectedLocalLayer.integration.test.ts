@@ -117,6 +117,7 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
         skipped: [],
         secrets: [],
         modelMap: {},
+        autoUpdate: true,
         createdAt: new Date(),
         createdBy: 'dev',
       },
