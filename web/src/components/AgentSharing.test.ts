@@ -160,7 +160,11 @@ describe('selo do agente compartilhado', () => {
 
   it('no seletor de agente da conversa nova', async () => {
     const host = await mount(NewConversation, {}, 'beta', { '/agents?project=beta': [shared, own] })
-    expect([...host.querySelectorAll('[data-test="shared-badge"]')].map((badge) => badge.textContent?.trim())).toEqual(['compartilhado por Alfa'])
+    // O seletor fechado mostra o escolhido; aberto, a lista (o selo aparece no agente compartilhado).
+    host.querySelector<HTMLElement>('[data-test="agent-select-toggle"]')!.click()
+    await nextTick()
+    const list = host.querySelector('[data-test="agent-select-list"]')!
+    expect([...list.querySelectorAll('[data-test="shared-badge"]')].map((badge) => badge.textContent?.trim())).toEqual(['compartilhado por Alfa'])
   })
 })
 

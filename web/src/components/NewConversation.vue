@@ -1,143 +1,150 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { useResource } from '@/composables/useResource'
-import { levelsOf, type IChoice } from '@/lib/agentChoice'
-import { useAgentCommands } from '@/lib/commands'
-import { effortLabel } from '@/lib/format'
-import type { TMode } from '@/lib/types'
-import { useAgentsStore } from '@/stores/agents'
-import { useProjectsStore } from '@/stores/projects'
-import { useProtocolsStore } from '@/stores/protocols'
-import { useRepositoriesStore } from '@/stores/repositories'
-import { reconcileDraft, useThreadStore, type IOutgoingFile } from '@/stores/thread'
-import AgentAvatar from './AgentAvatar.vue'
-import Composer from './Composer.vue'
-import Icon from './Icon.vue'
-import SharedBadge from './SharedBadge.vue'
-import ModelPicker from './ModelPicker.vue'
-import TurnBubbles from './TurnBubbles.vue'
+  import { computed, onMounted, watch } from 'vue'
+  import { useRoute, useRouter } from 'vue-router'
+  import { useResource } from '@/composables/useResource'
+  import { levelsOf, type IChoice } from '@/lib/agentChoice'
+  import { useAgentCommands } from '@/lib/commands'
+  import { effortLabel } from '@/lib/format'
+  import type { TMode } from '@/lib/types'
+  import { useAgentsStore } from '@/stores/agents'
+  import { useProjectsStore } from '@/stores/projects'
+  import { useProtocolsStore } from '@/stores/protocols'
+  import { useRepositoriesStore } from '@/stores/repositories'
+  import { reconcileDraft, useThreadStore, type IOutgoingFile } from '@/stores/thread'
+  import AgentSelect from './AgentSelect.vue'
+  import Composer from './Composer.vue'
+  import Icon from './Icon.vue'
+  import SharedBadge from './SharedBadge.vue'
+  import ModelPicker from './ModelPicker.vue'
+  import TurnBubbles from './TurnBubbles.vue'
 
-const route = useRoute()
-const router = useRouter()
-const agents = useAgentsStore()
-const protocols = useProtocolsStore()
-const thread = useThreadStore()
-const projects = useProjectsStore()
+  const route = useRoute()
+  const router = useRouter()
+  const agents = useAgentsStore()
+  const protocols = useProtocolsStore()
+  const thread = useThreadStore()
+  const projects = useProjectsStore()
 
-/** Os repositórios do projeto atual (`repositories/<nome>`) e as worktrees de cada um: onde a conversa pode abrir. */
-const { data: repositoryList, error: repositoryError } = useResource(useRepositoriesStore().lists, () => projects.current || undefined)
-const repositories = computed(() => (repositoryList.value ?? []).filter((item) => !item.cloning))
-// O repositório do rascunho que o projeto não tem mais sai (a leitura que falhou conta como lista vazia).
-watch([repositoryList, repositoryError], () => {
-  if (!repositoryList.value && !repositoryError.value && projects.current) return
-  if (thread.draft?.repository && !repositories.value.some((item) => item.name === thread.draft?.repository)) thread.draft = { ...thread.draft, repository: undefined, worktree: undefined }
-}, { immediate: true })
-const worktrees = computed(() => repositories.value.find((item) => item.name === thread.draft?.repository)?.worktrees ?? [])
-function pickRepository(name: string) {
-  if (thread.draft) thread.draft = { ...thread.draft, repository: name || undefined, worktree: undefined }
-}
-function pickWorktree(name: string) {
-  if (thread.draft) thread.draft = { ...thread.draft, worktree: name || undefined }
-}
-
-const MODE_HINT: Record<string, string> = {
-  chat: 'Conversa simples, com anexos.',
-  chatTools: 'Conversa em que o agente pode usar ferramentas.',
-  agent: 'Modo agente: faz tarefas em várias etapas, com ferramentas.',
-}
-
-const draft = computed(() => thread.draft)
-/**
- * Os agentes que a tela mostra (nunca subagente) e, entre eles, os que abrem conversa agora. O membro só
- * recebe ativos; o admin recebe todos, e os inativos aparecem desabilitados com o motivo.
- */
-const listed = computed(() => agents.conversable)
-const usable = computed(() => listed.value.filter((option) => !option.unavailable))
-const agent = computed(() => usable.value.find((option) => option.id === draft.value?.agentId))
-/** Os `/commands` do agente escolhido (o autocompletar da caixa). */
-const commands = useAgentCommands(computed(() => agent.value?.id))
-
-/** As lanes do provider (assinatura só roda a agent); `undefined` = protocolos ainda não carregados. */
-const lanesOf = (providerId: string) => protocols.get(protocols.protocolOf(providerId))?.lanes
-const choice = computed<IChoice | undefined>(() => (draft.value?.provider && draft.value.model ? { provider: draft.value.provider, model: draft.value.model } : undefined))
-/** As lanes do agente que o provider escolhido roda. */
-const lanes = computed(() => {
-  const current = agent.value
-  if (!current) return []
-  const allowed = choice.value ? lanesOf(choice.value.provider) : undefined
-  return allowed ? current.modes.filter((mode) => allowed.includes(mode)) : current.modes
-})
-
-/** Os níveis que valem para o modelo escolhido: os dele no catálogo, ou os do provider quando o catálogo não sabe. */
-const reasoningLevels = computed(() => (agent.value ? levelsOf(agent.value, choice.value) : []))
-
-// Trocar para um modelo que não aceita o nível escolhido volta ao padrão, em vez de mandar um nível que seria ignorado.
-watch(reasoningLevels, (levels) => {
-  if (draft.value?.reasoning && !levels.includes(draft.value.reasoning)) draft.value.reasoning = undefined
-})
-
-/**
- * Rascunho novo ao entrar — a não ser que já exista um SEM sessão (o "nova conversa com o mesmo
- * agente" de uma conversa encerrada, que chega aqui com agente e modelo já escolhidos).
- *
- * ⚠️ Esse rascunho guarda a escolha de ANTES: a lista de agentes muda (modelo desativado, lane que saiu,
- * agente que ficou indisponível), então ele é conferido contra o agente de agora toda vez.
- */
-function ensureDraft() {
-  // Enviando, o rascunho já virou sessão: mexer nele agora jogaria fora a conversa que está nascendo.
-  if (thread.sending) return
-  const asked = usable.value.find((option) => option.id === String(route.query.agent ?? ''))
-  if (asked && thread.draft?.agentId !== asked.id) return pick(asked.id, true)
-
-  const current = thread.draft && !thread.sessionId ? usable.value.find((option) => option.id === thread.draft?.agentId) : undefined
-  if (thread.draft && current) {
-    const next = reconcileDraft(thread.draft, current, lanesOf)
-    const { mode, tools, provider, model, reasoning } = thread.draft
-    if (next.mode !== mode || next.tools !== tools || next.provider !== provider || next.model !== model || next.reasoning !== reasoning) thread.draft = next
-    return
+  /** Os repositórios do projeto atual (`repositories/<nome>`) e as worktrees de cada um: onde a conversa pode abrir. */
+  const { data: repositoryList, error: repositoryError } = useResource(useRepositoriesStore().lists, () => projects.current || undefined)
+  const repositories = computed(() => (repositoryList.value ?? []).filter((item) => !item.cloning))
+  // O repositório do rascunho que o projeto não tem mais sai (a leitura que falhou conta como lista vazia).
+  watch(
+    [repositoryList, repositoryError],
+    () => {
+      if (!repositoryList.value && !repositoryError.value && projects.current) return
+      if (thread.draft?.repository && !repositories.value.some((item) => item.name === thread.draft?.repository))
+        thread.draft = { ...thread.draft, repository: undefined, worktree: undefined }
+    },
+    { immediate: true },
+  )
+  const worktrees = computed(() => repositories.value.find((item) => item.name === thread.draft?.repository)?.worktrees ?? [])
+  function pickRepository(name: string) {
+    if (thread.draft) thread.draft = { ...thread.draft, repository: name || undefined, worktree: undefined }
+  }
+  function pickWorktree(name: string) {
+    if (thread.draft) thread.draft = { ...thread.draft, worktree: name || undefined }
   }
 
-  const first = usable.value[0]
-  if (first) thread.startDraft(reconcileDraft({ agentId: first.id, mode: 'chat', tools: false }, first, lanesOf))
-}
+  const MODE_HINT: Record<string, string> = {
+    chat: 'Conversa simples, com anexos.',
+    chatTools: 'Conversa em que o agente pode usar ferramentas.',
+    agent: 'Modo agente: faz tarefas em várias etapas, com ferramentas.',
+  }
 
-onMounted(ensureDraft)
-watch(() => [agents.list, protocols.loaded], ensureDraft)
+  const draft = computed(() => thread.draft)
+  /**
+   * Os agentes que a tela mostra (nunca subagente) e, entre eles, os que abrem conversa agora. O membro só
+   * recebe ativos; o admin recebe todos, e os inativos aparecem desabilitados com o motivo.
+   */
+  const listed = computed(() => [...agents.conversable].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })))
+  const usable = computed(() => listed.value.filter((option) => !option.unavailable))
+  const agent = computed(() => usable.value.find((option) => option.id === draft.value?.agentId))
+  /** Os `/commands` do agente escolhido (o autocompletar da caixa). */
+  const commands = useAgentCommands(computed(() => agent.value?.id))
 
-function pick(id: string, fresh = false) {
-  const next = usable.value.find((option) => option.id === id)
-  if (!next) return
-  const previous = fresh ? undefined : thread.draft
-  // Provider e modelo voltam ao padrão do agente novo; a lane acompanha a anterior quando o agente também a tem.
-  // O repositório e a worktree escolhidos ficam ao trocar de agente: o lugar é da conversa, não do agente.
-  thread.startDraft(
-    reconcileDraft({ agentId: id, mode: previous?.mode ?? 'chat', tools: !!previous?.tools, repository: previous?.repository, worktree: previous?.worktree }, next, lanesOf),
-  )
-}
+  /** As lanes do provider (assinatura só roda a agent); `undefined` = protocolos ainda não carregados. */
+  const lanesOf = (providerId: string) => protocols.get(protocols.protocolOf(providerId))?.lanes
+  const choice = computed<IChoice | undefined>(() => (draft.value?.provider && draft.value.model ? { provider: draft.value.provider, model: draft.value.model } : undefined))
+  /** As lanes do agente que o provider escolhido roda. */
+  const lanes = computed(() => {
+    const current = agent.value
+    if (!current) return []
+    const allowed = choice.value ? lanesOf(choice.value.provider) : undefined
+    return allowed ? current.modes.filter((mode) => allowed.includes(mode)) : current.modes
+  })
 
-/** Outro provider pode não rodar a lane escolhida (assinatura): o rascunho se ajusta na mesma troca. */
-function pickModel(next: IChoice) {
-  const current = agent.value
-  if (!thread.draft || !current) return
-  thread.draft = reconcileDraft({ ...thread.draft, provider: next.provider, model: next.model }, current, lanesOf)
-}
+  /** Os níveis que valem para o modelo escolhido: os dele no catálogo, ou os do provider quando o catálogo não sabe. */
+  const reasoningLevels = computed(() => (agent.value ? levelsOf(agent.value, choice.value) : []))
 
-function setMode(mode: TMode, tools: boolean) {
-  if (thread.draft) thread.draft = { ...thread.draft, mode, tools }
-}
+  // Trocar para um modelo que não aceita o nível escolhido volta ao padrão, em vez de mandar um nível que seria ignorado.
+  watch(reasoningLevels, (levels) => {
+    if (draft.value?.reasoning && !levels.includes(draft.value.reasoning)) draft.value.reasoning = undefined
+  })
 
-async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) => void) {
-  const { ok, created } = await thread.send(text, files)
-  settle(ok)
-  if (created) await router.replace(`/c/${created}`)
-}
+  /**
+   * Rascunho novo ao entrar — a não ser que já exista um SEM sessão (o "nova conversa com o mesmo
+   * agente" de uma conversa encerrada, que chega aqui com agente e modelo já escolhidos).
+   *
+   * ⚠️ Esse rascunho guarda a escolha de ANTES: a lista de agentes muda (modelo desativado, lane que saiu,
+   * agente que ficou indisponível), então ele é conferido contra o agente de agora toda vez.
+   */
+  function ensureDraft() {
+    // Enviando, o rascunho já virou sessão: mexer nele agora jogaria fora a conversa que está nascendo.
+    if (thread.sending) return
+    const asked = usable.value.find((option) => option.id === String(route.query.agent ?? ''))
+    if (asked && thread.draft?.agentId !== asked.id) return pick(asked.id, true)
+
+    const current = thread.draft && !thread.sessionId ? usable.value.find((option) => option.id === thread.draft?.agentId) : undefined
+    if (thread.draft && current) {
+      const next = reconcileDraft(thread.draft, current, lanesOf)
+      const { mode, tools, provider, model, reasoning } = thread.draft
+      if (next.mode !== mode || next.tools !== tools || next.provider !== provider || next.model !== model || next.reasoning !== reasoning) thread.draft = next
+      return
+    }
+
+    const first = usable.value[0]
+    if (first) thread.startDraft(reconcileDraft({ agentId: first.id, mode: 'chat', tools: false }, first, lanesOf))
+  }
+
+  onMounted(ensureDraft)
+  watch(() => [agents.list, protocols.loaded], ensureDraft)
+
+  function pick(id: string, fresh = false) {
+    const next = usable.value.find((option) => option.id === id)
+    if (!next) return
+    const previous = fresh ? undefined : thread.draft
+    // Provider e modelo voltam ao padrão do agente novo; a lane acompanha a anterior quando o agente também a tem.
+    // O repositório e a worktree escolhidos ficam ao trocar de agente: o lugar é da conversa, não do agente.
+    thread.startDraft(
+      reconcileDraft({ agentId: id, mode: previous?.mode ?? 'chat', tools: !!previous?.tools, repository: previous?.repository, worktree: previous?.worktree }, next, lanesOf),
+    )
+  }
+
+  /** Outro provider pode não rodar a lane escolhida (assinatura): o rascunho se ajusta na mesma troca. */
+  function pickModel(next: IChoice) {
+    const current = agent.value
+    if (!thread.draft || !current) return
+    thread.draft = reconcileDraft({ ...thread.draft, provider: next.provider, model: next.model }, current, lanesOf)
+  }
+
+  function setMode(mode: TMode, tools: boolean) {
+    if (thread.draft) thread.draft = { ...thread.draft, mode, tools }
+  }
+
+  async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) => void) {
+    const { ok, created } = await thread.send(text, files)
+    settle(ok)
+    if (created) await router.replace(`/c/${created}`)
+  }
 </script>
 
 <template>
   <section class="flex h-full flex-col">
     <header class="flex items-center gap-3 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-3">
-      <RouterLink to="/" class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 lg:hidden" title="Voltar"><Icon name="back" class="h-5 w-5" /></RouterLink>
+      <RouterLink to="/" class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 lg:hidden" title="Voltar">
+        <Icon name="back" class="h-5 w-5" />
+      </RouterLink>
       <h2 class="font-medium">Nova conversa</h2>
     </header>
 
@@ -147,31 +154,21 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
           <p v-if="!usable.length" class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 text-center text-sm text-zinc-400">
             {{ agents.loaded ? 'Nenhum agente disponível.' : 'Carregando agentes…' }}
           </p>
-          <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <button
-              v-for="option in listed"
-              :key="option.id"
-              :disabled="!!option.unavailable"
-              :title="option.unavailable?.label"
-              class="flex min-w-0 items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-              :class="option.id === draft?.agentId ? 'border-emerald-500/60 bg-emerald-500/10' : option.unavailable ? 'border-zinc-800' : 'border-zinc-800 hover:bg-zinc-900'"
-              @click="pick(option.id)"
-            >
-              <AgentAvatar :name="option.name" :provider="option.providers[0]?.id ?? ''" size="sm" />
-              <span class="min-w-0 flex-1">
-                <span class="flex min-w-0 items-center gap-1"><span class="truncate text-sm font-medium">{{ option.name }}</span><SharedBadge :from="option.sharedFrom" /></span>
-                <span class="block truncate text-xs text-zinc-400">{{ option.providers[0]?.name }} · {{ option.providers[0]?.models[0] }}<template v-if="option.providers.length > 1"> · +{{ option.providers.length - 1 }} provedor(es)</template></span>
-                <span v-if="option.unavailable" class="block truncate text-xs text-amber-300">{{ option.unavailable.label }}</span>
-              </span>
-            </button>
-          </div>
+          <AgentSelect v-if="listed.length" :options="listed" :value="draft?.agentId" @pick="pick" />
 
           <div v-if="agent && draft" class="grid gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 sm:grid-cols-2">
             <div class="sm:col-span-2">
               <span class="mb-1.5 block text-xs font-medium text-zinc-400">Modo</span>
               <div class="flex flex-wrap gap-1.5">
                 <button v-if="lanes.includes('chat')" class="chip" :class="{ on: draft.mode === 'chat' && !draft.tools }" @click="setMode('chat', false)">Conversa</button>
-                <button v-if="lanes.includes('chat') && agent.allowedTools.length" class="chip" :class="{ on: draft.mode === 'chat' && draft.tools }" @click="setMode('chat', true)">Conversa + ferramentas</button>
+                <button
+                  v-if="lanes.includes('chat') && agent.allowedTools.length"
+                  class="chip"
+                  :class="{ on: draft.mode === 'chat' && draft.tools }"
+                  @click="setMode('chat', true)"
+                >
+                  Conversa + ferramentas
+                </button>
                 <button v-if="lanes.includes('agent')" class="chip" :class="{ on: draft.mode === 'agent' }" @click="setMode('agent', false)">Agente</button>
               </div>
               <p class="mt-1.5 text-xs text-zinc-500">{{ MODE_HINT[draft.mode === 'chat' && draft.tools ? 'chatTools' : draft.mode] }}</p>
@@ -183,14 +180,22 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
             <template v-if="repositories.length">
               <label class="text-xs font-medium text-zinc-400">
                 Repositório
-                <select :value="draft.repository ?? ''" class="mt-1 w-full rounded-lg bg-zinc-800 px-2 h-9 text-sm text-zinc-100" @change="pickRepository(($event.target as HTMLSelectElement).value)">
+                <select
+                  :value="draft.repository ?? ''"
+                  class="mt-1 w-full rounded-lg bg-zinc-800 px-2 h-9 text-sm text-zinc-100"
+                  @change="pickRepository(($event.target as HTMLSelectElement).value)"
+                >
                   <option value="">Pasta do projeto</option>
                   <option v-for="item in repositories" :key="item.name" :value="item.name">{{ item.name }}</option>
                 </select>
               </label>
               <label v-if="draft.repository" class="text-xs font-medium text-zinc-400">
                 Worktree
-                <select :value="draft.worktree ?? ''" class="mt-1 w-full rounded-lg bg-zinc-800 px-2 h-9 text-sm text-zinc-100" @change="pickWorktree(($event.target as HTMLSelectElement).value)">
+                <select
+                  :value="draft.worktree ?? ''"
+                  class="mt-1 w-full rounded-lg bg-zinc-800 px-2 h-9 text-sm text-zinc-100"
+                  @change="pickWorktree(($event.target as HTMLSelectElement).value)"
+                >
                   <option value="">O checkout do repositório</option>
                   <option v-for="item in worktrees" :key="item.path" :value="item.name">{{ item.name }}{{ item.branch ? ` (${item.branch})` : '' }}</option>
                 </select>
