@@ -57,7 +57,7 @@
     <!-- No celular a conversa abre por cima de tudo (inclusive da barra de navegação), como num app de mensagens. -->
     <div
       class="h-full min-w-0 flex-1 bg-zinc-950"
-      :class="hasDetail ? 'block max-md:fixed max-md:inset-0 max-md:z-40 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]' : 'hidden lg:block'"
+      :class="hasDetail ? 'block max-md:fixed max-md:inset-0 max-md:z-40 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[var(--safe-bottom)]' : 'hidden lg:block'"
     >
       <NewConversation v-if="isNew" />
       <ThreadView v-else-if="id" :key="id" />
