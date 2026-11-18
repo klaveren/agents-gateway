@@ -5,6 +5,8 @@ import assert from 'node:assert'
 import { agentIssues } from './Agent.Policy'
 import { AGENT_MIGRATIONS, applyAgentMigrations, atlasTriggersPrompt, withoutAtlasTalkLine } from './Agent.Migrations'
 import {
+  ATLAS_PRICES_STEPS,
+  ATLAS_PRICES_TRIGGER_STEPS,
   AGENT_SEED,
   ATLAS_ADMIN_LITE_PROMPT,
   ATLAS_ADMIN_PROMPT,
@@ -393,4 +395,28 @@ describe('watch-capability', () => {
       assert.deepStrictEqual(tools('maya'), ['cap:terminal'])
       assert.deepStrictEqual(tools('argos'), ['cap:terminal'])
     })
+})
+
+describe('prices-trigger-v2', () => {
+  const migration = AGENT_MIGRATIONS.find((item) => item.key === 'prices-trigger-v2')!
+  const admin = ATLAS_AGENTS[1]
+  const withBody = (body: string) => ({
+    ...admin,
+    triggers: [
+      { id: 'update-model-prices', when: 'x', body },
+      { id: 'create-hook', when: 'y', body: 'z' },
+    ],
+  })
+
+  it('troca o corpo do trigger de preços só onde ainda é o da semente de antes', () => {
+    assert.deepStrictEqual(migration.agentIds, ['atlas-admin'])
+    const changed = migration.change(withBody(ATLAS_PRICES_STEPS))
+    assert.strictEqual(changed?.triggers?.[0].body, ATLAS_PRICES_TRIGGER_STEPS)
+    assert.strictEqual(changed?.triggers?.[1].body, 'z')
+    assert.strictEqual(migration.change(withBody('o que quem administra escreveu')), undefined)
+  })
+
+  it('a semente de hoje já nasce com o corpo novo', () => {
+    assert.strictEqual(admin.triggers?.find((trigger) => trigger.id === 'update-model-prices')?.body, ATLAS_PRICES_TRIGGER_STEPS)
+  })
 })

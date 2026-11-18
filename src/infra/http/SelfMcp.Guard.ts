@@ -281,6 +281,14 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         if (method === 'PATCH' && /^\/connections\/[^/]+\/agents\/[^/]+\/local\/?$/.test(clean)) return inScope(id)
         return refuse('Not available to an agent conversation in a project')
       }
+      // 💲 O PREÇO de um modelo (set_model_price): a pessoa atualiza preço conversando, e a conversa dela vive num projeto.
+      // Só o preço, e a rota ainda exige o administrador do gateway. Ativar modelo, chave e provider seguem fora daqui.
+      case 'providers': {
+        if (scope.unrestricted) return undefined
+        const keys = body && typeof body === 'object' ? Object.keys(body) : []
+        const onlyPrice = method === 'PUT' && /^\/providers\/[^/]+\/models\/?$/.test(clean) && keys.includes('price') && keys.every((key) => key === 'modelId' || key === 'price')
+        return onlyPrice ? undefined : refuse('Only the model price is changed from an agent conversation in a project')
+      }
       // ⛔ Configuração do sistema (sequências de modelos): nem o agente do Atlas (admin sem projeto) grava — é da pessoa.
       case 'settings':
         return refuse('An agent conversation cannot change the gateway settings')

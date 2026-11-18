@@ -15,6 +15,8 @@ import {
   ATLAS_MIGRATION_SECTION,
   ATLAS_TRIGGERS,
   BUILDER_DELEGATIONS,
+  ATLAS_PRICES_STEPS,
+  ATLAS_PRICES_TRIGGER_STEPS,
   LEGACY_ATLAS_ADMIN_LITE_PROMPT,
   LEGACY_ATLAS_ADMIN_PROMPT,
   LEGACY_ATLAS_BUILDERS_RULE,
@@ -204,6 +206,19 @@ export const AGENT_MIGRATIONS: readonly IAgentMigration[] = [
     change: (agent) => {
       const systemPrompt = withoutAtlasTalkLine(agent.systemPrompt)
       return systemPrompt === agent.systemPrompt ? undefined : { ...agent, systemPrompt }
+    },
+  },
+  {
+    // 💲 O trigger de preços reescrito (uma linha por modelId, só página oficial, a conversa grava): troca onde o corpo
+    // ainda é o da semente de antes; o editado por quem administra fica.
+    key: 'prices-trigger-v2',
+    agentIds: ['atlas-admin'],
+    change: (agent) => {
+      if (!(agent.triggers ?? []).some((trigger) => trigger.id === 'update-model-prices' && trigger.body === ATLAS_PRICES_STEPS)) return undefined
+      const triggers = (agent.triggers ?? []).map((trigger) =>
+        trigger.id === 'update-model-prices' && trigger.body === ATLAS_PRICES_STEPS ? { ...trigger, body: ATLAS_PRICES_TRIGGER_STEPS } : trigger,
+      )
+      return { ...agent, triggers }
     },
   },
   {

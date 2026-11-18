@@ -1089,14 +1089,14 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     'set_model_price',
     {
       description:
-        'Set the price of a model in a provider catalog, in USD per 1M tokens (saved as a manual price, which syncs never overwrite). Use official pricing pages as the source; never guess.',
+        'Set the price of a model in a provider catalog, in USD per 1M tokens (saved as a manual price, which syncs never overwrite). One call per provider + exact modelId as list_models returns it: never merge providers or versions, never use a marketing name. Source: only the official pricing page of the model MAKER (Anthropic, OpenAI, Google); a subscription or reseller provider (claude-sub, codex, antigravity, openrouter) takes the maker API price of the same model. News, blogs and aggregators do not count: without the official page, report the row as unverified and do not set it. Show the person the table (provider, modelId, current, new, official URL) and call this yourself after they confirm; works in a project conversation too, never hand the table to the person to type.',
       inputSchema: {
         providerId: z.string(),
         modelId: z.string(),
         input: z.number().min(0).max(10000).describe('USD per 1M fresh input tokens'),
         output: z.number().min(0).max(10000).describe('USD per 1M output tokens'),
-        cacheRead: z.number().min(0).max(10000).optional(),
-        cacheWrite: z.number().min(0).max(10000).optional(),
+        cacheRead: z.number().min(0).max(10000).optional().describe('USD per 1M cached input tokens read; only when the official page lists it'),
+        cacheWrite: z.number().min(0).max(10000).optional().describe('USD per 1M tokens written to the cache; only when the official page lists it'),
       },
     },
     async ({ providerId, modelId, ...price }) => reply(await api('PUT', `/providers/${encodeURIComponent(providerId)}/models`, { body: { modelId, price } })),
