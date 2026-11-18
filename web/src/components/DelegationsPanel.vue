@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import Icon from './Icon.vue'
   import { computed, ref, watch } from 'vue'
   import { tokens, usd } from '@/lib/format'
   import type { IConversation } from '@/lib/types'
@@ -44,7 +45,7 @@
 <template>
   <div class="border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2 text-sm" data-test="delegations">
     <button type="button" class="flex w-full items-center gap-2 text-left" :aria-expanded="open" data-test="delegations-toggle" @click="open = !open">
-      <span class="text-xs font-semibold tracking-wide text-zinc-400 uppercase">Delegações</span>
+      <Icon name="agents" class="h-4 w-4 shrink-0 text-zinc-400" title="Delegações" aria-label="Delegações" />
       <span class="shrink-0 text-xs text-zinc-500">
         {{ done }} de {{ items.length }}{{ working.length ? '' : ' · concluídas' }} · {{ tokens(total) }} tokens
         <template v-if="showCost && cost !== undefined">· {{ usd(cost) }}</template>

@@ -4,7 +4,17 @@ import type { IWatchItem } from '@/lib/types'
 import WatchesPanel from './WatchesPanel.vue'
 
 const NOW = new Date('2026-01-01T10:02:00Z')
-const command: IWatchItem = { id: 'w-1', kind: 'command', label: 'servidor voltar', command: 'curl -sf http://x/health', everySeconds: 60, status: 'active', createdAt: '2026-01-01T10:00:00Z', deadlineAt: '2026-01-01T11:00:00Z', checks: 2 }
+const command: IWatchItem = {
+  id: 'w-1',
+  kind: 'command',
+  label: 'servidor voltar',
+  command: 'curl -sf http://x/health',
+  everySeconds: 60,
+  status: 'active',
+  createdAt: '2026-01-01T10:00:00Z',
+  deadlineAt: '2026-01-01T11:00:00Z',
+  checks: 2,
+}
 const timer: IWatchItem = { id: 'w-2', kind: 'timer', label: 'ticket fechar', status: 'active', createdAt: '2026-01-01T10:01:30Z', deadlineAt: '2026-01-01T10:30:00Z', checks: 0 }
 
 let app: App | undefined
@@ -25,12 +35,21 @@ afterEach(() => {
 })
 
 describe('WatchesPanel', () => {
-  it('diz o que está sendo vigiado, há quanto tempo, de quanto em quanto e até quando', () => {
+  it('fechada mostra a próxima; aberta diz o que está sendo vigiado, há quanto tempo, de quanto em quanto e até quando', async () => {
     vi.useFakeTimers({ now: NOW })
     const host = mount([command, timer], async () => true)
-    const lines = [...host.querySelectorAll('li')].map((line) => [...line.querySelectorAll('span:not(:has(span))')].map((part) => part.textContent?.trim()))
-    expect(lines[0]).toEqual(['Vigiando', 'servidor voltar', 'há 2 min · confere a cada 1 min · prazo em 58 min'])
-    expect(lines[1]).toEqual(['Despertador', 'ticket fechar', 'agora · acorda em 28 min'])
+    // Fechada: a linha de cima é a próxima a acordar (o despertador), com o ícone no lugar do rótulo.
+    const toggle = host.querySelector<HTMLButtonElement>('[data-test="watches-toggle"]')!
+    expect(toggle.textContent).toContain('ticket fechar')
+    expect(toggle.textContent).toContain('1 despertador · 1 vigia · acorda em 28 min')
+    expect(host.querySelector('li')).toBeNull()
+
+    toggle.click()
+    await nextTick()
+    const lines = [...host.querySelectorAll('li')].map((line) => [...line.querySelectorAll('span')].map((part) => part.textContent?.trim()))
+    expect(lines[0]).toEqual(['servidor voltar', 'há 2 min · confere a cada 1 min · prazo em 58 min'])
+    expect(lines[1]).toEqual(['ticket fechar', 'agora · acorda em 28 min'])
+    expect(host.querySelector('li svg')?.getAttribute('aria-label')).toBe('Vigiando')
     // O comando conferido fica na dica do rótulo, para quem quer saber o que roda.
     expect(host.querySelector('li [title]')?.getAttribute('title')).toBe('curl -sf http://x/health')
   })
@@ -39,6 +58,8 @@ describe('WatchesPanel', () => {
     vi.useFakeTimers({ now: NOW })
     const stop = vi.fn(async () => true)
     const host = mount([command], stop)
+    host.querySelector<HTMLButtonElement>('[data-test="watches-toggle"]')?.click()
+    await nextTick()
     host.querySelector<HTMLButtonElement>('li button')?.click()
     await nextTick()
     expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain('Parar de vigiar?')
