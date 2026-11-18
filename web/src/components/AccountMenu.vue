@@ -47,7 +47,7 @@
 </script>
 
 <template>
-  <div v-if="auth.user" ref="root" class="relative flex justify-center" :class="placement === 'up' ? 'min-w-0 flex-1' : ''">
+  <div v-if="auth.user" ref="root" class="relative flex justify-center" :class="placement === 'up' ? 'min-w-[64px] flex-1 shrink-0' : ''">
     <button
       type="button"
       class="flex flex-col items-center gap-0.5 text-[10px] font-medium"
