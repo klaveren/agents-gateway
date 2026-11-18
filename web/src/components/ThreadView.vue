@@ -306,6 +306,22 @@
     menuOpen.value = false
     void action()
   }
+  /** Copia o id da conversa; o item diz "Copiado" por um instante e o menu fecha. */
+  const idCopied = ref(false)
+  async function copySessionId() {
+    const id = header.value?.id ?? thread.sessionId
+    if (!id) return
+    try {
+      await copyText(id)
+      idCopied.value = true
+      setTimeout(() => {
+        idCopied.value = false
+        menuOpen.value = false
+      }, 900)
+    } catch {
+      menuOpen.value = false
+    }
+  }
   async function archiveConversation() {
     if (!header.value) return
     await conversations.archive(header.value.id)
@@ -475,7 +491,7 @@
             <div
               v-if="menuOpen"
               role="menu"
-              class="absolute top-full right-0 z-50 mt-2 w-60 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
+              class="absolute top-full right-0 z-50 mt-2 w-48 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
               data-test="thread-menu-items"
             >
               <button
@@ -484,7 +500,7 @@
                 @click="fromMenu(() => (panelOpen = !panelOpen))"
               >
                 <Icon name="panel" class="h-4 w-4 text-zinc-400" />
-                Board da conversa
+                Board
                 <span v-if="panelCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ panelCount }}</span>
               </button>
               <button
@@ -503,10 +519,11 @@
                 class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-zinc-800 disabled:text-zinc-500"
                 :class="thread.session?.compactNext ? 'text-zinc-500' : 'text-amber-300'"
                 :disabled="thread.session?.compactNext || compacting"
+                :title="thread.session?.compactNext ? 'Compacta na próxima mensagem' : 'Compactar o contexto'"
                 @click="fromMenu(compactNow)"
               >
                 <Icon name="compress" class="h-4 w-4" />
-                {{ thread.session?.compactNext ? 'Compacta na próxima mensagem' : 'Compactar o contexto' }}
+                {{ thread.session?.compactNext ? 'Agendada' : 'Compactar' }}
               </button>
               <button
                 v-if="!embedded"
@@ -515,7 +532,17 @@
                 @click="fromMenu(toggleShare)"
               >
                 <Icon name="share" class="h-4 w-4" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" />
-                {{ header.shared ? 'Parar de compartilhar' : 'Compartilhar por link' }}
+                {{ header.shared ? 'Descompartilhar' : 'Compartilhar' }}
+              </button>
+              <button
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                title="Copiar o id da conversa"
+                data-test="thread-menu-copy-id"
+                @click="copySessionId"
+              >
+                <Icon name="copy" class="h-4 w-4" :class="idCopied ? 'text-emerald-400' : 'text-zinc-400'" />
+                {{ idCopied ? 'Copiado' : 'Copiar ID' }}
               </button>
               <button
                 role="menuitem"
@@ -532,7 +559,7 @@
                 @click="fromMenu(() => (confirming = true))"
               >
                 <Icon name="trash" class="h-4 w-4 text-zinc-400" />
-                Apagar histórico
+                Apagar
               </button>
             </div>
           </div>
