@@ -51,6 +51,9 @@ describe('SelfMcp.Guard', () => {
     assert.ok(refused(await guarded('PUT', '/projects/Q/members', { body: { members: [] } })))
     assert.ok(refused(await guarded('POST', '/projects', { body: { id: 'z' } })))
     assert.ok(refused(await guarded('PUT', '/providers/x/models', { body: {} })))
+    assert.ok(refused(await guarded('PUT', '/providers/x/models', { body: { modelId: 'm', enabled: true } })), 'ativar modelo continua fora')
+    assert.ok(refused(await guarded('PUT', '/providers/x/models', { body: { modelId: 'm', enabled: true, price: { input: 1, output: 2 } } })), 'preço junto com ativar')
+    assert.ok(refused(await guarded('PUT', '/providers/x', { body: { name: 'y' } })), 'o provider')
     assert.ok(refused(await guarded('POST', '/packages', { body: { name: 'jq' } })))
     assert.ok(refused(await guarded('POST', '/catalog/history/restore', { body: { kind: 'rule', id: 'r-q', project: 'Q' } })))
     assert.ok(refused(await guarded('POST', '/sessions', { body: { agentId: 'a-q' } })), 'abrir conversa com o agente de Q')
@@ -158,6 +161,15 @@ describe('SelfMcp.Guard', () => {
     for (const scope of [{ projectId: 'P', unrestricted: false }, { unrestricted: true }, { unrestricted: false }])
       assert.ok(refused(await scopedWrites(api, scope)('PUT', '/settings', { body: { modelGroups: [] } })))
     assert.deepStrictEqual(written, [])
+  })
+
+  it('💲 numa conversa de projeto o agente grava SÓ o preço de um modelo (a rota ainda exige o administrador)', async () => {
+    const { api, written } = fakeApi()
+    const guarded = scopedWrites(api, { projectId: 'P', unrestricted: false })
+    assert.ok((await guarded('PUT', '/providers/codex/models', { body: { modelId: 'gpt-6-sol', price: { input: 2, output: 10, cacheRead: 0.2 } } })).ok)
+    assert.ok((await guarded('PUT', '/providers/codex/models', { body: { modelId: 'gpt-6-sol', price: null } })).ok, 'restaurar o preço da lista')
+    assert.ok(refused(await guarded('POST', '/providers/codex/models', { body: { modelId: 'novo' } })), 'adicionar modelo')
+    assert.strictEqual(written.length, 2)
   })
 
   it('🔌 projeto conectado: o agente só ajusta a camada local de um agente do projeto da conversa', async () => {

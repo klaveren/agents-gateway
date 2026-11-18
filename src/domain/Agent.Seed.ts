@@ -123,11 +123,24 @@ ${ATLAS_KNOWLEDGE_LINE}
 Você mesmo continua listando e lendo (list_rules, list_docs, get_doc, list_resources, get_protocol), reordenando rules (move_rule), apagando (delete_rule, delete_doc, delete_resource — confirme antes), cuidando do contexto inicial e liberando recursos para agentes (set_agent_resources). Ligar ou desligar uma rule é na tela Projeto → Rules.`
 
 /** Atualizar os preços dos modelos: o mesmo na PRO e na lite. Os passos são o corpo do trigger `update-model-prices`. */
-const ATLAS_PRICES_STEPS = `1. Use list_providers e list_models para saber os modelos ATIVADOS de cada provider e o preço atual.
+export const ATLAS_PRICES_STEPS = `1. Use list_providers e list_models para saber os modelos ATIVADOS de cada provider e o preço atual.
 2. Para cada provider oficial (Anthropic, OpenAI, Google), pesquise a página OFICIAL de preços com WebSearch. Preços em USD por 1 milhão de tokens: entrada, saída e, quando houver, leitura e escrita de cache.
 3. Monte uma tabela: modelo | preço atual | preço encontrado | fonte (URL) | data da consulta. Modelo sem preço oficial encontrado fica como está — diga que não achou; nunca estime.
 4. Só grave com set_model_price o que a pessoa confirmar. Ao final, resuma o que mudou.`
 export const ATLAS_PRICES_SECTION = `## Atualizar os preços dos modelos\n${ATLAS_PRICES_STEPS}`
+
+/**
+ * 💲 O corpo de HOJE do trigger `update-model-prices` (o de antes, `ATLAS_PRICES_STEPS`, fica para as migrações reconhecerem
+ * o prompt antigo). O que a Maya ensinou: juntar providers e versões numa linha, usar site de notícia como fonte e mandar a
+ * pessoa digitar o que a conversa podia gravar.
+ */
+export const ATLAS_PRICES_TRIGGER_STEPS = `1. list_providers e list_models: os modelos ATIVADOS de cada provider, com o id exato e o preço atual.
+2. UMA linha por provider + modelId, exatamente como list_models devolve. Nunca junte providers ("claude-sub e antigravity") nem versões ("as 3 versões"), nunca troque o id por nome comercial.
+3. Fonte: só a página OFICIAL de preços de quem FAZ o modelo (Anthropic, OpenAI, Google). Provider de assinatura ou revenda (claude-sub, codex, antigravity, openrouter) usa o preço de API do mesmo modelo nessa página. Notícia, blog e agregador não contam: sem a página oficial, a linha fica "não conferido" e não se grava. Página oficial bloqueada: peça o acesso ao domínio e diga onde aprovar.
+4. USD por 1M tokens: entrada, saída e, quando a página trouxer, leitura e escrita de cache. Preço por faixa ou com data para mudar: use o padrão de hoje e avise.
+5. Mostre a tabela: provider | modelId | atual | novo | fonte (URL oficial). Só entra o que muda.
+6. Com o OK da pessoa, grave você mesmo com set_model_price, uma chamada por linha. Nunca passe a tabela para a pessoa digitar. Linha recusada: diga qual e o motivo, e siga com as outras.
+7. Confira com list_models e diga o que mudou.`
 
 /** Os hooks: o corpo do trigger `create-hook` (e a seção do Atlas de antes). */
 const ATLAS_HOOKS_STEPS = `Um hook é a URL POST /v1/hook/<agente>/<nome>: quando um serviço (GitHub, CRM, cron) chama, o agente executa o prompt do hook com o evento junto, em nome de quem criou o hook.
@@ -259,7 +272,7 @@ export const ATLAS_TRIGGERS: readonly IAgentTrigger[] = [
     when: 'Pedirem para migrar ou importar um repositório ou ambiente para o gateway, ou a fila do import_items tiver itens.',
     body: ATLAS_MIGRATE_STEPS,
   },
-  { id: 'update-model-prices', when: 'Pedirem para conferir ou atualizar o preço de um modelo.', body: ATLAS_PRICES_STEPS },
+  { id: 'update-model-prices', when: 'Pedirem para conferir ou atualizar o preço de um modelo.', body: ATLAS_PRICES_TRIGGER_STEPS },
   { id: 'create-hook', when: 'Pedirem um hook: um serviço de fora (GitHub, CRM, cron) aciona um agente.', body: ATLAS_HOOKS_STEPS },
   { id: 'create-schedule', when: 'Pedirem algo com hora marcada ou que se repete (um agendamento).', body: ATLAS_SCHEDULES_SECTION },
   { id: 'install-missing-tool', when: 'Faltar um programa ou pacote neste servidor para uma tarefa.', body: ATLAS_INSTALL_STEPS },
