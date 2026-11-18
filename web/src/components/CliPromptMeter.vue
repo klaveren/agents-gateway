@@ -6,7 +6,7 @@
   import { useProjectsStore } from '@/stores/projects'
 
   /**
-   * O prompt do agente no Codex e no Antigravity, contra o limite do Linux para um argumento (ver `lib/cliPrompt`).
+   * O prompt do agente no Codex, contra o limite do Linux para um argumento (ver `lib/cliPrompt`).
    * ⚖️ AVISO, nunca bloqueio: o Salvar segue. O ambiente (rules, índices, contexto inicial) vem medido do servidor
    * sobre o agente salvo, no projeto dele (num global, no projeto atual); o soul e a instrução, do formulário.
    */

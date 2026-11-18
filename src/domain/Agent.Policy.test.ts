@@ -61,7 +61,7 @@ describe('agentIssues', () => {
     assert.deepStrictEqual(messages({ USERNAME: 'maya' }), [])
   })
 
-  it('⚖️ o tamanho do prompt e da soul é de quem cria; só Codex e Antigravity têm o teto do argumento do Linux', () => {
+  it('⚖️ o tamanho do prompt e da soul é de quem cria; só o Codex tem o teto do argumento do Linux (o Antigravity lê pela entrada)', () => {
     const big = 'x'.repeat(200_000)
     assert.deepStrictEqual(agentIssues(agent({ systemPrompt: big, soul: big }), rules), [], 'sem teto do sistema')
     const onCli = (protocol: EProvider, soul: string) =>
@@ -71,7 +71,7 @@ describe('agentIssues', () => {
         modelEnabled: () => true,
       }).map((issue) => issue.message)
     assert.match(onCli(EProvider.CODEX, big).join(' | '), /command-line argument.*128 KiB.*now 200 KB/)
-    assert.match(onCli(EProvider.ANTIGRAVITY, big).join(' | '), /command-line argument/)
+    assert.deepStrictEqual(onCli(EProvider.ANTIGRAVITY, big), [], 'o Antigravity recebe o prompt pela entrada padrão')
     assert.deepStrictEqual(onCli(EProvider.CODEX, 'x'.repeat(50_000)), [], 'abaixo do teto passa')
   })
 

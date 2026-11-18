@@ -20,7 +20,7 @@ export const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/
 export const AGENT_NAME_MAX = 80
 /**
  * ⚖️ O TAMANHO DO PROMPT É DE QUEM CRIA O AGENTE: o sistema não impõe teto (custa tokens a cada turno, e a tela mostra
- * quanto). A trava que existe é técnica: o Codex e o Antigravity recebem o prompt como ARGUMENTO de linha de comando, e
+ * quanto). A trava que existe é técnica: o Codex recebe o prompt como ARGUMENTO de linha de comando, e
  * o Linux recusa um argumento acima de 128 KiB (`MAX_ARG_STRLEN`). A conta deixa folga para o que o gateway junta ao
  * prompt (rules, índice de skills e de documentos).
  */

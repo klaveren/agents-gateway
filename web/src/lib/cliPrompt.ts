@@ -1,8 +1,8 @@
 import type { ICliFootprint } from './types'
 
 /**
- * ⚖️ O PROMPT NO CLI: o Codex e o Antigravity recebem o prompt montado (soul, instrução, rules, índices, contexto
- * inicial) como UM argumento de linha de comando, e o Linux recusa um argumento acima de 128 KiB — a conversa nesses
+ * ⚖️ O PROMPT NO CLI: o Codex recebe o prompt montado (soul, instrução, rules, índices, contexto
+ * inicial) como UM argumento de linha de comando, e o Linux recusa um argumento acima de 128 KiB — a conversa nesse
  * provedores falha (o servidor recusa antes, com o motivo). A tela só AVISA: o tamanho é de quem cria o agente.
  * Os mesmos números do servidor (`CliArgument.Policy`).
  */
