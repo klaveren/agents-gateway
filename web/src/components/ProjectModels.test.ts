@@ -160,6 +160,7 @@ describe('ProjectModels', () => {
     expect([...host.querySelectorAll('[data-test="project-provider-add"] option')].map((option) => option.textContent?.trim())).toEqual([
       'Acrescentar provider…',
       'Anthropic',
+      'Google',
       'OpenRouter',
     ])
   })

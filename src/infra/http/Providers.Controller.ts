@@ -61,7 +61,7 @@ const modelChangeSchema = z.object({
 })
 /** 🔐 O provider de um projeto: só os tipos conhecidos (ver `PROJECT_PROVIDER_KINDS`). */
 const projectProviderSchema = z.object({
-  kind: z.enum(['anthropic', 'openai', 'openrouter']),
+  kind: z.enum(['anthropic', 'openai', 'google', 'openrouter']),
   name: z.string().max(60).optional(),
   key: key.optional(),
 })

@@ -184,6 +184,13 @@ describe('Providers (integração)', () => {
     assert.ok((await ids(admin)).includes('proj-p--openai'))
     assert.strictEqual((await call('/providers/proj-p--openai/models', { token: member })).status, 200)
     assert.strictEqual((await call('/providers/proj-p--openai', { method: 'DELETE', token: member })).status, 200)
+    // O Google: o SDK oficial, sem URL (a do Google).
+    const google = JSON.parse((await call('/projects/proj-p/providers', { method: 'POST', token: member, body: { kind: 'google' } })).text).result as {
+      id: string
+      protocol: string
+      baseUrl?: string
+    }
+    assert.deepStrictEqual([google.id, google.protocol, google.baseUrl], ['proj-p--google', 'google', undefined])
   })
 })
 

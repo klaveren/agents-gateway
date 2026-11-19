@@ -66,11 +66,13 @@ export function normalizeBaseUrl(raw: string): string {
  * daqui — a URL livre (um compatível qualquer) mandaria a chave e as conversas para onde o admin do projeto quisesse,
  * inclusive a rede interna. Assinaturas ficam no gateway (o login mora na máquina).
  */
-export const PROJECT_PROVIDER_KINDS = {
+export const PROJECT_PROVIDER_KINDS: Record<'anthropic' | 'openai' | 'google' | 'openrouter', { name: string; protocol: EProvider; baseUrl?: string }> = {
   anthropic: { name: 'Anthropic', protocol: EProvider.CLAUDE, baseUrl: 'https://api.anthropic.com' },
+  // O Google fala o SDK oficial, que só leva a chave: a URL é sempre a do Google (sem campo para mudar).
+  google: { name: 'Google', protocol: EProvider.GOOGLE },
   openai: { name: 'OpenAI', protocol: EProvider.OPENAI, baseUrl: 'https://api.openai.com/v1' },
   openrouter: { name: 'OpenRouter', protocol: EProvider.OPENAI, baseUrl: 'https://openrouter.ai/api/v1' },
-} as const
+}
 export type TProjectProviderKind = keyof typeof PROJECT_PROVIDER_KINDS
 
 /** O id do provider de um projeto: `<projeto>--<tipo>` (dois hífens: não colide com id de provider do gateway por acaso). */
