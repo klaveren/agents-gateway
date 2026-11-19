@@ -571,6 +571,7 @@ function buildRoutes(
     { method: 'get', path: '/protocols', handler: providers.protocols },
     { method: 'get', path: '/providers', handler: providers.list },
     { method: 'post', path: '/providers', handler: providers.create },
+    { method: 'post', path: '/projects/:id/providers', handler: providers.createForProject },
     { method: 'put', path: '/providers/:id', handler: providers.update },
     { method: 'delete', path: '/providers/:id', handler: providers.remove },
     { method: 'put', path: '/providers/:id/key', handler: providers.saveKey },

@@ -13,7 +13,9 @@ import { protocolCatalog } from '@domain/Protocol.Catalog'
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { checkAdminAccess } from './Caller.Admin'
-import { administers, adminView, IAdminView, requireAnyAdmin } from './Project.Access'
+import { administers, adminView, IAdminView, requireAnyAdmin, requireProjectAdmin } from './Project.Access'
+import { viaAccessToken } from './Auth.Controller'
+import { viaSessionCookie } from './Session.Cookie'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
@@ -57,6 +59,12 @@ const modelChangeSchema = z.object({
   /** `null` apaga o preço manual e volta ao do catálogo ou de fábrica. */
   price: z.object({ input: price, output: price, cacheRead: price.optional(), cacheWrite: price.optional() }).nullable().optional(),
 })
+/** 🔐 O provider de um projeto: só os tipos conhecidos (ver `PROJECT_PROVIDER_KINDS`). */
+const projectProviderSchema = z.object({
+  kind: z.enum(['anthropic', 'openai', 'openrouter']),
+  name: z.string().max(60).optional(),
+  key: key.optional(),
+})
 const updateSchema = z.object({ name: z.string().max(200).optional(), baseUrl: z.string().trim().max(500).optional(), enabled: z.boolean().optional() })
 
 /**
@@ -84,6 +92,7 @@ export class ProvidersController {
       'loginCancel',
       'addModel',
       'protocols',
+      'createForProject',
     ] as const)
       this[name] = this[name].bind(this)
   }
@@ -101,7 +110,11 @@ export class ProvidersController {
       // ⚖️ Quem administra um projeto também lê (o formulário do agente escolhe provider e modelo); os agentes que
       // aparecem são só os dos projetos dele. Gravar segue do administrador do gateway.
       const view = await requireAnyAdmin(this.deps.proof, 'listProviders')
-      return this.deps.providers.list().map((provider) => this.view(provider, view))
+      // 🔐 O provider de um projeto só aparece para quem administra o projeto (e o gateway).
+      return this.deps.providers
+        .list()
+        .filter((provider) => !provider.projectId || view.gateway || administers(view, provider.projectId))
+        .map((provider) => this.view(provider, view))
     })
   }
 
@@ -125,7 +138,7 @@ export class ProvidersController {
     await this.respond(
       res,
       async () => {
-        const admin = await this.requireAdmin('updateProvider')
+        const admin = await this.requireProviderAdmin(req, 'updateProvider')
         const body = parseBody(updateSchema, req.body)
         const updated = this.deps.providers.update(this.idOf(req), body, admin)
         if (body.enabled === false) await this.deps.retire?.(admin)
@@ -140,7 +153,7 @@ export class ProvidersController {
     await this.respond(
       res,
       async () => {
-        const admin = await this.requireAdmin('removeProvider')
+        const admin = await this.requireProviderAdmin(req, 'removeProvider')
         const id = this.idOf(req)
         this.deps.providers.remove(id, (providerId) =>
           this.deps.agents
@@ -161,8 +174,11 @@ export class ProvidersController {
     await this.respond(
       res,
       async () => {
-        const admin = await this.requireAdmin('saveProviderKey')
+        const admin = await this.requireProviderAdmin(req, 'saveProviderKey')
         const id = this.idOf(req)
+        // ⛔ A chave de um provider do PROJETO só entra pela tela, como as variáveis secretas: nem token nem agente.
+        if (this.deps.providers.get(id)?.projectId && !(viaSessionCookie(res) && !viaAccessToken(res)))
+          throw new HttpError(403, 'forbidden', 'Só quem administra o projeto, entrando pela tela, grava a chave do provider dele.')
         this.deps.credentials.save(id, parseBody(keySchema, req.body).key, admin)
         return this.view(this.deps.providers.get(id) as IProviderConfig, await adminView(this.deps.proof))
       },
@@ -175,7 +191,7 @@ export class ProvidersController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('clearProviderKey')
+        await this.requireProviderAdmin(req, 'clearProviderKey')
         const id = this.idOf(req)
         this.deps.credentials.clear(id)
         return this.view(this.deps.providers.get(id) as IProviderConfig, await adminView(this.deps.proof))
@@ -187,7 +203,7 @@ export class ProvidersController {
   /** Testa a chave colada (antes de salvar) ou, sem corpo, a que está em vigor — na URL do provider. */
   async test(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('testProviderKey')
+      await this.requireProviderAdmin(req, 'testProviderKey')
       const provider = this.deps.providers.get(this.idOf(req)) as IProviderConfig
       const { key: pasted } = parseBody(testSchema, req.body ?? {})
 
@@ -204,7 +220,9 @@ export class ProvidersController {
   /** O catálogo de um provider: tudo o que ele lista, ativado ou não, com o preço e de onde ele veio. */
   async listModels(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await requireAnyAdmin(this.deps.proof, 'listModels')
+      const view = await requireAnyAdmin(this.deps.proof, 'listModels')
+      const provider = this.deps.providers.get(this.idOf(req))
+      if (provider?.projectId && !view.gateway && !administers(view, provider.projectId)) throw new HttpError(404, 'not_found', 'Not found')
       return this.catalog.list(this.idOf(req)).map(toModelDto)
     })
   }
@@ -217,7 +235,7 @@ export class ProvidersController {
     await this.respond(
       res,
       async () => {
-        const admin = await this.requireAdmin('syncModels')
+        const admin = await this.requireProviderAdmin(req, 'syncModels')
         const provider = this.deps.providers.get(this.idOf(req)) as IProviderConfig
         if (isSubscription(provider.protocol)) {
           let listed
@@ -253,7 +271,7 @@ export class ProvidersController {
     await this.respond(
       res,
       async () => {
-        const admin = await this.requireAdmin('addModel')
+        const admin = await this.requireProviderAdmin(req, 'addModel')
         const id = this.idOf(req)
         const { modelId } = parseBody(addModelSchema, req.body)
         return toModelDto(this.catalog.addModel(id, modelId, admin))
@@ -267,7 +285,7 @@ export class ProvidersController {
     await this.respond(
       res,
       async () => {
-        const admin = await this.requireAdmin('updateModel')
+        const admin = await this.requireProviderAdmin(req, 'updateModel')
         const id = this.idOf(req)
         const body = parseBody(modelChangeSchema, req.body)
 
@@ -353,6 +371,7 @@ export class ProvidersController {
       official: provider.official,
       subscription: isSubscription(provider.protocol),
       enabled: provider.enabled,
+      ...(provider.projectId ? { projectId: provider.projectId } : {}),
       updatedAt: provider.updatedAt,
       updatedBy: provider.updatedBy,
       credential,
@@ -366,6 +385,42 @@ export class ProvidersController {
     const id = req.params.id as string
     if (!this.deps.providers.get(id)) throw new HttpError(404, 'not_found', 'Not found')
     return id
+  }
+
+  /**
+   * 🔐 Quem mexe no provider: o do gateway, o administrador do gateway; o de um PROJETO, quem administra o projeto (e o
+   * administrador do gateway). Devolve quem grava.
+   */
+  private async requireProviderAdmin(req: Request, operation: string): Promise<string> {
+    const provider = this.deps.providers.get(this.idOf(req))
+    if (!provider?.projectId) return this.requireAdmin(operation)
+    const view = await adminView(this.deps.proof)
+    if (!view || !(view.gateway || administers(view, provider.projectId))) {
+      console.warn(`[admin] acesso negado a ${operation}: não administra o projeto ${provider.projectId}`)
+      throw new HttpError(404, 'not_found', 'Not found')
+    }
+    return view.by
+  }
+
+  /**
+   * `POST /projects/:id/providers { kind, name?, key? }` — 🔐 um provider do projeto (Anthropic, OpenAI ou OpenRouter, URL
+   * fixa). Quem administra o projeto; a chave, só pela tela.
+   */
+  async createForProject(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const projectId = req.params.id as string
+        const by = await requireProjectAdmin(this.deps.proof, projectId, 'createProjectProvider')
+        const body = parseBody(projectProviderSchema, req.body)
+        if (body.key && !(viaSessionCookie(res) && !viaAccessToken(res)))
+          throw new HttpError(403, 'forbidden', 'Só quem administra o projeto, entrando pela tela, grava a chave do provider dele.')
+        const provider = this.deps.providers.createForProject(projectId, body.kind, body.name, by)
+        if (body.key) this.deps.credentials.save(provider.id, body.key, by)
+        return this.view(provider, await adminView(this.deps.proof))
+      },
+      { status: 201, message: 'Provider created' },
+    )
   }
 
   private async requireAdmin(operation: string): Promise<string> {

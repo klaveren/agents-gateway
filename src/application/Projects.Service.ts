@@ -187,7 +187,10 @@ export class ProjectsService {
     const byRole = Object.fromEntries(Object.entries(members.byRole ?? {}).flatMap(([role, list]) => (list ? [[role, tidy(list)]] : [])))
     const byUser = Object.fromEntries(Object.entries(members.byUser ?? {}).map(([userId, list]) => [userId, tidy(list)]))
     const roles = Object.keys(byRole).filter((role) => !(PROJECT_ROLES as readonly string[]).includes(role))
-    const issues = [...roles.map((role) => ({ field: `byRole.${role}`, message: 'unknown role' })), ...memberModelsIssues(project.models?.allowed, { byRole, byUser })]
+    // O modelo de um provider DO PROJETO (`<projeto>--<tipo>`) não passa pela lista do gateway: o provider é do projeto.
+    const own = (key: string) => key.startsWith(`${id}--`)
+    const allowed = project.models?.allowed && [...project.models.allowed]
+    const issues = [...roles.map((role) => ({ field: `byRole.${role}`, message: 'unknown role' })), ...memberModelsIssues(allowed, { byRole, byUser }, own)]
     if (issues.length) throw new InvalidProjectError(issues)
     const { byRole: _role, byUser: _user, ...rest } = project.models ?? {}
     const models: IProjectModels = {
@@ -211,7 +214,7 @@ export class ProjectsService {
     const project = this.get(id)
     const allowed = project.models?.allowed
     const issues = modelGroupIssues(change.modelGroups, rules.known, (step) =>
-      allowed && !allowed.includes(`${step.provider}/${step.model}`) ? 'not released to this project' : rules.unusable?.(step),
+      allowed && !allowed.includes(`${step.provider}/${step.model}`) && !step.provider.startsWith(`${id}--`) ? 'not released to this project' : rules.unusable?.(step),
     )
     const ids = new Set([...change.modelGroups.map((group) => group.id), ...(rules.gatewayGroups ?? [])])
     if (change.defaultModelGroup && change.defaultModelGroup !== NO_MODEL_GROUP && !ids.has(change.defaultModelGroup))

@@ -67,6 +67,8 @@ export interface IAgentRules {
    * global roda em vários e quem filtra é a conversa. Ausente = sem a regra.
    */
   projectModelAllowed?(projectId: string, providerId: string, modelId: string): boolean
+  /** 🔐 O projeto dono do provider (o provider de projeto, ver `IProviderConfig.projectId`); `undefined` = do gateway. */
+  providerProject?(providerId: string): string | undefined
   /**
    * O servidor MCP existe NO ESCOPO do agente (`mcp:<servidor>/…`)? `projectId`: o do agente (ausente = global).
    * ⛔ O agente de um projeto enxerga os globais e os do projeto dele; o global, só os globais. Ausente = nenhum
@@ -123,6 +125,9 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     if (target.protocol && target.network && !SANDBOX_NETWORK.includes(target.protocol)) issue('providers', `${target.provider}: has no sandbox network to open`)
 
     if (!target.models.length) issue('models', `${target.provider}: at least one model`)
+    // ⛔ O provider de um projeto é só dos agentes DELE: nem global, nem de outro projeto.
+    const owner = rules.providerProject?.(target.provider)
+    if (owner && agent.projectId !== owner) issue('providers', `${target.provider}: belongs to project ${owner}`)
     if (target.protocol && rules.modelEnabled) {
       for (const model of target.models) if (!rules.modelEnabled(target.provider, model)) issue('models', `${target.provider}: not enabled in Providers → Models: ${model}`)
       if (agent.projectId && rules.projectModelAllowed)

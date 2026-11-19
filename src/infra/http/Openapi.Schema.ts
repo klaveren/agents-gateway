@@ -5894,6 +5894,27 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/providers': {
+      post: {
+        summary:
+          'Create a provider of the PROJECT (`{ kind: anthropic | openai | openrouter, name?, key? }`): a known provider with its fixed URL, one per kind, id `<project>--<kind>`. It only runs in conversations of this project, with the project key; its models skip the gateway list (the role and person lists still apply). Project administrators; the key only on the SCREEN (an access token or an agent gets 403). The other `/providers/{id}` routes (models, key, sync, price, delete) accept the project administrators for project providers',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: { kind: { type: 'string', enum: ['anthropic', 'openai', 'openrouter'] }, name: { type: 'string' }, key: { type: 'string' } },
+            required: ['kind'],
+          }),
+        },
+        responses: {
+          '201': { description: 'Created: the provider (never the key)', ...json(envelope({ type: 'object' })) },
+          '403': { description: 'A key sent outside the screen', content: { 'application/json': { schema: failureEnvelope } } },
+          '404': { description: 'Not an administrator of the project', content: { 'application/json': { schema: failureEnvelope } } },
+          '422': { description: 'Unknown kind, or the project already has one of this kind', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
     '/projects/{id}/model-groups': {
       get: {
         summary:

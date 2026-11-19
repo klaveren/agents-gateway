@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
 import { makeAuth } from '@composition/factories/Auth.Factory'
+import { makeProjects } from '@composition/factories/Projects.Factory'
 import { makeAuthController, makeController, makeProvidersController } from '@composition/factories/Controller.Factory'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { probeKey } from '@infra/providers/Provider.Probe'
@@ -155,6 +156,34 @@ describe('Providers (integração)', () => {
   it('provider desconhecido é 404; chave com espaço é 422', async () => {
     assert.strictEqual((await call('/providers/llama/key', { method: 'PUT', token: admin, body: { key: SECRET } })).status, 404)
     assert.strictEqual((await call('/providers/claude/key', { method: 'PUT', token: admin, body: { key: 'tem espaco aqui' } })).status, 422)
+  })
+
+  it('🔐 o provider do PROJETO: quem administra o projeto cria (só tipos conhecidos, URL fixa); a chave só pela tela; os outros nem veem', async () => {
+    const anaId = makeAuth()
+      .accounts!.list()
+      .find((user) => user.email === 'ana@x.test')!.id
+    assert.strictEqual((await call('/projects/proj-p/providers', { method: 'POST', token: member, body: { kind: 'openai' } })).status, 404, 'sem projeto que administre')
+    makeProjects().create({ id: 'proj-p', name: 'P' }, 'teste', 'api', anaId)
+
+    const created = await call('/projects/proj-p/providers', { method: 'POST', token: member, body: { kind: 'openai' } })
+    assert.strictEqual(created.status, 201)
+    const provider = JSON.parse(created.text).result as { id: string; baseUrl: string; projectId: string; credential: { configured: boolean } }
+    assert.deepStrictEqual([provider.id, provider.baseUrl, provider.projectId, provider.credential.configured], ['proj-p--openai', 'https://api.openai.com/v1', 'proj-p', false])
+    assert.strictEqual((await call('/projects/proj-p/providers', { method: 'POST', token: member, body: { kind: 'openai' } })).status, 422, 'um por tipo')
+    assert.strictEqual((await call('/projects/proj-p/providers', { method: 'POST', token: member, body: { kind: 'qualquer' } })).status, 422)
+    // ⛔ A chave do projeto só entra pela tela: com token, 403 — na criação e depois.
+    assert.strictEqual((await call('/projects/proj-p/providers', { method: 'POST', token: member, body: { kind: 'anthropic', key: SECRET } })).status, 403)
+    assert.strictEqual((await call('/providers/proj-p--openai/key', { method: 'PUT', token: member, body: { key: SECRET } })).status, 403)
+    // ⛔ A URL é a do provedor conhecido.
+    assert.strictEqual((await call('/providers/proj-p--openai', { method: 'PUT', token: member, body: { baseUrl: 'https://outro.exemplo/v1' } })).status, 422)
+    // Quem administra o projeto mexe no dele, não nos do gateway; o gateway vê o do projeto.
+    assert.strictEqual((await call('/providers/proj-p--openai', { method: 'PUT', token: member, body: { name: 'OpenAI do P' } })).status, 200)
+    assert.strictEqual((await call('/providers/claude', { method: 'PUT', token: member, body: { name: 'x' } })).status, 404)
+    const ids = (token: string) => call('/providers', { token }).then((answer) => (JSON.parse(answer.text).result as Array<{ id: string }>).map((item) => item.id))
+    assert.ok((await ids(member)).includes('proj-p--openai'))
+    assert.ok((await ids(admin)).includes('proj-p--openai'))
+    assert.strictEqual((await call('/providers/proj-p--openai/models', { token: member })).status, 200)
+    assert.strictEqual((await call('/providers/proj-p--openai', { method: 'DELETE', token: member })).status, 200)
   })
 })
 

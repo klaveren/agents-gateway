@@ -3,7 +3,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IProviderConfig, IProviderConnection } from '@domain/models/Provider.Model'
 import { ICredentialStore } from '@domain/ports/CredentialStore.Port'
 import { IProviderDirectory, IProviderRepository } from '@domain/ports/ProviderRepository.Port'
-import { normalizeBaseUrl, providerIssues } from '@domain/Provider.Policy'
+import { normalizeBaseUrl, PROJECT_PROVIDER_KINDS, projectProviderId, providerIssues, TProjectProviderKind } from '@domain/Provider.Policy'
 
 export interface INewProvider {
   id: string
@@ -64,10 +64,41 @@ export class ProvidersService implements IProviderDirectory {
     return provider
   }
 
+  /**
+   * 🔐 Um provider do PROJETO (ver `PROJECT_PROVIDER_KINDS`): um por tipo, URL fixa, com o projeto dono. A chave vem à parte
+   * (pelo cofre, como as outras).
+   */
+  createForProject(projectId: string, kind: TProjectProviderKind, name: string | undefined, by: string): IProviderConfig {
+    const known = PROJECT_PROVIDER_KINDS[kind]
+    if (!known) throw new InvalidProviderError([{ field: 'kind', message: `use one of: ${Object.keys(PROJECT_PROVIDER_KINDS).join(', ')}` }])
+    const id = projectProviderId(projectId, kind)
+    if (this.providers.get(id)) throw new InvalidProviderError([{ field: 'kind', message: `this project already has ${known.name}` }])
+    const label = (name ?? '').trim() || known.name
+    const issues = providerIssues({ name: label, baseUrl: known.baseUrl }, [])
+    if (issues.length) throw new InvalidProviderError(issues)
+    const now = this.now()
+    const provider: IProviderConfig = {
+      id,
+      name: label,
+      protocol: known.protocol,
+      baseUrl: known.baseUrl,
+      official: false,
+      enabled: true,
+      projectId,
+      createdAt: now,
+      updatedAt: now,
+      updatedBy: by,
+    }
+    this.providers.insert(provider)
+    return provider
+  }
+
   update(id: string, change: { name?: string; baseUrl?: string; enabled?: boolean }, by: string): IProviderConfig {
     const current = this.providers.get(id)
     if (!current) throw new ProviderNotFoundError(id)
     if (current.official && change.baseUrl !== undefined) throw new InvalidProviderError([{ field: 'baseUrl', message: 'official providers have a fixed URL' }])
+    // ⛔ O do projeto também: a URL é a do provedor conhecido.
+    if (current.projectId && change.baseUrl !== undefined) throw new InvalidProviderError([{ field: 'baseUrl', message: 'a project provider has a fixed URL' }])
 
     const issues = providerIssues({ name: change.name ?? current.name, baseUrl: change.baseUrl }, [])
     if (issues.length) throw new InvalidProviderError(issues)

@@ -1098,7 +1098,10 @@ export class AgentController {
       agentExists: (id) => delegable(id, this.agents),
       modelEnabled: this.usecases.models ? (provider, model) => this.usecases.models!.isEnabled(provider, model) : undefined,
       // 🔐 O modelo liberado ao projeto do agente (ver `ModelAccess.Policy`): projeto sem lista libera tudo.
-      projectModelAllowed: (projectId, provider, model) => projectAllows(this.projectModels(projectId), provider, model),
+      // O modelo de um provider do PRÓPRIO projeto não passa pela lista do gateway (o provider é do projeto).
+      projectModelAllowed: (projectId, provider, model) =>
+        this.usecases.providers?.get(provider)?.projectId === projectId || projectAllows(this.projectModels(projectId), provider, model),
+      providerProject: (provider) => this.usecases.providers?.get(provider)?.projectId,
       protocolOf: (id) => this.usecases.providers?.get(id)?.protocol ?? Object.values(EProvider).find((value) => value === id),
       promptIssue: (agent) => {
         const protocols = agent.providers.map((target) => this.usecases.providers?.get(target.provider)?.protocol ?? target.provider)

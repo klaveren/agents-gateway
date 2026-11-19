@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { memberAllows, memberList, memberModelsIssues, modelKey, modelListIssues, parseModelKey, projectAllows } from './ModelAccess.Policy'
+import { conversationModelFilter, memberAllows, memberList, memberModelsIssues, modelKey, modelListIssues, parseModelKey, projectAllows } from './ModelAccess.Policy'
 
 describe('ModelAccess.Policy', () => {
   it('a chave é provider/modelo; o modelo pode ter barra, o provider não', () => {
@@ -42,5 +42,26 @@ describe('ModelAccess.Policy', () => {
       { field: 'allowed', message: '"claude/a" is repeated' },
       { field: 'allowed', message: '"ruim" is not provider/model' },
     ])
+  })
+})
+
+describe('🔐 conversationModelFilter — o provider do projeto', () => {
+  const ownerOf = (provider: string) => (provider.startsWith('alfa--') ? 'alfa' : undefined)
+  it('o provider de um projeto só roda em conversa dele; sem projeto, nenhum', () => {
+    assert.strictEqual(conversationModelFilter(undefined, undefined, {}, ownerOf)('alfa--openai', 'gpt'), false)
+    assert.strictEqual(conversationModelFilter(undefined, undefined, {}, ownerOf)('claude', 'opus'), true)
+    assert.strictEqual(conversationModelFilter('beta', undefined, {}, ownerOf)('alfa--openai', 'gpt'), false)
+    assert.strictEqual(conversationModelFilter('alfa', undefined, {}, ownerOf)('alfa--openai', 'gpt'), true)
+  })
+  it('no projeto dono, a lista do gateway não vale para o provider dele; a do papel, sim', () => {
+    const models = { allowed: ['claude/haiku'], byRole: { member: ['claude/haiku'] } }
+    const filter = conversationModelFilter('alfa', models, { role: 'member' }, ownerOf)
+    assert.strictEqual(filter('alfa--openai', 'gpt'), false, 'fora da lista do papel')
+    assert.strictEqual(
+      conversationModelFilter('alfa', { allowed: ['claude/haiku'] }, { role: 'member' }, ownerOf)('alfa--openai', 'gpt'),
+      true,
+      'sem lista do papel: o provider do projeto vale',
+    )
+    assert.strictEqual(filter('claude', 'opus'), false)
   })
 })
