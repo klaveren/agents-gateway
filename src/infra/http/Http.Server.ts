@@ -634,6 +634,10 @@ function buildRoutes(
     { method: 'put', path: '/conversations/:id/share', handler: controller.shareConversation },
     { method: 'delete', path: '/conversations/:id', handler: controller.deleteConversation },
     { method: 'put', path: '/conversations/:id/archive', handler: controller.archiveConversation },
+    { method: 'get', path: '/messages', handler: controller.listMessages },
+    { method: 'get', path: '/messages/:conversationId', handler: controller.messageThread },
+    { method: 'post', path: '/messages/:conversationId/read', handler: controller.readMessages },
+    { method: 'put', path: '/messages/:conversationId/archive', handler: controller.archiveMessages },
     { method: 'patch', path: '/conversations/:id', handler: controller.renameConversation },
     // O painel da conversa (ver `ConversationPanel.Model`): o agente mantém; a pessoa lê e corrige.
     { method: 'get', path: '/conversations/:id/panel', handler: controller.getConversationPanel },

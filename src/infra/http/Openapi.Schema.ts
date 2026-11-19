@@ -5983,6 +5983,42 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/messages': {
+      get: {
+        summary:
+          'The Messages inbox of the signed-in person: one thread per conversation whose agent wrote to them (`notify`), the latest first, with the unread count; `?archived=1` lists the archived ones. Only the recipient sees a thread (no administrator reads someone else’s)',
+        parameters: [{ name: 'archived', in: 'query', required: false, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK: `{ threads, unread }`', ...json(envelope({ type: 'object' })) },
+          '401': { description: 'Not signed in', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/messages/{conversationId}': {
+      get: {
+        summary: 'The messages of one thread of the signed-in person, in order (`from`: agent or person; `turn`: the turn of the conversation when it was sent)',
+        parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK: `{ messages }`', ...json(envelope({ type: 'object' })) },
+          '404': { description: 'No such thread for this person', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/messages/{conversationId}/read': {
+      post: {
+        summary: 'Marks a thread of the signed-in person as read; returns the unread count',
+        parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK: `{ unread }`', ...json(envelope({ type: 'object' })) } },
+      },
+    },
+    '/messages/{conversationId}/archive': {
+      put: {
+        summary: 'Archives (`{ archived: true }`) or restores a thread of the signed-in person; a new message reopens it',
+        parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: false, ...json({ type: 'object', properties: { archived: { type: 'boolean' } } }) },
+        responses: { '200': { description: 'OK: `{ unread }`', ...json(envelope({ type: 'object' })) } },
+      },
+    },
     '/usage/all': {
       get: {
         summary:
