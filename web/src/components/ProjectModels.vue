@@ -3,6 +3,7 @@
   import { api } from '@/lib/api'
   import type { ICatalogModel, IProviderStatus } from '@/lib/types'
   import { useProvidersStore } from '@/stores/providers'
+  import ProjectModelGroups from './ProjectModelGroups.vue'
 
   /**
    * 🔐 OS MODELOS DO PROJETO (ver `ModelAccess.Policy` no servidor). Duas camadas, cada uma só restringe a de cima:
@@ -167,6 +168,8 @@
           {{ busy ? 'Salvando…' : 'Salvar modelos por papel' }}
         </button>
       </section>
+
+      <ProjectModelGroups v-if="projectAdmin" :project-id="projectId" :models="projectKeys" />
     </template>
 
     <p v-if="note" class="text-sm text-success-300">{{ note }}</p>

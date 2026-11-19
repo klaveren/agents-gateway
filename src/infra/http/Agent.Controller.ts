@@ -97,6 +97,7 @@ import {
   TAgentBody,
   updateSettingsSchema,
   reconfigureSessionSchema,
+  projectModelGroupsSchema,
 } from './Request.Schema'
 import { toSessionDto } from './Session.Dto'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
@@ -320,6 +321,8 @@ export class AgentController {
     this.availability = this.availability.bind(this)
     this.getSettings = this.getSettings.bind(this)
     this.getModelGroups = this.getModelGroups.bind(this)
+    this.getProjectModelGroups = this.getProjectModelGroups.bind(this)
+    this.setProjectModelGroups = this.setProjectModelGroups.bind(this)
     this.updateSettings = this.updateSettings.bind(this)
     this.listConversations = this.listConversations.bind(this)
     this.conversationStats = this.conversationStats.bind(this)
@@ -510,7 +513,13 @@ export class AgentController {
     const defaultGroup = body.defaultModelGroup === undefined ? current.defaultModelGroup : body.defaultModelGroup || undefined
     if (defaultGroup && !groups.some((group) => group.id === defaultGroup)) issues.push({ field: 'defaultModelGroup', message: `unknown model group: ${defaultGroup}` })
     for (const agent of this.agents.list())
-      if (agent.modelGroup && agent.modelGroup !== NO_MODEL_GROUP && !groups.some((group) => group.id === agent.modelGroup))
+      if (
+        agent.modelGroup &&
+        agent.modelGroup !== NO_MODEL_GROUP &&
+        !groups.some((group) => group.id === agent.modelGroup) &&
+        // 🔁 O grupo do PROJETO do agente não depende dos do gateway.
+        !(agent.projectId && this.projectModels(agent.projectId)?.modelGroups?.some((group) => group.id === agent.modelGroup))
+      )
         issues.push({ field: 'modelGroups', message: `${agent.modelGroup} is used by agent ${agent.id}` })
     const agentId = body.agentId === undefined ? current.agentId : body.agentId || undefined
     const agent = agentId ? this.agents.get(agentId) : this.agents.fallback()
@@ -1081,7 +1090,8 @@ export class AgentController {
 
     return {
       knownTools: tools.map((tool) => tool.name),
-      modelGroupExists: (id) => !!settings.modelGroups?.some((group) => group.id === id),
+      modelGroupExists: (id, projectId) =>
+        !!settings.modelGroups?.some((group) => group.id === id) || (!!projectId && !!this.projectModels(projectId)?.modelGroups?.some((group) => group.id === id)),
       // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar. E só o do escopo do agente:
       // o global ou o do projeto dele — nunca o de outro projeto.
       mcpServerExists: (id, projectId) => this.usecases.catalog.mcp.resolve(id, projectId)?.enabled === true,
@@ -1286,6 +1296,42 @@ export class AgentController {
       await requireAnyAdmin(this.usecases.proof, 'getModelGroups')
       const settings = await this.usecases.settings.read()
       return { groups: settings.modelGroups ?? [], ...(settings.defaultModelGroup ? { defaultModelGroup: settings.defaultModelGroup } : {}) }
+    })
+  }
+
+  /** `GET /projects/:id/model-groups` — 🔁 os grupos de fallback do projeto e o padrão dele (quem administra o projeto). */
+  async getProjectModelGroups(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      await requireProjectAdmin(this.usecases.proof, id, 'getProjectModelGroups')
+      const models = this.projectModels(id)
+      return { groups: models?.modelGroups ?? [], ...(models?.defaultModelGroup ? { defaultModelGroup: models.defaultModelGroup } : {}) }
+    })
+  }
+
+  /**
+   * `PUT /projects/:id/model-groups { groups, defaultModelGroup }` — 🔁 as listas inteiras. Cada passo tem de ser um modelo
+   * que o projeto recebeu, de provider ligado e modelo ativo; o padrão pode ser um grupo do projeto ou do gateway.
+   */
+  async setProjectModelGroups(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const by = await requireProjectAdmin(this.usecases.proof, id, 'setProjectModelGroups')
+      if (!this.usecases.projects) throw new HttpError(404, 'not_found', 'Projects are not enabled')
+      const body = parseBody(projectModelGroupsSchema, req.body)
+      const providers = this.usecases.providers
+      const models = this.usecases.models
+      const settings = await this.usecases.settings.read()
+      const saved = this.usecases.projects.setModelGroups(id, { modelGroups: body.groups, ...(body.defaultModelGroup ? { defaultModelGroup: body.defaultModelGroup } : {}) }, by, {
+        known: providers ? (provider) => !!providers.get(provider) : undefined,
+        unusable: (step) => {
+          if (providers && !providers.get(step.provider)?.enabled) return 'provider is disabled'
+          if (models && !models.isEnabled(step.provider, step.model)) return 'model is not enabled in the catalog'
+          return undefined
+        },
+        gatewayGroups: (settings.modelGroups ?? []).map((group) => group.id),
+      })
+      return { groups: saved.models?.modelGroups ?? [], ...(saved.models?.defaultModelGroup ? { defaultModelGroup: saved.models.defaultModelGroup } : {}) }
     })
   }
 

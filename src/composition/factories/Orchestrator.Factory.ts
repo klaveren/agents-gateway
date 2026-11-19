@@ -160,6 +160,15 @@ export function makeOrchestrator(): AgentProvider {
     const role = projects.roleOf(projectId, ownerId)
     return (provider, model) => memberAllows(models, { ...(ownerId ? { userId: ownerId } : {}), ...(role ? { role } : {}) }, provider, model)
   })
+  // 🔁 Os grupos de fallback do projeto da conversa: procurados antes dos do gateway.
+  provider.useProjectGroups((projectId) => {
+    try {
+      const models = makeProjects().get(projectId).models
+      return models?.modelGroups || models?.defaultModelGroup ? { modelGroups: models.modelGroups, defaultModelGroup: models.defaultModelGroup } : undefined
+    } catch {
+      return undefined
+    }
+  })
   provider.useSecrets({
     envFor: (agentId, sessionId, project) => makeResourceSecrets().envFor(agentId, sessionId, project),
     // Os nomes das skills e commands que o agente pode carregar: os liberados para ele (o índice do prompt).

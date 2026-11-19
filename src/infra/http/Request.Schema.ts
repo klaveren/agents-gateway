@@ -89,13 +89,19 @@ const clearable = z.string().trim().nullable().optional()
 /** Um passo da troca de provedor: provedor + modelo. */
 const fallbackStep = z.object({ provider: z.string().trim().min(1).max(100), model: z.string().trim().min(1).max(200) })
 const modelGroupRef = z.string().trim().regex(MODEL_GROUP_ID, '2–48 lowercase letters, digits or hyphens')
-const modelGroup = z.object({
+export const modelGroup = z.object({
   id: modelGroupRef,
   name: z.string().trim().min(1).max(MODEL_GROUP_BOUNDS.name),
   description: z.string().trim().max(MODEL_GROUP_BOUNDS.description).optional(),
   steps: z.array(fallbackStep).max(MODEL_GROUP_BOUNDS.steps),
   switchOn: z.array(z.enum(SWITCHABLE_FAILURES as [TProviderFailure, ...TProviderFailure[]])).optional(),
   cooldownMinutes: z.number().int().min(MODEL_GROUP_BOUNDS.cooldownMinutes.min).max(MODEL_GROUP_BOUNDS.cooldownMinutes.max).optional(),
+})
+
+/** 🔁 Os grupos de fallback de um projeto (as listas inteiras) e o padrão dele (`none` = não troca). */
+export const projectModelGroupsSchema = z.object({
+  groups: z.array(modelGroup).max(MODEL_GROUP_BOUNDS.groups),
+  defaultModelGroup: z.string().max(48).nullable().optional(),
 })
 
 /**

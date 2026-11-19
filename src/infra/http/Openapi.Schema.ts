@@ -5894,6 +5894,34 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/model-groups': {
+      get: {
+        summary:
+          'The fallback groups of the project and its default group (the project default wins over the gateway one; a group id is looked up in the project before the gateway). Project administrators',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK: `{ groups, defaultModelGroup? }`', ...json(envelope({ type: 'object' })) },
+          '404': { description: 'Not an administrator of the project', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+      put: {
+        summary:
+          'Save the fallback groups of the project (`{ groups, defaultModelGroup }`, the whole list). Each step must be a model the project received, with the provider enabled and the model enabled in the catalog; the default may be a project or a gateway group, or `none`. Project administrators',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: { groups: { type: 'array', items: { type: 'object' } }, defaultModelGroup: { type: 'string', nullable: true } },
+            required: ['groups'],
+          }),
+        },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object' })) },
+          '422': { description: 'A step outside the project models, or an unknown default', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
     '/projects/{id}/member-models': {
       put: {
         summary:

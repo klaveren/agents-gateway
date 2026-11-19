@@ -1,4 +1,5 @@
 import { IAgenticScope } from '@domain/Import.Scope'
+import type { IModelGroup } from '@domain/Fallback.Policy'
 
 /**
  * Um PROJETO: agentes, conversas e (depois) skills, rules e specs vivem dentro de um, com a sua pasta
@@ -60,6 +61,10 @@ export interface IProjectModels {
   allowed?: string[]
   byRole?: Partial<Record<TProjectRole, string[]>>
   byUser?: Record<string, string[]>
+  /** 🔁 Os grupos de fallback do PROJETO (ver `Fallback.Policy`): o id procura aqui antes do gateway. Ausente = nenhum. */
+  modelGroups?: IModelGroup[]
+  /** O grupo padrão do projeto (vence o do gateway); `none` = não troca. Ausente = o do gateway. */
+  defaultModelGroup?: string
 }
 
 /** Um valor visível que o projeto dá a uma variável de um MCP (`server` = o id do MCP, como o agente o cita). */
