@@ -45,6 +45,8 @@ const envFilesSchema = z.object({ agents: z.array(z.string().min(1).max(200)).ma
 /** 🔐 Os modelos que o gateway libera ao projeto (`provider/modelo`); `null` = tudo. */
 const allowedModelsSchema = z.object({ allowed: z.array(z.string().min(3).max(300)).max(2000).nullable() })
 /** 🔐 As listas de cada papel e pessoa (inteiras). */
+/** 💰 O teto do mês do projeto; `null` = sem esse teto. */
+const capsSchema = z.object({ monthlyCostUsd: z.number().positive().max(1_000_000).nullable().optional(), monthlyTokens: z.number().int().positive().nullable().optional() })
 const memberModelsSchema = z.object({
   byRole: z.record(z.string().max(20), z.array(z.string().min(3).max(300)).max(2000)).optional(),
   byUser: z.record(z.string().max(80), z.array(z.string().min(3).max(300)).max(2000)).optional(),
@@ -99,6 +101,7 @@ export class ProjectsController {
       'models',
       'setAllowedModels',
       'setMemberModels',
+      'setCaps',
       'remove',
       'members',
       'setMembers',
@@ -271,7 +274,7 @@ export class ProjectsController {
       const effective = list ? list.filter((key) => !allowed || allowed.includes(key)) : (allowed ?? null)
       return {
         allowed: allowed ?? null,
-        ...(gatewayAdmin || role === 'admin' ? { byRole: models?.byRole ?? {}, byUser: models?.byUser ?? {} } : {}),
+        ...(gatewayAdmin || role === 'admin' ? { byRole: models?.byRole ?? {}, byUser: models?.byUser ?? {}, caps: models?.caps ?? {} } : {}),
         effective,
       }
     })
@@ -300,6 +303,24 @@ export class ProjectsController {
       const by = await requireProjectAdmin(this.deps.proof, id, 'setProjectMemberModels')
       if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem administra o projeto, entrando pela tela, libera modelos aos membros.')
       return this.deps.projects.setMemberModels(id, parseBody(memberModelsSchema, req.body), by).models ?? {}
+    })
+  }
+
+  /**
+   * `PUT /projects/:id/caps { monthlyCostUsd, monthlyTokens }` — 💰 o teto do mês do projeto (todas as conversas dele, com
+   * qualquer chave); `null` = sem esse teto. Quem administra o projeto ou o gateway.
+   */
+  async setCaps(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const gatewayAdmin = (await checkAdminAccess(this.deps.proof)).allowed
+      const by = gatewayAdmin ? await this.requireAdmin('setProjectCaps') : await requireProjectAdmin(this.deps.proof, id, 'setProjectCaps')
+      const body = parseBody(capsSchema, req.body)
+      const caps = {
+        ...(body.monthlyCostUsd != null ? { monthlyCostUsd: body.monthlyCostUsd } : {}),
+        ...(body.monthlyTokens != null ? { monthlyTokens: body.monthlyTokens } : {}),
+      }
+      return this.deps.projects.setCaps(id, caps, by).models?.caps ?? {}
     })
   }
 

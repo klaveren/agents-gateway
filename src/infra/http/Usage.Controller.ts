@@ -26,6 +26,8 @@ export interface IUsageControllerDeps {
   cap?: UsageCapService
   /** O nome de cada projeto, na aba do ambiente. */
   projects?: { all(): Array<{ id: string; name: string }> }
+  /** 💰 O projeto dono de cada provider: o modelo pago com a chave de um projeto sai marcado (`projectKey`). */
+  providerProject?: (providerId: string) => string | undefined
   now?: () => Date
 }
 
@@ -82,7 +84,7 @@ export class UsageController {
       const byTool = await this.toolsOf(query)
       // ⚖️ Quem administra o gateway já vê o custo de todos: o seu também aparece aqui, com ou sem teto. Os outros, sem custo.
       if ((await adminView(this.deps.proof))?.gateway)
-        return { period, ...this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider)), ...(byTool ? { byTool } : {}) }
+        return { period, ...this.keyed(this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider))), ...(byTool ? { byTool } : {}) }
       return { period, ...withoutCost(this.service.summarize(rows, { days })), ...(byTool ? { byTool } : {}) }
     })
   }
@@ -125,7 +127,7 @@ export class UsageController {
       const byProject = this.service.byGroup(tagged, pricingOf).map((group) => ({ ...group, projectId: group.value, name: group.value ? names.get(group.value) : undefined }))
       return {
         period,
-        ...this.service.summarize(rows, { days }, pricingOf),
+        ...this.keyed(this.service.summarize(rows, { days }, pricingOf)),
         byProject,
         ...(await this.toolsOf(query, scope).then((byTool) => (byTool ? { byTool } : {}))),
       }
@@ -166,7 +168,7 @@ export class UsageController {
         ownerId,
         name: user?.name,
         email: user?.email ?? rows.find((row) => row.ownerEmail)?.ownerEmail,
-        ...this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider)),
+        ...this.keyed(this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider))),
         ...(await this.toolsOf(query, scope).then((byTool) => (byTool ? { byTool } : {}))),
       }
     })
@@ -202,7 +204,7 @@ export class UsageController {
       const rows = (await this.rows(this.grouped(range.query, key, req), scope)).filter((row) => (value === NO_VALUE ? row.group === undefined : row.group === value))
       const { days, period } = this.spanned(range, rows)
 
-      return { period, key, ...(value === NO_VALUE ? {} : { value }), ...this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider)) }
+      return { period, key, ...(value === NO_VALUE ? {} : { value }), ...this.keyed(this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider))) }
     })
   }
 
@@ -294,6 +296,13 @@ export class UsageController {
     if (query.groupBy === undefined) return admitted.map(({ group: _group, ...row }) => row)
     const ids = new Set(admitted.map((row) => row.conversationId))
     return (await this.deps.conversations.usage(query)).filter((row) => ids.has(row.conversationId))
+  }
+
+  /** 💰 Marca, por modelo, o que foi pago com a chave de um projeto (o provider do projeto), e não do gateway. */
+  private keyed<T extends { byModel: Array<{ provider: string }> }>(summary: T): T {
+    const owner = this.deps.providerProject
+    if (!owner) return summary
+    return { ...summary, byModel: summary.byModel.map((item) => (owner(item.provider) ? { ...item, projectKey: owner(item.provider) } : item)) }
   }
 
   private pricingOf(provider: string): TModelPricing {

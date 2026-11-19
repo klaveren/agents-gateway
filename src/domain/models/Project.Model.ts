@@ -65,6 +65,8 @@ export interface IProjectModels {
   modelGroups?: IModelGroup[]
   /** O grupo padrão do projeto (vence o do gateway); `none` = não troca. Ausente = o do gateway. */
   defaultModelGroup?: string
+  /** 💰 O teto do MÊS do projeto (todas as conversas dele, com qualquer chave). Ausente = sem teto. Ver `projectCapReached`. */
+  caps?: { monthlyCostUsd?: number; monthlyTokens?: number }
 }
 
 /** Um valor visível que o projeto dá a uma variável de um MCP (`server` = o id do MCP, como o agente o cita). */

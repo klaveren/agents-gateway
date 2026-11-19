@@ -75,6 +75,15 @@ describe('ProjectsService', () => {
     assert.strictEqual(service.setMemberModels('alfa', { byRole: { member: ['claude/haiku'] } }, 'root').models?.defaultModelGroup, 'global')
   })
 
+  it('💰 o teto do projeto: gravado sem mexer nas outras listas; vazio tira; número inválido é recusado', () => {
+    const { service } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    service.setAllowedModels('alfa', ['claude/haiku'], 'root')
+    assert.deepStrictEqual(service.setCaps('alfa', { monthlyCostUsd: 50 }, 'root').models, { allowed: ['claude/haiku'], caps: { monthlyCostUsd: 50 } })
+    assert.deepStrictEqual(service.setCaps('alfa', {}, 'root').models, { allowed: ['claude/haiku'] })
+    assert.throws(() => service.setCaps('alfa', { monthlyTokens: -1 }, 'root'), InvalidProjectError)
+  })
+
   it('⛔ canUse: só os membros — também o admin do gateway; projeto inexistente, ninguém', () => {
     const { service } = build()
     service.create({ id: 'alfa', name: 'Alfa' }, 'root')

@@ -122,7 +122,8 @@ export class SendMessageUseCase {
     // ⛔ A CONVERSA JÁ RESPONDE: recusa ANTES do turno ao vivo. Aberto e fechado, ele apagava o turno que roda de verdade
     // — a tela via a conversa parada e cada mensagem nova dava 409.
     if (described?.status === 'running') throw new SessionBusyError(sessionId)
-    const refused = await this.cap?.refusal((described?.metadata?.owner as { id?: string } | undefined)?.id)
+    const project = described?.metadata?.project
+    const refused = await this.cap?.refusal((described?.metadata?.owner as { id?: string } | undefined)?.id, typeof project === 'string' ? project : undefined)
     if (refused) throw new UsageCapReachedError(refused)
     const index = described?.turns
     const ticket = this.live?.start(sessionId, recorded.recordAs ?? recorded.text ?? '', described?.metadata)
@@ -345,7 +346,7 @@ export class SendMessageUseCase {
 
 /** Quem confere o teto de uso antes do turno (ver `UsageCap.Service`). */
 export interface IUsageCapGate {
-  refusal(ownerId?: string): Promise<string | undefined>
+  refusal(ownerId?: string, projectId?: string): Promise<string | undefined>
 }
 
 /** Quem mascara o turno (ver `Secret.Masker`). */
