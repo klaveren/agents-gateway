@@ -107,3 +107,13 @@ describe('ConversationPanel.Model', () => {
     assert.deepStrictEqual(normalizePanel('lixo'), emptyPanel())
   })
 })
+
+describe('board sem teto de quantidade', () => {
+  it('passa de 100 itens e de 60 decisões: o board acompanha a conversa inteira', () => {
+    let panel = emptyPanel()
+    const context = { by: 'zeus', now: new Date() }
+    for (let index = 0; index < 150; index++) panel = applyPanelOp(panel, { op: 'add', title: `item ${index}` }, context).panel
+    for (let index = 0; index < 80; index++) panel = applyPanelOp(panel, { op: 'decide', text: `decisão ${index}` } as TPanelOp, context).panel
+    assert.deepStrictEqual([panel.items.length, panel.decisions.length], [150, 80])
+  })
+})
