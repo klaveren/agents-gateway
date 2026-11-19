@@ -452,6 +452,8 @@ export interface IProviderStatus {
   protocol: TProvider
   baseUrl?: string
   official: boolean
+  /** 🔐 O projeto dono (o provider do projeto); ausente = do gateway. */
+  projectId?: string
   /** Fala pela assinatura de uma pessoa (Claude Pro/Max, ChatGPT, Google), sem chave de API. */
   subscription?: boolean
   enabled: boolean
