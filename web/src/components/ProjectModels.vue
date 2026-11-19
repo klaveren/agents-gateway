@@ -18,6 +18,7 @@
     allowed: string[] | null
     byRole?: Partial<Record<'admin' | 'member', string[]>>
     byUser?: Record<string, string[]>
+    caps?: { monthlyCostUsd?: number; monthlyTokens?: number }
     effective: string[] | null
   }
 
@@ -49,6 +50,26 @@
   )
   /** O que o projeto recebe agora (no rascunho): a base da lista dos papéis. */
   const projectKeys = computed(() => [...(allowedDraft.value ? gatewayKeys.value.filter((item) => allowedDraft.value!.has(item)) : gatewayKeys.value), ...ownKeys.value])
+  /** 💰 O teto do mês do projeto (vazio = sem esse teto). */
+  const capCost = ref('')
+  const capTokens = ref('')
+
+  async function saveCaps() {
+    busy.value = true
+    error.value = undefined
+    note.value = undefined
+    try {
+      const number = (value: string) => (value.trim() ? Number(value.replace(',', '.')) : null)
+      await api(`/projects/${encodeURIComponent(props.projectId)}/caps`, { method: 'PUT', body: { monthlyCostUsd: number(capCost.value), monthlyTokens: number(capTokens.value) } })
+      note.value = 'Teto do projeto salvo.'
+      await load()
+    } catch (failure) {
+      error.value = failure instanceof Error ? failure.message : String(failure)
+    } finally {
+      busy.value = false
+    }
+  }
+
   const userOverrides = computed(() => Object.keys(view.value?.byUser ?? {}).length)
 
   async function load() {
@@ -62,6 +83,8 @@
         await Promise.all(enabled.map(async (provider) => ({ provider, models: (await providers.models(provider.id).catch(() => [])).filter((model) => model.enabled) })))
       ).filter((group) => group.models.length)
       allowedDraft.value = models.allowed ? new Set(models.allowed) : null
+      capCost.value = models.caps?.monthlyCostUsd !== undefined ? String(models.caps.monthlyCostUsd) : ''
+      capTokens.value = models.caps?.monthlyTokens !== undefined ? String(models.caps.monthlyTokens) : ''
       roleDraft.value = {
         admin: models.byRole?.admin ? new Set(models.byRole.admin) : null,
         member: models.byRole?.member ? new Set(models.byRole.member) : null,
@@ -122,7 +145,9 @@
       permitido.
     </p>
     <p v-if="loading" class="text-sm text-zinc-500">Carregando…</p>
-    <p v-else-if="!groups.length && !projectAdmin" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">Nenhum modelo ligado no gateway ainda.</p>
+    <p v-else-if="!groups.length && !projectAdmin" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">
+      Nenhum modelo ligado no gateway ainda.
+    </p>
 
     <template v-else>
       <section v-if="gatewayAdmin" class="flex flex-col gap-2" data-test="project-models-gateway">
@@ -173,6 +198,36 @@
         <button type="button" class="btn btn-primary self-end" :disabled="busy" data-test="project-models-roles-save" @click="saveRoles">
           {{ busy ? 'Salvando…' : 'Salvar modelos por papel' }}
         </button>
+      </section>
+
+      <section v-if="projectAdmin || gatewayAdmin" class="flex flex-col gap-2" data-test="project-caps">
+        <h3 class="text-sm font-medium text-zinc-200">
+          Teto do mês
+          <span class="text-xs font-normal text-zinc-500">(todas as conversas do projeto, com qualquer chave)</span>
+        </h3>
+        <form class="flex flex-wrap items-center gap-2" @submit.prevent="saveCaps">
+          <label class="flex items-center gap-2 text-sm text-zinc-300">
+            US$
+            <input
+              v-model="capCost"
+              inputmode="decimal"
+              class="h-9 w-28 rounded-lg bg-zinc-950 px-3 text-sm ring-1 ring-zinc-800"
+              placeholder="sem teto"
+              aria-label="Teto em dólares"
+            />
+          </label>
+          <label class="flex items-center gap-2 text-sm text-zinc-300">
+            Tokens
+            <input
+              v-model="capTokens"
+              inputmode="numeric"
+              class="h-9 w-36 rounded-lg bg-zinc-950 px-3 text-sm ring-1 ring-zinc-800"
+              placeholder="sem teto"
+              aria-label="Teto em tokens"
+            />
+          </label>
+          <button type="submit" class="btn btn-sm btn-primary ml-auto" :disabled="busy" data-test="project-caps-save">Salvar teto</button>
+        </form>
       </section>
 
       <ProjectProviders v-if="projectAdmin" :project-id="projectId" @changed="load" />

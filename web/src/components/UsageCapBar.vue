@@ -18,7 +18,7 @@
     caps: { monthlyCostUsd?: number; userMonthlyCostUsd?: number; monthlyTokens?: number; userMonthlyTokens?: number }
     gateway?: ISpent
     user?: ISpent
-    reached?: { scope: 'gateway' | 'user'; kind: 'cost' | 'tokens' }
+    reached?: { scope: 'gateway' | 'user' | 'project'; kind: 'cost' | 'tokens' }
   }
 
   const status = ref<ICapStatus>()
@@ -39,7 +39,8 @@
       add('Gateway · tokens', tokens(gateway.tokens), tokens(caps.monthlyTokens), percent(gateway.tokens, caps.monthlyTokens))
     }
     if (user) {
-      if (user.costUsd !== undefined) add('Você · custo', `${user.costIsFloor ? '≥ ' : ''}${usd(user.costUsd)}`, usd(caps.userMonthlyCostUsd), percent(user.costUsd, caps.userMonthlyCostUsd))
+      if (user.costUsd !== undefined)
+        add('Você · custo', `${user.costIsFloor ? '≥ ' : ''}${usd(user.costUsd)}`, usd(caps.userMonthlyCostUsd), percent(user.costUsd, caps.userMonthlyCostUsd))
       else if (user.costPercent !== undefined) add('Você · custo', `${user.costPercent}%`, 'do teto', user.costPercent)
       add('Você · tokens', tokens(user.tokens), tokens(caps.userMonthlyTokens), percent(user.tokens, caps.userMonthlyTokens))
     }
@@ -63,14 +64,19 @@
         <span class="tabular-nums text-zinc-300">{{ row.used }} de {{ row.cap }} · {{ row.percent }}%</span>
       </div>
       <div class="h-1.5 overflow-hidden rounded-full bg-zinc-800">
-        <div class="h-full rounded-full" :class="row.percent >= 100 ? 'bg-rose-500' : row.percent >= 80 ? 'bg-amber-400' : 'bg-emerald-500'" :style="{ width: `${row.percent}%` }" />
+        <div
+          class="h-full rounded-full"
+          :class="row.percent >= 100 ? 'bg-rose-500' : row.percent >= 80 ? 'bg-amber-400' : 'bg-emerald-500'"
+          :style="{ width: `${row.percent}%` }"
+        />
       </div>
     </div>
     <p v-if="floorWarning" class="text-xs text-amber-300">
       ⚠ Há modelo usado sem preço cadastrado: o custo aparece menor do que é, e o teto em US$ pode não disparar. Cadastre os preços em Modelos.
     </p>
     <p v-if="status?.reached" class="text-xs text-rose-300">
-      {{ status.reached.scope === 'gateway' ? 'O gateway atingiu' : 'Você atingiu' }} o teto do mês: novas mensagens voltam no dia 1º, ou quando quem administra aumentar o teto.
+      {{ status.reached.scope === 'gateway' ? 'O gateway atingiu' : status.reached.scope === 'project' ? 'O projeto atingiu' : 'Você atingiu' }} o teto do mês: novas mensagens
+      voltam no dia 1º, ou quando quem administra aumentar o teto.
     </p>
   </section>
 </template>

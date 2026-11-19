@@ -531,7 +531,7 @@ export interface IUsageSummary {
   totals: IUsageFigure
   daily: Array<IUsageFigure & { date: string }>
   byAgent: Array<IUsageFigure & { agentId: string }>
-  byModel: Array<IUsageFigure & { provider: string; model: string }>
+  byModel: Array<IUsageFigure & { provider: string; model: string; projectKey?: string }>
   top: Array<IUsageFigure & { id: string; title?: string; agentId: string; provider: string; model: string }>
   /** ESTIMATIVA por ferramenta (o provedor não separa): diretos = argumentos + resultado; contexto = o resultado relido no turno. */
   byTool?: IToolUsage[]

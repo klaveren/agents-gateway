@@ -1,4 +1,4 @@
-import { capMessage, capReached, hasCaps, ICapHit, IUsageCaps, IUsageSpent, monthStart, usageCaps } from '@domain/Usage.Cap'
+import { capMessage, capReached, hasCaps, ICapHit, IUsageCaps, IUsageSpent, monthStart, projectCapReached, usageCaps } from '@domain/Usage.Cap'
 import { costOf, TModelPricing } from '@domain/models/Model.Pricing'
 import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
 
@@ -11,7 +11,15 @@ export interface IUsageCapStatus {
   since: string
   gateway: IUsageSpent
   user?: IUsageSpent
+  /** 💰 O do projeto da conversa (com qualquer chave), quando ele tem teto. */
+  project?: IUsageSpent & { id: string; caps: { monthlyCostUsd?: number; monthlyTokens?: number } }
   reached?: ICapHit
+}
+
+/** 💰 O teto por projeto (ver `IProjectModels.caps`) e de quem é cada provider (o de projeto não conta no do gateway). */
+export interface IUsageCapScopes {
+  projectCaps?: (projectId: string) => { monthlyCostUsd?: number; monthlyTokens?: number } | undefined
+  providerProject?: (providerId: string) => string | undefined
 }
 
 /**
@@ -26,29 +34,39 @@ export class UsageCapService {
     private readonly pricingOf: (provider: string) => TModelPricing,
     private readonly now: () => Date = () => new Date(),
     private readonly caps: () => IUsageCaps = () => usageCaps(),
+    private readonly scopes: IUsageCapScopes = {},
   ) {}
 
   /** O motivo da recusa, ou nada: o turno pode começar. */
-  async refusal(ownerId?: string): Promise<string | undefined> {
+  async refusal(ownerId?: string, projectId?: string): Promise<string | undefined> {
     const caps = this.caps()
-    if (!hasCaps(caps)) return undefined
-    const status = await this.status(ownerId, caps)
+    const projectCaps = projectId ? this.scopes.projectCaps?.(projectId) : undefined
+    if (!hasCaps(caps) && !projectCaps) return undefined
+    const status = await this.status(ownerId, caps, projectId)
     return status.reached ? capMessage(status.reached) : undefined
   }
 
-  async status(ownerId?: string, caps: IUsageCaps = this.caps()): Promise<IUsageCapStatus> {
+  /**
+   * ⚖️ O teto do GATEWAY conta só o que o gateway paga: o gasto com a chave de um projeto (o provider do projeto) fica fora
+   * dele — e entra no teto do projeto, que conta todas as conversas do projeto, com qualquer chave.
+   */
+  async status(ownerId?: string, caps: IUsageCaps = this.caps(), projectId?: string): Promise<IUsageCapStatus> {
     const since = monthStart(this.now())
     const rows = await this.rows(since)
-    const gateway = this.spent(rows)
-    const user = ownerId ? this.spent(rows.filter((row) => row.ownerId === ownerId)) : undefined
-    const reached = capReached(caps, gateway, user)
-    return { caps, since: since.toISOString(), gateway, ...(user ? { user } : {}), ...(reached ? { reached } : {}) }
+    const paidByGateway = rows.filter((row) => !this.scopes.providerProject?.(row.provider))
+    const gateway = this.spent(paidByGateway)
+    const user = ownerId ? this.spent(paidByGateway.filter((row) => row.ownerId === ownerId)) : undefined
+    const projectCaps = projectId ? this.scopes.projectCaps?.(projectId) : undefined
+    const project = projectId && projectCaps ? { id: projectId, caps: projectCaps, ...this.spent(rows.filter((row) => row.group === projectId)) } : undefined
+    const reached = capReached(caps, gateway, user) ?? (project ? projectCapReached(projectCaps, project) : undefined)
+    return { caps, since: since.toISOString(), gateway, ...(user ? { user } : {}), ...(project ? { project } : {}), ...(reached ? { reached } : {}) }
   }
 
   private async rows(since: Date): Promise<IUsageRow[]> {
     const at = this.now().getTime()
     if (this.cached && this.cached.since === since.getTime() && at - this.cached.at < CACHE_MS) return this.cached.rows
-    const rows = await this.usage({ since, tzOffsetMinutes: 0 })
+    // O projeto de cada linha (`group`) para o teto do projeto.
+    const rows = await this.usage({ since, tzOffsetMinutes: 0, groupBy: 'project' })
     this.cached = { at, since: since.getTime(), rows }
     return rows
   }

@@ -295,6 +295,7 @@ export function makeUsageController(conversations: AgentController['conversation
     accounts: makeAuth().accounts,
     cap,
     projects: makeProjects(),
+    providerProject: (providerId) => makeProviders().get(providerId)?.projectId,
   })
 }
 

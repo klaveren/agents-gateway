@@ -5915,6 +5915,21 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/caps': {
+      put: {
+        summary:
+          'The monthly cap of the project (`{ monthlyCostUsd, monthlyTokens }`; `null` = no such cap): all conversations of the project, with any key. New turns are refused once reached (until the 1st or a higher cap). Spending with a project key does not count toward the gateway caps. Project or gateway administrators',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { monthlyCostUsd: { type: 'number', nullable: true }, monthlyTokens: { type: 'integer', nullable: true } } }),
+        },
+        responses: {
+          '200': { description: 'OK: the caps', ...json(envelope({ type: 'object' })) },
+          '404': { description: 'Not an administrator', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
     '/projects/{id}/model-groups': {
       get: {
         summary:

@@ -229,6 +229,21 @@ export class ProjectsService {
     return this.projects.update(id, { models, updatedAt: this.now(), updatedBy: by })!
   }
 
+  /** 💰 O teto do mês do projeto (`undefined` em um campo = sem esse teto). Quem administra o projeto. */
+  setCaps(id: string, caps: { monthlyCostUsd?: number; monthlyTokens?: number }, by: string): IProject {
+    const project = this.get(id)
+    const issues = Object.entries(caps)
+      .filter(([, value]) => value !== undefined && !(Number.isFinite(value) && value > 0))
+      .map(([field]) => ({ field, message: 'a positive number, or empty for no cap' }))
+    if (issues.length) throw new InvalidProjectError(issues)
+    const { caps: _old, ...rest } = project.models ?? {}
+    const kept = {
+      ...(caps.monthlyCostUsd !== undefined ? { monthlyCostUsd: caps.monthlyCostUsd } : {}),
+      ...(caps.monthlyTokens !== undefined ? { monthlyTokens: caps.monthlyTokens } : {}),
+    }
+    return this.projects.update(id, { models: { ...rest, ...(Object.keys(kept).length ? { caps: kept } : {}) }, updatedAt: this.now(), updatedBy: by })!
+  }
+
   /** 🎨 A paleta do destaque da tela no projeto (`undefined` = o verde do tema). Desta máquina: sem revisão no catálogo. */
   setColor(id: string, color: TProjectColor | undefined, by: string): IProject {
     this.get(id)

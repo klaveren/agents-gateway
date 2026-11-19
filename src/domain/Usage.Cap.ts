@@ -22,7 +22,7 @@ export interface IUsageSpent {
 
 /** O teto que bateu: de quem (o gateway ou a pessoa), do quê, quanto é e quanto já foi. */
 export interface ICapHit {
-  scope: 'gateway' | 'user'
+  scope: 'gateway' | 'user' | 'project'
   kind: 'cost' | 'tokens'
   cap: number
   used: number
@@ -59,6 +59,13 @@ export function capReached(caps: IUsageCaps, gateway: IUsageSpent, user?: IUsage
   return undefined
 }
 
+/** 🔐 O teto do PROJETO (ver `IProjectModels.caps`): o gasto do mês de todas as conversas dele, com qualquer chave. */
+export function projectCapReached(caps: { monthlyCostUsd?: number; monthlyTokens?: number } | undefined, spent: IUsageSpent): ICapHit | undefined {
+  if (caps?.monthlyCostUsd !== undefined && spent.costUsd >= caps.monthlyCostUsd) return { scope: 'project', kind: 'cost', cap: caps.monthlyCostUsd, used: spent.costUsd }
+  if (caps?.monthlyTokens !== undefined && spent.tokens >= caps.monthlyTokens) return { scope: 'project', kind: 'tokens', cap: caps.monthlyTokens, used: spent.tokens }
+  return undefined
+}
+
 /** O começo do mês, em UTC: de onde o teto conta. */
 export function monthStart(now: Date): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
@@ -66,7 +73,7 @@ export function monthStart(now: Date): Date {
 
 /** A recusa, em português (a tela mostra como veio). */
 export function capMessage(hit: ICapHit): string {
-  const who = hit.scope === 'gateway' ? 'O gateway' : 'Você'
+  const who = hit.scope === 'gateway' ? 'O gateway' : hit.scope === 'project' ? 'O projeto' : 'Você'
   const amount = hit.kind === 'cost' ? `US$ ${hit.cap.toLocaleString('pt-BR')}` : `${hit.cap.toLocaleString('pt-BR')} tokens`
-  return `${who} atingiu o teto de uso do mês (${amount}). Novas mensagens voltam no dia 1º, ou quando quem administra aumentar o teto em Configuração → Limites.`
+  return `${who} atingiu o teto de uso do mês (${amount}). Novas mensagens voltam no dia 1º, ou quando quem administra aumentar o teto ${hit.scope === 'project' ? 'em Projeto → Modelos' : 'em Configuração → Limites'}.`
 }

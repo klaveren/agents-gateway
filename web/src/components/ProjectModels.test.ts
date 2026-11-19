@@ -153,4 +153,18 @@ describe('ProjectModels', () => {
       'OpenRouter',
     ])
   })
+  it('💰 o teto do mês: mostra o gravado e salva (vazio = sem teto)', async () => {
+    const host = mount({ allowed: null, byRole: {}, byUser: {}, caps: { monthlyCostUsd: 50 }, effective: null }, { gatewayAdmin: false, projectAdmin: true })
+    await flush()
+    const section = host.querySelector('[data-test="project-caps"]')!
+    const [cost, tokens] = [...section.querySelectorAll<HTMLInputElement>('input')]
+    expect([cost.value, tokens.value]).toEqual(['50', ''])
+    tokens.value = '2000000'
+    tokens.dispatchEvent(new Event('input'))
+    cost.value = ''
+    cost.dispatchEvent(new Event('input'))
+    host.querySelector<HTMLButtonElement>('[data-test="project-caps-save"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/caps', { method: 'PUT', body: { monthlyCostUsd: null, monthlyTokens: 2000000 } })
+  })
 })

@@ -99,6 +99,7 @@
               <div class="flex items-baseline gap-2 text-sm">
                 <span class="truncate font-mono text-[13px] text-zinc-200">{{ item.model }}</span>
                 <span class="shrink-0 text-xs text-zinc-500">{{ protocols.providerName(item.provider) }}</span>
+                <span v-if="item.projectKey" class="shrink-0 rounded-full bg-sky-500/15 px-1.5 text-[10px] text-sky-300" title="Pago com a chave do projeto">chave do projeto</span>
                 <span class="ml-auto shrink-0 text-xs text-zinc-400">
                   {{ tokens(item.usage.totalTokens) }}
                   <template v-if="showCost">· {{ cost(item) }}</template>

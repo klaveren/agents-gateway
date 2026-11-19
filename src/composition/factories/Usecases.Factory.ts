@@ -1,3 +1,5 @@
+import { makeProviders } from './Providers.Factory'
+import { makeProjects } from './Projects.Factory'
 import { projectMcpEnv } from './ProjectVariables.Factory'
 import { makeSecretMasker } from './SecretMask.Factory'
 import { ResumeSessionUseCase } from '@application/ResumeSession.Usecase'
@@ -37,6 +39,18 @@ export function makeUsecases() {
   const usageCap = new UsageCapService(
     (query) => conversations.usage(query),
     (provider) => makeModelCatalog().pricing(provider),
+    undefined,
+    undefined,
+    {
+      projectCaps: (projectId) => {
+        try {
+          return makeProjects().get(projectId).models?.caps
+        } catch {
+          return undefined
+        }
+      },
+      providerProject: (providerId) => makeProviders().get(providerId)?.projectId,
+    },
   )
   const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier(), makeSecretMasker(), live, usageCap, makeSuggester())
   // A delegação usa os MESMOS casos de uso: a conversa filha é gravada e avisada como qualquer outra.

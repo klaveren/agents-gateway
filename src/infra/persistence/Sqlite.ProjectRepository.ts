@@ -240,6 +240,7 @@ function modelsJson(models: IProjectModels | undefined): string | null {
     ...(Object.keys(byUser).length ? { byUser } : {}),
     ...(models.modelGroups?.length ? { modelGroups: models.modelGroups } : {}),
     ...(models.defaultModelGroup ? { defaultModelGroup: models.defaultModelGroup } : {}),
+    ...(models.caps && (models.caps.monthlyCostUsd !== undefined || models.caps.monthlyTokens !== undefined) ? { caps: models.caps } : {}),
   }
   return Object.keys(kept).length ? JSON.stringify(kept) : null
 }
@@ -256,9 +257,19 @@ function modelsOf(value: unknown): IProjectModels | undefined {
       ...(Object.keys(map(parsed.byUser)).length ? { byUser: map(parsed.byUser) } : {}),
       ...(Array.isArray(parsed.modelGroups) && parsed.modelGroups.length ? { modelGroups: parsed.modelGroups } : {}),
       ...(typeof parsed.defaultModelGroup === 'string' && parsed.defaultModelGroup ? { defaultModelGroup: parsed.defaultModelGroup } : {}),
+      ...(parsed.caps && typeof parsed.caps === 'object' ? { caps: capsOf(parsed.caps) } : {}),
     }
     return Object.keys(models).length ? models : undefined
   } catch {
     return undefined
   }
+}
+
+/** O teto do projeto lido do banco: só números positivos. */
+function capsOf(value: unknown): { monthlyCostUsd?: number; monthlyTokens?: number } {
+  const raw = value as Record<string, unknown>
+  const positive = (item: unknown) => (typeof item === 'number' && Number.isFinite(item) && item > 0 ? item : undefined)
+  const cost = positive(raw.monthlyCostUsd)
+  const tokens = positive(raw.monthlyTokens)
+  return { ...(cost !== undefined ? { monthlyCostUsd: cost } : {}), ...(tokens !== undefined ? { monthlyTokens: tokens } : {}) }
 }

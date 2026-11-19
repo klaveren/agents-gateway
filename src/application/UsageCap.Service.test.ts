@@ -67,3 +67,34 @@ describe('UsageCapService', () => {
     assert.strictEqual(reads(), 1)
   })
 })
+
+describe('UsageCapService — 💰 o teto do projeto e a chave do projeto', () => {
+  const at = (ownerId: string, tokens: number, project: string, provider = 'p'): IUsageRow => ({
+    ...row(ownerId, tokens, 0),
+    conversationId: `c-${ownerId}-${tokens}-${provider}`,
+    group: project,
+    provider,
+  })
+  const build = (caps: object, rows: IUsageRow[], projectCaps: Record<string, { monthlyTokens?: number; monthlyCostUsd?: number }>) =>
+    new UsageCapService(
+      async (query) => (assert.strictEqual(query.groupBy, 'project'), rows),
+      () => pricing,
+      () => new Date('2026-11-09T12:00:00Z'),
+      () => caps,
+      { projectCaps: (id) => projectCaps[id], providerProject: (provider) => (provider === 'alfa--openai' ? 'alfa' : undefined) },
+    )
+
+  it('o teto do projeto conta todas as conversas dele (qualquer chave) e recusa só nele', async () => {
+    const service = build({}, [at('ana', 600_000, 'alfa'), at('bia', 500_000, 'alfa', 'alfa--openai'), at('caio', 5_000_000, 'beta')], { alfa: { monthlyTokens: 1_000_000 } })
+    assert.match((await service.refusal('ana', 'alfa'))!, /O projeto atingiu o teto de uso do mês \(1\.000\.000 tokens\).*Projeto → Modelos/)
+    assert.strictEqual(await service.refusal('caio', 'beta'), undefined, 'beta sem teto')
+    assert.strictEqual(await service.refusal('ana'), undefined, 'conversa sem projeto')
+  })
+
+  it('⚖️ o gasto com a chave de um projeto não conta no teto do gateway', async () => {
+    const service = build({ monthlyTokens: 1_000_000 }, [at('ana', 600_000, 'alfa'), at('bia', 900_000, 'alfa', 'alfa--openai')], {})
+    const status = await service.status('ana', undefined, 'alfa')
+    assert.strictEqual(status.gateway.tokens, 600_000)
+    assert.strictEqual(status.reached, undefined)
+  })
+})

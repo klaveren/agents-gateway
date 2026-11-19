@@ -491,6 +491,7 @@ function buildRoutes(
     { method: 'get', path: '/projects/:id/models', handler: projects.models },
     { method: 'put', path: '/projects/:id/models', handler: projects.setAllowedModels },
     { method: 'put', path: '/projects/:id/member-models', handler: projects.setMemberModels },
+    { method: 'put', path: '/projects/:id/caps', handler: projects.setCaps },
     { method: 'delete', path: '/projects/:id', handler: projects.remove },
     { method: 'get', path: '/projects/:id/members', handler: projects.members },
     { method: 'get', path: '/projects/:id/repositories', handler: projects.repositories },
