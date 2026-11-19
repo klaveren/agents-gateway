@@ -122,6 +122,8 @@ export const updateSettingsSchema = z.object({
   classifierProvider: clearable,
   suggestProvider: clearable,
   suggestModel: clearable,
+  imageProvider: clearable,
+  imageModel: clearable,
   builderProvider: clearable,
   builderModel: clearable,
   classifyTurns: z.boolean().nullable().optional(),

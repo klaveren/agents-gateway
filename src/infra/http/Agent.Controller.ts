@@ -483,6 +483,8 @@ export class AgentController {
     classifierProvider?: string | null
     suggestProvider?: string | null
     suggestModel?: string | null
+    imageProvider?: string | null
+    imageModel?: string | null
     builderProvider?: string | null
     builderModel?: string | null
     modelGroups?: IModelGroup[] | null
@@ -561,6 +563,20 @@ export class AgentController {
       else if (suggester && !suggester.key) issues.push({ field: 'suggestProvider', message: `${suggester.providerId} has no API key` })
       else if (suggestProvider && suggestModel && this.usecases.models && !this.usecases.models.isEnabled(suggestProvider, suggestModel))
         issues.push({ field: 'suggestModel', message: `${suggestModel} is not enabled in ${suggestProvider}` })
+    }
+
+    // 🖼️ O modelo de imagem: os dois juntos (ou nenhum = sem imagem), provider OpenAI ou Google com chave e modelo ativado.
+    const imageProvider = body.imageProvider === undefined ? current.imageProvider : body.imageProvider || undefined
+    const imageModel = body.imageModel === undefined ? current.imageModel : body.imageModel || undefined
+    if (body.imageProvider !== undefined || body.imageModel !== undefined) {
+      const image = imageProvider ? this.usecases.providers?.connection(imageProvider) : undefined
+      if (!!imageProvider !== !!imageModel) issues.push({ field: 'imageModel', message: 'choose the provider and the model together (or neither: no images)' })
+      else if (imageProvider && this.usecases.providers && !image) issues.push({ field: 'imageProvider', message: `${imageProvider} is disabled or does not exist` })
+      else if (image && image.protocol !== EProvider.OPENAI && image.protocol !== EProvider.GOOGLE)
+        issues.push({ field: 'imageProvider', message: `${image.providerId} does not generate images here: use an OpenAI or Google provider (API key)` })
+      else if (image && !image.key) issues.push({ field: 'imageProvider', message: `${image.providerId} has no API key` })
+      else if (imageProvider && imageModel && this.usecases.models && !this.usecases.models.isEnabled(imageProvider, imageModel))
+        issues.push({ field: 'imageModel', message: `${imageModel} is not enabled in ${imageProvider}` })
     }
 
     // O construtor: os dois juntos, provider ligado e modelo ativado nele (ou nenhum dos dois = o do Atlas).
