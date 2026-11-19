@@ -59,13 +59,37 @@ export function modelListIssues(field: string, list: readonly string[]): Array<{
  * ⛔ O admin do projeto só RESTRINGE: a lista de um papel ou pessoa tem de caber no que o projeto recebeu. O que o gateway
  * tirou depois sai da lista sozinho na leitura (ver `memberAllows`), sem invalidar o que já estava salvo.
  */
-export function memberModelsIssues(allowed: readonly string[] | undefined, members: Pick<IProjectModels, 'byRole' | 'byUser'>): Array<{ field: string; message: string }> {
+export function memberModelsIssues(
+  allowed: readonly string[] | undefined,
+  members: Pick<IProjectModels, 'byRole' | 'byUser'>,
+  /** O modelo de um provider do próprio projeto: fica fora da lista do gateway. */
+  own: (key: string) => boolean = () => false,
+): Array<{ field: string; message: string }> {
   const issues: Array<{ field: string; message: string }> = []
   const check = (field: string, list: readonly string[]) => {
     issues.push(...modelListIssues(field, list))
-    if (allowed) for (const key of list) if (!allowed.includes(key)) issues.push({ field, message: `"${key}" was not released to this project` })
+    if (allowed) for (const key of list) if (!allowed.includes(key) && !own(key)) issues.push({ field, message: `"${key}" was not released to this project` })
   }
   for (const [role, list] of Object.entries(members.byRole ?? {})) if (list) check(`byRole.${role}`, list)
   for (const [userId, list] of Object.entries(members.byUser ?? {})) check(`byUser.${userId}`, list)
   return issues
+}
+
+/**
+ * 🔐 O filtro de UMA conversa: pode este `provider/modelo`? `ownerOf` diz o projeto dono do provider (o provider de
+ * projeto, fase 2). ⛔ O provider de um projeto só roda em conversa dele — e lá a lista do gateway não vale (o provider é
+ * do projeto), só a do papel ou da pessoa. Conversa sem projeto: nenhum provider de projeto.
+ */
+export function conversationModelFilter(
+  projectId: string | undefined,
+  models: IProjectModels | undefined,
+  member: { userId?: string; role?: TProjectRole },
+  ownerOf: (provider: string) => string | undefined,
+): (provider: string, model: string) => boolean {
+  return (provider, model) => {
+    const owner = ownerOf(provider)
+    if (!projectId) return !owner
+    if (owner) return owner === projectId && memberAllows({ ...models, allowed: undefined }, member, provider, model)
+    return memberAllows(models, member, provider, model)
+  }
 }

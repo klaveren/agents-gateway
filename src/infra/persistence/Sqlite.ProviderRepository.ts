@@ -38,6 +38,9 @@ export class SqliteProviderRepository implements IProviderRepository {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    // 🔐 O projeto dono (o provider do projeto, ver `IProviderConfig.projectId`); NULL = do gateway.
+    const columns = this.db.prepare('PRAGMA table_info(providers)').all() as TRow[]
+    if (!columns.some((column) => column.name === 'project_id')) this.db.exec('ALTER TABLE providers ADD COLUMN project_id TEXT')
 
     const now = new Date().toISOString()
     const seed = this.db.prepare('INSERT OR IGNORE INTO providers (id, name, protocol, base_url, official, enabled, created_at, updated_at) VALUES (?, ?, ?, NULL, 1, ?, ?, ?)')
@@ -59,7 +62,7 @@ export class SqliteProviderRepository implements IProviderRepository {
 
   insert(provider: IProviderConfig): void {
     this.db
-      .prepare('INSERT INTO providers (id, name, protocol, base_url, official, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .prepare('INSERT INTO providers (id, name, protocol, base_url, official, enabled, created_at, updated_at, updated_by, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(
         provider.id,
         provider.name,
@@ -70,6 +73,7 @@ export class SqliteProviderRepository implements IProviderRepository {
         provider.createdAt.toISOString(),
         provider.updatedAt.toISOString(),
         provider.updatedBy ?? null,
+        provider.projectId ?? null,
       )
   }
 
@@ -100,6 +104,7 @@ function toProvider(row: TRow): IProviderConfig {
     baseUrl: typeof row.base_url === 'string' && row.base_url ? row.base_url : undefined,
     official: Number(row.official) === 1,
     enabled: Number(row.enabled) === 1,
+    ...(typeof row.project_id === 'string' && row.project_id ? { projectId: row.project_id } : {}),
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),
     updatedBy: typeof row.updated_by === 'string' ? row.updated_by : undefined,

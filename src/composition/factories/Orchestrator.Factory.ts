@@ -1,5 +1,5 @@
 import { IProjectModels, readsEnvFiles } from '@domain/models/Project.Model'
-import { memberAllows } from '@domain/ModelAccess.Policy'
+import { conversationModelFilter } from '@domain/ModelAccess.Policy'
 import { projectFixedEnv } from './ProjectVariables.Factory'
 import { markAnswersDelivered } from '@domain/models/ConversationPanel.Model'
 import type { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
@@ -147,18 +147,20 @@ export function makeOrchestrator(): AgentProvider {
   // 🖥️ O agente de máquina sabe que é (o "## Ambiente"): a mesma decisão das permissões.
   provider.useMachine((projectId, agentId) => makePermissions().layers({ projectId, agentId }).machine === true)
   // 🔐 Os modelos do projeto e da pessoa (ver `ModelAccess.Policy`): projeto sem lista não filtra nada.
+  // ⛔ O provider de um PROJETO só roda em conversa dele (ver `IProviderConfig.projectId`): fora, nunca; dentro, a lista do
+  // papel ou da pessoa ainda vale, e a do gateway (`allowed`) não — o provider é do projeto.
   provider.useModelAccess((projectId, ownerId) => {
-    if (!projectId) return undefined
+    const ownerOf = (providerId: string) => makeProviders().get(providerId)?.projectId
+    if (!projectId) return conversationModelFilter(undefined, undefined, {}, ownerOf)
     const projects = makeProjects()
     let models: IProjectModels | undefined
     try {
       models = projects.get(projectId).models
     } catch {
-      return undefined
+      models = undefined
     }
-    if (!models) return undefined
     const role = projects.roleOf(projectId, ownerId)
-    return (provider, model) => memberAllows(models, { ...(ownerId ? { userId: ownerId } : {}), ...(role ? { role } : {}) }, provider, model)
+    return conversationModelFilter(projectId, models, { ...(ownerId ? { userId: ownerId } : {}), ...(role ? { role } : {}) }, ownerOf)
   })
   // 🔁 Os grupos de fallback do projeto da conversa: procurados antes dos do gateway.
   provider.useProjectGroups((projectId) => {

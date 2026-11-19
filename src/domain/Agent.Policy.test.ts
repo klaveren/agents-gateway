@@ -38,6 +38,19 @@ describe('agentIssues', () => {
     assert.deepStrictEqual(on({}), [], 'global: quem filtra é a conversa')
   })
 
+  it('🔐 o provider de um projeto é só dos agentes dele: nem global, nem de outro projeto', () => {
+    const on = (projectId: string | undefined) =>
+      agentIssues(agent({ allowedTools: [], ...(projectId ? { projectId } : {}), providers: [{ provider: 'alfa--openai', models: ['gpt'] }] }), {
+        ...rules,
+        protocolOf: () => EProvider.OPENAI,
+        modelEnabled: () => true,
+        providerProject: (provider) => (provider === 'alfa--openai' ? 'alfa' : undefined),
+      }).map((issue) => issue.message)
+    assert.deepStrictEqual(on('alfa'), [])
+    assert.deepStrictEqual(on('beta'), ['alfa--openai: belongs to project alfa'])
+    assert.deepStrictEqual(on(undefined), ['alfa--openai: belongs to project alfa'])
+  })
+
   it('desligar ferramenta automática (`off:`) só vale para as automáticas', () => {
     const rules = { takenIds: [], knownTools: ['run_bash'] }
     const base = { id: 'a1', name: 'A', providers: [{ provider: EProvider.CLAUDE, models: ['m'] }], systemPrompt: 'p', modes: [EMode.AGENT] }

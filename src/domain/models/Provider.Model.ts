@@ -18,6 +18,11 @@ export interface IProviderConfig {
   /** Um dos três oficiais: não se apaga, e o protocolo e a URL não mudam. */
   official: boolean
   enabled: boolean
+  /**
+   * 🔐 O PROJETO dono do provider (ver `plano-modelos-por-projeto.md`, fase 2): só roda em conversa dele, com a chave dele, e
+   * quem o administra é o admin do projeto. Ausente = do gateway.
+   */
+  projectId?: string
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

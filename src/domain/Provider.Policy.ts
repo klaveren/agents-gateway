@@ -60,3 +60,20 @@ function baseUrlIssue(raw: string): string | undefined {
 export function normalizeBaseUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, '')
 }
+
+/**
+ * 🔐 OS PROVIDERS QUE UM PROJETO PODE CADASTRAR (fase 2 dos modelos por projeto): só provedores CONHECIDOS, com a URL fixa
+ * daqui — a URL livre (um compatível qualquer) mandaria a chave e as conversas para onde o admin do projeto quisesse,
+ * inclusive a rede interna. Assinaturas ficam no gateway (o login mora na máquina).
+ */
+export const PROJECT_PROVIDER_KINDS = {
+  anthropic: { name: 'Anthropic', protocol: EProvider.CLAUDE, baseUrl: 'https://api.anthropic.com' },
+  openai: { name: 'OpenAI', protocol: EProvider.OPENAI, baseUrl: 'https://api.openai.com/v1' },
+  openrouter: { name: 'OpenRouter', protocol: EProvider.OPENAI, baseUrl: 'https://openrouter.ai/api/v1' },
+} as const
+export type TProjectProviderKind = keyof typeof PROJECT_PROVIDER_KINDS
+
+/** O id do provider de um projeto: `<projeto>--<tipo>` (dois hífens: não colide com id de provider do gateway por acaso). */
+export function projectProviderId(projectId: string, kind: TProjectProviderKind): string {
+  return `${projectId}--${kind}`
+}
