@@ -16,6 +16,7 @@
   const KINDS = [
     { id: 'anthropic' as const, label: 'Anthropic' },
     { id: 'openai' as const, label: 'OpenAI' },
+    { id: 'google' as const, label: 'Google' },
     { id: 'openrouter' as const, label: 'OpenRouter' },
   ]
 

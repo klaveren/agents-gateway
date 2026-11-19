@@ -74,7 +74,7 @@ export class ProvidersService implements IProviderDirectory {
     const id = projectProviderId(projectId, kind)
     if (this.providers.get(id)) throw new InvalidProviderError([{ field: 'kind', message: `this project already has ${known.name}` }])
     const label = (name ?? '').trim() || known.name
-    const issues = providerIssues({ name: label, baseUrl: known.baseUrl }, [])
+    const issues = providerIssues({ name: label, ...(known.baseUrl ? { baseUrl: known.baseUrl } : {}) }, [])
     if (issues.length) throw new InvalidProviderError(issues)
     const now = this.now()
     const provider: IProviderConfig = {

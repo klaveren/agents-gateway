@@ -60,7 +60,7 @@ export const useProvidersStore = defineStore('providers', () => {
   }
 
   /** 🔐 Um provider do projeto (Anthropic, OpenAI ou OpenRouter, URL fixa); a chave, se vier, só pela tela. */
-  async function createForProject(projectId: string, input: { kind: 'anthropic' | 'openai' | 'openrouter'; name?: string; key?: string }): Promise<IProviderStatus> {
+  async function createForProject(projectId: string, input: { kind: 'anthropic' | 'openai' | 'google' | 'openrouter'; name?: string; key?: string }): Promise<IProviderStatus> {
     const created = await api<IProviderStatus>(`/projects/${encodeURIComponent(projectId)}/providers`, { method: 'POST', body: input })
     put(created)
     return created
