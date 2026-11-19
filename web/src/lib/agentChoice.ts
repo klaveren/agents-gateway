@@ -49,3 +49,16 @@ export function levelsOf(agent: Pick<IAgent, 'providers' | 'reasoningEfforts'>, 
   if (!provider) return []
   return (choice?.model ? provider.modelReasoning?.[choice.model] : undefined) ?? provider.reasoningEfforts ?? []
 }
+
+/**
+ * 🔐 O agente com os modelos que a pessoa pode usar no projeto (`effective`; `null`/ausente = todos). O servidor recusa o
+ * resto; aqui a tela só não oferece. Sem nenhum modelo, o agente fica indisponível, com o motivo.
+ */
+export function withAllowedModels<T extends Pick<IAgent, 'providers' | 'unavailable'>>(agent: T, effective: readonly string[] | null | undefined): T {
+  if (!effective) return agent
+  const providers = agent.providers
+    .map((provider) => ({ ...provider, models: provider.models.filter((model) => effective.includes(`${provider.id}/${model}`)) }))
+    .filter((provider) => provider.models.length)
+  if (providers.length) return { ...agent, providers }
+  return { ...agent, unavailable: agent.unavailable ?? { reason: 'no_model', label: 'Nenhum modelo dele está liberado para você neste projeto' } }
+}

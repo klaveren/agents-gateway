@@ -2,7 +2,7 @@
   import { computed, onMounted, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import { useResource } from '@/composables/useResource'
-  import { levelsOf, type IChoice } from '@/lib/agentChoice'
+  import { levelsOf, withAllowedModels, type IChoice } from '@/lib/agentChoice'
   import { useAgentCommands } from '@/lib/commands'
   import { effortLabel } from '@/lib/format'
   import type { TMode } from '@/lib/types'
@@ -57,7 +57,11 @@
    * Os agentes que a tela mostra (nunca subagente) e, entre eles, os que abrem conversa agora. O membro só
    * recebe ativos; o admin recebe todos, e os inativos aparecem desabilitados com o motivo.
    */
-  const listed = computed(() => [...agents.conversable].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })))
+  // 🔐 Só os modelos que a pessoa pode usar neste projeto (o servidor recusa o resto).
+  const { data: modelAccess } = useResource(projects.modelAccess, () => projects.current || undefined)
+  const listed = computed(() =>
+    [...agents.conversable].map((option) => withAllowedModels(option, modelAccess.value?.effective)).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' })),
+  )
   const usable = computed(() => listed.value.filter((option) => !option.unavailable))
   const agent = computed(() => usable.value.find((option) => option.id === draft.value?.agentId))
   /** Os `/commands` do agente escolhido (o autocompletar da caixa). */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { choiceKey, levelsOf, offers, parseChoice, resolveChoice } from './agentChoice'
+import { choiceKey, levelsOf, offers, parseChoice, resolveChoice, withAllowedModels } from './agentChoice'
 import type { IAgent } from './types'
 
 const agent: Pick<IAgent, 'providers' | 'reasoningEfforts'> = {
@@ -33,5 +33,22 @@ describe('agentChoice', () => {
     expect(levelsOf(agent, { provider: 'claude-sub', model: 'opus' })).toEqual(['low'])
     expect(levelsOf(agent, { provider: 'claude', model: 'sonnet' })).toEqual(['low', 'high'])
     expect(levelsOf(agent, undefined)).toEqual([])
+  })
+})
+
+describe('🔐 withAllowedModels', () => {
+  const base = {
+    providers: [
+      { id: 'claude', name: 'Claude', models: ['opus', 'haiku'], pricing: {} },
+      { id: 'codex', name: 'Codex', models: ['sol'], pricing: {} },
+    ],
+  } as never
+  it('sem lista, o agente como está; com lista, só os liberados (e some o provider sem nenhum)', () => {
+    expect(withAllowedModels(base, null)).toBe(base)
+    const filtered = withAllowedModels(base, ['claude/haiku']) as { providers: Array<{ id: string; models: string[] }> }
+    expect(filtered.providers.map((provider) => [provider.id, provider.models])).toEqual([['claude', ['haiku']]])
+  })
+  it('nenhum liberado: fica indisponível, com o motivo', () => {
+    expect((withAllowedModels(base, ['outro/x']) as { unavailable?: { label: string } }).unavailable?.label).toMatch(/neste projeto/)
   })
 })

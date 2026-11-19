@@ -8,6 +8,7 @@ import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { requireProjectAdmin } from './Project.Access'
+import { memberList } from '@domain/ModelAccess.Policy'
 import { parseBody } from './Request.Parser'
 import { viaAccessToken } from './Auth.Controller'
 import { viaSessionCookie } from './Session.Cookie'
@@ -41,6 +42,13 @@ const updateSchema = z.object({
 })
 const colorSchema = z.object({ color: z.enum(PROJECT_COLORS).nullable() })
 const envFilesSchema = z.object({ agents: z.array(z.string().min(1).max(200)).max(500) })
+/** 🔐 Os modelos que o gateway libera ao projeto (`provider/modelo`); `null` = tudo. */
+const allowedModelsSchema = z.object({ allowed: z.array(z.string().min(3).max(300)).max(2000).nullable() })
+/** 🔐 As listas de cada papel e pessoa (inteiras). */
+const memberModelsSchema = z.object({
+  byRole: z.record(z.string().max(20), z.array(z.string().min(3).max(300)).max(2000)).optional(),
+  byUser: z.record(z.string().max(80), z.array(z.string().min(3).max(300)).max(2000)).optional(),
+})
 /** A lista inteira de membros, com o papel (`members`); `userIds` (sem papel) segue aceito: cada um fica com o que tinha. */
 const membersSchema = z
   .object({
@@ -88,6 +96,9 @@ export class ProjectsController {
       'setColor',
       'setEnvFiles',
       'setMachineAgents',
+      'models',
+      'setAllowedModels',
+      'setMemberModels',
       'remove',
       'members',
       'setMembers',
@@ -240,6 +251,55 @@ export class ProjectsController {
       const agents = parseBody(envFilesSchema, req.body).agents
       if (agents.length && !this.machineOn()) throw new HttpError(409, 'machine_agents_off', 'Os agentes de máquina estão desligados: ligue em Sistema → Configurações.')
       return this.toDto(this.deps.projects.setMachineAgents(id, agents, by), 'admin')
+    })
+  }
+
+  /**
+   * `GET /projects/:id/models` — 🔐 os modelos do projeto (ver `ModelAccess.Policy`). Quem administra (o projeto ou o
+   * gateway) lê as listas inteiras; todo membro lê o que ELE pode usar (`effective`; `null` = tudo o que o gateway liga).
+   */
+  async models(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const caller = await this.caller()
+      const gatewayAdmin = (await checkAdminAccess(this.deps.proof)).allowed
+      const role = this.deps.projects.exists(id) ? this.deps.projects.roleOf(id, caller.userId) : undefined
+      if (!role && !gatewayAdmin) throw new HttpError(404, 'not_found', 'Not found')
+      const models = this.deps.projects.get(id).models
+      const list = memberList(models, { ...(caller.userId ? { userId: caller.userId } : {}), ...(role ? { role } : {}) })
+      const allowed = models?.allowed
+      const effective = list ? list.filter((key) => !allowed || allowed.includes(key)) : (allowed ?? null)
+      return {
+        allowed: allowed ?? null,
+        ...(gatewayAdmin || role === 'admin' ? { byRole: models?.byRole ?? {}, byUser: models?.byUser ?? {} } : {}),
+        effective,
+      }
+    })
+  }
+
+  /**
+   * `PUT /projects/:id/models { allowed }` — 🔐 os modelos que o admin do GATEWAY libera ao projeto (`null` = tudo). ⛔ Só
+   * na TELA: liberar amplia o que o projeto usa, e nem token nem agente amplia.
+   */
+  async setAllowedModels(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const by = await this.requireAdmin('setProjectModels')
+      if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só o administrador do gateway, entrando pela tela, libera modelos ao projeto.')
+      const { allowed } = parseBody(allowedModelsSchema, req.body)
+      return this.deps.projects.setAllowedModels(req.params.id as string, allowed ?? undefined, by).models ?? {}
+    })
+  }
+
+  /**
+   * `PUT /projects/:id/member-models { byRole, byUser }` — 🔐 o que o admin do PROJETO libera a cada papel e pessoa, sempre
+   * dentro do que o projeto recebeu (as listas inteiras; ausente = tudo do projeto). ⛔ Só na tela.
+   */
+  async setMemberModels(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const by = await requireProjectAdmin(this.deps.proof, id, 'setProjectMemberModels')
+      if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem administra o projeto, entrando pela tela, libera modelos aos membros.')
+      return this.deps.projects.setMemberModels(id, parseBody(memberModelsSchema, req.body), by).models ?? {}
     })
   }
 

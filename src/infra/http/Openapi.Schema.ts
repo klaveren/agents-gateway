@@ -5872,6 +5872,41 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/models': {
+      get: {
+        summary:
+          'The models of the project (see the model access rules): `allowed` is what the gateway administrator released to the project (`null` = everything enabled in the gateway); administrators of the project or the gateway also get `byRole` and `byUser`; every member gets `effective`, the `provider/model` keys THEY may use (`null` = everything the project receives)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object' })) },
+          '404': { description: 'Not a member', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+      put: {
+        summary:
+          'Release models to the project (`{ allowed: ["provider/model"] }`, the WHOLE list; `null` = everything). Gateway administrators, on the SCREEN only: an access token or an agent gets 403',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { allowed: { type: 'array', nullable: true, items: { type: 'string' } } }, required: ['allowed'] }) },
+        responses: {
+          '200': { description: 'OK: the project models', ...json(envelope({ type: 'object' })) },
+          '403': { description: 'Not on the screen', content: { 'application/json': { schema: failureEnvelope } } },
+          '422': { description: 'A key is not provider/model', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/projects/{id}/member-models': {
+      put: {
+        summary:
+          'What each role and person of the project may use (`{ byRole: { member: [...] }, byUser: { <userId>: [...] } }`, the whole lists; a person list wins over the role list; absent = everything the project receives). Always inside what the project received. Project administrators, on the SCREEN only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { byRole: { type: 'object' }, byUser: { type: 'object' } } }) },
+        responses: {
+          '200': { description: 'OK: the project models', ...json(envelope({ type: 'object' })) },
+          '403': { description: 'Not on the screen', content: { 'application/json': { schema: failureEnvelope } } },
+          '422': { description: 'A model outside what the project received', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
     '/usage/all': {
       get: {
         summary:
