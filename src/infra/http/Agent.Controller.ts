@@ -1,3 +1,4 @@
+import { NOTIFY_TOOL } from '@domain/models/PersonMessage.Model'
 import type { PersonMessagesService } from '@application/PersonMessages.Service'
 import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
 import { AUDIT_ERROR_LOCAL, AUDIT_STATUS_LOCAL } from './Audit.Controller'
@@ -342,6 +343,7 @@ export class AgentController {
     this.messageThread = this.messageThread.bind(this)
     this.readMessages = this.readMessages.bind(this)
     this.archiveMessages = this.archiveMessages.bind(this)
+    this.replyMessage = this.replyMessage.bind(this)
     this.conversationActivity = this.conversationActivity.bind(this)
     this.renameConversation = this.renameConversation.bind(this)
     this.listErrors = this.listErrors.bind(this)
@@ -2126,6 +2128,79 @@ export class AgentController {
       service.setArchived(recipientId, req.params.conversationId as string, (req.body as { archived?: unknown } | undefined)?.archived !== false)
       return { unread: service.unread(recipientId) }
     })
+  }
+
+  /**
+   * `POST /messages/:conversationId/reply { message }` — 💬 a pessoa responde pela caixa: a resposta entra na conversa de
+   * origem como mensagem dela (mesmo na conversa de OUTRA pessoa — quem recebeu o fio foi chamado pelo agente) e o turno
+   * roda no servidor; o que o agente responder volta para o fio. Turno rodando: a resposta entra na fila dele.
+   */
+  async replyMessage(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const { service, recipientId } = await this.messagesOf()
+        const conversationId = req.params.conversationId as string
+        const text = String((req.body as { message?: unknown } | undefined)?.message ?? '')
+        const resolved = await this.requireCaller()
+        const name = (resolved.identity as { name?: string } | undefined)?.name || resolved.identity?.email || 'a pessoa'
+        // A conversa primeiro: se ela não roda mais, a resposta nem entra no fio (não fica "respondido" sem ter ido).
+        if (!service.thread(recipientId, conversationId).length) throw new HttpError(404, 'not_found', 'Not found')
+        if (!text.trim()) throw new HttpError(422, 'validation_error', 'message is required')
+        const session = await this.usecases.getSession.execute(conversationId)
+        let reply: { input: string; agentId: string }
+        try {
+          reply = service.reply(recipientId, conversationId, text, name)
+        } catch (error: unknown) {
+          throw new HttpError(
+            error instanceof Error && /no such thread/.test(error.message) ? 404 : 422,
+            error instanceof Error && /no such thread/.test(error.message) ? 'not_found' : 'validation_error',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+        const input: IMessageInput = { text: reply.input }
+        // Conversa rodando: entra na fila do turno; quando ela parar, o último turno volta para o fio.
+        if (session.status === 'running' || this.liveTurns.has(conversationId)) {
+          this.usecases.sendMessage.enqueue(conversationId, reply.input)
+          void this.mirrorWhenIdle(conversationId, reply.agentId)
+          return { queued: true }
+        }
+        const { done } = this.launch(conversationId, session, input, undefined)
+        void done.then(() => this.mirrorFinished(conversationId, reply.agentId)).catch(() => undefined)
+        return { queued: false }
+      },
+      { status: 202, message: 'Reply sent to the conversation' },
+    )
+  }
+
+  /** 💬 O turno que a resposta abriu terminou: o texto dele volta para o fio (a menos que o agente já tenha escrito com `notify`). */
+  private mirrorFinished(conversationId: string, agentId: string): void {
+    const finished = this.finishedTurns.get(conversationId) as { tools?: string[]; status?: string; error?: string; text?: string } | undefined
+    if (!finished || (finished.tools ?? []).includes(NOTIFY_TOOL)) return
+    if (finished.status === 'error') this.usecases.personMessages?.mirror(conversationId, agentId, `Não consegui responder: ${finished.error ?? 'o turno falhou'}`, 'attention')
+    else this.usecases.personMessages?.mirror(conversationId, agentId, finished.text ?? '')
+  }
+
+  /** 💬 A resposta entrou na fila de um turno rodando: quando a conversa para, o último turno gravado volta para o fio. */
+  private async mirrorWhenIdle(conversationId: string, agentId: string): Promise<void> {
+    const events = this.usecases.events
+    if (!events) return
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => (unsubscribe(), resolve()), 60 * 60_000)
+      timer.unref?.()
+      const unsubscribe = events.subscribe((event) => {
+        if (event.type === 'conversation.idle' && event.sessionId === conversationId) {
+          clearTimeout(timer)
+          unsubscribe()
+          resolve()
+        }
+      })
+    })
+    // O turno é gravado um instante depois do fim.
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    const turns = await this.usecases.conversations.listTurns(conversationId).catch(() => [])
+    const last = turns.at(-1)
+    if (last && !(last.toolCalls ?? []).some((call) => call.tool === NOTIFY_TOOL)) this.usecases.personMessages?.mirror(conversationId, agentId, last.text)
   }
 
   async archiveConversation(req: Request, res: Response) {

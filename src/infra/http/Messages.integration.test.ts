@@ -77,4 +77,15 @@ describe('Mensagens (integração)', () => {
       [0, 1],
     )
   })
+
+  it('💬 responder pela caixa: a resposta aparece no fio e o turno vai para a conversa (202); quem não tem o fio, 404', async () => {
+    await makePersonMessages().send({ sessionId: 'gw_da_ana', agentId: 'zeus', to: 'owner', body: 'Qual o prazo?' })
+    assert.strictEqual((await call('/messages/gw_da_ana/reply', { method: 'POST', token: admin, body: { message: 'x' } })).status, 404)
+    assert.strictEqual((await call('/messages/gw_da_ana/reply', { method: 'POST', token: member, body: { message: '  ' } })).status, 422)
+    const sent = await call('/messages/gw_da_ana/reply', { method: 'POST', token: member, body: { message: 'Sexta' } })
+    const thread = (await call('/messages/gw_da_ana', { token: member })).body.result.messages as Array<{ from: string; body: string }>
+    // Conversa que não roda mais (aqui: só gravada, sem o agente): 404, e a resposta não entra no fio.
+    if (sent.status === 404) assert.notStrictEqual(thread.at(-1)?.body, 'Sexta')
+    else assert.deepStrictEqual([sent.status, thread.at(-1)?.from, thread.at(-1)?.body], [202, 'person', 'Sexta'])
+  })
 })

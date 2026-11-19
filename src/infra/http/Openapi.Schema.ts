@@ -6011,6 +6011,19 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK: `{ unread }`', ...json(envelope({ type: 'object' })) } },
       },
     },
+    '/messages/{conversationId}/reply': {
+      post: {
+        summary:
+          'Replies to a thread of the signed-in person: the reply goes to the thread of everyone who received that conversation and ENTERS the conversation as a message from them (even someone else’s conversation: the agent called them), running the turn on the server; the agent’s answer comes back to the thread (unless it wrote with `notify`). With the turn running, the reply joins its queue. 202',
+        parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { message: { type: 'string' } }, required: ['message'] }) },
+        responses: {
+          '202': { description: 'Sent: `{ queued }`', ...json(envelope({ type: 'object' })) },
+          '404': { description: 'No such thread for this person, or the conversation no longer runs', content: { 'application/json': { schema: failureEnvelope } } },
+          '422': { description: 'Empty message', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
     '/messages/{conversationId}/archive': {
       put: {
         summary: 'Archives (`{ archived: true }`) or restores a thread of the signed-in person; a new message reopens it',
