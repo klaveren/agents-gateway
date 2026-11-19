@@ -2,7 +2,9 @@
   import { computed, onMounted, ref } from 'vue'
   import { api } from '@/lib/api'
   import type { ICatalogModel, IProviderStatus } from '@/lib/types'
+  import { useProjectsStore } from '@/stores/projects'
   import { useProvidersStore } from '@/stores/providers'
+  import { useUsersStore } from '@/stores/users'
   import ProjectModelGroups from './ProjectModelGroups.vue'
   import ProjectProviders from './ProjectProviders.vue'
 
@@ -70,7 +72,31 @@
     }
   }
 
-  const userOverrides = computed(() => Object.keys(view.value?.byUser ?? {}).length)
+  /** 👤 A lista de cada pessoa (vence a do papel); ausente = a do papel dela. */
+  const userDraft = ref<Record<string, Set<string>>>({})
+  const members = ref<Array<{ userId: string; role: 'admin' | 'member'; name: string }>>([])
+  const users = useUsersStore()
+  const projects = useProjectsStore()
+
+  async function loadMembers() {
+    if (!(props.projectAdmin || props.gatewayAdmin)) return
+    const [list] = await Promise.all([projects.members(props.projectId).catch(() => []), users.ensure().catch(() => undefined)])
+    const names = new Map(users.list.map((user) => [user.id, user.name || user.email]))
+    members.value = (Array.isArray(list) ? list : []).map((member) => ({ userId: member.userId, role: member.role, name: names.get(member.userId) ?? member.userId }))
+  }
+
+  function toggleOverride(userId: string) {
+    const next = { ...userDraft.value }
+    if (next[userId]) delete next[userId]
+    else next[userId] = new Set(memberDefault(userId))
+    userDraft.value = next
+  }
+  /** O que a pessoa usaria pelo papel (o ponto de partida da lista própria). */
+  function memberDefault(userId: string): string[] {
+    const role = members.value.find((member) => member.userId === userId)?.role ?? 'member'
+    const set = roleDraft.value[role]
+    return set ? [...set] : projectKeys.value
+  }
 
   async function load() {
     loading.value = true
@@ -85,6 +111,8 @@
       allowedDraft.value = models.allowed ? new Set(models.allowed) : null
       capCost.value = models.caps?.monthlyCostUsd !== undefined ? String(models.caps.monthlyCostUsd) : ''
       capTokens.value = models.caps?.monthlyTokens !== undefined ? String(models.caps.monthlyTokens) : ''
+      userDraft.value = Object.fromEntries(Object.entries(models.byUser ?? {}).map(([userId, list]) => [userId, new Set(list)]))
+      void loadMembers()
       roleDraft.value = {
         admin: models.byRole?.admin ? new Set(models.byRole.admin) : null,
         member: models.byRole?.member ? new Set(models.byRole.member) : null,
@@ -127,8 +155,9 @@
       const byRole = Object.fromEntries(
         Object.entries(roleDraft.value).flatMap(([role, set]) => (set ? [[role, [...set].filter((item) => projectKeys.value.includes(item))]] : [])),
       )
-      await api(`/projects/${encodeURIComponent(props.projectId)}/member-models`, { method: 'PUT', body: { byRole, byUser: view.value?.byUser ?? {} } })
-      note.value = 'Modelos por papel salvos.'
+      const byUser = Object.fromEntries(Object.entries(userDraft.value).map(([userId, set]) => [userId, [...set].filter((item) => projectKeys.value.includes(item))]))
+      await api(`/projects/${encodeURIComponent(props.projectId)}/member-models`, { method: 'PUT', body: { byRole, byUser } })
+      note.value = 'Modelos por papel e pessoa salvos.'
       await load()
     } catch (failure) {
       error.value = failure instanceof Error ? failure.message : String(failure)
@@ -194,9 +223,32 @@
             </label>
           </div>
         </div>
-        <p v-if="userOverrides" class="text-xs text-zinc-500">{{ userOverrides }} pessoa(s) com lista própria (pela API): a dela vale no lugar da do papel.</p>
+        <div v-if="members.length" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3" data-test="project-models-users">
+          <span class="text-sm text-zinc-200">
+            Exceções por pessoa
+            <span class="text-xs text-zinc-500">(a lista dela vale no lugar da do papel)</span>
+          </span>
+          <div v-for="member in members" :key="member.userId" class="flex flex-col gap-1" data-test="project-models-user">
+            <label class="flex items-center gap-2 text-sm text-zinc-300">
+              <input type="checkbox" :checked="!!userDraft[member.userId]" @change="toggleOverride(member.userId)" />
+              {{ member.name }}
+              <span class="text-xs text-zinc-500">{{ member.role === 'admin' ? 'administrador' : 'membro' }}</span>
+              <span v-if="!userDraft[member.userId]" class="text-xs text-zinc-500">· como o papel</span>
+            </label>
+            <div v-if="userDraft[member.userId]" class="flex flex-wrap gap-x-4 gap-y-1 pl-6">
+              <label v-for="item in projectKeys" :key="item" class="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  :checked="userDraft[member.userId].has(item)"
+                  @change="userDraft = { ...userDraft, [member.userId]: toggle(userDraft[member.userId], item) }"
+                />
+                <span class="font-mono text-[13px] text-zinc-300">{{ item }}</span>
+              </label>
+            </div>
+          </div>
+        </div>
         <button type="button" class="btn btn-primary self-end" :disabled="busy" data-test="project-models-roles-save" @click="saveRoles">
-          {{ busy ? 'Salvando…' : 'Salvar modelos por papel' }}
+          {{ busy ? 'Salvando…' : 'Salvar modelos por papel e pessoa' }}
         </button>
       </section>
 
