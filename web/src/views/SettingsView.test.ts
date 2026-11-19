@@ -101,3 +101,32 @@ describe('SettingsView — grupo de modelos padrão', () => {
     expect(tab('limits').getAttribute('aria-selected')).toBe('true')
   })
 })
+
+describe('SettingsView — modelo de imagem', () => {
+  it('🖼️ o select de imagem lista só os ativados que geram imagem; os "só imagem" ficam fora das listas de conversa', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().isAdmin = true
+    const model = (modelId: string, image?: object, enabled = true) => ({ modelId, enabled, available: true, updatedAt: '', image })
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === '/settings') return { audience: 'all' }
+      if (path === '/providers') return [{ id: 'openai', name: 'OpenAI', protocol: 'openai', official: true, enabled: true, credential: { configured: true, source: 'stored' } }]
+      if (path === '/providers/openai/models')
+        return [
+          model('gpt-5.6', { output: false, source: 'heuristic' }),
+          model('gpt-image-2', { output: true, only: true, source: 'heuristic' }),
+          model('dall-e-3', { output: true, only: true, source: 'heuristic' }, false),
+        ]
+      return []
+    })
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { render: () => h('div') } }] })
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp({ render: () => h(SettingsView) })
+    app.use(pinia).use(router).mount(host)
+    await flush()
+    const options = (test: string) => [...host.querySelectorAll(`[data-test="${test}"] option`)].map((option) => option.textContent?.trim())
+    expect(options('image-model')).toEqual(['Nenhum (sem geração de imagem)', 'OpenAI · gpt-image-2'])
+    expect(options('suggest-model')).toEqual(['Nenhum (sem sugestão)', 'OpenAI · gpt-5.6'])
+  })
+})

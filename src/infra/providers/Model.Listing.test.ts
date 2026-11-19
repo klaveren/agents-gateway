@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { modelImage } from '@domain/models/ModelCatalog.Model'
 import { anthropicReasoning, listModels, parametersReasoning, priceOf } from './Model.Listing'
 
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
@@ -17,12 +18,56 @@ describe('listModels', () => {
     ])
   })
 
-  it('OpenAI oficial: tira o que não conversa (embeddings, voz, imagem)', async () => {
-    const fetcher = (async () => reply({ data: [{ id: 'gpt-5.6-sol' }, { id: 'text-embedding-3-large' }, { id: 'tts-1' }, { id: 'dall-e-3' }] })) as unknown as typeof fetch
+  it('OpenAI oficial: tira o que não conversa (embeddings, voz, áudio); os de imagem ficam (o Modelo de imagem)', async () => {
+    const fetcher = (async () =>
+      reply({
+        data: [{ id: 'gpt-5.6-sol' }, { id: 'text-embedding-3-large' }, { id: 'tts-1' }, { id: 'dall-e-3' }, { id: 'gpt-image-2' }, { id: 'gpt-4o-audio-preview' }],
+      })) as unknown as typeof fetch
 
     assert.deepStrictEqual(
       (await listModels({ protocol: EProvider.OPENAI }, 'k', fetcher)).map((model) => model.id),
-      ['gpt-5.6-sol'],
+      ['gpt-5.6-sol', 'dall-e-3', 'gpt-image-2'],
+    )
+  })
+
+  it('🖼️ compatível que diz o que o modelo produz: gera imagem (e só imagem) vem do provider', async () => {
+    const fetcher = (async () =>
+      reply({
+        data: [
+          { id: 'v/chat', architecture: { output_modalities: ['text'] } },
+          { id: 'v/flash-image', architecture: { output_modalities: ['image', 'text'] } },
+          { id: 'v/so-imagem', architecture: { output_modalities: ['image'] } },
+        ],
+      })) as unknown as typeof fetch
+
+    assert.deepStrictEqual(
+      (await listModels({ protocol: EProvider.OPENAI, baseUrl: 'https://router.example/v1' }, 'k', fetcher)).map((model) => [model.id, model.image]),
+      [
+        ['v/chat', { output: false, source: 'provider' }],
+        ['v/flash-image', { output: true, source: 'provider' }],
+        ['v/so-imagem', { output: true, only: true, source: 'provider' }],
+      ],
+    )
+  })
+
+  it('🖼️ sem o campo, o palpite pelo id', () => {
+    assert.deepStrictEqual(
+      ['gpt-image-2', 'dall-e-3', 'gemini-3.1-flash-image', 'google/gemini-2.5-flash-image-preview', 'gemini-3.7-flash', 'claude-opus-5-5'].map((id) =>
+        modelImage({ modelId: id }),
+      ),
+      [
+        { output: true, only: true, source: 'heuristic' },
+        { output: true, only: true, source: 'heuristic' },
+        { output: true, source: 'heuristic' },
+        { output: true, source: 'heuristic' },
+        { output: false, source: 'heuristic' },
+        { output: false, source: 'heuristic' },
+      ],
+    )
+    assert.deepStrictEqual(
+      modelImage({ modelId: 'gpt-image-2', image: { output: false, source: 'provider' } }),
+      { output: false, source: 'provider' },
+      'o provider vence o palpite',
     )
   })
 

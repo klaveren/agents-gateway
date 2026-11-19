@@ -1,5 +1,5 @@
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { IListedModel, IModelReasoning } from '@domain/models/ModelCatalog.Model'
+import { guessModelImage, IListedModel, IModelImage, IModelReasoning } from '@domain/models/ModelCatalog.Model'
 import { IModelPrice } from '@domain/models/Model.Pricing'
 import { maskKey } from './Provider.Probe'
 
@@ -48,9 +48,12 @@ export async function listModels(connection: { protocol: EProvider; baseUrl?: st
 
   const official = !connection.baseUrl
   if (connection.protocol !== EProvider.OPENAI || !official) return all
-  return all
-    .filter((model) => !OPENAI_NOT_CHAT.test(model.id))
-    .map((model) => ({ ...model, reasoning: model.reasoning ?? { supported: OPENAI_REASONING.test(model.id), source: 'heuristic' as const } }))
+  return (
+    all
+      // 🖼️ Os de imagem (gpt-image, dall-e) ficam: são o "Modelo de imagem" das Configurações.
+      .filter((model) => guessModelImage(model.id).only || !OPENAI_NOT_CHAT.test(model.id))
+      .map((model) => ({ ...model, reasoning: model.reasoning ?? { supported: OPENAI_REASONING.test(model.id), source: 'heuristic' as const } }))
+  )
 }
 
 async function fetchPage(protocol: EProvider, base: string, key: string, cursor: string | undefined, fetcher: typeof fetch): Promise<TPage> {
@@ -88,6 +91,7 @@ async function fetchPage(protocol: EProvider, base: string, key: string, cursor:
       contextLength: number(model.max_input_tokens) ?? number(model.context_length),
       price: priceOf(model.pricing),
       ...(reasoning ? { reasoning } : {}),
+      ...imageOf(model.architecture),
     }
   })
 
@@ -110,6 +114,14 @@ function request(protocol: EProvider, base: string, key: string, cursor?: string
  * O preço da listagem, quando há: por TOKEN (texto) → por 1M (número). Campo que não é número válido
  * é ignorado; sem entrada E saída, não há preço (melhor "sem preço" do que um preço pela metade).
  */
+/** 🖼️ `architecture.output_modalities` (OpenRouter e compatíveis): o que o modelo produz. Sem o campo, nada. */
+export function imageOf(raw: unknown): { image?: IModelImage } {
+  const outputs = (raw as { output_modalities?: unknown } | undefined)?.output_modalities
+  if (!Array.isArray(outputs)) return {}
+  const image = outputs.includes('image')
+  return { image: { output: image, ...(image && !outputs.includes('text') ? { only: true } : {}), source: 'provider' } }
+}
+
 export function priceOf(raw: unknown): IModelPrice | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const pricing = raw as Record<string, unknown>

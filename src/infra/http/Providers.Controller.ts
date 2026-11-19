@@ -1,6 +1,6 @@
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { ProvidersService } from '@application/Providers.Service'
-import { ICatalogModel } from '@domain/models/ModelCatalog.Model'
+import { ICatalogModel, modelImage } from '@domain/models/ModelCatalog.Model'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IProviderConfig } from '@domain/models/Provider.Model'
 import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
@@ -453,6 +453,7 @@ function toModelDto(model: ICatalogModel) {
     price: model.price,
     priceSource: model.priceSource,
     reasoning: model.reasoning,
+    image: modelImage(model),
     syncedAt: model.syncedAt,
     updatedAt: model.updatedAt,
     updatedBy: model.updatedBy,

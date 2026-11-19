@@ -32,7 +32,11 @@
   /** Quem só administra o projeto não lê as Configurações: as sequências vêm da leitura própria delas (`/model-groups`). */
   const readOnly = ref<{ groups: IModelGroup[]; defaultModelGroup?: string }>()
   onMounted(() => {
-    if (!auth.isAdmin) void api<{ groups: IModelGroup[]; defaultModelGroup?: string }>('/model-groups').then((found) => (readOnly.value = found), () => undefined)
+    if (!auth.isAdmin)
+      void api<{ groups: IModelGroup[]; defaultModelGroup?: string }>('/model-groups').then(
+        (found) => (readOnly.value = found),
+        () => undefined,
+      )
   })
   const groups = computed(() => (auth.isAdmin ? (settings.current?.modelGroups ?? []) : (readOnly.value?.groups ?? [])))
   const defaultId = computed(() => (auth.isAdmin ? settings.current?.defaultModelGroup : readOnly.value?.defaultModelGroup))
@@ -54,7 +58,9 @@
   )
   const stepOptions = computed<IFallbackStep[]>(() =>
     runnable.value.flatMap((provider: IProviderStatus) =>
-      (providers.catalogs.get(provider.id) ?? []).filter((model) => model.enabled && model.available !== false).map((model) => ({ provider: provider.id, model: model.modelId })),
+      (providers.catalogs.get(provider.id) ?? [])
+        .filter((model) => model.enabled && model.available !== false && !model.image?.only)
+        .map((model) => ({ provider: provider.id, model: model.modelId })),
     ),
   )
 
@@ -137,8 +143,8 @@
       </header>
       <div class="flex flex-col gap-2 p-3">
         <p class="hint">
-          Quando o modelo da conversa falha (cota, limite de uso…), o agente continua no próximo modelo da sequência, sem a pessoa precisar fazer nada, e fica nele. A conversa aberta
-          sem modelo escolhido já começa no primeiro. A pessoa ainda pode escolher outro modelo na conversa.
+          Quando o modelo da conversa falha (cota, limite de uso…), o agente continua no próximo modelo da sequência, sem a pessoa precisar fazer nada, e fica nele. A conversa
+          aberta sem modelo escolhido já começa no primeiro. A pessoa ainda pode escolher outro modelo na conversa.
         </p>
         <select v-model="choice" aria-label="Sequência de troca" class="h-9 max-w-xs rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
           <option value="">Padrão ({{ defaultName }})</option>
@@ -160,7 +166,9 @@
       </header>
       <div class="flex flex-col gap-4 p-3">
         <div class="flex flex-col gap-2">
-          <p class="hint">A ordem de uso. A conversa começa no primeiro modelo disponível; quando ele falha, passa para o próximo, e assim por diante. Só aparecem modelos ativados.</p>
+          <p class="hint">
+            A ordem de uso. A conversa começa no primeiro modelo disponível; quando ele falha, passa para o próximo, e assim por diante. Só aparecem modelos ativados.
+          </p>
           <FallbackChain v-model="draft.steps" :options="stepOptions" :stale="stale" />
         </div>
         <div class="flex flex-col gap-1.5">

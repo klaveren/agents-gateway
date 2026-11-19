@@ -22,6 +22,32 @@ export interface IModelReasoning {
   source: 'provider' | 'heuristic'
 }
 
+/**
+ * 🖼️ Se o modelo GERA IMAGEM, segundo a listagem do provider (`architecture.output_modalities`, nos compatíveis
+ * com OpenRouter) ou, sem ela, o palpite pelo id (`heuristic`). `only` = só gera imagem (não conversa): fica
+ * fora das listas de modelo de conversa.
+ */
+export interface IModelImage {
+  output: boolean
+  only?: boolean
+  source: 'provider' | 'heuristic'
+}
+
+/** Só imagem: os modelos de imagem da OpenAI (o endpoint `/images`). */
+const IMAGE_ONLY = /^(gpt-image|chatgpt-image|dall-e)/i
+/** Gera imagem: os acima e os Gemini de imagem (`generateContent` com saída de imagem). */
+const IMAGE_OUTPUT = /^(gpt-image|chatgpt-image|dall-e)|(^|\/)gemini-[\w.-]*image/i
+
+/** O palpite pelo id, para quando a listagem não diz (OpenAI, Google, Anthropic). */
+export function guessModelImage(modelId: string): IModelImage {
+  return { output: IMAGE_OUTPUT.test(modelId), ...(IMAGE_ONLY.test(modelId) ? { only: true } : {}), source: 'heuristic' }
+}
+
+/** O que a listagem disse; sem nada, o palpite. Vale também para o que foi gravado antes de haver o campo. */
+export function modelImage(model: { modelId: string; image?: IModelImage }): IModelImage {
+  return model.image ?? guessModelImage(model.modelId)
+}
+
 /** Um modelo que um provider oferece — e se ele pode ser usado aqui. */
 export interface ICatalogModel {
   providerId: string
@@ -35,6 +61,7 @@ export interface ICatalogModel {
   price?: IModelPrice
   priceSource?: TPriceSource
   reasoning?: IModelReasoning
+  image?: IModelImage
   syncedAt?: Date
   updatedAt: Date
   updatedBy?: string
@@ -48,6 +75,7 @@ export interface IListedModel {
   /** Só quando a listagem traz preço (há agregadores que trazem). */
   price?: IModelPrice
   reasoning?: IModelReasoning
+  image?: IModelImage
 }
 
 /**

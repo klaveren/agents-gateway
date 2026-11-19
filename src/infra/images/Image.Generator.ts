@@ -1,9 +1,12 @@
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { guessModelImage } from '@domain/models/ModelCatalog.Model'
 import type { IProviderConnection } from '@domain/models/Provider.Model'
 
 /**
  * 🖼️ GERA UMA IMAGEM pelo provider configurado (Configurações → Modelo de imagem): o endpoint de imagem da OpenAI (e dos
- * compatíveis que o imitam) ou o `generateContent` do Gemini com saída de imagem. Devolve os bytes e o tipo.
+ * compatíveis que o imitam) para os "só imagem" (gpt-image, dall-e); o `chat/completions` com `modalities` para os que
+ * conversam e geram imagem num compatível (os Gemini de imagem no OpenRouter); ou o `generateContent` do Gemini com
+ * saída de imagem. Devolve os bytes e o tipo.
  * ⛔ A chave só vai no cabeçalho (nunca na URL nem no erro).
  */
 export interface IGeneratedImage {
@@ -25,6 +28,7 @@ export async function generateImage(
 ): Promise<IGeneratedImage> {
   if (!connection.key) throw new Error('the image provider has no API key')
   if (connection.protocol === EProvider.GOOGLE) return google(connection.key, model, prompt, fetcher)
+  if (connection.protocol === EProvider.OPENAI && connection.baseUrl && !guessModelImage(model).only) return chat(connection.baseUrl, connection.key, model, prompt, fetcher)
   if (connection.protocol === EProvider.OPENAI) return openai(connection.baseUrl ?? 'https://api.openai.com/v1', connection.key, model, prompt, size, fetcher)
   throw new Error(`${connection.protocol} does not generate images here (use an OpenAI or Google provider)`)
 }
@@ -43,6 +47,24 @@ async function openai(base: string, key: string, model: string, prompt: string, 
   const encoded = body?.data?.[0]?.b64_json
   if (!encoded) throw new Error('the provider answered without an image')
   return { data: Buffer.from(encoded, 'base64'), mime: 'image/png' }
+}
+
+/** Compatível (OpenRouter): a imagem vem em `message.images[].image_url.url`, como data URL. Só data URL: nada se baixa de fora. */
+async function chat(base: string, key: string, model: string, prompt: string, fetcher: typeof fetch): Promise<IGeneratedImage> {
+  const response = await fetcher(`${base.replace(/\/+$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], modalities: ['image', 'text'] }),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+    redirect: 'error',
+  })
+  type TImage = { image_url?: { url?: string } }
+  const body = (await response.json().catch(() => undefined)) as { choices?: Array<{ message?: { images?: TImage[] } }>; error?: { message?: string } } | undefined
+  if (!response.ok) throw new Error(clean(body?.error?.message ?? `HTTP ${response.status}`, key))
+  const url = body?.choices?.[0]?.message?.images?.find((item) => item.image_url?.url)?.image_url?.url ?? ''
+  const match = /^data:(image\/[\w.+-]+);base64,(.+)$/s.exec(url)
+  if (!match) throw new Error('the model answered without an image (is it an image model?)')
+  return { data: Buffer.from(match[2], 'base64'), mime: match[1] }
 }
 
 async function google(key: string, model: string, prompt: string, fetcher: typeof fetch): Promise<IGeneratedImage> {

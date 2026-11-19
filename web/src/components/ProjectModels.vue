@@ -106,7 +106,9 @@
       view.value = models
       const enabled = providers.list.filter((provider) => provider.enabled)
       groups.value = (
-        await Promise.all(enabled.map(async (provider) => ({ provider, models: (await providers.models(provider.id).catch(() => [])).filter((model) => model.enabled) })))
+        await Promise.all(
+          enabled.map(async (provider) => ({ provider, models: (await providers.models(provider.id).catch(() => [])).filter((model) => model.enabled && !model.image?.only) })),
+        )
       ).filter((group) => group.models.length)
       allowedDraft.value = models.allowed ? new Set(models.allowed) : null
       capCost.value = models.caps?.monthlyCostUsd !== undefined ? String(models.caps.monthlyCostUsd) : ''

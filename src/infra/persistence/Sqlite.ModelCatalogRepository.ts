@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { ICatalogModel, IModelReasoning, TPriceSource } from '@domain/models/ModelCatalog.Model'
+import { ICatalogModel, IModelImage, IModelReasoning, TPriceSource } from '@domain/models/ModelCatalog.Model'
 import { IModelPrice } from '@domain/models/Model.Pricing'
 import { IModelCatalogRepository, TCatalogPatch } from '@domain/ports/ModelCatalogRepository.Port'
 
@@ -16,6 +16,7 @@ const SCHEMA = `
     price           TEXT,
     price_source    TEXT,
     reasoning       TEXT,
+    image           TEXT,
     synced_at       TEXT,
     updated_at      TEXT    NOT NULL,
     updated_by      TEXT,
@@ -26,7 +27,10 @@ const SCHEMA = `
 type TRow = Record<string, unknown>
 
 /** Colunas que um arquivo antigo ainda não tem. `ALTER ADD COLUMN` só acrescenta; nunca reescreve. */
-const ADDED_COLUMNS: Array<{ column: string; definition: string }> = [{ column: 'reasoning', definition: 'TEXT' }]
+const ADDED_COLUMNS: Array<{ column: string; definition: string }> = [
+  { column: 'reasoning', definition: 'TEXT' },
+  { column: 'image', definition: 'TEXT' },
+]
 
 const COLUMNS: Record<keyof TCatalogPatch, string> = {
   label: 'label',
@@ -36,6 +40,7 @@ const COLUMNS: Record<keyof TCatalogPatch, string> = {
   price: 'price',
   priceSource: 'price_source',
   reasoning: 'reasoning',
+  image: 'image',
   syncedAt: 'synced_at',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
@@ -75,8 +80,8 @@ export class SqliteModelCatalogRepository implements IModelCatalogRepository {
   insert(model: ICatalogModel): void {
     this.db
       .prepare(
-        `INSERT INTO provider_models (provider_id, model_id, label, enabled, available, context_length, price, price_source, reasoning, synced_at, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO provider_models (provider_id, model_id, label, enabled, available, context_length, price, price_source, reasoning, image, synced_at, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         model.providerId,
@@ -88,6 +93,7 @@ export class SqliteModelCatalogRepository implements IModelCatalogRepository {
         model.price ? JSON.stringify(model.price) : null,
         model.priceSource ?? null,
         model.reasoning ? JSON.stringify(model.reasoning) : null,
+        model.image ? JSON.stringify(model.image) : null,
         model.syncedAt?.toISOString() ?? null,
         model.updatedAt.toISOString(),
         model.updatedBy ?? null,
@@ -140,6 +146,7 @@ function toModel(row: TRow): ICatalogModel {
     price,
     priceSource: typeof row.price_source === 'string' ? (row.price_source as TPriceSource) : undefined,
     reasoning: json<IModelReasoning>(row.reasoning),
+    image: json<IModelImage>(row.image),
     syncedAt: typeof row.synced_at === 'string' ? new Date(row.synced_at) : undefined,
     updatedAt: new Date(String(row.updated_at)),
     updatedBy: typeof row.updated_by === 'string' ? row.updated_by : undefined,

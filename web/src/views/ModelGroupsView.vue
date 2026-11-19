@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import SaveFooter from '@/components/SaveFooter.vue'
-import { computed, onMounted, ref, watch } from 'vue'
+  import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import ConfirmDialog from '@/components/ConfirmDialog.vue'
   import FallbackChain from '@/components/FallbackChain.vue'
@@ -58,7 +58,9 @@ import { computed, onMounted, ref, watch } from 'vue'
   const stale = (step: IFallbackStep) => stepServes(step, providers.list, (id) => providers.catalogs.get(id)) === false
   const stepOptions = computed<IFallbackStep[]>(() =>
     runnableProviders.value.flatMap((provider: IProviderStatus) =>
-      (providers.catalogs.get(provider.id) ?? []).filter((model) => model.enabled && model.available !== false).map((model) => ({ provider: provider.id, model: model.modelId })),
+      (providers.catalogs.get(provider.id) ?? [])
+        .filter((model) => model.enabled && model.available !== false && !model.image?.only)
+        .map((model) => ({ provider: provider.id, model: model.modelId })),
     ),
   )
 
@@ -163,7 +165,11 @@ import { computed, onMounted, ref, watch } from 'vue'
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="min-w-0 truncate text-xl font-semibold">Fallback</h1>
         <span class="text-sm text-zinc-500" data-test="list-count">{{ groups.length }}</span>
-        <RouterLink to="/model-groups/new" class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Nova sequência">
+        <RouterLink
+          to="/model-groups/new"
+          class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+          title="Nova sequência"
+        >
           <Icon name="plus" class="h-5 w-5" />
         </RouterLink>
       </header>
@@ -184,7 +190,8 @@ import { computed, onMounted, ref, watch } from 'vue'
           </span>
           <span class="block truncate text-xs text-zinc-500">
             <code>{{ group.id }}</code>
-            · {{ group.steps.length ? `${group.steps.length} ${group.steps.length === 1 ? 'passo' : 'passos'}` : 'sem modelos: o agente usa os dele' }} · {{ countOf(group.id) }} {{ countOf(group.id) === 1 ? 'agente' : 'agentes' }}
+            · {{ group.steps.length ? `${group.steps.length} ${group.steps.length === 1 ? 'passo' : 'passos'}` : 'sem modelos: o agente usa os dele' }} · {{ countOf(group.id) }}
+            {{ countOf(group.id) === 1 ? 'agente' : 'agentes' }}
             <template v-if="group.id === defaultId">+ os sem sequência</template>
           </span>
         </span>
@@ -243,7 +250,9 @@ import { computed, onMounted, ref, watch } from 'vue'
               class="input tabular-nums"
               aria-label="Tempo de espera"
             />
-            <small class="text-xs text-zinc-500">Nesse tempo, o agente pula esse modelo e usa o próximo. Só vale quando o erro não diz quando ele volta; em branco, 15 minutos.</small>
+            <small class="text-xs text-zinc-500">
+              Nesse tempo, o agente pula esse modelo e usa o próximo. Só vale quando o erro não diz quando ele volta; em branco, 15 minutos.
+            </small>
           </label>
 
           <div v-if="selected" class="flex flex-col gap-1 text-sm">
@@ -276,7 +285,8 @@ import { computed, onMounted, ref, watch } from 'vue'
     :open="removing"
     :title="`Apagar a sequência ${selected?.name ?? ''}?`"
     :message="
-      removeError ?? (selected?.id === defaultId ? 'É a sequência padrão: os agentes sem sequência deixam de trocar de modelo.' : 'Agentes que usam esta sequência impedem a exclusão.')
+      removeError ??
+      (selected?.id === defaultId ? 'É a sequência padrão: os agentes sem sequência deixam de trocar de modelo.' : 'Agentes que usam esta sequência impedem a exclusão.')
     "
     :busy="busy"
     @confirm="remove"

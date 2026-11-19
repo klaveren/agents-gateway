@@ -1,133 +1,154 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useResource } from '@/composables/useResource'
-import { ApiError } from '@/lib/api'
-import { fullTime } from '@/lib/format'
-import type { ICatalogModel, IProviderStatus } from '@/lib/types'
-import { useProvidersStore } from '@/stores/providers'
+  import { computed, ref } from 'vue'
+  import { useResource } from '@/composables/useResource'
+  import { ApiError } from '@/lib/api'
+  import { fullTime } from '@/lib/format'
+  import type { ICatalogModel, IProviderStatus } from '@/lib/types'
+  import { useProvidersStore } from '@/stores/providers'
 
-/**
- * Os modelos de um provider: atualizar a lista, ativar o que pode ser usado, ajustar o preço.
- *
- * ⚖️ A LISTAGEM PROPÕE, QUEM ADMINISTRA DECIDE: modelo novo chega desligado; preço digitado aqui vale
- * sobre o da listagem e o de fábrica, e sobrevive à próxima atualização.
- */
-const props = defineProps<{ provider: IProviderStatus }>()
+  /**
+   * Os modelos de um provider: atualizar a lista, ativar o que pode ser usado, ajustar o preço.
+   *
+   * ⚖️ A LISTAGEM PROPÕE, QUEM ADMINISTRA DECIDE: modelo novo chega desligado; preço digitado aqui vale
+   * sobre o da listagem e o de fábrica, e sobrevive à próxima atualização.
+   */
+  const props = defineProps<{ provider: IProviderStatus }>()
 
-const providers = useProvidersStore()
+  const providers = useProvidersStore()
 
-/** O catálogo do provider, da store: lido uma vez; "Atualizar a lista", ativar e o preço o trocam lá. */
-const catalog = useResource(providers.catalogs, () => props.provider.id)
-const models = computed(() => catalog.data.value ?? [])
-const loading = catalog.loading
-const syncing = ref(false)
-const note = ref<string>()
-const syncError = ref<string>()
-const error = computed(() => syncError.value ?? (catalog.error.value === undefined ? undefined : describe(catalog.error.value)))
-const search = ref('')
-const onlyEnabled = ref(false)
-const editing = ref<string>()
-const draft = ref({ input: '', output: '' })
-const rowError = ref<Record<string, string>>({})
-const newId = ref('')
-const adding = ref(false)
-const addError = ref<string>()
+  /** O catálogo do provider, da store: lido uma vez; "Atualizar a lista", ativar e o preço o trocam lá. */
+  const catalog = useResource(providers.catalogs, () => props.provider.id)
+  const models = computed(() => catalog.data.value ?? [])
+  const loading = catalog.loading
+  const syncing = ref(false)
+  const note = ref<string>()
+  const syncError = ref<string>()
+  const error = computed(() => syncError.value ?? (catalog.error.value === undefined ? undefined : describe(catalog.error.value)))
+  const search = ref('')
+  const onlyEnabled = ref(false)
+  const editing = ref<string>()
+  const draft = ref({ input: '', output: '' })
+  const rowError = ref<Record<string, string>>({})
+  const newId = ref('')
+  const adding = ref(false)
+  const addError = ref<string>()
 
-/** O mesmo formato que o servidor aceita para o id de um modelo. */
-const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$/
+  /** O mesmo formato que o servidor aceita para o id de um modelo. */
+  const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$/
 
-const SOURCE: Record<string, string> = { manual: 'manual', catalog: 'da lista', default: 'sugerido' }
+  const SOURCE: Record<string, string> = { manual: 'manual', catalog: 'da lista', default: 'sugerido' }
 
-const visible = computed(() => {
-  const term = search.value.trim().toLowerCase()
-  return models.value.filter((model) => (!onlyEnabled.value || model.enabled) && (!term || model.modelId.toLowerCase().includes(term) || model.label?.toLowerCase().includes(term)))
-})
-const enabledCount = computed(() => models.value.filter((model) => model.enabled).length)
-const lastSync = computed(() => models.value.map((model) => model.syncedAt).filter(Boolean).sort().at(-1))
+  const visible = computed(() => {
+    const term = search.value.trim().toLowerCase()
+    return models.value.filter(
+      (model) => (!onlyEnabled.value || model.enabled) && (!term || model.modelId.toLowerCase().includes(term) || model.label?.toLowerCase().includes(term)),
+    )
+  })
+  const enabledCount = computed(() => models.value.filter((model) => model.enabled).length)
+  const lastSync = computed(() =>
+    models.value
+      .map((model) => model.syncedAt)
+      .filter(Boolean)
+      .sort()
+      .at(-1),
+  )
 
-function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
-}
-
-async function sync() {
-  syncing.value = true
-  note.value = undefined
-  syncError.value = undefined
-  try {
-    const result = await providers.syncModels(props.provider.id)
-    note.value = `${result.total} modelos na lista · ${result.added} novos (desligados)${result.missing ? ` · ${result.missing} sumiram da lista` : ''}.`
-  } catch (cause) {
-    syncError.value = describe(cause)
-  } finally {
-    syncing.value = false
+  function describe(cause: unknown): string {
+    return cause instanceof Error ? cause.message : String(cause)
   }
-}
 
-/** Adiciona um modelo pelo id — para quem não lista (assinatura) ou não traz o modelo na listagem. Entra desligado. */
-async function addById() {
-  const modelId = newId.value.trim()
-  if (!modelId) return
-  addError.value = undefined
-  note.value = undefined
-  if (!MODEL_ID.test(modelId)) {
-    addError.value = 'identificador inválido: use letras, números e . _ : / @ - (até 200)'
-    return
+  async function sync() {
+    syncing.value = true
+    note.value = undefined
+    syncError.value = undefined
+    try {
+      const result = await providers.syncModels(props.provider.id)
+      note.value = `${result.total} modelos na lista · ${result.added} novos (desligados)${result.missing ? ` · ${result.missing} sumiram da lista` : ''}.`
+    } catch (cause) {
+      syncError.value = describe(cause)
+    } finally {
+      syncing.value = false
+    }
   }
-  adding.value = true
-  try {
-    // Idempotente: se já existia, o servidor devolve o mesmo modelo e a store só troca a linha.
-    const added = await providers.addModel(props.provider.id, modelId)
-    newId.value = ''
-    note.value = `${added.modelId} adicionado (desligado até você ativar).`
-  } catch (failure) {
-    addError.value = failure instanceof ApiError ? Object.values(failure.fieldIssues).flat().join('; ') || failure.message : failure instanceof Error ? failure.message : String(failure)
-  } finally {
-    adding.value = false
-  }
-}
 
-async function toggle(model: ICatalogModel) {
-  rowError.value = { ...rowError.value, [model.modelId]: '' }
-  try {
-    await providers.updateModel(props.provider.id, { modelId: model.modelId, enabled: !model.enabled })
-  } catch (failure) {
-    rowError.value = { ...rowError.value, [model.modelId]: failure instanceof Error ? failure.message : String(failure) }
+  /** Adiciona um modelo pelo id — para quem não lista (assinatura) ou não traz o modelo na listagem. Entra desligado. */
+  async function addById() {
+    const modelId = newId.value.trim()
+    if (!modelId) return
+    addError.value = undefined
+    note.value = undefined
+    if (!MODEL_ID.test(modelId)) {
+      addError.value = 'identificador inválido: use letras, números e . _ : / @ - (até 200)'
+      return
+    }
+    adding.value = true
+    try {
+      // Idempotente: se já existia, o servidor devolve o mesmo modelo e a store só troca a linha.
+      const added = await providers.addModel(props.provider.id, modelId)
+      newId.value = ''
+      note.value = `${added.modelId} adicionado (desligado até você ativar).`
+    } catch (failure) {
+      addError.value =
+        failure instanceof ApiError ? Object.values(failure.fieldIssues).flat().join('; ') || failure.message : failure instanceof Error ? failure.message : String(failure)
+    } finally {
+      adding.value = false
+    }
   }
-}
 
-function edit(model: ICatalogModel) {
-  editing.value = model.modelId
-  draft.value = { input: model.price ? String(model.price.input) : '', output: model.price ? String(model.price.output) : '' }
-}
-
-async function savePrice(model: ICatalogModel, reset = false) {
-  const input = Number(draft.value.input.replace(',', '.'))
-  const output = Number(draft.value.output.replace(',', '.'))
-  if (!reset && (!Number.isFinite(input) || !Number.isFinite(output) || draft.value.input === '' || draft.value.output === '')) {
-    rowError.value = { ...rowError.value, [model.modelId]: 'informe entrada e saída, em US$ por 1M de tokens' }
-    return
-  }
-  try {
-    await providers.updateModel(props.provider.id, { modelId: model.modelId, price: reset ? null : { input, output } })
-    editing.value = undefined
+  async function toggle(model: ICatalogModel) {
     rowError.value = { ...rowError.value, [model.modelId]: '' }
-  } catch (failure) {
-    rowError.value = { ...rowError.value, [model.modelId]: failure instanceof ApiError ? Object.values(failure.fieldIssues).flat().join('; ') || failure.message : String(failure) }
+    try {
+      await providers.updateModel(props.provider.id, { modelId: model.modelId, enabled: !model.enabled })
+    } catch (failure) {
+      rowError.value = { ...rowError.value, [model.modelId]: failure instanceof Error ? failure.message : String(failure) }
+    }
   }
-}
 
-function context(tokens?: number): string {
-  if (!tokens) return ''
-  return tokens >= 1_000_000 ? `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 ? 1 : 0)}M` : `${Math.round(tokens / 1000)}k`
-}
+  function edit(model: ICatalogModel) {
+    editing.value = model.modelId
+    draft.value = { input: model.price ? String(model.price.input) : '', output: model.price ? String(model.price.output) : '' }
+  }
+
+  async function savePrice(model: ICatalogModel, reset = false) {
+    const input = Number(draft.value.input.replace(',', '.'))
+    const output = Number(draft.value.output.replace(',', '.'))
+    if (!reset && (!Number.isFinite(input) || !Number.isFinite(output) || draft.value.input === '' || draft.value.output === '')) {
+      rowError.value = { ...rowError.value, [model.modelId]: 'informe entrada e saída, em US$ por 1M de tokens' }
+      return
+    }
+    try {
+      await providers.updateModel(props.provider.id, { modelId: model.modelId, price: reset ? null : { input, output } })
+      editing.value = undefined
+      rowError.value = { ...rowError.value, [model.modelId]: '' }
+    } catch (failure) {
+      rowError.value = {
+        ...rowError.value,
+        [model.modelId]: failure instanceof ApiError ? Object.values(failure.fieldIssues).flat().join('; ') || failure.message : String(failure),
+      }
+    }
+  }
+
+  function context(tokens?: number): string {
+    if (!tokens) return ''
+    return tokens >= 1_000_000 ? `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 ? 1 : 0)}M` : `${Math.round(tokens / 1000)}k`
+  }
 </script>
 
 <template>
   <div class="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
     <div class="flex flex-wrap items-center gap-2">
       <span class="text-sm font-medium">Modelos</span>
-      <span class="text-xs text-zinc-500">{{ enabledCount }} ativados de {{ models.length }}<template v-if="lastSync"> · lista de {{ fullTime(lastSync) }}</template></span>
-      <button type="button" :disabled="syncing || (!provider.credential.configured && !provider.subscription)" class="ml-auto btn btn-sm btn-secondary" :title="provider.credential.configured || provider.subscription ? '' : 'Salve uma chave antes'" @click="sync">
+      <span class="text-xs text-zinc-500">
+        {{ enabledCount }} ativados de {{ models.length }}
+        <template v-if="lastSync">· lista de {{ fullTime(lastSync) }}</template>
+      </span>
+      <button
+        type="button"
+        :disabled="syncing || (!provider.credential.configured && !provider.subscription)"
+        class="ml-auto btn btn-sm btn-secondary"
+        :title="provider.credential.configured || provider.subscription ? '' : 'Salve uma chave antes'"
+        @click="sync"
+      >
         {{ syncing ? 'Atualizando…' : 'Atualizar lista' }}
       </button>
     </div>
@@ -136,41 +157,96 @@ function context(tokens?: number): string {
     <p v-if="error" class="text-xs text-rose-300">{{ error }}</p>
 
     <form class="flex flex-wrap items-center gap-2" @submit.prevent="addById">
-      <input v-model="newId" autocomplete="off" spellcheck="false" aria-label="Adicionar modelo pelo identificador" placeholder="Adicionar modelo pelo identificador" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 font-mono text-sm outline-none focus:border-emerald-500/60" />
+      <input
+        v-model="newId"
+        autocomplete="off"
+        spellcheck="false"
+        aria-label="Adicionar modelo pelo identificador"
+        placeholder="Adicionar modelo pelo identificador"
+        class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 font-mono text-sm outline-none focus:border-emerald-500/60"
+      />
       <button type="submit" :disabled="adding || !newId.trim()" class="btn btn-secondary">{{ adding ? 'Adicionando…' : 'Adicionar' }}</button>
       <p v-if="addError" class="w-full text-xs text-rose-300">{{ addError }}</p>
     </form>
 
     <div v-if="models.length" class="flex flex-wrap items-center gap-2">
-      <input v-model="search" type="search" placeholder="Buscar modelo…" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm outline-none focus:border-emerald-500/60" />
-      <label class="flex items-center gap-1.5 text-xs text-zinc-400"><input v-model="onlyEnabled" type="checkbox" class="accent-emerald-500" /> só ativados</label>
+      <input
+        v-model="search"
+        type="search"
+        placeholder="Buscar modelo…"
+        class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm outline-none focus:border-emerald-500/60"
+      />
+      <label class="flex items-center gap-1.5 text-xs text-zinc-400">
+        <input v-model="onlyEnabled" type="checkbox" class="accent-emerald-500" />
+        só ativados
+      </label>
     </div>
 
     <p v-if="loading" class="text-xs text-zinc-500">Carregando…</p>
-    <p v-else-if="!models.length" class="text-xs text-zinc-500">Nenhum modelo ainda. {{ provider.credential.configured || provider.subscription ? 'Clique em "Atualizar lista" para buscar os do provedor.' : 'Salve uma chave e atualize a lista.' }}</p>
+    <p v-else-if="!models.length" class="text-xs text-zinc-500">
+      Nenhum modelo ainda.
+      {{ provider.credential.configured || provider.subscription ? 'Clique em "Atualizar lista" para buscar os do provedor.' : 'Salve uma chave e atualize a lista.' }}
+    </p>
 
     <ul v-if="visible.length" class="max-h-96 divide-y divide-zinc-800/70 overflow-y-auto">
       <li v-for="model in visible" :key="model.modelId" class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2" :class="{ 'opacity-50': !model.available }">
-        <button type="button" role="switch" :aria-checked="model.enabled" :aria-label="`Ativar ${model.modelId}`" class="switch shrink-0" :class="{ on: model.enabled }" @click="toggle(model)"><span /></button>
+        <button
+          type="button"
+          role="switch"
+          :aria-checked="model.enabled"
+          :aria-label="`Ativar ${model.modelId}`"
+          class="switch shrink-0"
+          :class="{ on: model.enabled }"
+          @click="toggle(model)"
+        >
+          <span />
+        </button>
         <div class="min-w-0 flex-1 basis-44">
           <div class="truncate font-mono text-[13px]" :title="model.modelId">{{ model.modelId }}</div>
-          <div class="truncate text-xs text-zinc-500">
-            {{ model.label && model.label !== model.modelId ? model.label : '' }}
-            <template v-if="model.contextLength"> · {{ context(model.contextLength) }} de contexto</template>
+          <!-- O nome trunca; os selos não (são o que se procura na lista). -->
+          <div class="flex min-w-0 items-center gap-1 text-xs text-zinc-500">
+            <span class="min-w-0 truncate">
+              {{ model.label && model.label !== model.modelId ? model.label : '' }}
+              <template v-if="model.contextLength">· {{ context(model.contextLength) }} de contexto</template>
+            </span>
             <span
               v-if="model.reasoning?.supported"
-              class="ml-1 rounded-full bg-violet-500/15 px-1.5 text-[10px] text-violet-300"
-              :title="model.reasoning.levels ? `Níveis: ${model.reasoning.levels.join(', ')}` : model.reasoning.source === 'heuristic' ? 'Estimado pelo nome do modelo' : 'Informado pelo provedor'"
-              >raciocina{{ model.reasoning.source === 'heuristic' ? ' (estimado)' : '' }}</span
+              class="shrink-0 rounded-full bg-violet-500/15 px-1.5 text-[10px] whitespace-nowrap text-violet-300"
+              :title="
+                model.reasoning.levels
+                  ? `Níveis: ${model.reasoning.levels.join(', ')}`
+                  : model.reasoning.source === 'heuristic'
+                    ? 'Estimado pelo nome do modelo'
+                    : 'Informado pelo provedor'
+              "
             >
-            <span v-if="!model.available" class="ml-1 rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">sumiu da lista</span>
+              raciocina{{ model.reasoning.source === 'heuristic' ? ' (estimado)' : '' }}
+            </span>
+            <span
+              v-if="model.image?.output"
+              class="shrink-0 rounded-full bg-sky-500/15 px-1.5 text-[10px] whitespace-nowrap text-sky-300"
+              data-test="model-image"
+              :title="model.image.source === 'heuristic' ? 'Estimado pelo nome do modelo' : 'Informado pelo provedor'"
+            >
+              {{ model.image.only ? 'só imagem' : 'gera imagem' }}{{ model.image.source === 'heuristic' ? ' (estimado)' : '' }}
+            </span>
+            <span v-if="!model.available" class="shrink-0 rounded-full bg-zinc-800 px-1.5 text-[10px] whitespace-nowrap text-zinc-400">sumiu da lista</span>
           </div>
         </div>
 
         <div v-if="editing !== model.modelId" class="ml-auto flex items-center gap-2 text-xs">
-          <span v-if="model.price" class="text-zinc-300">${{ model.price.input }} / ${{ model.price.output }} <span class="text-zinc-500">por 1M</span></span>
+          <span v-if="model.price" class="text-zinc-300">
+            ${{ model.price.input }} / ${{ model.price.output }}
+            <span class="text-zinc-500">por 1M</span>
+          </span>
           <span v-else class="text-zinc-500">sem preço</span>
-          <span v-if="model.priceSource" class="rounded-full px-1.5 text-[10px]" :class="model.priceSource === 'manual' ? 'bg-sky-500/15 text-sky-300' : 'bg-zinc-800 text-zinc-400'">{{ SOURCE[model.priceSource] }}</span>
+          <span
+            v-if="model.priceSource"
+            class="rounded-full px-1.5 text-[10px]"
+            :class="model.priceSource === 'manual' ? 'bg-sky-500/15 text-sky-300' : 'bg-zinc-800 text-zinc-400'"
+          >
+            {{ SOURCE[model.priceSource] }}
+          </span>
           <button type="button" class="btn btn-sm btn-ghost" @click="edit(model)">Editar</button>
         </div>
         <form v-else class="flex items-center gap-1.5 text-xs" @submit.prevent="savePrice(model)">
@@ -178,7 +254,9 @@ function context(tokens?: number): string {
           <input v-model="draft.output" inputmode="decimal" placeholder="saída" class="w-20 rounded border border-zinc-700 bg-zinc-900 px-2 py-1" />
           <span class="text-zinc-500">US$/1M</span>
           <button type="submit" class="btn btn-sm btn-primary">Gravar preço</button>
-          <button v-if="model.priceSource === 'manual'" type="button" class="btn btn-sm btn-ghost" title="Remove o preço manual" @click="savePrice(model, true)">Restaurar preço</button>
+          <button v-if="model.priceSource === 'manual'" type="button" class="btn btn-sm btn-ghost" title="Remove o preço manual" @click="savePrice(model, true)">
+            Restaurar preço
+          </button>
           <button type="button" class="btn btn-sm btn-ghost" @click="editing = undefined">Cancelar</button>
         </form>
         <p v-if="rowError[model.modelId]" class="w-full text-xs text-rose-300">{{ rowError[model.modelId] }}</p>
@@ -188,18 +266,18 @@ function context(tokens?: number): string {
 </template>
 
 <style scoped>
-@reference '../style.css';
+  @reference '../style.css';
 
-.switch {
-  @apply relative h-5 w-9 rounded-full bg-zinc-700 transition-colors;
-}
-.switch span {
-  @apply absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform;
-}
-.switch.on {
-  @apply bg-emerald-500;
-}
-.switch.on span {
-  @apply translate-x-4;
-}
+  .switch {
+    @apply relative h-5 w-9 rounded-full bg-zinc-700 transition-colors;
+  }
+  .switch span {
+    @apply absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform;
+  }
+  .switch.on {
+    @apply bg-emerald-500;
+  }
+  .switch.on span {
+    @apply translate-x-4;
+  }
 </style>

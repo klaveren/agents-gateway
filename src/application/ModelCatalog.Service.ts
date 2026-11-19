@@ -110,6 +110,7 @@ export class ModelCatalogService {
           contextLength: item.contextLength,
           ...suggested,
           reasoning: item.reasoning,
+          image: item.image,
           syncedAt: now,
           updatedAt: now,
           updatedBy: by,
@@ -125,6 +126,7 @@ export class ModelCatalogService {
         available: true,
         contextLength: item.contextLength ?? current.contextLength,
         reasoning: item.reasoning ?? current.reasoning,
+        image: item.image ?? current.image,
         ...price,
         syncedAt: now,
       })
