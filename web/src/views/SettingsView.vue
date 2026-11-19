@@ -2,7 +2,9 @@
   import SaveFooter from '@/components/SaveFooter.vue'
   import MachineAgentsSetting from '@/components/MachineAgentsSetting.vue'
   import PushSetting from '@/components/PushSetting.vue'
+  import SettingsTabs, { type TSettingsTab } from '@/components/SettingsTabs.vue'
   import { computed, onMounted, ref, watch } from 'vue'
+  import { useRoute, useRouter } from 'vue-router'
   import { ApiError } from '@/lib/api'
   import { lite } from '@/lib/edition'
   import type { IProviderStatus, TAudience, TLimitName } from '@/lib/types'
@@ -17,6 +19,25 @@
   const settings = useSettingsStore()
   const providers = useProvidersStore()
   const protocols = useProtocolsStore()
+  const route = useRoute()
+  const router = useRouter()
+
+  /** As guias da tela; a lite não tem Modelos nem Implantação. A guia mora no endereço (`#limits`) para abrir direto nela. */
+  const TABS: Array<{ id: TSettingsTab; label: string; full?: boolean }> = [
+    { id: 'general', label: 'Geral' },
+    { id: 'models', label: 'Modelos', full: true },
+    { id: 'limits', label: 'Limites' },
+    { id: 'machine', label: 'Máquina' },
+    { id: 'notices', label: 'Avisos' },
+    { id: 'deployment', label: 'Implantação', full: true },
+  ]
+  const tabs = computed(() => TABS.filter((item) => !(lite.value && item.full)))
+  const tab = computed<TSettingsTab>({
+    get: () => tabs.value.find((item) => `#${item.id}` === route.hash)?.id ?? 'general',
+    set: (id) => void router.replace({ hash: id === 'general' ? '' : `#${id}` }),
+  })
+  /** As guias que o "Salvar configurações" grava; Máquina e Avisos salvam por conta própria, Implantação é só leitura. */
+  const saves = computed(() => ['general', 'models', 'limits'].includes(tab.value))
 
   /** A configuração do SISTEMA (só admin). O que é da pessoa — conta, senha, tokens — mora em Perfil. */
   const audience = ref<TAudience>('all')
@@ -177,104 +198,135 @@
     <div class="mx-auto flex max-w-2xl flex-col gap-6">
       <h1 class="text-xl font-semibold">Configuração</h1>
 
-      <section v-if="auth.isAdmin && settings.current" class="flex flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 class="font-medium">Operação do gateway</h2>
+      <template v-if="auth.isAdmin && settings.current">
+        <SettingsTabs v-model="tab" :items="tabs" />
 
-        <div class="flex flex-col gap-2">
-          <span class="text-sm text-zinc-300">Quem pode abrir conversa</span>
-          <label
-            v-for="option in AUDIENCE"
-            :key="option.value"
-            class="flex cursor-pointer items-start gap-3 rounded-xl border p-3"
-            :class="audience === option.value ? (option.value === 'off' ? 'border-rose-500/50 bg-rose-500/10' : 'border-emerald-500/50 bg-emerald-500/10') : 'border-zinc-800'"
-          >
-            <input v-model="audience" type="radio" :value="option.value" class="mt-1 accent-emerald-500" />
-            <span>
-              <span class="block text-sm font-medium">{{ option.label }}</span>
-              <span class="block text-xs text-zinc-400">{{ option.hint }}</span>
-            </span>
-          </label>
-        </div>
-
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
-            Agente padrão
-            <select v-model="agentId" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9" @change="onAgentChange">
-              <option value="">Padrão ({{ settings.current.defaults?.agentId ?? 'nenhum agente ativo' }})</option>
-              <!-- Inativo aparece, mas não se escolhe: o servidor recusaria, e o motivo diz o que resolver. -->
-              <option v-for="option in agents.conversable" :key="option.id" :value="option.id" :disabled="!!option.unavailable">
-                {{ option.name }}{{ option.unavailable ? ` (${option.unavailable.label})` : '' }}
-              </option>
-            </select>
-          </label>
-          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
-            Modelo padrão
-            <select v-model="model" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9">
-              <option value="">Padrão do agente</option>
-              <optgroup v-for="provider in agent?.providers ?? []" :key="provider.id" :label="provider.name">
-                <option v-for="option in provider.models" :key="option" :value="`${provider.id}|${option}`" :disabled="!!provider.unavailable">
-                  {{ option }}{{ provider.unavailable ? ` (${provider.unavailable.label})` : '' }}
-                </option>
-              </optgroup>
-            </select>
-          </label>
-          <!-- A lite não tem o classificador nem o construtor. -->
-          <template v-if="!lite">
+        <section v-show="tab === 'general'" class="flex flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+          <h2 class="font-medium">Operação do gateway</h2>
+          <div class="flex flex-col gap-2">
+            <span class="text-sm text-zinc-300">Quem pode abrir conversa</span>
+            <label
+              v-for="option in AUDIENCE"
+              :key="option.value"
+              class="flex cursor-pointer items-start gap-3 rounded-xl border p-3"
+              :class="audience === option.value ? (option.value === 'off' ? 'border-rose-500/50 bg-rose-500/10' : 'border-emerald-500/50 bg-emerald-500/10') : 'border-zinc-800'"
+            >
+              <input v-model="audience" type="radio" :value="option.value" class="mt-1 accent-emerald-500" />
+              <span>
+                <span class="block text-sm font-medium">{{ option.label }}</span>
+                <span class="block text-xs text-zinc-400">{{ option.hint }}</span>
+              </span>
+            </label>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
             <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
-              Modelo de classificação
-              <select v-model="classifier" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
-                <option value="">Nenhum (sem classificação)</option>
-                <option v-if="classifier && !classifierOptions.some((option) => option.value === classifier)" :value="classifier">
-                  {{ classifier.replace('::', ' · ') }} (não ativado)
+              Agente padrão
+              <select v-model="agentId" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9" @change="onAgentChange">
+                <option value="">Padrão ({{ settings.current.defaults?.agentId ?? 'nenhum agente ativo' }})</option>
+                <!-- Inativo aparece, mas não se escolhe: o servidor recusaria, e o motivo diz o que resolver. -->
+                <option v-for="option in agents.conversable" :key="option.id" :value="option.id" :disabled="!!option.unavailable">
+                  {{ option.name }}{{ option.unavailable ? ` (${option.unavailable.label})` : '' }}
                 </option>
-                <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
               </select>
-              <small class="text-xs text-zinc-500">Só modelos ativados com chave (sem assinatura). Prefira um pequeno: roda a cada mensagem.</small>
             </label>
-            <label class="flex items-center gap-2 self-start text-sm text-zinc-300 sm:mt-6 sm:h-[38px]">
-              <input v-model="classifyTurns" type="checkbox" class="accent-emerald-500" />
-              Classificar cada mensagem
-            </label>
-            <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2" data-test="suggest-model">
-              Modelo de sugestão
-              <select v-model="suggester" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
-                <option value="">Nenhum (sem sugestão)</option>
-                <option v-if="suggester && !classifierOptions.some((option) => option.value === suggester)" :value="suggester">
-                  {{ suggester.replace('::', ' · ') }} (não ativado)
-                </option>
-                <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
+            <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
+              Modelo padrão
+              <select v-model="model" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9">
+                <option value="">Padrão do agente</option>
+                <optgroup v-for="provider in agent?.providers ?? []" :key="provider.id" :label="provider.name">
+                  <option v-for="option in provider.models" :key="option" :value="`${provider.id}|${option}`" :disabled="!!provider.unavailable">
+                    {{ option }}{{ provider.unavailable ? ` (${provider.unavailable.label})` : '' }}
+                  </option>
+                </optgroup>
               </select>
-              <small class="text-xs text-zinc-500">
-                Ao fim de cada resposta a uma mensagem sua, sugere a próxima (aparece na caixa de mensagem; Tab usa). Só modelos ativados com chave (sem assinatura). Prefira um
-                pequeno: roda a cada mensagem.
-              </small>
             </label>
-            <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2" data-test="image-model">
-              Modelo de imagem
-              <select v-model="imager" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
-                <option value="">Nenhum (sem geração de imagem)</option>
-                <option v-if="imager && !imageOptions.some((option) => option.value === imager)" :value="imager">{{ imager.replace('::', ' · ') }} (não ativado)</option>
-                <option v-for="option in imageOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
-              </select>
-              <small class="text-xs text-zinc-500">
-                O que gera as imagens que os agentes pedem ("Gerar imagens" no cadastro do agente), qualquer que seja o modelo da conversa. OpenAI (gpt-image) ou Google (Gemini de
-                imagem), com chave; ative o modelo em Modelos → provider (Adicionar modelo pelo identificador, se a lista não o trouxer).
-              </small>
-            </label>
-            <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">
-              Modelo do construtor
-              <select v-model="builder" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
-                <option value="">Mesmo do Atlas</option>
-                <option v-if="builder && !builderOptions.some((option) => option.value === builder)" :value="builder">{{ builder.replace('::', ' · ') }} (não ativado)</option>
-                <option v-for="option in builderOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
-              </select>
-              <small class="text-xs text-zinc-500">Redige skills e commands na guia Construir. Prefira um modelo forte.</small>
-            </label>
-          </template>
-        </div>
+          </div>
+        </section>
 
-        <div v-if="settings.current.limitBounds" class="flex flex-col gap-2">
-          <h3 class="text-sm font-medium text-zinc-300">Limites</h3>
+        <!-- A lite não tem o classificador nem o construtor. -->
+        <template v-if="!lite">
+          <section v-show="tab === 'models'" class="flex flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+            <h2 class="font-medium">Modelos de apoio</h2>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
+                Modelo de classificação
+                <select v-model="classifier" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
+                  <option value="">Nenhum (sem classificação)</option>
+                  <option v-if="classifier && !classifierOptions.some((option) => option.value === classifier)" :value="classifier">
+                    {{ classifier.replace('::', ' · ') }} (não ativado)
+                  </option>
+                  <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
+                </select>
+                <small class="text-xs text-zinc-500">Só modelos ativados com chave (sem assinatura). Prefira um pequeno: roda a cada mensagem.</small>
+              </label>
+              <label class="flex items-center gap-2 self-start text-sm text-zinc-300 sm:mt-6 sm:h-[38px]">
+                <input v-model="classifyTurns" type="checkbox" class="accent-emerald-500" />
+                Classificar cada mensagem
+              </label>
+              <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2" data-test="suggest-model">
+                Modelo de sugestão
+                <select v-model="suggester" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
+                  <option value="">Nenhum (sem sugestão)</option>
+                  <option v-if="suggester && !classifierOptions.some((option) => option.value === suggester)" :value="suggester">
+                    {{ suggester.replace('::', ' · ') }} (não ativado)
+                  </option>
+                  <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
+                </select>
+                <small class="text-xs text-zinc-500">
+                  Ao fim de cada resposta a uma mensagem sua, sugere a próxima (aparece na caixa de mensagem; Tab usa). Só modelos ativados com chave (sem assinatura). Prefira um
+                  pequeno: roda a cada mensagem.
+                </small>
+              </label>
+              <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2" data-test="image-model">
+                Modelo de imagem
+                <select v-model="imager" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
+                  <option value="">Nenhum (sem geração de imagem)</option>
+                  <option v-if="imager && !imageOptions.some((option) => option.value === imager)" :value="imager">{{ imager.replace('::', ' · ') }} (não ativado)</option>
+                  <option v-for="option in imageOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
+                </select>
+                <small class="text-xs text-zinc-500">
+                  O que gera as imagens que os agentes pedem ("Gerar imagens" no cadastro do agente), qualquer que seja o modelo da conversa. OpenAI (gpt-image) ou Google (Gemini
+                  de imagem), com chave; ative o modelo em Modelos → provider (Adicionar modelo pelo identificador, se a lista não o trouxer).
+                </small>
+              </label>
+              <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">
+                Modelo do construtor
+                <select v-model="builder" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
+                  <option value="">Mesmo do Atlas</option>
+                  <option v-if="builder && !builderOptions.some((option) => option.value === builder)" :value="builder">{{ builder.replace('::', ' · ') }} (não ativado)</option>
+                  <option v-for="option in builderOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
+                </select>
+                <small class="text-xs text-zinc-500">Redige skills e commands na guia Construir. Prefira um modelo forte.</small>
+              </label>
+            </div>
+          </section>
+          <section v-show="tab === 'models'" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+            <h2 class="font-medium">Fallback</h2>
+            <p class="text-xs text-zinc-400">
+              A sequência dos agentes que não escolheram uma: a conversa começa no primeiro modelo disponível dela e, se o modelo falha (cota, limite de uso…), segue no próximo e
+              fica nele.
+            </p>
+            <label class="flex max-w-xs flex-col gap-1 text-sm text-zinc-300">
+              Sequência padrão
+              <select v-model="defaultGroup" aria-label="Sequência padrão" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
+                <option value="">Nenhum</option>
+                <option v-for="group in settings.current.modelGroups ?? []" :key="group.id" :value="group.id">{{ group.name }}</option>
+              </select>
+            </label>
+            <RouterLink to="/model-groups" class="text-sm text-emerald-300 underline">Gerenciar as sequências</RouterLink>
+            <p v-if="settings.current.benched?.length" class="text-xs text-amber-300">
+              Sem cota agora:
+              {{
+                settings.current.benched
+                  .map((item) => `${protocols.providerName(item.provider)} até ${new Date(item.until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
+                  .join(', ')
+              }}
+            </p>
+          </section>
+        </template>
+
+        <section v-if="settings.current.limitBounds" v-show="tab === 'limits'" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+          <h2 class="font-medium">Limites</h2>
           <p class="text-xs text-zinc-400">Em branco, vale o padrão (número cinza).</p>
           <div class="grid gap-3 sm:grid-cols-2">
             <label v-for="limit in LIMITS" :key="limit.name" class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
@@ -294,80 +346,56 @@
               </small>
             </label>
           </div>
-        </div>
+        </section>
 
-        <ul v-if="issues.length" class="list-disc pl-5 text-sm text-rose-300">
-          <li v-for="(issue, index) in issues" :key="index">
-            <code v-if="issue.field" class="text-xs text-rose-200">{{ issue.field }}</code>
-            <template v-if="issue.field">:</template>
-            {{ issue.message }}
-          </li>
-        </ul>
-        <p v-if="settings.current.updatedBy" class="text-xs text-zinc-500">
-          Última alteração por {{ settings.current.updatedBy }} em {{ new Date(settings.current.updatedAt ?? '').toLocaleString('pt-BR') }}
-        </p>
-      </section>
+        <MachineAgentsSetting v-show="tab === 'machine'" />
+        <PushSetting v-show="tab === 'notices'" />
+        <section v-if="!lite && settings.current.deployment" v-show="tab === 'deployment'" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+          <h2 class="font-medium">Implantação</h2>
+          <p class="text-xs text-zinc-400">
+            Só leitura. Para mudar, edite o
+            <code>.env</code>
+            do servidor e reinicie.
+          </p>
+          <dl class="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+            <div v-for="item in DEPLOYMENT" :key="item.key" class="flex min-w-0 items-baseline justify-between gap-3 border-b border-zinc-800/70 pb-1.5">
+              <dt class="text-zinc-400">{{ item.label }}</dt>
+              <dd class="min-w-0 truncate font-mono text-xs text-zinc-200" :title="deploymentValue(settings.current.deployment[item.key])">
+                {{ deploymentValue(settings.current.deployment[item.key]) }}
+              </dd>
+            </div>
+          </dl>
+          <p v-if="settings.current.deployment.sandbox" class="text-xs" :class="settings.current.deployment.sandbox.available ? 'text-success-300' : 'text-amber-300'">
+            Isolamento dos agentes de projeto:
+            {{
+              settings.current.deployment.sandbox.available
+                ? 'ativo'
+                : `indisponível — ${settings.current.deployment.sandbox.reason ?? 'sem motivo'}. O terminal deles fica bloqueado.`
+            }}
+          </p>
+        </section>
 
-      <MachineAgentsSetting v-if="auth.isAdmin && settings.current" />
-
-      <PushSetting v-if="auth.isAdmin && settings.current" />
-
-      <section v-if="!lite && auth.isAdmin && settings.current" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 class="font-medium">Fallback</h2>
-        <p class="text-xs text-zinc-400">
-          A sequência dos agentes que não escolheram uma: a conversa começa no primeiro modelo disponível dela e, se o modelo falha (cota, limite de uso…), segue no próximo e fica
-          nele.
-        </p>
-        <label class="flex max-w-xs flex-col gap-1 text-sm text-zinc-300">
-          Sequência padrão
-          <select v-model="defaultGroup" aria-label="Sequência padrão" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
-            <option value="">Nenhum</option>
-            <option v-for="group in settings.current.modelGroups ?? []" :key="group.id" :value="group.id">{{ group.name }}</option>
-          </select>
-        </label>
-        <RouterLink to="/model-groups" class="text-sm text-emerald-300 underline">Gerenciar as sequências</RouterLink>
-        <p v-if="settings.current.benched?.length" class="text-xs text-amber-300">
-          Sem cota agora:
-          {{
-            settings.current.benched
-              .map((item) => `${protocols.providerName(item.provider)} até ${new Date(item.until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
-              .join(', ')
-          }}
-        </p>
-      </section>
-
-      <section v-if="!lite && auth.isAdmin && settings.current?.deployment" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 class="font-medium">Implantação</h2>
-        <p class="text-xs text-zinc-400">
-          Só leitura. Para mudar, edite o
-          <code>.env</code>
-          do servidor e reinicie.
-        </p>
-        <dl class="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
-          <div v-for="item in DEPLOYMENT" :key="item.key" class="flex min-w-0 items-baseline justify-between gap-3 border-b border-zinc-800/70 pb-1.5">
-            <dt class="text-zinc-400">{{ item.label }}</dt>
-            <dd class="min-w-0 truncate font-mono text-xs text-zinc-200" :title="deploymentValue(settings.current.deployment[item.key])">
-              {{ deploymentValue(settings.current.deployment[item.key]) }}
-            </dd>
-          </div>
-        </dl>
-        <p v-if="settings.current.deployment.sandbox" class="text-xs" :class="settings.current.deployment.sandbox.available ? 'text-success-300' : 'text-amber-300'">
-          Isolamento dos agentes de projeto:
-          {{
-            settings.current.deployment.sandbox.available
-              ? 'ativo'
-              : `indisponível — ${settings.current.deployment.sandbox.reason ?? 'sem motivo'}. O terminal deles fica bloqueado.`
-          }}
-        </p>
-      </section>
+        <template v-if="saves">
+          <ul v-if="issues.length" class="list-disc pl-5 text-sm text-rose-300">
+            <li v-for="(issue, index) in issues" :key="index">
+              <code v-if="issue.field" class="text-xs text-rose-200">{{ issue.field }}</code>
+              <template v-if="issue.field">:</template>
+              {{ issue.message }}
+            </li>
+          </ul>
+          <p v-if="settings.current.updatedBy" class="text-xs text-zinc-500">
+            Última alteração por {{ settings.current.updatedBy }} em {{ new Date(settings.current.updatedAt ?? '').toLocaleString('pt-BR') }}
+          </p>
+        </template>
+      </template>
 
       <p v-if="!auth.isAdmin" class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 text-sm text-zinc-400">
         A configuração do sistema é só de quem administra.
         <RouterLink v-if="auth.user" to="/profile" class="text-emerald-300 underline">Ver meu perfil</RouterLink>
         <RouterLink v-else-if="auth.localAccounts" :to="{ path: '/login', query: { next: '/settings' } }" class="text-emerald-300 underline">Entrar</RouterLink>
       </p>
-      <!-- Um salvar só: a operação do gateway e a troca automática de modelo padrão. -->
-      <SaveFooter v-if="auth.isAdmin && settings.current" label="Salvar configurações" @save="saveSettings">
+      <!-- Um salvar só para Geral, Modelos e Limites: os campos das três vão juntos. -->
+      <SaveFooter v-if="auth.isAdmin && settings.current && saves" label="Salvar configurações" @save="saveSettings">
         <span v-if="saved" class="text-sm text-success-300">{{ saved }}</span>
         <span v-if="failure" class="text-sm text-rose-300">{{ failure }}</span>
       </SaveFooter>
