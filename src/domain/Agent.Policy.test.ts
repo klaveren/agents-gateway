@@ -24,6 +24,20 @@ describe('agentIssues', () => {
 
   const fields = (issues: Array<{ field: string }>) => issues.map((issue) => issue.field)
 
+  it('🔐 agente de projeto só oferece modelo liberado ao projeto; o global não passa por esta regra', () => {
+    const released = (projectId: string, provider: string, model: string) => projectId === 'alfa' && `${provider}/${model}` === 'google/gemini-3.7-flash'
+    const on = (over: Partial<IAgent>) =>
+      agentIssues(agent({ allowedTools: [], ...over }), { ...rules, protocolOf: () => EProvider.GOOGLE, modelEnabled: () => true, projectModelAllowed: released }).map(
+        (issue) => issue.message,
+      )
+    assert.deepStrictEqual(on({ projectId: 'alfa' }), [])
+    assert.deepStrictEqual(on({ projectId: 'alfa', providers: [{ provider: EProvider.GOOGLE, models: ['gemini-4-argon'] }] }), [
+      'google: not released to project alfa: gemini-4-argon',
+    ])
+    assert.deepStrictEqual(on({ projectId: 'beta' }), ['google: not released to project beta: gemini-3.7-flash'])
+    assert.deepStrictEqual(on({}), [], 'global: quem filtra é a conversa')
+  })
+
   it('desligar ferramenta automática (`off:`) só vale para as automáticas', () => {
     const rules = { takenIds: [], knownTools: ['run_bash'] }
     const base = { id: 'a1', name: 'A', providers: [{ provider: EProvider.CLAUDE, models: ['m'] }], systemPrompt: 'p', modes: [EMode.AGENT] }

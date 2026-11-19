@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IAgenticScope, normalizeScope } from '@domain/Import.Scope'
-import { IProject, IProjectMcpVar, IProjectMember, PROJECT_COLORS, TProjectColor, TProjectRole } from '@domain/models/Project.Model'
+import { IProject, IProjectMcpVar, IProjectMember, IProjectModels, PROJECT_COLORS, TProjectColor, TProjectRole } from '@domain/models/Project.Model'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
 
 const SCHEMA = `
@@ -51,6 +51,8 @@ const ADDED_COLUMNS: ReadonlyArray<{ column: string; definition: string }> = [
   { column: 'env_file_agents', definition: 'TEXT' },
   // JSON `[agentId]` (os agentes de máquina, ver `IProject.machineAgents`); NULL = nenhum.
   { column: 'machine_agents', definition: 'TEXT' },
+  // JSON `IProjectModels` (os modelos liberados ao projeto e aos papéis/pessoas); NULL = tudo do gateway.
+  { column: 'models', definition: 'TEXT' },
 ]
 
 /** Os projetos e os membros, no mesmo arquivo das conversas. Sem arquivo, em memória (`:memory:`). */
@@ -89,7 +91,10 @@ export class SqliteProjectRepository implements IProjectRepository {
   update(
     id: string,
     patch: Partial<
-      Pick<IProject, 'name' | 'description' | 'importIgnore' | 'importScope' | 'env' | 'mcpEnv' | 'color' | 'envFileAgents' | 'machineAgents' | 'updatedAt' | 'updatedBy'>
+      Pick<
+        IProject,
+        'name' | 'description' | 'importIgnore' | 'importScope' | 'env' | 'mcpEnv' | 'color' | 'envFileAgents' | 'machineAgents' | 'models' | 'updatedAt' | 'updatedBy'
+      >
     >,
   ): IProject | undefined {
     if (patch.name !== undefined) this.db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(patch.name, id)
@@ -107,6 +112,7 @@ export class SqliteProjectRepository implements IProjectRepository {
       this.db.prepare('UPDATE projects SET env_file_agents = ? WHERE id = ?').run(patch.envFileAgents?.length ? JSON.stringify(patch.envFileAgents) : null, id)
     if ('machineAgents' in patch)
       this.db.prepare('UPDATE projects SET machine_agents = ? WHERE id = ?').run(patch.machineAgents?.length ? JSON.stringify(patch.machineAgents) : null, id)
+    if ('models' in patch) this.db.prepare('UPDATE projects SET models = ? WHERE id = ?').run(modelsJson(patch.models), id)
     if (patch.updatedAt) this.db.prepare('UPDATE projects SET updated_at = ?, updated_by = ? WHERE id = ?').run(patch.updatedAt.toISOString(), patch.updatedBy ?? null, id)
     return this.get(id)
   }
@@ -161,6 +167,7 @@ function toProject(row: TRow): IProject {
     ...(mcpEnvOf(row.mcp_env).length ? { mcpEnv: mcpEnvOf(row.mcp_env) } : {}),
     ...(envFileAgentsOf(row.env_file_agents).length ? { envFileAgents: envFileAgentsOf(row.env_file_agents) } : {}),
     ...(envFileAgentsOf(row.machine_agents).length ? { machineAgents: envFileAgentsOf(row.machine_agents) } : {}),
+    ...(modelsOf(row.models) ? { models: modelsOf(row.models) } : {}),
     ...(typeof row.color === 'string' && (PROJECT_COLORS as readonly string[]).includes(row.color) ? { color: row.color as TProjectColor } : {}),
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),
@@ -219,5 +226,35 @@ function envFileAgentsOf(raw: unknown): string[] {
     return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string' && id !== '') : []
   } catch {
     return []
+  }
+}
+
+/** Os modelos do projeto, só o que tem lista (ausente = tudo de cima); nada a gravar = NULL. */
+function modelsJson(models: IProjectModels | undefined): string | null {
+  if (!models) return null
+  const byRole = Object.fromEntries(Object.entries(models.byRole ?? {}).filter((entry) => Array.isArray(entry[1])))
+  const byUser = Object.fromEntries(Object.entries(models.byUser ?? {}).filter((entry) => Array.isArray(entry[1])))
+  const kept: IProjectModels = {
+    ...(models.allowed ? { allowed: models.allowed } : {}),
+    ...(Object.keys(byRole).length ? { byRole } : {}),
+    ...(Object.keys(byUser).length ? { byUser } : {}),
+  }
+  return Object.keys(kept).length ? JSON.stringify(kept) : null
+}
+
+function modelsOf(value: unknown): IProjectModels | undefined {
+  if (typeof value !== 'string' || !value) return undefined
+  try {
+    const parsed = JSON.parse(value) as IProjectModels
+    const strings = (list: unknown): list is string[] => Array.isArray(list) && list.every((item) => typeof item === 'string')
+    const map = (record: unknown) => Object.fromEntries(Object.entries((record as Record<string, unknown>) ?? {}).filter((entry): entry is [string, string[]] => strings(entry[1])))
+    const models: IProjectModels = {
+      ...(strings(parsed.allowed) ? { allowed: parsed.allowed } : {}),
+      ...(Object.keys(map(parsed.byRole)).length ? { byRole: map(parsed.byRole) } : {}),
+      ...(Object.keys(map(parsed.byUser)).length ? { byUser: map(parsed.byUser) } : {}),
+    }
+    return Object.keys(models).length ? models : undefined
+  } catch {
+    return undefined
   }
 }

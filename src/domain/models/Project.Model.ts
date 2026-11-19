@@ -44,9 +44,22 @@ export interface IProject {
    * Configurações (`machineAgentsOn`). Desta máquina (nunca no catálogo), escolhidos pelo admin do projeto na tela.
    */
   machineAgents?: string[]
+  /** 🔐 Os modelos que o projeto pode usar e os de cada papel ou pessoa (ver `ModelAccess.Policy`). Ausente = tudo do gateway. */
+  models?: IProjectModels
   createdAt: Date
   updatedAt: Date
   updatedBy?: string
+}
+
+/**
+ * 🔐 OS MODELOS DO PROJETO (ver `ModelAccess.Policy`). Cada lista é de `provider/modelo` e AUSENTE = tudo o que vem de cima.
+ *  - `allowed`: o que o admin do GATEWAY liberou ao projeto (dentre os ligados no catálogo);
+ *  - `byRole` / `byUser`: o que o admin do PROJETO libera a cada papel ou pessoa (a da pessoa vence a do papel), dentro de `allowed`.
+ */
+export interface IProjectModels {
+  allowed?: string[]
+  byRole?: Partial<Record<TProjectRole, string[]>>
+  byUser?: Record<string, string[]>
 }
 
 /** Um valor visível que o projeto dá a uma variável de um MCP (`server` = o id do MCP, como o agente o cita). */

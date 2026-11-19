@@ -42,6 +42,22 @@ describe('ProjectsService', () => {
     assert.strictEqual(service.setColor('alfa', undefined, 'root').color, undefined)
   })
 
+  it('🔐 os modelos do projeto: o gateway libera, o projeto restringe por papel e pessoa; gravado e relido; vazio volta a tudo', () => {
+    const { service, repository } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    assert.strictEqual(service.get('alfa').models, undefined, 'sem lista: tudo do gateway')
+    service.setAllowedModels('alfa', ['claude/opus', ' claude/haiku ', 'claude/opus'], 'root')
+    assert.deepStrictEqual(repository.get('alfa')?.models, { allowed: ['claude/haiku', 'claude/opus'] })
+    service.setMemberModels('alfa', { byRole: { member: ['claude/haiku'] }, byUser: { u_bia: ['claude/opus'] } }, 'root')
+    assert.deepStrictEqual(repository.get('alfa')?.models, { allowed: ['claude/haiku', 'claude/opus'], byRole: { member: ['claude/haiku'] }, byUser: { u_bia: ['claude/opus'] } })
+    assert.throws(() => service.setMemberModels('alfa', { byRole: { member: ['codex/sol'] } }, 'root'), InvalidProjectError, 'fora do que o projeto recebeu')
+    assert.throws(() => service.setMemberModels('alfa', { byRole: { dono: ['claude/haiku'] } as never }, 'root'), InvalidProjectError, 'papel que não existe')
+    assert.throws(() => service.setAllowedModels('alfa', ['sem-barra'], 'root'), InvalidProjectError)
+    // Encolher o do gateway mantém as listas dos papéis (o que saiu deixa de valer na leitura); sem lista, volta a tudo.
+    assert.deepStrictEqual(service.setAllowedModels('alfa', undefined, 'root').models, { byRole: { member: ['claude/haiku'] }, byUser: { u_bia: ['claude/opus'] } })
+    assert.strictEqual(service.setMemberModels('alfa', {}, 'root').models, undefined)
+  })
+
   it('⛔ canUse: só os membros — também o admin do gateway; projeto inexistente, ninguém', () => {
     const { service } = build()
     service.create({ id: 'alfa', name: 'Alfa' }, 'root')

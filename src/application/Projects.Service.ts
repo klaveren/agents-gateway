@@ -7,6 +7,7 @@ import {
   IProject,
   IProjectMcpVar,
   IProjectMember,
+  IProjectModels,
   PROJECT_ENV_LIMITS,
   PROJECT_ID_PATTERN,
   PROJECT_ROLES,
@@ -14,6 +15,7 @@ import {
   TProjectRole,
 } from '@domain/models/Project.Model'
 import { AGENT_ENV_NAME, fixedEnvIssues } from '@domain/Agent.Policy'
+import { memberModelsIssues, modelListIssues } from '@domain/ModelAccess.Policy'
 import { MCP_SERVER_ID_PATTERN } from '@domain/models/McpServer.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
@@ -162,6 +164,36 @@ export class ProjectsService {
     this.get(id)
     const unique = [...new Set(agents.map((agent) => agent.trim()).filter(Boolean))].sort()
     return this.projects.update(id, { machineAgents: unique, updatedAt: this.now(), updatedBy: by })!
+  }
+
+  /**
+   * 🔐 Os modelos que o admin do GATEWAY libera ao projeto (`provider/modelo`); `undefined` = tudo o que o gateway liga.
+   * ⚖️ Encolher não apaga as listas dos papéis e pessoas: o que saiu deixa de valer na leitura (`memberAllows`).
+   */
+  setAllowedModels(id: string, allowed: string[] | undefined, by: string): IProject {
+    const project = this.get(id)
+    const list = allowed ? [...new Set(allowed.map((key) => key.trim()).filter(Boolean))].sort() : undefined
+    const issues = list ? modelListIssues('allowed', list) : []
+    if (issues.length) throw new InvalidProjectError(issues)
+    const { allowed: _old, ...rest } = project.models ?? {}
+    return this.projects.update(id, { models: { ...rest, ...(list ? { allowed: list } : {}) }, updatedAt: this.now(), updatedBy: by })!
+  }
+
+  /** 🔐 O que o admin do PROJETO libera a cada papel e pessoa, sempre dentro do que o projeto recebeu. As listas INTEIRAS. */
+  setMemberModels(id: string, members: Pick<IProjectModels, 'byRole' | 'byUser'>, by: string): IProject {
+    const project = this.get(id)
+    const tidy = (list: readonly string[]) => [...new Set(list.map((key) => key.trim()).filter(Boolean))].sort()
+    const byRole = Object.fromEntries(Object.entries(members.byRole ?? {}).flatMap(([role, list]) => (list ? [[role, tidy(list)]] : [])))
+    const byUser = Object.fromEntries(Object.entries(members.byUser ?? {}).map(([userId, list]) => [userId, tidy(list)]))
+    const roles = Object.keys(byRole).filter((role) => !(PROJECT_ROLES as readonly string[]).includes(role))
+    const issues = [...roles.map((role) => ({ field: `byRole.${role}`, message: 'unknown role' })), ...memberModelsIssues(project.models?.allowed, { byRole, byUser })]
+    if (issues.length) throw new InvalidProjectError(issues)
+    const models: IProjectModels = {
+      ...(project.models?.allowed ? { allowed: project.models.allowed } : {}),
+      ...(Object.keys(byRole).length ? { byRole } : {}),
+      ...(Object.keys(byUser).length ? { byUser } : {}),
+    }
+    return this.projects.update(id, { models, updatedAt: this.now(), updatedBy: by })!
   }
 
   /** 🎨 A paleta do destaque da tela no projeto (`undefined` = o verde do tema). Desta máquina: sem revisão no catálogo. */
