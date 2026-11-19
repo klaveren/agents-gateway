@@ -97,4 +97,10 @@ describe('Mensagens (integração)', () => {
     )
     assert.strictEqual((await call('/push/key')).status, 401)
   })
+
+  it('🔐 a configuração do push é do admin pela tela: token de integração, 403', async () => {
+    assert.strictEqual((await call('/push/config', { token: admin })).status, 403)
+    assert.strictEqual((await call('/push/config', { method: 'PUT', token: admin, body: { contact: 'ops@empresa.com' } })).status, 403)
+    assert.strictEqual((await call('/push/config/rotate', { method: 'POST', token: admin })).status, 403)
+  })
 })
