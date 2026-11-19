@@ -1,4 +1,5 @@
-import { readsEnvFiles } from '@domain/models/Project.Model'
+import { IProjectModels, readsEnvFiles } from '@domain/models/Project.Model'
+import { memberAllows } from '@domain/ModelAccess.Policy'
 import { projectFixedEnv } from './ProjectVariables.Factory'
 import { markAnswersDelivered } from '@domain/models/ConversationPanel.Model'
 import type { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
@@ -145,6 +146,20 @@ export function makeOrchestrator(): AgentProvider {
   provider.useProjectEnv((projectId) => projectFixedEnv(projectId))
   // 🖥️ O agente de máquina sabe que é (o "## Ambiente"): a mesma decisão das permissões.
   provider.useMachine((projectId, agentId) => makePermissions().layers({ projectId, agentId }).machine === true)
+  // 🔐 Os modelos do projeto e da pessoa (ver `ModelAccess.Policy`): projeto sem lista não filtra nada.
+  provider.useModelAccess((projectId, ownerId) => {
+    if (!projectId) return undefined
+    const projects = makeProjects()
+    let models: IProjectModels | undefined
+    try {
+      models = projects.get(projectId).models
+    } catch {
+      return undefined
+    }
+    if (!models) return undefined
+    const role = projects.roleOf(projectId, ownerId)
+    return (provider, model) => memberAllows(models, { ...(ownerId ? { userId: ownerId } : {}), ...(role ? { role } : {}) }, provider, model)
+  })
   provider.useSecrets({
     envFor: (agentId, sessionId, project) => makeResourceSecrets().envFor(agentId, sessionId, project),
     // Os nomes das skills e commands que o agente pode carregar: os liberados para ele (o índice do prompt).

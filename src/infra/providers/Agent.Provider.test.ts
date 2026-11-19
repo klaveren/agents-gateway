@@ -230,7 +230,7 @@ describe('AgentProvider', () => {
     const events = await drain(provider.sendMessage(session.id, { text: 'oi' }))
     assert.strictEqual(store.get(session.id)?.model, 'gemini-a')
     assert.ok(
-      events.some((event) => event.type === 'warning' && /google · gemini-b foi desligado; a conversa segue em google · gemini-a/.test(String(event.payload.message))),
+      events.some((event) => event.type === 'warning' && /google · gemini-b não está mais disponível; a conversa segue em google · gemini-a/.test(String(event.payload.message))),
       'o turno avisa a troca',
     )
 
