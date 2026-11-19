@@ -1,3 +1,4 @@
+import { RENDER_DOCUMENT_TOOL } from './models/Document.Model'
 import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
 import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
@@ -15,7 +16,7 @@ import { TNativeToolRisk } from './Native.Tools'
  */
 export const CAPABILITY_PREFIX = 'cap:'
 
-export type TCapabilityId = 'terminal' | 'files.read' | 'files.write' | 'web.search' | 'web.fetch' | 'todos' | 'triggers' | 'watch'
+export type TCapabilityId = 'terminal' | 'files.read' | 'files.write' | 'web.search' | 'web.fetch' | 'todos' | 'triggers' | 'watch' | 'documents'
 
 /** O que roda num provedor: ferramentas concretas (locais ou `sdk:`), o que o CLI já faz sozinho, ou nada. */
 type TRun = { tools: readonly string[]; note: string } | { builtIn: string } | { unavailable: true }
@@ -105,6 +106,15 @@ export const CAPABILITIES: readonly ICapability[] = [
     description: 'Cria, edita e apaga triggers de agentes — só dos que as regras "trigger" liberam (sem regra, de nenhum, nem o próprio).',
     risk: 'server-exec',
     local: [AGENT_TRIGGER_TOOL],
+    runs: {},
+  },
+  {
+    id: 'documents',
+    label: 'Gerar documentos',
+    description:
+      'O agente cria PDF, Word (DOCX), planilha (XLSX) e apresentação (PPTX) com o modelo do projeto e entrega na conversa, para baixar. Roda no gateway: não pede terminal nem pacote.',
+    risk: 'session',
+    local: [RENDER_DOCUMENT_TOOL],
     runs: {},
   },
   {
