@@ -239,6 +239,9 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         return secretTarget(body)
       case 'projects': {
         if (clean === '/projects') return scope.unrestricted ? undefined : refuse('Only an administrator in a conversation outside any project creates projects')
+        // 🔐 Liberar modelos amplia o que o projeto e as pessoas usam: é da pessoa, na tela (a rota também confere).
+        if (method === 'PUT' && /^\/projects\/[^/]+\/(models|member-models)\/?$/.test(clean))
+          return refuse('An agent conversation cannot release models: the person does that on the Models screen')
         const denied = inScope(id)
         if (denied || scope.unrestricted || !/^\/projects\/[^/]+\/members\/?$/.test(clean)) return denied
         return widensMembers(id, body)

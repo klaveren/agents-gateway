@@ -289,6 +289,26 @@ describe('Projetos (integração)', () => {
     )
   })
 
+  it('🔐 os modelos do projeto: ⛔ liberar só na tela (token é 403, membro 404); cada um lê o que pode usar', async () => {
+    const refused = await call(ADMIN, 'PUT', '/projects/alfa/models', { allowed: ['claude/opus'] })
+    assert.strictEqual(refused.status, 403)
+    assert.match(JSON.stringify(refused.body), /entrando pela tela/)
+    assert.strictEqual((await call(ANA, 'PUT', '/projects/alfa/models', { allowed: ['claude/opus'] })).status, 404)
+    assert.strictEqual((await call(ANA, 'PUT', '/projects/alfa/member-models', { byRole: { member: [] } })).status, 404)
+    // Sem lista: tudo do gateway, para todos.
+    assert.deepStrictEqual((await call(ANA, 'GET', '/projects/alfa/models')).body.result, { allowed: null, effective: null })
+
+    // A lista gravada (o que a tela faria): o membro lê só o que ele pode; quem administra lê as listas.
+    projects.setAllowedModels('alfa', ['claude/haiku', 'claude/opus'], 'teste')
+    projects.setMemberModels('alfa', { byRole: { member: ['claude/haiku'] } }, 'teste')
+    assert.deepStrictEqual((await call(ANA, 'GET', '/projects/alfa/models')).body.result, { allowed: ['claude/haiku', 'claude/opus'], effective: ['claude/haiku'] })
+    const admin = (await call(ADMIN, 'GET', '/projects/alfa/models')).body.result as { byRole: unknown; effective: unknown }
+    assert.deepStrictEqual([admin.byRole, admin.effective], [{ member: ['claude/haiku'] }, ['claude/haiku', 'claude/opus']])
+    assert.strictEqual((await call(BIA, 'GET', '/projects/alfa/models')).status, 404, 'quem não é do projeto')
+    projects.setAllowedModels('alfa', undefined, 'teste')
+    projects.setMemberModels('alfa', {}, 'teste')
+  })
+
   it('⛔ o agente de projeto só aparece para os membros dele; o global aparece em todos', async () => {
     agents.moveToProject(CLAUDE_TEST_AGENT.id, 'alfa', 'teste')
     agents.moveToProject(OPENAI_TEST_AGENT.id, 'beta', 'teste')

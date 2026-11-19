@@ -70,6 +70,8 @@ export const useProjectsStore = defineStore('projects', () => {
   }
 
   const memberLists = keyedResource((id) => api<IProjectMember[]>(`/projects/${encodeURIComponent(id)}/members`))
+  /** 🔐 O que quem está logado pode usar no projeto (`effective`; `null` = tudo do gateway). Ver `ProjectModels`. */
+  const modelAccess = keyedResource((id) => api<{ allowed: string[] | null; effective: string[] | null }>(`/projects/${encodeURIComponent(id)}/models`))
 
   function setCurrent(id: string | undefined): void {
     current.value = id
@@ -149,6 +151,7 @@ export const useProjectsStore = defineStore('projects', () => {
   }
 
   return {
+    modelAccess,
     list,
     current,
     currentProject,
