@@ -45,11 +45,15 @@ export interface IModelGroupSettings {
   defaultModelGroup?: string
 }
 
-/** O grupo do agente: o dele, senão o padrão. `none` (ou um id que sumiu) = nenhum. */
-export function groupOf(agent: Pick<IAgent, 'modelGroup'>, settings: IModelGroupSettings | undefined): IModelGroup | undefined {
-  const id = agent.modelGroup ?? settings?.defaultModelGroup
+/**
+ * O grupo do agente: o dele, senão o padrão. `none` (ou um id que sumiu) = nenhum.
+ * 🔐 Com os grupos do PROJETO da conversa: o padrão do projeto vence o do gateway, e o id procura primeiro no projeto
+ * (o mesmo id no gateway fica por baixo). Os passos que o projeto não libera saem depois (ver `AgentProvider.getAgent`).
+ */
+export function groupOf(agent: Pick<IAgent, 'modelGroup'>, settings: IModelGroupSettings | undefined, project?: IModelGroupSettings): IModelGroup | undefined {
+  const id = agent.modelGroup ?? project?.defaultModelGroup ?? settings?.defaultModelGroup
   if (!id || id === NO_MODEL_GROUP) return undefined
-  return settings?.modelGroups?.find((group) => group.id === id)
+  return project?.modelGroups?.find((group) => group.id === id) ?? settings?.modelGroups?.find((group) => group.id === id)
 }
 
 /** Os passos do grupo, sem repetir. */

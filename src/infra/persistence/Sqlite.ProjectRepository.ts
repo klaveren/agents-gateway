@@ -238,6 +238,8 @@ function modelsJson(models: IProjectModels | undefined): string | null {
     ...(models.allowed ? { allowed: models.allowed } : {}),
     ...(Object.keys(byRole).length ? { byRole } : {}),
     ...(Object.keys(byUser).length ? { byUser } : {}),
+    ...(models.modelGroups?.length ? { modelGroups: models.modelGroups } : {}),
+    ...(models.defaultModelGroup ? { defaultModelGroup: models.defaultModelGroup } : {}),
   }
   return Object.keys(kept).length ? JSON.stringify(kept) : null
 }
@@ -252,6 +254,8 @@ function modelsOf(value: unknown): IProjectModels | undefined {
       ...(strings(parsed.allowed) ? { allowed: parsed.allowed } : {}),
       ...(Object.keys(map(parsed.byRole)).length ? { byRole: map(parsed.byRole) } : {}),
       ...(Object.keys(map(parsed.byUser)).length ? { byUser: map(parsed.byUser) } : {}),
+      ...(Array.isArray(parsed.modelGroups) && parsed.modelGroups.length ? { modelGroups: parsed.modelGroups } : {}),
+      ...(typeof parsed.defaultModelGroup === 'string' && parsed.defaultModelGroup ? { defaultModelGroup: parsed.defaultModelGroup } : {}),
     }
     return Object.keys(models).length ? models : undefined
   } catch {

@@ -31,6 +31,8 @@ function mount(view: unknown, props: { gatewayAdmin: boolean; projectAdmin: bool
     if (init?.method === 'PUT') return {}
     if (path === '/providers') return PROVIDERS
     if (path === '/providers/claude/models') return MODELS
+    if (path === '/projects/alfa/model-groups') return { groups: [] }
+    if (path === '/model-groups') return { groups: [{ id: 'global', name: 'Global' }] }
     return view
   })
   const host = document.createElement('div')
@@ -80,5 +82,41 @@ describe('ProjectModels', () => {
     host.querySelector<HTMLButtonElement>('[data-test="project-models-roles-save"]')!.click()
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/member-models', { method: 'PUT', body: { byRole: { member: ['claude/opus'] }, byUser: { u_bia: ['claude/opus'] } } })
+  })
+  it('🔁 o fallback do projeto: cria um grupo com os modelos do projeto, escolhe o padrão e salva', async () => {
+    const host = mount(
+      { allowed: ['claude/opus', 'claude/haiku'], byRole: {}, byUser: {}, effective: ['claude/opus', 'claude/haiku'] },
+      { gatewayAdmin: false, projectAdmin: true },
+    )
+    await flush()
+    const section = host.querySelector('[data-test="project-model-groups"]')!
+    expect([...section.querySelectorAll('[data-test="project-default-group"] option')].map((option) => option.textContent?.trim())).toEqual([
+      'O do gateway',
+      'Não troca',
+      'Global (gateway)',
+    ])
+    host.querySelector<HTMLButtonElement>('[data-test="project-group-add"]')!.click()
+    await nextTick()
+    const group = section.querySelector('[data-test="project-group"]')!
+    const [name, id] = [...group.querySelectorAll<HTMLInputElement>('input')]
+    name.value = 'Barato'
+    name.dispatchEvent(new Event('input'))
+    id.value = 'barato'
+    id.dispatchEvent(new Event('input'))
+    const pick = group.querySelector<HTMLSelectElement>('select')!
+    pick.value = 'claude/haiku'
+    pick.dispatchEvent(new Event('change'))
+    await nextTick()
+    ;[...group.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.trim() === 'Acrescentar')!.click()
+    await nextTick()
+    const def = section.querySelector<HTMLSelectElement>('[data-test="project-default-group"]')!
+    def.value = 'barato'
+    def.dispatchEvent(new Event('change'))
+    host.querySelector<HTMLButtonElement>('[data-test="project-groups-save"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/model-groups', {
+      method: 'PUT',
+      body: { groups: [{ id: 'barato', name: 'Barato', steps: [{ provider: 'claude', model: 'haiku' }] }], defaultModelGroup: 'barato' },
+    })
   })
 })

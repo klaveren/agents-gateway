@@ -617,6 +617,8 @@ function buildRoutes(
     { method: 'get', path: '/availability', handler: controller.availability },
     { method: 'get', path: '/settings', handler: controller.getSettings },
     { method: 'get', path: '/model-groups', handler: controller.getModelGroups },
+    { method: 'get', path: '/projects/:id/model-groups', handler: controller.getProjectModelGroups },
+    { method: 'put', path: '/projects/:id/model-groups', handler: controller.setProjectModelGroups },
     { method: 'put', path: '/settings', handler: controller.updateSettings },
     // ⚠️ `/conversations/stats` e `/events` ANTES de qualquer `/conversations/:id`: senão seriam lidos como id.
     { method: 'get', path: '/conversations', handler: controller.listConversations },

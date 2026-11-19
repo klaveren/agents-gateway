@@ -58,6 +58,23 @@ describe('ProjectsService', () => {
     assert.strictEqual(service.setMemberModels('alfa', {}, 'root').models, undefined)
   })
 
+  it('🔁 os grupos de fallback do projeto: só com modelos que o projeto recebeu; o padrão pode ser do gateway; as outras listas ficam', () => {
+    const { service } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    service.setAllowedModels('alfa', ['claude/haiku', 'claude/opus'], 'root')
+    const group = { id: 'barato', name: 'Barato', steps: [{ provider: 'claude', model: 'haiku' }] }
+    const saved = service.setModelGroups('alfa', { modelGroups: [group], defaultModelGroup: 'barato' }, 'root')
+    assert.deepStrictEqual(saved.models, { allowed: ['claude/haiku', 'claude/opus'], modelGroups: [group], defaultModelGroup: 'barato' })
+    assert.throws(() => service.setModelGroups('alfa', { modelGroups: [{ ...group, steps: [{ provider: 'codex', model: 'sol' }] }] }, 'root'), /not released to this project/)
+    assert.throws(() => service.setModelGroups('alfa', { modelGroups: [], defaultModelGroup: 'sumiu' }, 'root'), /unknown group: sumiu/)
+    assert.deepStrictEqual(
+      service.setModelGroups('alfa', { modelGroups: [], defaultModelGroup: 'global' }, 'root', { gatewayGroups: ['global'] }).models?.defaultModelGroup,
+      'global',
+    )
+    // Mexer na lista do gateway ou dos papéis não apaga os grupos.
+    assert.strictEqual(service.setMemberModels('alfa', { byRole: { member: ['claude/haiku'] } }, 'root').models?.defaultModelGroup, 'global')
+  })
+
   it('⛔ canUse: só os membros — também o admin do gateway; projeto inexistente, ninguém', () => {
     const { service } = build()
     service.create({ id: 'alfa', name: 'Alfa' }, 'root')

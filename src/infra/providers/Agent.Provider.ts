@@ -15,7 +15,19 @@ import { offers, targetFor } from '@domain/Agent.Policy'
 import { conversationNote, IAmbient, IAmbientSecrets, mcpDownNote, secretNamesOf, secretsChangedNote } from '@domain/Ambient.Policy'
 import { agentFolderAccess, hasTerminal, hasWatch, resolveCapabilities } from '@domain/Capability.Catalog'
 import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
-import { benchKeyOf, DEFAULT_COOLDOWN_MINUTES, fallbackChain, groupOf, IFallbackStep, IModelGroup, nextStep, stepKey, switchesOn, withGroupTargets } from '@domain/Fallback.Policy'
+import {
+  benchKeyOf,
+  DEFAULT_COOLDOWN_MINUTES,
+  fallbackChain,
+  groupOf,
+  IFallbackStep,
+  IModelGroup,
+  IModelGroupSettings,
+  nextStep,
+  stepKey,
+  switchesOn,
+  withGroupTargets,
+} from '@domain/Fallback.Policy'
 import { HANDOFF_MAX_CHARS, handoffText, ITranscriptTurn } from '@domain/Handoff.Policy'
 import type { TProviderFailure } from '@domain/Provider.Failure'
 import { INTERJECTION_QUEUE_MAX, interjectionRound } from '@domain/Interjection.Policy'
@@ -176,7 +188,7 @@ export class AgentProvider implements IAgentProvider {
     const agent = this.getAgent(input.agentId || settings.agentId, projectOf(input.metadata), ownerIdOf(input.metadata))
     // ⛔ O agente de um projeto só conversa num OUTRO projeto se foi compartilhado com ele (parou de compartilhar = sem acesso).
     if (!reaches(agent, projectOf(input.metadata))) throw new AgentNotFoundError(agent.id)
-    const choice = this.chooseTarget(agent, input, settings)
+    const choice = this.chooseTarget(agent, input, settings, projectOf(input.metadata))
     const protocol = this.protocolOf(choice.provider)
     const mode = resolveSessionMode(agent, input, lanesOf(protocol))
     // A filha de uma delegação vale o que a mãe vale: admin só se a mãe foi aberta por admin.
@@ -234,7 +246,7 @@ export class AgentProvider implements IAgentProvider {
       const before = `${record.provider} · ${record.model}`
       const settings = this.current ?? (await this.settings?.read()) ?? DEFAULT_SETTINGS
       try {
-        this.reconfigure(sessionId, this.chooseTarget(this.agentOf(record), {}, settings))
+        this.reconfigure(sessionId, this.chooseTarget(this.agentOf(record), {}, settings, projectOf(record.metadata)))
       } catch {
         throw new ModelDisabledError(record.provider, record.model)
       }
@@ -593,8 +605,20 @@ export class AgentProvider implements IAgentProvider {
   }
 
   /** O grupo de modelos da conversa: o do agente, senão o padrão (ver `Fallback.Policy`). */
-  private groupFor(record: Pick<ISessionRecord, 'agentId'>): IModelGroup | undefined {
-    return groupOf(this.agents.get(record.agentId) ?? {}, this.current)
+  private groupFor(record: Pick<ISessionRecord, 'agentId' | 'metadata'>): IModelGroup | undefined {
+    const project = projectOf(record.metadata)
+    return groupOf(this.agents.get(record.agentId) ?? {}, this.current, this.projectGroupsOf(project))
+  }
+
+  /** 🔁 Os grupos de fallback do projeto da conversa (ver `IProjectModels.modelGroups`). Ligados na composição. */
+  useProjectGroups(groups: (projectId: string) => IModelGroupSettings | undefined): void {
+    this.projectGroups = groups
+  }
+
+  private projectGroups?: (projectId: string) => IModelGroupSettings | undefined
+
+  private projectGroupsOf(projectId: string | undefined): IModelGroupSettings | undefined {
+    return projectId ? this.projectGroups?.(projectId) : undefined
   }
 
   /** O próximo passo do grupo que pode rodar agora, ou nada (aí o erro sai como sempre). */
@@ -933,7 +957,7 @@ export class AgentProvider implements IAgentProvider {
    * configurações e, depois, o padrão do agente — sempre entre os providers que PODEM rodar agora, para
    * um provider desligado no topo da lista não derrubar toda conversa nova.
    */
-  private chooseTarget(agent: IAgent, input: ICreateSessionInput, settings: IAgentSettings): { provider: string; model: string } {
+  private chooseTarget(agent: IAgent, input: ICreateSessionInput, settings: IAgentSettings, projectId?: string): { provider: string; model: string } {
     if (input.provider && !agent.providers.some((target) => target.provider === input.provider)) throw new ProviderNotOfferedError(agent.id, input.provider)
     if (input.model && !(input.provider ? offers(agent, input.provider, input.model) : agent.providers.some((target) => target.models.includes(input.model!))))
       throw new ModelDisabledError(input.provider ?? agent.providers[0]?.provider ?? '', input.model)
@@ -941,7 +965,7 @@ export class AgentProvider implements IAgentProvider {
     const asked = input.provider || input.model
     // ⚖️ Sem escolha, com grupo de modelos: o primeiro passo dele que pode rodar agora (fora da reserva, modelo ativo).
     if (!asked) {
-      const step = fallbackChain(groupOf(agent, settings)).find((candidate) => {
+      const step = fallbackChain(groupOf(agent, settings, this.projectGroupsOf(projectId))).find((candidate) => {
         if (this.isStepBenched(candidate)) return false
         const target = agent.providers.find((item) => item.provider === candidate.provider)
         return !!target && target.models.includes(candidate.model) && (this.agents.isTargetRunnable?.(agent, { ...target, models: [candidate.model] }) ?? true)
@@ -996,7 +1020,7 @@ export class AgentProvider implements IAgentProvider {
     // ⚖️ Os passos do grupo de modelos entram como alvos do agente (só os modelos ativos): é o que a troca e a conversa
     // sem escolha usam, com o sandbox do agente (ver `withGroupTargets`).
     const allows = this.modelAccess?.(projectId, ownerId)
-    const group = groupOf(agent, this.current)
+    const group = groupOf(agent, this.current, this.projectGroupsOf(projectId))
     const usable = (step: IFallbackStep) => (this.agents.isModelUsable?.(step.provider, step.model) ?? true) && (!allows || allows(step.provider, step.model))
     const withGroup = withGroupTargets(agent, group && { ...group, steps: group.steps.filter(usable) })
     if (!allows) return withGroup

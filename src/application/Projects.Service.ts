@@ -16,6 +16,7 @@ import {
 } from '@domain/models/Project.Model'
 import { AGENT_ENV_NAME, fixedEnvIssues } from '@domain/Agent.Policy'
 import { memberModelsIssues, modelListIssues } from '@domain/ModelAccess.Policy'
+import { IFallbackStep, IModelGroup, modelGroupIssues, NO_MODEL_GROUP } from '@domain/Fallback.Policy'
 import { MCP_SERVER_ID_PATTERN } from '@domain/models/McpServer.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
@@ -188,10 +189,39 @@ export class ProjectsService {
     const roles = Object.keys(byRole).filter((role) => !(PROJECT_ROLES as readonly string[]).includes(role))
     const issues = [...roles.map((role) => ({ field: `byRole.${role}`, message: 'unknown role' })), ...memberModelsIssues(project.models?.allowed, { byRole, byUser })]
     if (issues.length) throw new InvalidProjectError(issues)
+    const { byRole: _role, byUser: _user, ...rest } = project.models ?? {}
     const models: IProjectModels = {
-      ...(project.models?.allowed ? { allowed: project.models.allowed } : {}),
+      ...rest,
       ...(Object.keys(byRole).length ? { byRole } : {}),
       ...(Object.keys(byUser).length ? { byUser } : {}),
+    }
+    return this.projects.update(id, { models, updatedAt: this.now(), updatedBy: by })!
+  }
+
+  /**
+   * 🔁 Os grupos de fallback do projeto e o padrão dele (as listas inteiras). ⛔ Cada passo tem de ser um modelo que o projeto
+   * recebeu; `unusable` diz por que um passo não serve (provider desligado, modelo desativado), como nos grupos do gateway.
+   */
+  setModelGroups(
+    id: string,
+    change: { modelGroups: IModelGroup[]; defaultModelGroup?: string },
+    by: string,
+    rules: { known?: (provider: string) => boolean; unusable?: (step: IFallbackStep) => string | undefined; gatewayGroups?: readonly string[] } = {},
+  ): IProject {
+    const project = this.get(id)
+    const allowed = project.models?.allowed
+    const issues = modelGroupIssues(change.modelGroups, rules.known, (step) =>
+      allowed && !allowed.includes(`${step.provider}/${step.model}`) ? 'not released to this project' : rules.unusable?.(step),
+    )
+    const ids = new Set([...change.modelGroups.map((group) => group.id), ...(rules.gatewayGroups ?? [])])
+    if (change.defaultModelGroup && change.defaultModelGroup !== NO_MODEL_GROUP && !ids.has(change.defaultModelGroup))
+      issues.push({ field: 'defaultModelGroup', message: `unknown group: ${change.defaultModelGroup}` })
+    if (issues.length) throw new InvalidProjectError(issues)
+    const { modelGroups: _groups, defaultModelGroup: _default, ...rest } = project.models ?? {}
+    const models: IProjectModels = {
+      ...rest,
+      ...(change.modelGroups.length ? { modelGroups: change.modelGroups } : {}),
+      ...(change.defaultModelGroup ? { defaultModelGroup: change.defaultModelGroup } : {}),
     }
     return this.projects.update(id, { models, updatedAt: this.now(), updatedBy: by })!
   }

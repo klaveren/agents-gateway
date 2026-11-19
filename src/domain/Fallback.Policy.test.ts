@@ -33,6 +33,22 @@ describe('Fallback.Policy — grupos de modelos', () => {
     assert.strictEqual(groupOf(agent, { modelGroups: [padrao] }), undefined)
   })
 
+  it('🔁 com os grupos do projeto: o padrão do projeto vence o do gateway; o id procura no projeto antes', () => {
+    const settings = { modelGroups: [padrao, { ...padrao, id: 'outro', name: 'do gateway' }], defaultModelGroup: 'padrao' }
+    const project = {
+      modelGroups: [
+        { ...padrao, id: 'outro', name: 'do projeto' },
+        { ...padrao, id: 'barato' },
+      ],
+      defaultModelGroup: 'barato',
+    }
+    assert.strictEqual(groupOf(agent, settings, project)?.id, 'barato')
+    assert.strictEqual(groupOf({ modelGroup: 'outro' }, settings, project)?.name, 'do projeto')
+    assert.strictEqual(groupOf({ modelGroup: 'padrao' }, settings, project)?.id, 'padrao', 'o do gateway, que o projeto não tem')
+    assert.strictEqual(groupOf(agent, settings, { defaultModelGroup: 'none' }), undefined, 'o projeto escolhe não trocar')
+    assert.strictEqual(groupOf(agent, settings, {})?.id, 'padrao', 'projeto sem grupo: o do gateway')
+  })
+
   it('a cadeia sem repetir; troca só no que o grupo escolhe (padrão: cota, limite, modelo)', () => {
     assert.strictEqual(fallbackChain(padrao).length, 3)
     assert.ok(switchesOn(padrao, 'quota') && switchesOn(padrao, 'model') && !switchesOn(padrao, 'auth') && !switchesOn(padrao, 'other'))
