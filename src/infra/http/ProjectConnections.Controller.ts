@@ -188,7 +188,7 @@ export class ProjectConnectionsController {
   async setModels(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { projectId } = await this.owned(req, 'setConnectionModels')
-      return this.dto(this.service().setModelMap(projectId, parseBody(modelsSchema, req.body).map))
+      return this.dto(await this.service().setModelMap(projectId, parseBody(modelsSchema, req.body).map))
     })
   }
 

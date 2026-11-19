@@ -1,3 +1,5 @@
+import { conversationModelFilter } from '@domain/ModelAccess.Policy'
+import type { IProjectModels } from '@domain/models/Project.Model'
 import { makeHostApprovals } from './HostApprovals.Factory'
 import { machineAgentsOn } from './Installation.Settings'
 import { RESOURCE_KINDS } from '@domain/models/Resource.Model'
@@ -631,16 +633,25 @@ export function makeProjectConnections(): ProjectConnectionService {
       history.within(catalogItemKey(current), { by, source: 'import', note: 'removido na origem (projeto conectado)' }, () => prepared.commit(by))
       await prepared.after?.()
     },
-    models: async () => {
+    models: async (projectId) => {
       const catalog = makeModelCatalog()
       const providers = makeProviders()
       const settings = await makeSettings()
         .read()
         .catch(() => undefined)
       // "Roda aqui": provedor ligado, modelo ativo e credencial (a assinatura usa o login do host) — o mesmo de `targetUnavailable`.
+      // 🔐 E o PROJETO daqui pode usar (ver `ModelAccess.Policy`): o mapa da conexão não leva a um modelo que ele não recebeu.
+      let projectModels: IProjectModels | undefined
+      try {
+        projectModels = projectId ? makeProjects().get(projectId).models : undefined
+      } catch {
+        projectModels = undefined
+      }
+      const allows = conversationModelFilter(projectId, projectModels, {}, (id) => providers.get(id)?.projectId)
       const runs = (provider: string, model: string) => {
         const config = providers.get(provider)
         return (
+          allows(provider, model) &&
           catalog.isEnabled(provider, model) &&
           !targetUnavailable({} as IAgent, { provider, models: [model] }, { provider: config, hasKey: !!providers.connection(provider)?.key, admin: true })
         )
