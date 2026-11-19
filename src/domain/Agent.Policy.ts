@@ -63,6 +63,11 @@ export interface IAgentRules {
    */
   modelEnabled?(providerId: string, modelId: string): boolean
   /**
+   * 🔐 O admin do gateway liberou o modelo ao PROJETO do agente (ver `ModelAccess.Policy`)? Só para agente de projeto: o
+   * global roda em vários e quem filtra é a conversa. Ausente = sem a regra.
+   */
+  projectModelAllowed?(projectId: string, providerId: string, modelId: string): boolean
+  /**
    * O servidor MCP existe NO ESCOPO do agente (`mcp:<servidor>/…`)? `projectId`: o do agente (ausente = global).
    * ⛔ O agente de um projeto enxerga os globais e os do projeto dele; o global, só os globais. Ausente = nenhum
    * servidor cadastrado, e toda referência a MCP é recusada.
@@ -120,6 +125,10 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     if (!target.models.length) issue('models', `${target.provider}: at least one model`)
     if (target.protocol && rules.modelEnabled) {
       for (const model of target.models) if (!rules.modelEnabled(target.provider, model)) issue('models', `${target.provider}: not enabled in Providers → Models: ${model}`)
+      if (agent.projectId && rules.projectModelAllowed)
+        for (const model of target.models)
+          if (rules.modelEnabled(target.provider, model) && !rules.projectModelAllowed(agent.projectId, target.provider, model))
+            issue('models', `${target.provider}: not released to project ${agent.projectId}: ${model}`)
     } else if (target.official && rules.providerOf) {
       for (const model of target.models) {
         const provider = rules.providerOf(model)

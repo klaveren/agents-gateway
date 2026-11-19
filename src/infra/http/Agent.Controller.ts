@@ -25,6 +25,7 @@ import { AgentCatalog } from '@application/Agent.Catalog'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { agentIssues, IAgentRules, offers, targetFor } from '@domain/Agent.Policy'
 import { CLI_ARG_PROTOCOLS } from '@domain/CliArgument.Policy'
+import { projectAllows } from '@domain/ModelAccess.Policy'
 import { NATIVE_TOOLS } from '@domain/Native.Tools'
 import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { isSubscription } from '@domain/Subscription.Policy'
@@ -1065,6 +1066,15 @@ export class AgentController {
    * pode ter subido ou caído) e o que cada provider recusa no prompt. O modelo é conferido no
    * catálogo do provider (`modelEnabled`), nunca pelo prefixo do id.
    */
+  /** Os modelos do projeto (ver `IProject.models`); projeto que não existe = sem lista. */
+  private projectModels(projectId: string) {
+    try {
+      return this.usecases.projects?.get(projectId).models
+    } catch {
+      return undefined
+    }
+  }
+
   async agentRules(): Promise<Omit<IAgentRules, 'takenIds'>> {
     const tools = await this.usecases.catalog.list(this.localTools)
     const settings = await this.usecases.settings.read()
@@ -1077,6 +1087,8 @@ export class AgentController {
       mcpServerExists: (id, projectId) => this.usecases.catalog.mcp.resolve(id, projectId)?.enabled === true,
       agentExists: (id) => delegable(id, this.agents),
       modelEnabled: this.usecases.models ? (provider, model) => this.usecases.models!.isEnabled(provider, model) : undefined,
+      // 🔐 O modelo liberado ao projeto do agente (ver `ModelAccess.Policy`): projeto sem lista libera tudo.
+      projectModelAllowed: (projectId, provider, model) => projectAllows(this.projectModels(projectId), provider, model),
       protocolOf: (id) => this.usecases.providers?.get(id)?.protocol ?? Object.values(EProvider).find((value) => value === id),
       promptIssue: (agent) => {
         const protocols = agent.providers.map((target) => this.usecases.providers?.get(target.provider)?.protocol ?? target.provider)
