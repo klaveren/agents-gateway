@@ -1,6 +1,11 @@
 import { ITokenIssuer } from '@domain/ports/TokenIssuer.Port'
 import { IUserRepository } from '@domain/ports/UserRepository.Port'
 import { ICallerProof } from '@infra/http/Caller.Proof'
+import { currentRequest } from '@infra/http/Request.Scope'
+import { liveTurnTokens } from './Live.TurnTokens'
+
+/** As rotas que um turno usa por dentro: o MCP do gateway, a ponte dos MCPs em contêiner e as ferramentas do turno. */
+const TURN_ROUTES: ReadonlySet<string> = new Set(['/mcp', '/mcp-proxy/:serverId', '/turn-tools'])
 
 /**
  * A prova do token emitido pelo próprio gateway.
@@ -31,7 +36,11 @@ export class LocalCallerProof implements ICallerProof {
     if (claims.via === 'agw' && !(claims.tid && this.accessTokenLive?.(claims.sub, claims.tid))) return false
 
     const user = this.users.findById(claims.sub)
-    return !!user && !user.disabled && user.email === claims.email && user.role === claims.role && user.sessionVersion === claims.ver
+    if (!user || user.disabled || user.email !== claims.email || user.role !== claims.role) return false
+    const signedOut = user.sessionVersion !== claims.ver || (!!claims.sid && this.users.sessionRevoked(claims.sid))
+    // ⚖️ Sessão encerrada (sair, sair de todos, senha trocada, admin encerrou) com um turno rodando: o turno vai até o
+    // fim, só nas rotas que ele usa por dentro. Telas e API recusam na hora. Conta desativada ou papel trocado: cai já.
+    return !signedOut || (liveTurnTokens().holds(token) && TURN_ROUTES.has(currentRequest()?.route ?? ''))
   }
 }
 

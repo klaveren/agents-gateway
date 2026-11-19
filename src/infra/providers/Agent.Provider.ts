@@ -76,6 +76,7 @@ import { IAgentProvider, IResumeInput, ISessionChange } from '@domain/ports/Agen
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
+import { liveTurnTokens } from '@infra/auth/Live.TurnTokens'
 import { ProviderBench } from './Provider.Bench'
 
 /** Chave do mapa de adapters: cada provider tem uma implementação por lane. */
@@ -335,6 +336,8 @@ export class AgentProvider implements IAgentProvider {
       return from
     }
 
+    // ⚖️ Sair da conta no meio não derruba este turno: o login dele vale nas rotas internas até o fim (`Live.TurnTokens`).
+    const releaseTurnToken = liveTurnTokens().hold(caller()?.token)
     try {
       /**
        * A credencial de quem chamou, resolvida AQUI e em nenhum outro lugar.
@@ -515,6 +518,7 @@ export class AgentProvider implements IAgentProvider {
         if (unavailable.length) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Indisponível em ${record.provider}: ${unavailable.join(', ')}.` } }
       }
     } finally {
+      releaseTurnToken()
       // A pessoa falou e o painel não mudou: o próximo turno começa com o aviso (o agente corrige sozinho).
       if (this.panels) record.panelSkipped = !panelTouched && !!asked.text.trim()
       record.status = 'idle'

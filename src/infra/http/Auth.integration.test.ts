@@ -125,15 +125,18 @@ describe('contas locais (integração)', () => {
     assert.strictEqual((await call('/settings', { token: forged })).status, 404)
     assert.strictEqual((await call('/auth/me', { token: forged })).status, 401)
   })
-  it('⛔ sair encerra a sessão NO SERVIDOR: uma cópia do token deixa de valer', async () => {
+  it('⛔ sair encerra a sessão NO SERVIDOR (uma cópia do token deixa de valer), só a deste navegador; sair de todos derruba as outras', async () => {
     await call('/users', { method: 'POST', token: rootToken, body: { email: 'caio@x.test', name: 'Caio', password: PASSWORD } })
     const login = async () => (await call('/auth/login', { method: 'POST', body: { email: 'caio@x.test', password: PASSWORD } })).body.result.token as string
     const first = await login()
-    const copy = await login()
+    const elsewhere = await login()
 
     assert.strictEqual((await call('/auth/logout', { method: 'POST', token: first })).status, 200)
     assert.strictEqual((await call('/auth/me', { token: first })).status, 401)
-    assert.strictEqual((await call('/auth/me', { token: copy })).status, 401)
+    assert.strictEqual((await call('/auth/me', { token: elsewhere })).status, 200, 'o outro aparelho segue')
+
+    assert.strictEqual((await call('/auth/logout', { method: 'POST', token: elsewhere, body: { all: true } })).status, 200)
+    assert.strictEqual((await call('/auth/me', { token: elsewhere })).status, 401)
   })
 
   it('⛔ o admin encerra as sessões de outra conta', async () => {

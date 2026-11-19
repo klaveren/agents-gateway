@@ -6,6 +6,8 @@ export interface ISessionClaims {
   role: TUserRole
   /** A geração da sessão (`IStoredUser.sessionVersion`) em que o token nasceu. */
   ver: number
+  /** A sessão deste login (um navegador): sair encerra só ela. Ausente nos tokens de antes. */
+  sid?: string
   /**
    * ⛔ A marca de sessão DERIVADA de token de acesso (`agw_`): `via: 'agw'` e `tid` = o id do token. Esta sessão não
    * gere tokens, não vira cookie e não vale como "pessoa na tela"; e cai junto com o `agw_` de origem.

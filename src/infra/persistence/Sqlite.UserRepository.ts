@@ -25,6 +25,11 @@ const SCHEMA = `
     session_version INTEGER NOT NULL DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS revoked_sessions (
+    sid         TEXT    NOT NULL PRIMARY KEY,
+    expires_at  TEXT    NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS auth_secret (
     id      INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
     secret  TEXT    NOT NULL
@@ -53,6 +58,16 @@ export class SqliteUserRepository implements IUserRepository {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+  }
+
+  revokeSession(sid: string, until: Date): void {
+    // As vencidas saem aqui: o token delas já não vale por si, a linha não guarda mais nada.
+    this.db.prepare('DELETE FROM revoked_sessions WHERE expires_at <= ?').run(new Date().toISOString())
+    this.db.prepare('INSERT OR REPLACE INTO revoked_sessions (sid, expires_at) VALUES (?, ?)').run(sid, until.toISOString())
+  }
+
+  sessionRevoked(sid: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM revoked_sessions WHERE sid = ?').get(sid)
   }
 
   count(): number {
