@@ -1,3 +1,4 @@
+import { conversationOf, makePersonMessages } from './PersonMessages.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeProjects } from './Projects.Factory'
 import { projectMcpEnv } from './ProjectVariables.Factory'
@@ -30,6 +31,9 @@ export function makeUsecases() {
   // Toda escrita passa pelo decorador, que avisa a caixa de entrada; a leitura vai direto.
   const events = new InMemoryConversationEvents()
   const conversations = new NotifyingConversationRepository(makeConversationRepository(), events)
+  // 💬 As mensagens das pessoas avisam a mesma caixa de entrada (o sino ao vivo).
+  makePersonMessages().useEvents(events)
+  makePersonMessages().useConversations((sessionId) => conversationOf(conversations, sessionId))
 
   // O turno ao vivo avisa a mesma caixa de entrada (quem está rodando).
   const live = new TurnLive(events)

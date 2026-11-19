@@ -1,3 +1,4 @@
+import { makePersonMessages } from './PersonMessages.Factory'
 import { makeProjects } from './Projects.Factory'
 import { conversationModelFilter } from '@domain/ModelAccess.Policy'
 import type { IProjectModels } from '@domain/models/Project.Model'
@@ -130,6 +131,8 @@ export function makeTools(): ITools {
             todos: todoStore(),
             panels: panelStore(),
             deliveries: deliveryStore(),
+            // 💬 O agente escreve para as pessoas (o turno em curso marca o ponto do contexto).
+            messages: { send: (input) => makePersonMessages().send(input), turnOf: panelStore().turnOf },
             // 📄 O modelo dos documentos do projeto da conversa: sem organização própria, o nome do projeto.
             documentTemplate: (projectId) => {
               if (!projectId) return undefined

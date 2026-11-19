@@ -1,5 +1,6 @@
 import { RENDER_DOCUMENT_TOOL } from './models/Document.Model'
 import { GENERATE_IMAGE_TOOL } from './models/Image.Model'
+import { NOTIFY_TOOL } from './models/PersonMessage.Model'
 import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
 import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
@@ -17,7 +18,7 @@ import { TNativeToolRisk } from './Native.Tools'
  */
 export const CAPABILITY_PREFIX = 'cap:'
 
-export type TCapabilityId = 'terminal' | 'files.read' | 'files.write' | 'web.search' | 'web.fetch' | 'todos' | 'triggers' | 'watch' | 'documents' | 'images'
+export type TCapabilityId = 'terminal' | 'files.read' | 'files.write' | 'web.search' | 'web.fetch' | 'todos' | 'triggers' | 'watch' | 'documents' | 'images' | 'notify'
 
 /** O que roda num provedor: ferramentas concretas (locais ou `sdk:`), o que o CLI já faz sozinho, ou nada. */
 type TRun = { tools: readonly string[]; note: string } | { builtIn: string } | { unavailable: true }
@@ -124,6 +125,15 @@ export const CAPABILITIES: readonly ICapability[] = [
     description: 'O agente gera imagens a partir de uma descrição, com o modelo de imagem das Configurações (qualquer que seja o modelo da conversa), e entrega na conversa.',
     risk: 'session',
     local: [GENERATE_IMAGE_TOOL],
+    runs: {},
+  },
+  {
+    id: 'notify',
+    label: 'Notificar pessoas',
+    description:
+      'O agente escreve para os admins do projeto, para a dona da conversa ou para uma pessoa do projeto, na tela Mensagens (e no celular). A resposta volta para a conversa.',
+    risk: 'session',
+    local: [NOTIFY_TOOL],
     runs: {},
   },
   {

@@ -12,6 +12,8 @@ export type TConversationEvent =
   | { type: 'conversation.deleted'; sessionId: string; metadata?: Record<string, unknown> }
   /** Um turno começou ou acabou (ver `Turn.Live`): a lista mostra quem está rodando. `at` (só no `running`) é quando o turno começou: a conversa sobe na lista já aí. */
   | { type: 'conversation.running' | 'conversation.idle'; sessionId: string; metadata?: Record<string, unknown>; at?: Date }
+  /** 💬 Uma mensagem para a pessoa (ver `PersonMessage.Model`): só ela recebe; `unread` é o total dela (o sino). */
+  | { type: 'message.created'; recipientId: string; conversationId: string; unread: number }
 
 /**
  * Por onde as mudanças passam. Em processo: um gateway, um barramento.

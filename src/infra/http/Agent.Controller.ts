@@ -1,3 +1,4 @@
+import type { PersonMessagesService } from '@application/PersonMessages.Service'
 import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
 import { AUDIT_ERROR_LOCAL, AUDIT_STATUS_LOCAL } from './Audit.Controller'
 import type { UsageCapService } from '@application/UsageCap.Service'
@@ -173,6 +174,8 @@ export interface IAgentControllerDeps {
   agentRemoved?: (agentId: string) => void
   /** Os projetos e quem é membro. Ausente = sem projetos (tudo como antes: um espaço só). */
   projects?: ProjectsService
+  /** 💬 As mensagens dos agentes para as pessoas (a tela Mensagens). Ausente = sem a tela. */
+  personMessages?: PersonMessagesService
   /** O cerco dos agentes de projeto, para a tela mostrar se funciona neste servidor. */
   sandbox?: IProjectSandbox
   /** O Docker responde aqui? (o MCP "Contêiner isolado" precisa dele). Ausente = não se informa. */
@@ -335,6 +338,10 @@ export class AgentController {
     this.shareConversation = this.shareConversation.bind(this)
     this.deleteConversation = this.deleteConversation.bind(this)
     this.archiveConversation = this.archiveConversation.bind(this)
+    this.listMessages = this.listMessages.bind(this)
+    this.messageThread = this.messageThread.bind(this)
+    this.readMessages = this.readMessages.bind(this)
+    this.archiveMessages = this.archiveMessages.bind(this)
     this.conversationActivity = this.conversationActivity.bind(this)
     this.renameConversation = this.renameConversation.bind(this)
     this.listErrors = this.listErrors.bind(this)
@@ -1595,6 +1602,11 @@ export class AgentController {
       !metadata?.[BUILDER_METADATA_KEY]
     const unsubscribe =
       this.usecases.events?.subscribe((event: TConversationEvent) => {
+        // 💬 A mensagem para uma pessoa só chega a ELA (nem o admin que monitora a vê).
+        if (event.type === 'message.created') {
+          if (event.recipientId === key) stream.emit(event.type, { conversationId: event.conversationId, unread: event.unread })
+          return
+        }
         if (!visible(event.type === 'conversation.updated' ? event.session.metadata : event.metadata)) return
         if (event.type === 'conversation.updated') stream.emit(event.type, { session: toConversationDto(event.session, viewOf(event.session.metadata)) })
         else stream.emit(event.type, { sessionId: event.sessionId, ...(event.type === 'conversation.running' && event.at ? { at: event.at } : {}) })
@@ -2067,6 +2079,52 @@ export class AgentController {
       if (live && (live.turns === 0 || (live.turns === 1 && live.status === 'running'))) this.usecases.sendMessage.chooseTitle(id, title)
       if (stored) await this.usecases.conversations.setTitle?.(id, title)
       return { id, title }
+    })
+  }
+
+  /** 💬 As mensagens são da PESSOA que as recebeu: sem conta, nada (nem o admin vê a caixa dos outros). */
+  private async messagesOf(): Promise<{ service: PersonMessagesService; recipientId: string }> {
+    const service = this.usecases.personMessages
+    if (!service) throw new HttpError(404, 'not_found', 'Not found')
+    const recipientId = ownerOf(await this.requireCaller())?.id
+    if (!recipientId) throw new HttpError(401, 'unauthorized', 'Sign in to see your messages')
+    return { service, recipientId }
+  }
+
+  /** `GET /messages?archived=1` — 💬 os fios da pessoa (um por conversa que lhe escreveu), o mais recente primeiro, e o total não lido. */
+  async listMessages(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { service, recipientId } = await this.messagesOf()
+      const archived = req.query?.archived === '1' || req.query?.archived === 'true'
+      return { threads: service.threads(recipientId, archived), unread: service.unread(recipientId) }
+    })
+  }
+
+  /** `GET /messages/:conversationId` — 💬 as mensagens de um fio da pessoa, em ordem. */
+  async messageThread(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { service, recipientId } = await this.messagesOf()
+      const messages = service.thread(recipientId, req.params.conversationId as string)
+      if (!messages.length) throw new HttpError(404, 'not_found', 'Not found')
+      return { messages }
+    })
+  }
+
+  /** `POST /messages/:conversationId/read` — 💬 a pessoa abriu o fio. */
+  async readMessages(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { service, recipientId } = await this.messagesOf()
+      service.markRead(recipientId, req.params.conversationId as string)
+      return { unread: service.unread(recipientId) }
+    })
+  }
+
+  /** `PUT /messages/:conversationId/archive { archived }` — 💬 arquiva (ou desarquiva) o fio; mensagem nova o reabre. */
+  async archiveMessages(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { service, recipientId } = await this.messagesOf()
+      service.setArchived(recipientId, req.params.conversationId as string, (req.body as { archived?: unknown } | undefined)?.archived !== false)
+      return { unread: service.unread(recipientId) }
     })
   }
 

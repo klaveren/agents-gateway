@@ -1,3 +1,4 @@
+import { makePersonMessages } from './PersonMessages.Factory'
 import { conversationModelFilter } from '@domain/ModelAccess.Policy'
 import type { IProjectModels } from '@domain/models/Project.Model'
 import { makeHostApprovals } from './HostApprovals.Factory'
@@ -161,6 +162,7 @@ export function makeController(): AgentController {
     resumeSession: usecases.resumeSessionUseCase,
     agentRemoved,
     projects: makeProjects(),
+    personMessages: makePersonMessages(),
     sandbox: projectSandbox(),
     docker: () => dockerStatus(),
     guidance: makeGuidance(),

@@ -47,6 +47,7 @@ import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ITodoItem, todoIssues, todoText, UPDATE_TODOS_TOOL } from '@domain/models/ConversationTodo.Model'
 import { renderDocumentTool } from './Document.Tool'
 import { generateImageTool, type IImageSetup } from './Image.Tool'
+import { notifyTool, type INotifyDesk } from './Notify.Tool'
 import type { IDocumentTemplate } from '@infra/documents/Document.Renderer'
 import { deliverFileTool, type IFileDeliveries, type IFileToolDeps, type IOwnFolder, makeFileTools, realOf } from './File.Tools'
 import type { IEditDiagnostics } from './Edit.Diagnostics'
@@ -148,6 +149,8 @@ export interface ILocalToolDeps {
   documentTemplate?: (projectId: string | undefined) => IDocumentTemplate | undefined
   /** 🖼️ O modelo de imagem das Configurações (ver `generate_image`). Ausente = sem a ferramenta. */
   images?: IImageSetup
+  /** 💬 As mensagens para as pessoas (ver `notify`). Ausente = sem a ferramenta. */
+  messages?: INotifyDesk
   /** O balcão das vigias (ver `Watch.Tools`). Ausente = sem `watch_start`, `wake_me`, `watch_list` nem `watch_stop`. */
   watches?: WatchDesk
   /**
@@ -704,6 +707,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.deliveries ? [deliverFileTool(fileDeps, deps.deliveries, (sessionId) => workspaceFor(undefined, sessionId))] : []),
     ...(deps.deliveries ? [renderDocumentTool(deps.deliveries, deps.documentTemplate)] : []),
     ...(deps.deliveries && deps.images ? [generateImageTool(deps.deliveries, deps.images)] : []),
+    ...(deps.messages ? [notifyTool(deps.messages)] : []),
     ...(deps.watches ? makeWatchTools(deps.watches) : []),
   ]
   // ⛔ A chamada repetida é recusada antes de rodar (ver `Loop.Policy`); a edição que deu certo ganha o diagnóstico do
