@@ -110,18 +110,21 @@
     (ids) => ids.forEach((id) => void providers.models(id).catch(() => undefined)),
     { immediate: true },
   )
-  const enabledModels = (provider: IProviderStatus) =>
+  /** Os modelos ativados de um provider. `image`: só os que geram imagem; sem ele, só os que conversam (fora os "só imagem"). */
+  const enabledModels = (provider: IProviderStatus, image = false) =>
     (providers.catalogs.get(provider.id) ?? [])
-      .filter((model) => model.enabled)
+      .filter((model) => model.enabled && (image ? model.image?.output : !model.image?.only))
       .map((model) => ({ value: `${provider.id}::${model.modelId}`, provider: provider.id, model: model.modelId }))
   /** Os modelos ativados de cada provider ligado e com chave de API — a lista do classificador (assinatura não classifica). */
-  const classifierOptions = computed(() => runnableProviders.value.filter((provider) => !provider.subscription).flatMap(enabledModels))
+  const classifierOptions = computed(() => runnableProviders.value.filter((provider) => !provider.subscription).flatMap((provider) => enabledModels(provider)))
   /** O construtor roda na lane agent: a assinatura serve. */
-  /** 🖼️ Imagem: só OpenAI e Google, com chave de API (assinatura não gera por aqui). */
+  /** 🖼️ Imagem: só OpenAI e Google, com chave de API (assinatura não gera por aqui), e só os modelos que geram imagem. */
   const imageOptions = computed(() =>
-    runnableProviders.value.filter((provider) => !provider.subscription && (provider.protocol === 'openai' || provider.protocol === 'google')).flatMap(enabledModels),
+    runnableProviders.value
+      .filter((provider) => !provider.subscription && (provider.protocol === 'openai' || provider.protocol === 'google'))
+      .flatMap((provider) => enabledModels(provider, true)),
   )
-  const builderOptions = computed(() => runnableProviders.value.flatMap(enabledModels))
+  const builderOptions = computed(() => runnableProviders.value.flatMap((provider) => enabledModels(provider)))
 
   watch(
     () => settings.current,
@@ -281,12 +284,14 @@
                 Modelo de imagem
                 <select v-model="imager" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
                   <option value="">Nenhum (sem geração de imagem)</option>
-                  <option v-if="imager && !imageOptions.some((option) => option.value === imager)" :value="imager">{{ imager.replace('::', ' · ') }} (não ativado)</option>
+                  <option v-if="imager && !imageOptions.some((option) => option.value === imager)" :value="imager">
+                    {{ imager.replace('::', ' · ') }} (não ativado ou não gera imagem)
+                  </option>
                   <option v-for="option in imageOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
                 </select>
                 <small class="text-xs text-zinc-500">
                   O que gera as imagens que os agentes pedem ("Gerar imagens" no cadastro do agente), qualquer que seja o modelo da conversa. OpenAI (gpt-image) ou Google (Gemini
-                  de imagem), com chave; ative o modelo em Modelos → provider (Adicionar modelo pelo identificador, se a lista não o trouxer).
+                  de imagem), com chave. Aparecem só os ativados com o selo "gera imagem" em Modelos → provider (Adicionar modelo pelo identificador, se a lista não o trouxer).
                 </small>
               </label>
               <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">

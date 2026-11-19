@@ -1,7 +1,7 @@
 import { ICatalogModel } from '@domain/models/ModelCatalog.Model'
 
 export type TCatalogPatch = Partial<
-  Pick<ICatalogModel, 'label' | 'enabled' | 'available' | 'contextLength' | 'price' | 'priceSource' | 'reasoning' | 'syncedAt' | 'updatedAt' | 'updatedBy'>
+  Pick<ICatalogModel, 'label' | 'enabled' | 'available' | 'contextLength' | 'price' | 'priceSource' | 'reasoning' | 'image' | 'syncedAt' | 'updatedAt' | 'updatedBy'>
 >
 
 /** Onde fica o catálogo. Síncrono, como os outros de configuração: é lido no caminho de cada sessão. */

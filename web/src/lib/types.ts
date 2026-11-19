@@ -483,6 +483,8 @@ export interface ICatalogModel {
   priceSource?: 'manual' | 'catalog' | 'default'
   /** Ausente = a listagem não diz. `heuristic` = palpite pelo id. */
   reasoning?: { supported: boolean; levels?: string[]; source: 'provider' | 'heuristic' }
+  /** 🖼️ Gera imagem; `only` = só imagem (não conversa). `heuristic` = palpite pelo id. */
+  image?: { output: boolean; only?: boolean; source: 'provider' | 'heuristic' }
   syncedAt?: string
   updatedAt: string
   updatedBy?: string

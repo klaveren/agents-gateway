@@ -19,7 +19,7 @@ export interface INewProvider {
  */
 export const useProvidersStore = defineStore('providers', () => {
   const catalog = keyedResource(() => api<IProviderStatus[]>('/providers'))
-  const catalogs = keyedResource((id) => api<ICatalogModel[]>(`/providers/${encodeURIComponent(id)}/models`))
+  const catalogs = keyedResource(async (id) => withImage(await api<ICatalogModel[]>(`/providers/${encodeURIComponent(id)}/models`)))
 
   const list = computed<IProviderStatus[]>({
     get: () => catalog.get('') ?? [],
@@ -42,7 +42,8 @@ export const useProvidersStore = defineStore('providers', () => {
   }
 
   /** Troca (ou acrescenta) o modelo no catálogo do provider. */
-  function putModel(id: string, model: ICatalogModel): void {
+  function putModel(id: string, saved: ICatalogModel): void {
+    const [model] = withImage([saved])
     catalogs.update(id, (current) =>
       current.some((one) => one.modelId === model.modelId) ? current.map((one) => (one.modelId === model.modelId ? model : one)) : [...current, model],
     )
@@ -102,7 +103,7 @@ export const useProvidersStore = defineStore('providers', () => {
     const result = await api<{ added: number; updated: number; missing: number; total: number; models: ICatalogModel[] }>(`/providers/${encodeURIComponent(id)}/models/sync`, {
       method: 'POST',
     })
-    catalogs.set(id, result.models)
+    catalogs.set(id, withImage(result.models))
     // A contagem do catálogo na lista mudou, e a resposta não a traz.
     await load().catch(() => undefined)
     return result
@@ -167,3 +168,14 @@ export const useProvidersStore = defineStore('providers', () => {
     reset,
   }
 })
+
+/** 🖼️ Mesmo palpite do servidor (`guessModelImage`), para um servidor anterior que ainda não manda `image`. */
+const IMAGE_ONLY = /^(gpt-image|chatgpt-image|dall-e)/i
+const IMAGE_OUTPUT = /^(gpt-image|chatgpt-image|dall-e)|(^|\/)gemini-[\w.-]*image/i
+export function withImage(models: ICatalogModel[]): ICatalogModel[] {
+  return models.map((model) =>
+    model.image
+      ? model
+      : { ...model, image: { output: IMAGE_OUTPUT.test(model.modelId), ...(IMAGE_ONLY.test(model.modelId) ? { only: true } : {}), source: 'heuristic' as const } },
+  )
+}
