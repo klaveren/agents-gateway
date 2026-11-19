@@ -107,3 +107,27 @@ describe('PersonMessagesService', () => {
     assert.strictEqual(service.unread('u_ana'), 2, 'a primeira e a resposta do agente')
   })
 })
+
+describe('Mensagens: o aviso no aparelho', () => {
+  it('cada mensagem do agente vai para o push de quem recebe; a resposta da pessoa não', async () => {
+    const { service } = build()
+    const pushed: Array<{ to: string; title?: string; from: string }> = []
+    service.usePush((to, message) => void pushed.push({ to, title: message.title, from: message.from }))
+    await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', title: 'Acesso', body: 'Libera?' })
+    assert.deepStrictEqual(pushed.map((item) => item.to).sort(), ['u_ana', 'u_bia'])
+    service.reply('u_ana', 'gw_alfa', 'Liberado', 'Ana')
+    assert.strictEqual(pushed.length, 2)
+    service.mirror('gw_alfa', 'zeus', 'Feito.')
+    assert.strictEqual(pushed.length, 4)
+    assert.ok(pushed.every((item) => item.from === 'agent'))
+  })
+
+  it('o push falhar não desfaz a mensagem', async () => {
+    const { service } = build()
+    service.usePush(() => {
+      throw new Error('push fora')
+    })
+    await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', body: 'Oi' })
+    assert.strictEqual(service.unread('u_ana'), 1)
+  })
+})

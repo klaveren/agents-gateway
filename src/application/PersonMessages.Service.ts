@@ -17,6 +17,8 @@ export interface IPersonMessagesDeps {
   members(projectId: string): Array<{ userId: string; role: 'admin' | 'member' }>
   /** As contas (para achar a pessoa pelo nome ou e-mail e os administradores do gateway). */
   accounts(): Array<{ id: string; email: string; name: string; role: string; disabled: boolean }>
+  /** 📱 O aviso no aparelho (Web Push) de cada mensagem do agente; quem não ligou não recebe nada. */
+  push?: (recipientId: string, message: IPersonMessage) => void
   now?: () => Date
 }
 
@@ -40,6 +42,11 @@ export class PersonMessagesService {
     this.deps.conversation = conversation
   }
 
+  /** 📱 O envio para o aparelho (nasce depois, com o Web Push). */
+  usePush(push: IPersonMessagesDeps['push']): void {
+    this.deps.push = push
+  }
+
   /** O agente escreve. Devolve os nomes de quem recebeu. */
   async send(input: { sessionId: string; agentId: string; to: string; title?: string; body: string; level?: string; turn?: number }): Promise<string[]> {
     const body = input.body?.trim() ?? ''
@@ -52,7 +59,7 @@ export class PersonMessagesService {
     const recipients = this.recipients(input.to, conversation)
     const at = this.now()
     for (const recipient of recipients) {
-      this.deps.repository.insert({
+      const message: IPersonMessage = {
         id: `m_${randomBytes(9).toString('hex')}`,
         recipientId: recipient.id,
         conversationId: input.sessionId,
@@ -64,8 +71,10 @@ export class PersonMessagesService {
         level,
         ...(input.turn !== undefined ? { turn: input.turn } : {}),
         createdAt: at,
-      })
+      }
+      this.deps.repository.insert(message)
       this.announce(recipient.id, input.sessionId)
+      this.pushTo(message)
     }
     return recipients.map((recipient) => recipient.name)
   }
@@ -110,7 +119,7 @@ export class PersonMessagesService {
     const at = this.now()
     for (const recipient of this.deps.repository.recipientsOf(conversationId)) {
       const projectId = this.deps.repository.thread(recipient, conversationId)[0]?.projectId
-      this.deps.repository.insert({
+      const message: IPersonMessage = {
         id: `m_${randomBytes(9).toString('hex')}`,
         recipientId: recipient,
         conversationId,
@@ -120,8 +129,10 @@ export class PersonMessagesService {
         body,
         level,
         createdAt: at,
-      })
+      }
+      this.deps.repository.insert(message)
       this.announce(recipient, conversationId)
+      this.pushTo(message)
     }
   }
 
@@ -180,6 +191,14 @@ export class PersonMessagesService {
     const names = pool.map((account) => account.name || account.email).join(', ')
     if (match.length > 1) throw new PersonMessageError(`more than one person is called "${target}": use the e-mail (${names})`)
     throw new PersonMessageError(`"${target}" is not in this project. Use admins, owner or one of: ${names || 'nobody'}`)
+  }
+
+  private pushTo(message: IPersonMessage): void {
+    try {
+      this.deps.push?.(message.recipientId, message)
+    } catch {
+      // O aviso no aparelho é extra: falhar nele não desfaz a mensagem.
+    }
   }
 
   private announce(recipientId: string, conversationId: string): void {

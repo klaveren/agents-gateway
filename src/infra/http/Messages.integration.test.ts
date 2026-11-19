@@ -88,4 +88,13 @@ describe('Mensagens (integração)', () => {
     if (sent.status === 404) assert.notStrictEqual(thread.at(-1)?.body, 'Sexta')
     else assert.deepStrictEqual([sent.status, thread.at(-1)?.from, thread.at(-1)?.body], [202, 'person', 'Sexta'])
   })
+
+  it('📱 o aviso no aparelho só se liga pela tela: token de integração, 403; sem conta, 401', async () => {
+    assert.strictEqual((await call('/push/key', { token: member })).status, 403)
+    assert.strictEqual(
+      (await call('/push/subscriptions', { method: 'POST', token: member, body: { endpoint: 'https://web.push.apple.com/x', keys: { p256dh: 'a', auth: 'b' } } })).status,
+      403,
+    )
+    assert.strictEqual((await call('/push/key')).status, 401)
+  })
 })

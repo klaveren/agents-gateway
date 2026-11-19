@@ -6032,6 +6032,33 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK: `{ unread }`', ...json(envelope({ type: 'object' })) } },
       },
     },
+    '/push/key': {
+      get: {
+        summary: 'Screen only: the VAPID public key the browser subscribes with, and how many devices of the signed-in person receive the new-message notice',
+        responses: {
+          '200': { description: 'OK: `{ publicKey, devices }`', ...json(envelope({ type: 'object' })) },
+          '403': { description: 'Not from the screen (an access token)', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/push/subscriptions': {
+      post: {
+        summary: 'Screen only: this device starts receiving the new-message notice (Web Push). The endpoint must be a browser push service',
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { endpoint: { type: 'string' }, keys: { type: 'object', properties: { p256dh: { type: 'string' }, auth: { type: 'string' } } } }, required: ['endpoint', 'keys'] }),
+        },
+        responses: {
+          '200': { description: 'OK: `{ devices }`', ...json(envelope({ type: 'object' })) },
+          '422': { description: 'Not a push service, or keys missing', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+      delete: {
+        summary: 'Screen only: this device stops receiving the notice',
+        requestBody: { required: true, ...json({ type: 'object', properties: { endpoint: { type: 'string' } }, required: ['endpoint'] }) },
+        responses: { '200': { description: 'OK: `{ devices }`', ...json(envelope({ type: 'object' })) } },
+      },
+    },
     '/usage/all': {
       get: {
         summary:
