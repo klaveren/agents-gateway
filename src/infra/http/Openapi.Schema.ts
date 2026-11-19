@@ -5915,6 +5915,18 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/document-template': {
+      put: {
+        summary:
+          'The template of the documents the agents of the project create (`render_document`): `organization` (header; default: the project name), `footer` (tax id, address, site) and `color` (`#RRGGBB`). Empty fields = the default. Project administrators',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { organization: { type: 'string' }, footer: { type: 'string' }, color: { type: 'string' } } }) },
+        responses: {
+          '200': { description: 'OK: the project', ...json(envelope({ type: 'object' })) },
+          '422': { description: 'A field too long or a color that is not #RRGGBB', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
     '/projects/{id}/caps': {
       put: {
         summary:

@@ -47,13 +47,13 @@ describe('a configuração do projeto', () => {
 
   it('no projeto em uso, quem o administra vê Serviços e Arquivos .env; sem usar nem apagar', async () => {
     const host = await mount({}, 'logiccus')
-    expect(tabs(host)).toEqual(['Projeto', 'Membros', 'Serviços', 'Modelos', 'Arquivos .env'])
+    expect(tabs(host)).toEqual(['Projeto', 'Membros', 'Serviços', 'Modelos', 'Documentos', 'Arquivos .env'])
     expect(host.textContent).not.toContain('Usar este projeto')
   })
 
   it('pelo Sistema, outro projeto: sem a guia .env (a lista de agentes é a do projeto em uso), com Usar este projeto', async () => {
     const host = await mount({}, 'outro', true)
-    expect(tabs(host)).toEqual(['Projeto', 'Membros', 'Serviços', 'Modelos'])
+    expect(tabs(host)).toEqual(['Projeto', 'Membros', 'Serviços', 'Modelos', 'Documentos'])
     expect(host.textContent).toContain('Usar este projeto')
   })
 

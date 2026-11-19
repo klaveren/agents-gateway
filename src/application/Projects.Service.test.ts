@@ -84,6 +84,18 @@ describe('ProjectsService', () => {
     assert.throws(() => service.setCaps('alfa', { monthlyTokens: -1 }, 'root'), InvalidProjectError)
   })
 
+  it('📄 o modelo dos documentos: gravado e relido; vazio volta ao padrão; cor fora de #RRGGBB é recusada', () => {
+    const { service } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    assert.deepStrictEqual(service.setDocumentTemplate('alfa', { organization: ' Infoccus ', footer: 'CNPJ 1', color: '#7C3AED' }, 'root').documentTemplate, {
+      organization: 'Infoccus',
+      footer: 'CNPJ 1',
+      color: '#7C3AED',
+    })
+    assert.throws(() => service.setDocumentTemplate('alfa', { color: 'roxo' }, 'root'), InvalidProjectError)
+    assert.strictEqual(service.setDocumentTemplate('alfa', {}, 'root').documentTemplate, undefined)
+  })
+
   it('⛔ canUse: só os membros — também o admin do gateway; projeto inexistente, ninguém', () => {
     const { service } = build()
     service.create({ id: 'alfa', name: 'Alfa' }, 'root')

@@ -793,6 +793,8 @@ export interface IProject {
   mcpEnv?: IProjectMcpVar[]
   /** 🎨 A paleta do destaque da tela no projeto (ver `projectColors.ts`). Ausente: o verde do tema. */
   color?: string
+  /** 📄 Só admin: o modelo dos documentos que os agentes geram (vazio = o padrão). */
+  documentTemplate?: { organization?: string; footer?: string; color?: string }
   /** ⚠️ Só admin: os agentes do projeto que leem os `.env` (um a um, liberados pelo admin, na tela). */
   envFileAgents?: string[]
   /** 🖥️ Os agentes de máquina do projeto; só vem quando o sistema os permite (desligado, ninguém é). */

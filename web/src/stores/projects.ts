@@ -131,6 +131,11 @@ export const useProjectsStore = defineStore('projects', () => {
     putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}/color`, { method: 'PUT', body: { color: color ?? null } }))
   }
 
+  /** 📄 O modelo dos documentos do projeto (campo vazio = o padrão). */
+  async function setDocumentTemplate(id: string, template: { organization?: string; footer?: string; color?: string }): Promise<void> {
+    putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}/document-template`, { method: 'PUT', body: template }))
+  }
+
   async function remove(id: string): Promise<void> {
     await api(`/projects/${encodeURIComponent(id)}`, { method: 'DELETE' })
     put(list.value.filter((one) => one.id !== id))
@@ -152,6 +157,7 @@ export const useProjectsStore = defineStore('projects', () => {
 
   return {
     modelAccess,
+    setDocumentTemplate,
     list,
     current,
     currentProject,

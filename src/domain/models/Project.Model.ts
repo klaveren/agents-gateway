@@ -47,6 +47,8 @@ export interface IProject {
   machineAgents?: string[]
   /** 🔐 Os modelos que o projeto pode usar e os de cada papel ou pessoa (ver `ModelAccess.Policy`). Ausente = tudo do gateway. */
   models?: IProjectModels
+  /** 📄 O modelo dos documentos que os agentes geram (`render_document`): cabeçalho, rodapé e cor. Ausente = o padrão. */
+  documentTemplate?: IProjectDocumentTemplate
   createdAt: Date
   updatedAt: Date
   updatedBy?: string
@@ -67,6 +69,28 @@ export interface IProjectModels {
   defaultModelGroup?: string
   /** 💰 O teto do MÊS do projeto (todas as conversas dele, com qualquer chave). Ausente = sem teto. Ver `projectCapReached`. */
   caps?: { monthlyCostUsd?: number; monthlyTokens?: number }
+}
+
+/** 📄 O modelo do documento do projeto (ver `Document.Renderer`). */
+export interface IProjectDocumentTemplate {
+  /** O nome no cabeçalho (a empresa). Ausente = o nome do projeto. */
+  organization?: string
+  /** O rodapé: CNPJ, endereço, site. */
+  footer?: string
+  /** A cor de destaque, `#RRGGBB`. */
+  color?: string
+}
+
+export const DOCUMENT_TEMPLATE_LIMITS = { organization: 120, footer: 300 } as const
+
+/** O que há de errado no modelo do documento. */
+export function documentTemplateIssues(template: IProjectDocumentTemplate): Array<{ field: string; message: string }> {
+  const issues: Array<{ field: string; message: string }> = []
+  if ((template.organization ?? '').length > DOCUMENT_TEMPLATE_LIMITS.organization)
+    issues.push({ field: 'organization', message: `at most ${DOCUMENT_TEMPLATE_LIMITS.organization} characters` })
+  if ((template.footer ?? '').length > DOCUMENT_TEMPLATE_LIMITS.footer) issues.push({ field: 'footer', message: `at most ${DOCUMENT_TEMPLATE_LIMITS.footer} characters` })
+  if (template.color && !/^#[0-9a-f]{6}$/i.test(template.color)) issues.push({ field: 'color', message: 'use #RRGGBB' })
+  return issues
 }
 
 /** Um valor visível que o projeto dá a uma variável de um MCP (`server` = o id do MCP, como o agente o cita). */

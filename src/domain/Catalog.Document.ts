@@ -259,6 +259,7 @@ export const PROJECT_SHAPE: TShape<IProject> = {
   color: { omit: 'a cor do destaque da tela é desta instalação, não conteúdo do catálogo' },
   envFileAgents: { omit: 'a leitura dos .env é decisão de segurança desta instalação, não conteúdo do catálogo' },
   machineAgents: { omit: 'o agente de máquina é decisão desta instalação, não conteúdo do catálogo' },
+  documentTemplate: { omit: 'o modelo dos documentos é desta instalação, não conteúdo do catálogo' },
   models: { omit: 'os modelos liberados dependem dos providers desta instalação, não são conteúdo do catálogo' },
   createdAt: { omit: META },
   updatedAt: { omit: META },

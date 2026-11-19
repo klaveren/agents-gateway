@@ -47,6 +47,8 @@ const allowedModelsSchema = z.object({ allowed: z.array(z.string().min(3).max(30
 /** 🔐 As listas de cada papel e pessoa (inteiras). */
 /** 💰 O teto do mês do projeto; `null` = sem esse teto. */
 const capsSchema = z.object({ monthlyCostUsd: z.number().positive().max(1_000_000).nullable().optional(), monthlyTokens: z.number().int().positive().nullable().optional() })
+/** 📄 O modelo dos documentos do projeto (vazio = o padrão). */
+const documentTemplateSchema = z.object({ organization: z.string().max(120).optional(), footer: z.string().max(300).optional(), color: z.string().max(7).optional() })
 const memberModelsSchema = z.object({
   byRole: z.record(z.string().max(20), z.array(z.string().min(3).max(300)).max(2000)).optional(),
   byUser: z.record(z.string().max(80), z.array(z.string().min(3).max(300)).max(2000)).optional(),
@@ -102,6 +104,7 @@ export class ProjectsController {
       'setAllowedModels',
       'setMemberModels',
       'setCaps',
+      'setDocumentTemplate',
       'remove',
       'members',
       'setMembers',
@@ -324,6 +327,15 @@ export class ProjectsController {
     })
   }
 
+  /** `PUT /projects/:id/document-template { organization, footer, color }` — 📄 o modelo dos documentos do projeto. */
+  async setDocumentTemplate(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const by = await requireProjectAdmin(this.deps.proof, id, 'setProjectDocumentTemplate')
+      return this.toDto(this.deps.projects.setDocumentTemplate(id, parseBody(documentTemplateSchema, req.body), by), 'admin')
+    })
+  }
+
   private machineOn(): boolean {
     return this.deps.machineAgentsOn?.() === true
   }
@@ -365,6 +377,7 @@ export class ProjectsController {
       ...(project.description ? { description: project.description } : {}),
       ...(project.color ? { color: project.color } : {}),
       ...(admin && project.envFileAgents?.length ? { envFileAgents: project.envFileAgents } : {}),
+      ...(admin ? { documentTemplate: project.documentTemplate ?? {} } : {}),
       // 🖥️ Todos veem quem é de máquina (o selo na conversa), e só quando o sistema permite: desligado, ninguém é.
       ...(project.machineAgents?.length && this.machineOn() ? { machineAgents: project.machineAgents } : {}),
       ...(admin ? { folder: this.deps.projects.folderOf(project.id), members: this.deps.projects.members(project.id).length } : {}),

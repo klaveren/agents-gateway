@@ -18,6 +18,7 @@
   import ProjectConnectionCard from './ProjectConnectionCard.vue'
   import ProjectServices from './ProjectServices.vue'
   import ProjectModels from './ProjectModels.vue'
+  import ProjectDocuments from './ProjectDocuments.vue'
   import SaveFooter from './SaveFooter.vue'
 
   /**
@@ -34,7 +35,7 @@
   const settings = useSettingsStore()
   const connections = useConnectionsStore()
 
-  type TProjectTab = 'projeto' | 'membros' | 'servicos' | 'modelos' | 'env' | 'maquina'
+  type TProjectTab = 'projeto' | 'membros' | 'servicos' | 'modelos' | 'documentos' | 'env' | 'maquina'
   const tab = ref<TProjectTab>('projeto')
   const sandbox = computed(() => settings.current?.deployment?.sandbox)
 
@@ -150,6 +151,7 @@
     ...(managesThis.value ? [{ id: 'servicos' as const, label: 'Serviços', count: 0, unsaved: false }] : []),
     // 🔐 Os modelos do projeto: o admin do gateway libera ao projeto; o do projeto, a cada papel.
     ...(managesThis.value || auth.isAdmin ? [{ id: 'modelos' as const, label: 'Modelos', count: 0, unsaved: false }] : []),
+    ...(managesThis.value ? [{ id: 'documentos' as const, label: 'Documentos', count: 0, unsaved: false }] : []),
     ...(envTab.value ? [{ id: 'env' as const, label: 'Arquivos .env', count: selected.value?.envFileAgents?.length ?? 0, unsaved: false }] : []),
     ...(machineTab.value ? [{ id: 'maquina' as const, label: 'Agentes de máquina', count: selected.value?.machineAgents?.length ?? 0, unsaved: false }] : []),
   ])
@@ -276,6 +278,10 @@
 
     <div v-if="tab === 'modelos'" role="tabpanel">
       <ProjectModels :project-id="selected.id" :gateway-admin="auth.isAdmin" :project-admin="managesThis" />
+    </div>
+
+    <div v-if="tab === 'documentos'" role="tabpanel">
+      <ProjectDocuments :project-id="selected.id" />
     </div>
 
     <div v-if="tab === 'env'" class="flex flex-col gap-2" role="tabpanel">
