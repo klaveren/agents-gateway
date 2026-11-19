@@ -45,6 +45,8 @@ import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ITodoItem, todoIssues, todoText, UPDATE_TODOS_TOOL } from '@domain/models/ConversationTodo.Model'
+import { renderDocumentTool } from './Document.Tool'
+import type { IDocumentTemplate } from '@infra/documents/Document.Renderer'
 import { deliverFileTool, type IFileDeliveries, type IFileToolDeps, type IOwnFolder, makeFileTools, realOf } from './File.Tools'
 import type { IEditDiagnostics } from './Edit.Diagnostics'
 import type { IAgentDiagnostics } from '@domain/models/Agent.Model'
@@ -141,6 +143,8 @@ export interface ILocalToolDeps {
   }
   /** Os arquivos entregues à pessoa (ver `ConversationFile.Model`). Ausente = sem `deliver_file`. */
   deliveries?: IFileDeliveries
+  /** 📄 O modelo do documento do projeto (ver `render_document`). Ausente = o padrão. */
+  documentTemplate?: (projectId: string | undefined) => IDocumentTemplate | undefined
   /** O balcão das vigias (ver `Watch.Tools`). Ausente = sem `watch_start`, `wake_me`, `watch_list` nem `watch_stop`. */
   watches?: WatchDesk
   /**
@@ -695,6 +699,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
     ...(deps.panels ? [boardTool(deps.panels), boardTool(deps.panels, LEGACY_BOARD_TOOL), planTool(deps.panels)] : []),
     ...(deps.deliveries ? [deliverFileTool(fileDeps, deps.deliveries, (sessionId) => workspaceFor(undefined, sessionId))] : []),
+    ...(deps.deliveries ? [renderDocumentTool(deps.deliveries, deps.documentTemplate)] : []),
     ...(deps.watches ? makeWatchTools(deps.watches) : []),
   ]
   // ⛔ A chamada repetida é recusada antes de rodar (ver `Loop.Policy`); a edição que deu certo ganha o diagnóstico do
