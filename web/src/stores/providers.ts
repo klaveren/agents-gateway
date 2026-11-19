@@ -59,6 +59,13 @@ export const useProvidersStore = defineStore('providers', () => {
     put(await api<IProviderStatus>('/providers', { method: 'POST', body: input }))
   }
 
+  /** 🔐 Um provider do projeto (Anthropic, OpenAI ou OpenRouter, URL fixa); a chave, se vier, só pela tela. */
+  async function createForProject(projectId: string, input: { kind: 'anthropic' | 'openai' | 'openrouter'; name?: string; key?: string }): Promise<IProviderStatus> {
+    const created = await api<IProviderStatus>(`/projects/${encodeURIComponent(projectId)}/providers`, { method: 'POST', body: input })
+    put(created)
+    return created
+  }
+
   async function update(id: string, change: { name?: string; baseUrl?: string; enabled?: boolean }): Promise<void> {
     put(await api<IProviderStatus>(`/providers/${encodeURIComponent(id)}`, { method: 'PUT', body: change }))
     await reloadAgents()
@@ -136,5 +143,27 @@ export const useProvidersStore = defineStore('providers', () => {
     catalogs.clear()
   }
 
-  return { catalog, catalogs, list, loaded, names, load, ensure, create, update, remove, save, clear, test, models, syncModels, updateModel, addModel, login, loginCode, reset }
+  return {
+    catalog,
+    catalogs,
+    list,
+    loaded,
+    names,
+    load,
+    ensure,
+    create,
+    createForProject,
+    update,
+    remove,
+    save,
+    clear,
+    test,
+    models,
+    syncModels,
+    updateModel,
+    addModel,
+    login,
+    loginCode,
+    reset,
+  }
 })

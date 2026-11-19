@@ -4,6 +4,7 @@
   import type { ICatalogModel, IProviderStatus } from '@/lib/types'
   import { useProvidersStore } from '@/stores/providers'
   import ProjectModelGroups from './ProjectModelGroups.vue'
+  import ProjectProviders from './ProjectProviders.vue'
 
   /**
    * 🔐 OS MODELOS DO PROJETO (ver `ModelAccess.Policy` no servidor). Duas camadas, cada uma só restringe a de cima:
@@ -39,10 +40,15 @@
   ]
 
   const key = (provider: string, model: string) => `${provider}/${model}`
-  /** Os modelos que o gateway liga, por provider (a fonte das duas listas). */
-  const gatewayKeys = computed(() => groups.value.flatMap((group) => group.models.map((model) => key(group.provider.id, model.modelId))))
+  /** Os modelos que o GATEWAY liga, por provider (a lista que o admin do gateway recorta); os providers de projeto ficam fora. */
+  const gatewayGroups = computed(() => groups.value.filter((group) => !group.provider.projectId))
+  const gatewayKeys = computed(() => gatewayGroups.value.flatMap((group) => group.models.map((model) => key(group.provider.id, model.modelId))))
+  /** Os modelos dos providers DESTE projeto: entram sempre na base dos papéis (não passam pela lista do gateway). */
+  const ownKeys = computed(() =>
+    groups.value.filter((group) => group.provider.projectId === props.projectId).flatMap((group) => group.models.map((model) => key(group.provider.id, model.modelId))),
+  )
   /** O que o projeto recebe agora (no rascunho): a base da lista dos papéis. */
-  const projectKeys = computed(() => (allowedDraft.value ? gatewayKeys.value.filter((item) => allowedDraft.value!.has(item)) : gatewayKeys.value))
+  const projectKeys = computed(() => [...(allowedDraft.value ? gatewayKeys.value.filter((item) => allowedDraft.value!.has(item)) : gatewayKeys.value), ...ownKeys.value])
   const userOverrides = computed(() => Object.keys(view.value?.byUser ?? {}).length)
 
   async function load() {
@@ -116,7 +122,7 @@
       permitido.
     </p>
     <p v-if="loading" class="text-sm text-zinc-500">Carregando…</p>
-    <p v-else-if="!groups.length" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">Nenhum modelo ligado no gateway ainda.</p>
+    <p v-else-if="!groups.length && !projectAdmin" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">Nenhum modelo ligado no gateway ainda.</p>
 
     <template v-else>
       <section v-if="gatewayAdmin" class="flex flex-col gap-2" data-test="project-models-gateway">
@@ -129,7 +135,7 @@
           Todos os modelos ligados no gateway
         </label>
         <div v-if="allowedDraft !== null" class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3">
-          <div v-for="group in groups" :key="group.provider.id" class="flex flex-col gap-1">
+          <div v-for="group in gatewayGroups" :key="group.provider.id" class="flex flex-col gap-1">
             <span class="text-xs font-medium text-zinc-400">{{ group.provider.name }}</span>
             <label v-for="model in group.models" :key="model.modelId" class="flex items-center gap-2 text-sm">
               <input
@@ -168,6 +174,8 @@
           {{ busy ? 'Salvando…' : 'Salvar modelos por papel' }}
         </button>
       </section>
+
+      <ProjectProviders v-if="projectAdmin" :project-id="projectId" @changed="load" />
 
       <ProjectModelGroups v-if="projectAdmin" :project-id="projectId" :models="projectKeys" />
     </template>

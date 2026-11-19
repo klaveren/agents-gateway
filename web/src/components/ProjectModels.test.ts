@@ -13,7 +13,19 @@ vi.mock('@/lib/api', () => ({
   CALLER_TOKEN_KEY: 'k',
 }))
 
-const PROVIDERS = [{ id: 'claude', name: 'Claude', protocol: 'claude', official: true, enabled: true, credential: { configured: true, source: 'stored' } }]
+const PROVIDERS = [
+  { id: 'claude', name: 'Claude', protocol: 'claude', official: true, enabled: true, credential: { configured: true, source: 'stored' } },
+  {
+    id: 'alfa--openai',
+    name: 'OpenAI',
+    protocol: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    projectId: 'alfa',
+    official: false,
+    enabled: true,
+    credential: { configured: false, source: 'none' },
+  },
+]
 const MODELS = [
   { modelId: 'opus', enabled: true, available: true },
   { modelId: 'haiku', enabled: true, available: true },
@@ -31,6 +43,7 @@ function mount(view: unknown, props: { gatewayAdmin: boolean; projectAdmin: bool
     if (init?.method === 'PUT') return {}
     if (path === '/providers') return PROVIDERS
     if (path === '/providers/claude/models') return MODELS
+    if (path === '/providers/alfa--openai/models') return [{ modelId: 'gpt-x', enabled: true, available: true }]
     if (path === '/projects/alfa/model-groups') return { groups: [] }
     if (path === '/model-groups') return { groups: [{ id: 'global', name: 'Global' }] }
     return view
@@ -81,7 +94,10 @@ describe('ProjectModels', () => {
     expect(roles.textContent).not.toContain('claude/haiku')
     host.querySelector<HTMLButtonElement>('[data-test="project-models-roles-save"]')!.click()
     await flush()
-    expect(api).toHaveBeenCalledWith('/projects/alfa/member-models', { method: 'PUT', body: { byRole: { member: ['claude/opus'] }, byUser: { u_bia: ['claude/opus'] } } })
+    expect(api).toHaveBeenCalledWith('/projects/alfa/member-models', {
+      method: 'PUT',
+      body: { byRole: { member: ['claude/opus', 'alfa--openai/gpt-x'] }, byUser: { u_bia: ['claude/opus'] } },
+    })
   })
   it('🔁 o fallback do projeto: cria um grupo com os modelos do projeto, escolhe o padrão e salva', async () => {
     const host = mount(
@@ -118,5 +134,23 @@ describe('ProjectModels', () => {
       method: 'PUT',
       body: { groups: [{ id: 'barato', name: 'Barato', steps: [{ provider: 'claude', model: 'haiku' }] }], defaultModelGroup: 'barato' },
     })
+  })
+  it('🔐 providers do projeto: o do projeto aparece com a chave e os modelos, fora da lista do gateway e dentro da base dos papéis', async () => {
+    const host = mount({ allowed: ['claude/opus'], byRole: {}, byUser: {}, effective: ['claude/opus'] }, { gatewayAdmin: true, projectAdmin: true })
+    await flush()
+    expect(host.querySelector('[data-test="project-models-gateway"]')?.textContent).not.toContain('gpt-x')
+    const own = host.querySelector('[data-test="project-provider"]')!
+    expect(own.textContent).toContain('Sem chave')
+    expect(own.textContent).toContain('https://api.openai.com/v1')
+    const roles = host.querySelector('[data-test="project-models-roles"]')!
+    roles.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()
+    await nextTick()
+    expect(roles.textContent).toContain('alfa--openai/gpt-x')
+    // Só os tipos que o projeto ainda não tem.
+    expect([...host.querySelectorAll('[data-test="project-provider-add"] option')].map((option) => option.textContent?.trim())).toEqual([
+      'Acrescentar provider…',
+      'Anthropic',
+      'OpenRouter',
+    ])
   })
 })
