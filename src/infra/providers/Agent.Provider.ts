@@ -173,7 +173,7 @@ export class AgentProvider implements IAgentProvider {
     if (settings.audience === 'off') throw new AgentUnavailableError()
 
     // Corpo → configuração → padrão do registry. O corpo só vence quando alguém escolheu de propósito.
-    const agent = this.getAgent(input.agentId || settings.agentId, projectOf(input.metadata))
+    const agent = this.getAgent(input.agentId || settings.agentId, projectOf(input.metadata), ownerIdOf(input.metadata))
     // ⛔ O agente de um projeto só conversa num OUTRO projeto se foi compartilhado com ele (parou de compartilhar = sem acesso).
     if (!reaches(agent, projectOf(input.metadata))) throw new AgentNotFoundError(agent.id)
     const choice = this.chooseTarget(agent, input, settings)
@@ -223,8 +223,8 @@ export class AgentProvider implements IAgentProvider {
     const record = this.requireSession(sessionId)
     const conversationProject = projectOf(record.metadata)
     // ⛔ A conversa antiga de um projeto com um agente que ele já não recebe fica no histórico, mas não continua.
-    if (!reaches(this.getAgent(record.agentId, projectOf(record.metadata)), conversationProject)) throw new AgentNotFoundError(record.agentId)
-    let { agent, unavailable } = this.prepare(this.getAgent(record.agentId, projectOf(record.metadata)), conversationProject, record.provider, record.protocol, record.mode)
+    if (!reaches(this.agentOf(record), conversationProject)) throw new AgentNotFoundError(record.agentId)
+    let { agent, unavailable } = this.prepare(this.agentOf(record), conversationProject, record.provider, record.protocol, record.mode)
     // ⚖️ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: a conversa SEGUE no modelo que
     // o agente escolheria hoje (o grupo de modelos, as configurações, o padrão), com aviso no turno. Antes era erro, e a
     // conversa retomada por quem orquestra (a esteira) travava sem ninguém para trocar o modelo à mão.
@@ -234,12 +234,12 @@ export class AgentProvider implements IAgentProvider {
       const before = `${record.provider} · ${record.model}`
       const settings = this.current ?? (await this.settings?.read()) ?? DEFAULT_SETTINGS
       try {
-        this.reconfigure(sessionId, this.chooseTarget(this.getAgent(record.agentId, projectOf(record.metadata)), {}, settings))
+        this.reconfigure(sessionId, this.chooseTarget(this.agentOf(record), {}, settings))
       } catch {
         throw new ModelDisabledError(record.provider, record.model)
       }
-      ;({ agent, unavailable } = this.prepare(this.getAgent(record.agentId, projectOf(record.metadata)), conversationProject, record.provider, record.protocol, record.mode))
-      swapped = `O modelo ${before} foi desligado; a conversa segue em ${record.provider} · ${record.model}.`
+      ;({ agent, unavailable } = this.prepare(this.agentOf(record), conversationProject, record.provider, record.protocol, record.mode))
+      swapped = `O modelo ${before} não está mais disponível; a conversa segue em ${record.provider} · ${record.model}.`
     }
     let adapter = this.getAdapter(record.protocol, record.mode)
     // Acabou de trocar de provider: a transcrição vai antes da mensagem, só para o modelo — o turno
@@ -318,7 +318,7 @@ export class AgentProvider implements IAgentProvider {
       sent = opening(handoff)
       turn.by = `${record.provider} · ${record.model}`
       tried.add(stepKey(record))
-      ;({ agent, unavailable } = this.prepare(this.getAgent(record.agentId, projectOf(record.metadata)), conversationProject, record.provider, record.protocol, record.mode))
+      ;({ agent, unavailable } = this.prepare(this.agentOf(record), conversationProject, record.provider, record.protocol, record.mode))
       adapter = this.getAdapter(record.protocol, record.mode)
       return from
     }
@@ -600,7 +600,7 @@ export class AgentProvider implements IAgentProvider {
   /** O próximo passo do grupo que pode rodar agora, ou nada (aí o erro sai como sempre). */
   private nextFallback(record: ISessionRecord, tried: ReadonlySet<string>): IFallbackStep | undefined {
     if (!this.bench) return undefined
-    const agent = this.getAgent(record.agentId, projectOf(record.metadata))
+    const agent = this.agentOf(record)
     return nextStep(fallbackChain(this.groupFor(record)), tried, (step) => this.canRun(agent, record.mode, step))
   }
 
@@ -886,7 +886,7 @@ export class AgentProvider implements IAgentProvider {
     const record = this.requireSession(sessionId)
     if (record.status === 'running') throw new SessionBusyError(sessionId)
 
-    const agent = this.getAgent(record.agentId, projectOf(record.metadata))
+    const agent = this.agentOf(record)
     const provider = change.provider ?? record.provider
     const switching = provider !== record.provider
     const target = agent.providers.find((candidate) => candidate.provider === provider)
@@ -968,7 +968,22 @@ export class AgentProvider implements IAgentProvider {
    * Sem `agentId` em lugar nenhum, vale o padrão do diretório: o primeiro que PODE abrir conversa.
    * ⚠️ Antes era o primeiro da lista, que podia estar desligado ou ser subagente.
    */
-  private getAgent(agentId?: string, projectId?: string): IAgent {
+  /** O agente da conversa como ela o vê: no projeto dela e com os modelos que a pessoa dona dela pode usar. */
+  private agentOf(record: Pick<ISessionRecord, 'agentId' | 'metadata'>): IAgent {
+    return this.getAgent(record.agentId, projectOf(record.metadata), ownerIdOf(record.metadata))
+  }
+
+  /**
+   * 🔐 Os modelos que a pessoa pode usar no projeto (ver `ModelAccess.Policy`): o filtro sai daqui e vale em tudo o que usa
+   * o agente — a escolha da conversa nova, a troca, o grupo de fallback, o modelo que saiu no meio da conversa.
+   */
+  useModelAccess(access: (projectId: string | undefined, ownerId: string | undefined) => ((provider: string, model: string) => boolean) | undefined): void {
+    this.modelAccess = access
+  }
+
+  private modelAccess?: (projectId: string | undefined, ownerId: string | undefined) => ((provider: string, model: string) => boolean) | undefined
+
+  private getAgent(agentId?: string, projectId?: string, ownerId?: string): IAgent {
     if (!agentId) {
       const fallback = this.agents.fallback ? this.agents.fallback() : this.agents.list()[0]
       if (!fallback) throw new NoAgentAvailableError()
@@ -980,8 +995,16 @@ export class AgentProvider implements IAgentProvider {
 
     // ⚖️ Os passos do grupo de modelos entram como alvos do agente (só os modelos ativos): é o que a troca e a conversa
     // sem escolha usam, com o sandbox do agente (ver `withGroupTargets`).
+    const allows = this.modelAccess?.(projectId, ownerId)
     const group = groupOf(agent, this.current)
-    return withGroupTargets(agent, group && { ...group, steps: group.steps.filter((step) => this.agents.isModelUsable?.(step.provider, step.model) ?? true) })
+    const usable = (step: IFallbackStep) => (this.agents.isModelUsable?.(step.provider, step.model) ?? true) && (!allows || allows(step.provider, step.model))
+    const withGroup = withGroupTargets(agent, group && { ...group, steps: group.steps.filter(usable) })
+    if (!allows) return withGroup
+    // ⛔ O que o projeto ou a pessoa não podem usar sai dos alvos: o agente fica só com o permitido (sem nenhum, o erro de sempre).
+    const providers = withGroup.providers
+      .map((target) => ({ ...target, models: target.models.filter((model) => allows(target.provider, model)) }))
+      .filter((target) => target.models.length)
+    return { ...withGroup, providers }
   }
 
   /**
@@ -1038,6 +1061,12 @@ function toSession(record: ISessionRecord): ISession {
 }
 
 /** O projeto que o controller carimbou na conversa. */
+/** A pessoa dona da conversa (`metadata.owner.id`): a delegação herda a da conversa mãe; sem dono, nenhuma. */
+function ownerIdOf(metadata: Record<string, unknown> | undefined): string | undefined {
+  const id = (metadata?.owner as { id?: unknown } | undefined)?.id
+  return typeof id === 'string' && id ? id : undefined
+}
+
 function projectOf(metadata: Record<string, unknown> | undefined): string | undefined {
   const value = metadata?.[PROJECT_METADATA_KEY]
   return typeof value === 'string' && value ? value : undefined
