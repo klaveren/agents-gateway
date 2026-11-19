@@ -70,6 +70,61 @@ export class PersonMessagesService {
     return recipients.map((recipient) => recipient.name)
   }
 
+  /**
+   * 💬 A PESSOA RESPONDE pela caixa: a resposta vai para o fio de TODOS que receberam aquela conversa (o outro admin vê
+   * quem respondeu e o quê) — lida para quem escreveu. Devolve o texto que entra na conversa, com quem respondeu e sobre o
+   * quê, para o agente saber de onde veio. ⛔ Só quem tem o fio responde.
+   */
+  reply(recipientId: string, conversationId: string, text: string, authorName: string): { input: string; agentId: string } {
+    const body = text?.trim() ?? ''
+    if (!body) throw new PersonMessageError('message is required')
+    if (body.length > PERSON_MESSAGE_LIMITS.body) throw new PersonMessageError(`message is longer than ${PERSON_MESSAGE_LIMITS.body} characters`)
+    const mine = this.deps.repository.thread(recipientId, conversationId)
+    if (!mine.length) throw new PersonMessageError('no such thread')
+    const asked = [...mine].reverse().find((message) => message.from === 'agent')
+    const at = this.now()
+    for (const recipient of this.deps.repository.recipientsOf(conversationId)) {
+      this.deps.repository.insert({
+        id: `m_${randomBytes(9).toString('hex')}`,
+        recipientId: recipient,
+        conversationId,
+        ...(mine[0].projectId ? { projectId: mine[0].projectId } : {}),
+        agentId: mine[0].agentId,
+        from: 'person',
+        authorId: recipientId,
+        body,
+        level: 'info',
+        createdAt: at,
+        ...(recipient === recipientId ? { readAt: at } : {}),
+      })
+      this.announce(recipient, conversationId)
+    }
+    const about = asked?.title ? ` (sobre "${asked.title}")` : ''
+    return { input: `[Resposta de ${authorName} pela caixa de Mensagens${about}]\n\n${body}`, agentId: mine[0].agentId }
+  }
+
+  /** 💬 A resposta do agente ao que a pessoa mandou pela caixa volta para o fio de todos (não lida). */
+  mirror(conversationId: string, agentId: string, text: string, level: TPersonMessageLevel = 'info'): void {
+    const body = text.trim().slice(0, PERSON_MESSAGE_LIMITS.body)
+    if (!body) return
+    const at = this.now()
+    for (const recipient of this.deps.repository.recipientsOf(conversationId)) {
+      const projectId = this.deps.repository.thread(recipient, conversationId)[0]?.projectId
+      this.deps.repository.insert({
+        id: `m_${randomBytes(9).toString('hex')}`,
+        recipientId: recipient,
+        conversationId,
+        ...(projectId ? { projectId } : {}),
+        agentId,
+        from: 'agent',
+        body,
+        level,
+        createdAt: at,
+      })
+      this.announce(recipient, conversationId)
+    }
+  }
+
   threads(recipientId: string, archived = false): IPersonThread[] {
     return this.deps.repository.threads(recipientId, { archived })
   }

@@ -87,4 +87,23 @@ describe('PersonMessagesService', () => {
       ['um', 'dois'],
     )
   })
+
+  it('💬 a resposta da pessoa vai para o fio de todos (lida para quem escreveu) e vira o texto da conversa, com quem e sobre o quê', async () => {
+    const { service } = build()
+    await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', title: 'Preciso de um OK', body: 'Posso subir?' })
+    const reply = service.reply('u_ana', 'gw_alfa', 'Pode, sim', 'Ana')
+    assert.deepStrictEqual(reply, { input: '[Resposta de Ana pela caixa de Mensagens (sobre "Preciso de um OK")]\n\nPode, sim', agentId: 'zeus' })
+    assert.deepStrictEqual(
+      service.thread('u_bia', 'gw_alfa').map((message) => [message.from, message.body, message.authorId]),
+      [
+        ['agent', 'Posso subir?', undefined],
+        ['person', 'Pode, sim', 'u_ana'],
+      ],
+    )
+    assert.ok(service.thread('u_ana', 'gw_alfa').at(-1)?.readAt, 'lida para quem escreveu')
+    assert.throws(() => service.reply('u_caio', 'gw_alfa', 'eu também', 'Caio'), /no such thread/, 'quem não recebeu não responde')
+    service.mirror('gw_alfa', 'zeus', 'Subindo agora.')
+    assert.deepStrictEqual(service.thread('u_ana', 'gw_alfa').at(-1)?.body, 'Subindo agora.')
+    assert.strictEqual(service.unread('u_ana'), 2, 'a primeira e a resposta do agente')
+  })
 })
