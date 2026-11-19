@@ -108,6 +108,7 @@ import { SseStream } from './Sse.Stream'
 import { NextFunction, Request, Response } from 'express'
 import { viaAccessToken } from './Auth.Controller'
 import { viaSessionCookie } from './Session.Cookie'
+import { PushError, type WebPushSender } from '@infra/push/WebPush.Sender'
 import { z } from 'zod'
 import type { IHostApprovals } from '@application/HostApprovals.Service'
 
@@ -177,6 +178,8 @@ export interface IAgentControllerDeps {
   projects?: ProjectsService
   /** 💬 As mensagens dos agentes para as pessoas (a tela Mensagens). Ausente = sem a tela. */
   personMessages?: PersonMessagesService
+  /** 📱 O Web Push (o aviso de mensagem nova no aparelho). */
+  push?: WebPushSender
   /** O cerco dos agentes de projeto, para a tela mostrar se funciona neste servidor. */
   sandbox?: IProjectSandbox
   /** O Docker responde aqui? (o MCP "Contêiner isolado" precisa dele). Ausente = não se informa. */
@@ -343,6 +346,9 @@ export class AgentController {
     this.messageThread = this.messageThread.bind(this)
     this.readMessages = this.readMessages.bind(this)
     this.archiveMessages = this.archiveMessages.bind(this)
+    this.pushKey = this.pushKey.bind(this)
+    this.pushSubscribe = this.pushSubscribe.bind(this)
+    this.pushUnsubscribe = this.pushUnsubscribe.bind(this)
     this.replyMessage = this.replyMessage.bind(this)
     this.conversationActivity = this.conversationActivity.bind(this)
     this.renameConversation = this.renameConversation.bind(this)
@@ -2091,6 +2097,48 @@ export class AgentController {
     const recipientId = ownerOf(await this.requireCaller())?.id
     if (!recipientId) throw new HttpError(401, 'unauthorized', 'Sign in to see your messages')
     return { service, recipientId }
+  }
+
+  /** 📱 O aviso no aparelho é da pessoa, ligado pela tela dela (nunca por um token de integração). */
+  private async pushOf(res: Response): Promise<{ push: WebPushSender; userId: string }> {
+    const push = this.usecases.push
+    if (!push) throw new HttpError(404, 'not_found', 'Not found')
+    if (!fromScreen(res)) throw new HttpError(403, 'forbidden', 'Push notifications are turned on from the screen')
+    const userId = ownerOf(await this.requireCaller())?.id
+    if (!userId) throw new HttpError(401, 'unauthorized', 'Sign in to receive notifications')
+    return { push, userId }
+  }
+
+  /** `GET /push/key` — 📱 a chave pública VAPID (para o navegador assinar) e quantos aparelhos da pessoa recebem. */
+  async pushKey(_req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { push, userId } = await this.pushOf(res)
+      return { publicKey: push.publicKey(), devices: push.devices(userId) }
+    })
+  }
+
+  /** `POST /push/subscriptions { endpoint, keys }` — 📱 este aparelho passa a receber o aviso de mensagem nova. */
+  async pushSubscribe(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { push, userId } = await this.pushOf(res)
+      try {
+        push.subscribe(userId, (req.body ?? {}) as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } }, String(req.headers['user-agent'] ?? ''))
+      } catch (error) {
+        if (error instanceof PushError) throw new HttpError(422, 'validation_error', error.message)
+        throw error
+      }
+      return { devices: push.devices(userId) }
+    })
+  }
+
+  /** `DELETE /push/subscriptions { endpoint }` — 📱 este aparelho para de receber. */
+  async pushUnsubscribe(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { push, userId } = await this.pushOf(res)
+      const endpoint = (req.body as { endpoint?: unknown } | undefined)?.endpoint
+      if (typeof endpoint === 'string') push.unsubscribe(userId, endpoint)
+      return { devices: push.devices(userId) }
+    })
   }
 
   /** `GET /messages?archived=1` — 💬 os fios da pessoa (um por conversa que lhe escreveu), o mais recente primeiro, e o total não lido. */

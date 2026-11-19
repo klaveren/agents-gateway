@@ -85,6 +85,7 @@ import { ModelGroupRetirement } from '@application/ModelGroupRetirement.Service'
 import { ProvidersController } from '@infra/http/Providers.Controller'
 import { UsageController } from '@infra/http/Usage.Controller'
 import { makeCredentials, makeSecretBox } from './Credentials.Factory'
+import { makePush } from './Push.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
 import { makeSessionStore, providerBench } from './Orchestrator.Factory'
@@ -163,6 +164,7 @@ export function makeController(): AgentController {
     agentRemoved,
     projects: makeProjects(),
     personMessages: makePersonMessages(),
+    push: makePush(),
     sandbox: projectSandbox(),
     docker: () => dockerStatus(),
     guidance: makeGuidance(),

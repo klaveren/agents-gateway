@@ -1,4 +1,5 @@
 import { conversationOf, makePersonMessages } from './PersonMessages.Factory'
+import { makePush } from './Push.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeProjects } from './Projects.Factory'
 import { projectMcpEnv } from './ProjectVariables.Factory'
@@ -34,6 +35,16 @@ export function makeUsecases() {
   // 💬 As mensagens das pessoas avisam a mesma caixa de entrada (o sino ao vivo).
   makePersonMessages().useEvents(events)
   makePersonMessages().useConversations((sessionId) => conversationOf(conversations, sessionId))
+  // 📱 E chegam no aparelho de quem ligou o aviso (Web Push): o nome do agente e o assunto, o toque abre o fio.
+  makePersonMessages().usePush((recipientId, message) => {
+    const agent = makeAgents().get(message.agentId)?.name ?? message.agentId
+    void makePush().notify(recipientId, {
+      title: message.title ? `${agent}: ${message.title}` : agent,
+      body: message.body,
+      url: `/messages/${encodeURIComponent(message.conversationId)}`,
+      tag: `message:${message.conversationId}`,
+    })
+  })
 
   // O turno ao vivo avisa a mesma caixa de entrada (quem está rodando).
   const live = new TurnLive(events)

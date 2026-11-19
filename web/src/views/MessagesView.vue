@@ -5,6 +5,7 @@
   import Icon from '@/components/Icon.vue'
   import MasterDetail from '@/components/MasterDetail.vue'
   import { api } from '@/lib/api'
+  import { disablePush, enablePush, pushState, type TPushState } from '@/lib/push'
   import { shortTime, fullTime } from '@/lib/format'
   import { renderMarkdown } from '@/lib/markdown'
   import type { ITurn } from '@/lib/types'
@@ -29,9 +30,28 @@
   const sentNote = ref<string>()
   const search = ref('')
 
+  // 📱 O aviso no aparelho (Web Push): ligado por um toque, aparelho a aparelho.
+  const push = ref<TPushState>()
+  const pushBusy = ref(false)
+  const pushError = ref<string>()
+  async function togglePush(on: boolean) {
+    pushBusy.value = true
+    pushError.value = undefined
+    try {
+      push.value = on ? await enablePush() : await disablePush()
+    } catch (failure) {
+      pushError.value = failure instanceof Error ? failure.message : String(failure)
+    } finally {
+      pushBusy.value = false
+    }
+  }
+
   const LEVEL: Record<string, string> = { info: '', attention: 'Precisa de você', urgent: 'Urgente' }
 
   onMounted(() => {
+    void pushState()
+      .then((state) => (push.value = state))
+      .catch(() => (push.value = 'unsupported'))
     void messages.load().catch((failure) => (error.value = failure instanceof Error ? failure.message : String(failure)))
     void agents.ensure().catch(() => undefined)
   })
@@ -135,6 +155,20 @@
             {{ messages.archived ? 'Caixa de entrada' : 'Arquivadas' }}
           </button>
         </header>
+        <div class="flex items-center gap-2 px-4 pb-2 text-xs" data-test="push">
+          <template v-if="push === 'on'">
+            <Icon name="bell" class="h-3.5 w-3.5 text-emerald-400" />
+            <span class="text-zinc-400">Aviso neste aparelho ligado</span>
+            <button type="button" class="ml-auto text-zinc-500 hover:text-zinc-300" :disabled="pushBusy" @click="togglePush(false)">Desligar</button>
+          </template>
+          <button v-else-if="push === 'off'" type="button" class="btn btn-sm btn-ghost -ml-2" :disabled="pushBusy" data-test="push-enable" @click="togglePush(true)">
+            <Icon name="bell" class="h-4 w-4" />
+            Receber aviso neste aparelho
+          </button>
+          <span v-else-if="push === 'install'" class="text-zinc-500">Para receber no iPhone: Safari → Compartilhar → Adicionar à Tela de Início, e abra por lá.</span>
+          <span v-else-if="push === 'denied'" class="text-zinc-500">Notificações bloqueadas para este site nos ajustes do navegador.</span>
+          <span v-if="pushError" class="text-rose-300">{{ pushError }}</span>
+        </div>
         <div class="px-4 pb-2">
           <input
             v-model="search"
