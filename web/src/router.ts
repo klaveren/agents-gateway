@@ -20,6 +20,7 @@ import AuditView from './views/AuditView.vue'
 import SharedView from './views/SharedView.vue'
 import EnvironmentView from './views/EnvironmentView.vue'
 import SchedulesView from './views/SchedulesView.vue'
+import MessagesView from './views/MessagesView.vue'
 import NotificationsView from './views/NotificationsView.vue'
 import ServersView from './views/ServersView.vue'
 import PermissionsView from './views/PermissionsView.vue'
@@ -80,6 +81,8 @@ export const router = createRouter({
     { path: '/environment', name: 'environment', component: EnvironmentView },
     { path: '/schedules', name: 'schedules', component: SchedulesView },
     { path: '/notifications', name: 'notifications', component: NotificationsView },
+    { path: '/messages', name: 'messages', component: MessagesView },
+    { path: '/messages/:id', name: 'message', component: MessagesView, props: true },
     // Os outros gateways que o app do Mac abre na mesma janela: no navegador a tela só explica.
     { path: '/servers', name: 'servers', component: ServersView },
     { path: '/permissions', name: 'permissions', component: PermissionsView },

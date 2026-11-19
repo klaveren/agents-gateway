@@ -6,7 +6,7 @@
   import { useStickToBottom } from '@/composables/useStickToBottom'
   import { useDrawerWidth } from '@/composables/useDrawerWidth'
   import type { IConversation, TMode } from '@/lib/types'
-  import { useRouter } from 'vue-router'
+  import { useRoute, useRouter } from 'vue-router'
   import { coreAgentName } from '@/lib/builder'
   import { useAgentCommands } from '@/lib/commands'
   import { contextMeter } from '@/lib/contextMeter'
@@ -37,6 +37,7 @@
   const props = defineProps<{ embedded?: boolean; agentId?: string; mode?: TMode }>()
   const emit = defineEmits<{ removed: [] }>()
   const router = useRouter()
+  const route = useRoute()
   const agents = useAgentsStore()
   const protocols = useProtocolsStore()
   const conversations = useConversationsStore()
@@ -250,6 +251,30 @@
     onScroll()
     if (scroller.value && scroller.value.scrollTop < OLDER_AT_PX) void loadOlder()
   }
+
+  /**
+   * 💬 `?turn=N` (o link da tela Mensagens): abre a conversa NAQUELE turno — traz os anteriores até ele estar carregado e
+   * rola até ele, com um destaque rápido. Turno que não existe mais: fica no fim, como sempre.
+   */
+  async function goToTurn(target: number) {
+    for (let page = 0; page < 40 && !thread.turns.some((turn) => turn.index <= target) && thread.hasOlder; page++) if (!(await thread.loadOlder())) break
+    await nextTick()
+    const element = scroller.value?.querySelector<HTMLElement>(`[data-turn="${target}"]`)
+    if (!element) return
+    pinned.value = false
+    element.scrollIntoView({ block: 'start' })
+    element.classList.add('turn-focus')
+    setTimeout(() => element.classList.remove('turn-focus'), 2500)
+  }
+  watch(
+    () => [thread.loading, route.query.turn] as const,
+    async ([busy, turn]) => {
+      const target = typeof turn === 'string' && /^\d+$/.test(turn) ? Number(turn) : undefined
+      if (busy || target === undefined) return
+      await goToTurn(target)
+    },
+    { immediate: true },
+  )
 
   // Abriu (ou releu) com poucos turnos à vista: traz os anteriores até haver o que rolar.
   watch(
@@ -609,7 +634,7 @@
         <p v-else-if="header" class="mx-auto rounded-full bg-zinc-900/80 px-3 py-1 text-xs text-zinc-400">Começou em {{ fullTime(header.createdAt) }}</p>
         <template v-for="(turn, index) in thread.turns" :key="`${turn.sessionId}-${turn.index}`">
           <p v-if="switchBefore(index)" class="mx-auto rounded-full border border-zinc-800 px-3 py-0.5 font-mono text-[11px] text-zinc-500">{{ switchBefore(index) }}</p>
-          <TurnBubbles :turn="turn" :show-cost="projects.manages" />
+          <div :data-turn="turn.index" class="flex flex-col gap-5 rounded-2xl transition-colors"><TurnBubbles :turn="turn" :show-cost="projects.manages" /></div>
         </template>
         <TurnBubbles v-if="thread.pending" :pending="thread.pending" :show-cost="projects.manages" />
         <p v-if="thread.error" class="mx-auto text-sm text-rose-300">{{ thread.error }}</p>
@@ -680,3 +705,10 @@
     />
   </section>
 </template>
+
+<style scoped>
+  .turn-focus {
+    background: rgb(16 185 129 / 0.08);
+    box-shadow: 0 0 0 1px rgb(16 185 129 / 0.35);
+  }
+</style>
