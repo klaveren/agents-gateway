@@ -36,6 +36,7 @@ function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[
   /** A ordem do que a camada local e o espelho fizeram. */
   const steps: string[] = []
   const repository = new SqliteProjectConnectionRepository(':memory:')
+  const modelsAsked: Array<string | undefined> = []
   const service = new ProjectConnectionService({
     repository,
     box: { seal: (plain) => plain, open: (box) => box },
@@ -67,7 +68,7 @@ function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[
     remove: async (current) => void steps.push(`remove ${current.kind}/${current.id}`),
     layers: { applyAll: (projectId) => void steps.push(`apply ${projectId}`), forget: (agentId) => void steps.push(`forget ${agentId}`) },
     localMcps: { release: (projectId) => void steps.push(`release ${projectId}`) },
-    models: async () => ({ enabled: () => true }),
+    models: async (projectId?: string) => (modelsAsked.push(projectId), { enabled: (provider: string, model: string) => `${provider}/${model}` !== 'claude/proibido' }),
   })
   repository.insert(
     {
@@ -88,7 +89,7 @@ function build(localGlobals: ICatalogDocument[], localProject: ICatalogDocument[
     'agc_x',
   )
   if (synced) repository.update('logiccus', { lastSyncedAt: new Date() })
-  return { service, planned, written, steps, repository }
+  return { service, planned, written, steps, repository, modelsAsked }
 }
 
 describe('projeto conectado: a cópia', () => {
@@ -194,5 +195,15 @@ describe('projeto conectado: a atualização automática', () => {
   it('a conexão nova e a que já existia no banco nascem com a atualização automática ligada', () => {
     const { repository } = build([])
     assert.equal(repository.get('logiccus')?.autoUpdate, true)
+  })
+})
+
+describe('projeto conectado: 🔐 o mapa de modelos respeita o projeto daqui', () => {
+  it('a cópia pergunta o que roda PARA o projeto conectado; o mapa recusa alvo que não roda aqui ou não está liberado', async () => {
+    const { service, modelsAsked } = build([])
+    await service.sync('logiccus', 'dev')
+    assert.strictEqual(modelsAsked.at(-1), 'logiccus')
+    await assert.rejects(service.setModelMap('logiccus', { 'claude/opus': 'claude/proibido' }), /não está liberado ao projeto: claude\/proibido/)
+    assert.deepStrictEqual((await service.setModelMap('logiccus', { 'claude/opus': 'claude/haiku' })).modelMap, { 'claude/opus': 'claude/haiku' })
   })
 })

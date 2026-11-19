@@ -51,7 +51,8 @@ export interface IProjectConnectionDeps {
   /** O uso das conversas daqui (as linhas do relatório), para mandar o do projeto conectado à origem. */
   usage?: (query: IUsageQuery) => Promise<IUsageRow[]>
   /** Os modelos desta instalação (sem o mapa, que é da conexão). */
-  models(): Promise<Omit<ILocalModels, 'map'>>
+  /** O que roda aqui, para o projeto conectado (`projectId`): também o que ele pode usar (ver `ModelAccess.Policy`). */
+  models(projectId?: string): Promise<Omit<ILocalModels, 'map'>>
   now?: () => Date
 }
 
@@ -155,8 +156,15 @@ export class ProjectConnectionService {
   }
 
   /** O mapa de modelos da conexão (`provider/modelo` da origem → daqui). Vale na próxima sincronização. */
-  setModelMap(projectId: string, map: Record<string, string>): IProjectConnection {
+  /** ⛔ O mapa só aponta para modelo que roda aqui E que o projeto pode usar: o resto é recusado com o motivo. */
+  async setModelMap(projectId: string, map: Record<string, string>): Promise<IProjectConnection> {
     this.require(projectId)
+    const local = await this.deps.models(projectId)
+    const refused = Object.entries(map).filter(([, target]) => {
+      const slash = target.indexOf('/')
+      return slash <= 0 || !local.enabled(target.slice(0, slash), target.slice(slash + 1))
+    })
+    if (refused.length) throw new ProjectConnectionError('invalid', `não roda aqui ou não está liberado ao projeto: ${refused.map(([, target]) => target).join(', ')}`)
     this.deps.repository.update(projectId, { modelMap: map })
     return this.require(projectId)
   }
@@ -521,7 +529,7 @@ export class ProjectConnectionService {
       if (this.deps.files.put(content).sha256 !== file.sha256) throw new ProjectConnectionError('unavailable', `o arquivo ${file.sha256} chegou corrompido`)
     }
 
-    const models = { ...(await this.deps.models()), map: connection.modelMap }
+    const models = { ...(await this.deps.models(projectId)), map: connection.modelMap }
     const parsed = parsePackage(pack.package.files, pack.package.manifest)
     const scope: TCatalogScope = { kind: 'project', projectId }
     // ⚖️ O MCP global da origem que os agentes usam vem como do projeto; com o mesmo id de um global DAQUI, vale o daqui
