@@ -44,6 +44,13 @@ html[data-short-viewport] {
 @media (display-mode: standalone) {
   html {
     background-color: var(--color-zinc-900);
+    /*
+     * 📱 iOS 26 (WebKit 301108): no app instalado, com `viewport-fit=cover` e a barra de status translúcida, a tela vem
+     * MAIS CURTA pela altura da barra de status enquanto o documento for menor que ela: a barra de baixo (e o detalhe em
+     * tela cheia) parava ~58pt acima do fim, com uma faixa embaixo. Documento da altura da tela inteira = o iOS dá a
+     * tela inteira. O `min()` segura quem tem barra de status opaca (topo 0): sem ele, a página rolaria essa altura.
+     */
+    min-height: min(100lvh, calc(100% + env(safe-area-inset-top)));
   }
 }
 
