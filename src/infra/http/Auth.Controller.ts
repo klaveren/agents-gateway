@@ -1,3 +1,4 @@
+import { caller } from '@infra/mcp/Caller.Identity'
 import { clientIp } from './Security.Middleware'
 import { gatewayEdition } from '@domain/Edition.Policy'
 import { clearSessionCookie, setSessionCookie, wantsCookieOnly } from './Session.Cookie'
@@ -178,12 +179,16 @@ export class AuthController {
     })
   }
 
-  /** Sai de todas as sessões da conta. Depois disto, nenhum token emitido antes vale. */
+  /**
+   * Sai deste navegador; `{ all: true }` sai de todos os aparelhos (nenhum token emitido antes vale). Nos dois casos, o
+   * turno que já roda vai até o fim.
+   */
   async logout(req: Request, res: Response) {
     await this.respond(
       res,
       async () => {
-        this.accounts.logout(await this.requireSelf())
+        const all = (req.body as { all?: unknown } | undefined)?.all === true
+        this.accounts.logout(await this.requireSelf(), caller()?.token, all)
         clearSessionCookie(req, res)
         return null
       },

@@ -192,7 +192,14 @@ export class AccountsService {
   }
 
   /** Sair: encerra TODAS as sessões da conta, não só a deste navegador — uma cópia do token não sobra. */
-  logout(id: string): void {
+  /**
+   * Sai DESTE navegador: encerra só a sessão do token apresentado. Token de antes (sem sessão própria) não dá para
+   * encerrar sozinho: aí saem todas, como antes. `all`: sai de todos os aparelhos.
+   * ⚖️ Turno que já roda vai até o fim mesmo assim (`Live.TurnTokens`); os próximos pedem login de novo.
+   */
+  logout(id: string, token?: string, all = false): void {
+    const claims = token ? this.tokens.verify(token) : undefined
+    if (!all && claims?.sub === id && claims.sid) return this.users.revokeSession(claims.sid, new Date(claims.exp * 1000))
     this.revoke(id)
   }
 
@@ -257,7 +264,7 @@ export class AccountsService {
   private sessionFor(id: string): ISession {
     const user = this.me(id)
     const ver = this.users.findById(id)?.sessionVersion ?? 0
-    const { token, expiresAt } = this.tokens.issue({ sub: user.id, email: user.email, role: user.role, ver })
+    const { token, expiresAt } = this.tokens.issue({ sub: user.id, email: user.email, role: user.role, ver, sid: randomBytes(12).toString('base64url') })
 
     return { token, expiresAt, user }
   }

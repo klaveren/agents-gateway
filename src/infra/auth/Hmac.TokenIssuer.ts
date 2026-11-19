@@ -33,7 +33,7 @@ export class HmacTokenIssuer implements ITokenIssuer {
   issue(claims: ISessionClaims): { token: string; expiresAt: Date } {
     const iat = Math.floor(this.now() / 1000)
     const exp = iat + Math.floor(this.ttlMs / 1000)
-    const body = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ iss: LOCAL_ISSUER, sub: claims.sub, email: claims.email, role: claims.role, ver: claims.ver, ...(claims.via === 'agw' && claims.tid ? { via: claims.via, tid: claims.tid } : {}), iat, exp })}`
+    const body = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ iss: LOCAL_ISSUER, sub: claims.sub, email: claims.email, role: claims.role, ver: claims.ver, ...(claims.sid ? { sid: claims.sid } : {}), ...(claims.via === 'agw' && claims.tid ? { via: claims.via, tid: claims.tid } : {}), iat, exp })}`
 
     return { token: `${body}.${this.sign(body)}`, expiresAt: new Date(exp * 1000) }
   }
@@ -58,7 +58,8 @@ export class HmacTokenIssuer implements ITokenIssuer {
     const derived = claims.via === 'agw' ? (typeof claims.tid === 'string' && claims.tid ? ({ via: 'agw', tid: claims.tid } as const) : undefined) : {}
     if (!derived) return undefined
 
-    return { sub: claims.sub, email: claims.email, role: claims.role as TUserRole, ver: claims.ver, ...derived, exp: claims.exp }
+    const sid = typeof claims.sid === 'string' && claims.sid ? { sid: claims.sid } : {}
+    return { sub: claims.sub, email: claims.email, role: claims.role as TUserRole, ver: claims.ver, ...sid, ...derived, exp: claims.exp }
   }
 
   owns(token: string): boolean {

@@ -166,9 +166,12 @@ export const useAuthStore = defineStore('auth', () => {
     await start(await api<ISession>('/auth/setup', { method: 'POST', body: input }))
   }
 
-  /** Sai NO SERVIDOR (todas as sessões da conta) e depois aqui. Se o servidor não responder, sai daqui mesmo assim. */
-  async function logout(): Promise<void> {
-    await api('/auth/logout', { method: 'POST' }).catch(() => undefined)
+  /**
+   * Sai NO SERVIDOR e depois aqui: deste navegador, ou de todos os aparelhos (`all`). Turno que já roda vai até o fim.
+   * Se o servidor não responder, sai daqui mesmo assim.
+   */
+  async function logout(all = false): Promise<void> {
+    await api('/auth/logout', { method: 'POST', ...(all ? { body: { all: true } } : {}) }).catch(() => undefined)
     user.value = undefined
     isAdmin.value = false
     clearClientState()

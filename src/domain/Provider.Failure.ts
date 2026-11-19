@@ -43,7 +43,16 @@ export function failureKind(error: unknown): TProviderFailure {
 export function errorPayload(error: unknown, message = messageOf(error)): { message: string; kind?: TProviderFailure; resetsAt?: string } {
   const kind = failureKind(error)
   const resetsAt = resetsAtOf(error)
-  return { message, ...(kind !== 'other' ? { kind } : {}), ...(resetsAt ? { resetsAt } : {}) }
+  return { message: readableMcpRefusal(message), ...(kind !== 'other' ? { kind } : {}), ...(resetsAt ? { resetsAt } : {}) }
+}
+
+/**
+ * O MCP do gateway recusou no meio do turno (`-32001`, o "Not found" das rotas internas): o SDK devolve o JSON-RPC cru.
+ * Em português, com o que costuma ser e o que fazer; o original vai junto, para quem investiga.
+ */
+export function readableMcpRefusal(message: string): string {
+  if (!/Error POSTing to endpoint/.test(message) || !/"code":\s*-32001/.test(message)) return message
+  return `Um MCP do gateway recusou a chamada no meio do turno: a sessão de quem conversa foi encerrada (conta desativada ou papel trocado), ou a conversa, o agente ou o MCP mudou. Mande a mensagem de novo para continuar. (${message})`
 }
 
 function statusOf(error: unknown): number | undefined {

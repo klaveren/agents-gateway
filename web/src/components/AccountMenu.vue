@@ -38,10 +38,10 @@
     about.value = true
   }
 
-  async function logout() {
+  async function logout(all = false) {
     open.value = false
     // ⚠️ `logout` limpa o estado de quem saiu e refaz o escopo (conversas, agentes, eventos) sozinho.
-    await auth.logout()
+    await auth.logout(all)
     await router.push('/login')
   }
 </script>
@@ -108,11 +108,24 @@
         Notificações
         <span v-if="pending" class="ml-auto rounded-full bg-amber-500 px-1.5 text-[10px] leading-4 font-semibold text-zinc-950" data-test="notifications-pill">{{ pending }}</span>
       </RouterLink>
-      <RouterLink v-if="serverList?.manage" to="/servers" role="menuitem" class="flex items-center gap-2.5 px-3 py-2.5 text-zinc-200 hover:bg-zinc-800" data-test="servers-item" @click="open = false">
+      <RouterLink
+        v-if="serverList?.manage"
+        to="/servers"
+        role="menuitem"
+        class="flex items-center gap-2.5 px-3 py-2.5 text-zinc-200 hover:bg-zinc-800"
+        data-test="servers-item"
+        @click="open = false"
+      >
         <Icon name="globe" class="h-4 w-4 text-zinc-400" />
         Servidores
       </RouterLink>
-      <button type="button" role="menuitem" class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800" data-test="about-item" @click="showAbout">
+      <button
+        type="button"
+        role="menuitem"
+        class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+        data-test="about-item"
+        @click="showAbout"
+      >
         <Icon name="info" class="h-4 w-4 text-zinc-400" />
         Sobre
       </button>
@@ -120,10 +133,22 @@
         type="button"
         role="menuitem"
         class="flex w-full items-center gap-2.5 border-t border-zinc-800 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 hover:text-rose-300"
-        @click="logout"
+        data-test="logout-item"
+        @click="logout()"
       >
         <Icon name="logout" class="h-4 w-4 text-zinc-400" />
         Sair
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs text-zinc-400 hover:bg-zinc-800 hover:text-rose-300"
+        data-test="logout-all-item"
+        title="Encerra o login em todos os navegadores e aparelhos. As conversas que já estão rodando terminam o que estavam fazendo."
+        @click="logout(true)"
+      >
+        <Icon name="logout" class="h-4 w-4 text-zinc-500" />
+        Sair de todos os aparelhos
       </button>
     </div>
     <AboutDialog :open="about" @close="about = false" />

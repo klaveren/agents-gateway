@@ -18,4 +18,7 @@ export interface IUserRepository {
   findByEmail(email: string): IStoredUser | undefined
   insert(user: IStoredUser): void
   update(id: string, patch: TUserPatch): IStoredUser | undefined
+  /** Encerra UMA sessão (um navegador) até o token dela vencer. As outras da conta seguem. */
+  revokeSession(sid: string, until: Date): void
+  sessionRevoked(sid: string): boolean
 }

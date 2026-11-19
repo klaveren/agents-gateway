@@ -1673,7 +1673,8 @@ export const OPENAPI_DOCUMENT = {
     },
     '/auth/logout': {
       post: {
-        summary: 'Sign out of EVERY session of the account: tokens issued before stop working, on any device',
+        summary: 'Sign out of THIS session (this browser); `all: true` signs out of every device. Turns already running finish what they were doing',
+        requestBody: { required: false, ...json({ type: 'object', properties: { all: { type: 'boolean', description: 'Every session of the account, on any device' } } }) },
         responses: { '200': { description: 'Signed out', ...json(envelope({ type: 'null' })) }, '401': failures['401'] },
       },
     },
@@ -6070,7 +6071,11 @@ export const OPENAPI_DOCUMENT = {
         summary: 'Screen only: this device starts receiving the new-message notice (Web Push). The endpoint must be a browser push service',
         requestBody: {
           required: true,
-          ...json({ type: 'object', properties: { endpoint: { type: 'string' }, keys: { type: 'object', properties: { p256dh: { type: 'string' }, auth: { type: 'string' } } } }, required: ['endpoint', 'keys'] }),
+          ...json({
+            type: 'object',
+            properties: { endpoint: { type: 'string' }, keys: { type: 'object', properties: { p256dh: { type: 'string' }, auth: { type: 'string' } } } },
+            required: ['endpoint', 'keys'],
+          }),
         },
         responses: {
           '200': { description: 'OK: `{ devices }`', ...json(envelope({ type: 'object' })) },
