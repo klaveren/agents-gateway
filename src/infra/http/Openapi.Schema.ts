@@ -6041,6 +6041,30 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/push/config': {
+      get: {
+        summary: 'Administrators, screen only: the Web Push setup — VAPID public key, contact (`mailto:`/`https:`) and how many devices receive. The private key is never returned',
+        responses: { '200': { description: 'OK: `{ publicKey, contact, custom, devices }`', ...json(envelope({ type: 'object' })) } },
+      },
+      put: {
+        summary:
+          'Administrators, screen only: sets the contact (an e-mail or https address; empty = the environment one) and, optionally, imports a VAPID key pair (both keys, base64url). Importing keys drops every device subscription: they turn the notice on again',
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { contact: { type: 'string' }, publicKey: { type: 'string' }, privateKey: { type: 'string' } } }),
+        },
+        responses: {
+          '200': { description: 'OK: the setup', ...json(envelope({ type: 'object' })) },
+          '422': { description: 'Invalid contact, or the keys are not a matching P-256 pair', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/push/config/rotate': {
+      post: {
+        summary: 'Administrators, screen only: generates a new VAPID key pair and drops every device subscription',
+        responses: { '200': { description: 'OK: the setup', ...json(envelope({ type: 'object' })) } },
+      },
+    },
     '/push/subscriptions': {
       post: {
         summary: 'Screen only: this device starts receiving the new-message notice (Web Push). The endpoint must be a browser push service',

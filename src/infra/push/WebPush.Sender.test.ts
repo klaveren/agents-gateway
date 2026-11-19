@@ -61,3 +61,48 @@ describe('Web Push: o aviso de mensagem nova no aparelho', () => {
     assert.strictEqual(push.devices('u_ana'), 0)
   })
 })
+
+describe('Web Push: a configuração do admin', () => {
+  it('contato: e-mail vira mailto, https passa, o resto é recusado; vazio volta ao do ambiente', () => {
+    const { push } = build()
+    push.setContact('ops@empresa.com')
+    assert.deepStrictEqual([push.config().contact, push.config().custom], ['mailto:ops@empresa.com', true])
+    push.setContact('https://empresa.com/contato')
+    assert.strictEqual(push.config().contact, 'https://empresa.com/contato')
+    assert.throws(() => push.setContact('http://x.test'), PushError)
+    assert.throws(() => push.setContact('não sei'), PushError)
+    push.setContact('')
+    assert.deepStrictEqual([push.config().contact, push.config().custom], ['mailto:push@agents-gateway.invalid', false])
+  })
+
+  it('o contato salvo vai em cada aviso', async () => {
+    const subjects: string[] = []
+    const { push } = build(async (_subscription, _payload, vapid) => void subjects.push(vapid.subject))
+    push.subscribe('u_ana', { endpoint: APPLE, keys: KEYS })
+    push.setContact('ops@empresa.com')
+    await push.notify('u_ana', { title: 't', body: 'b', url: '/messages/s', tag: 'x' })
+    assert.deepStrictEqual(subjects, ['mailto:ops@empresa.com'])
+  })
+
+  it('importar um par: confere que a privada gera a pública, troca e desliga os aparelhos; a privada nunca sai em config()', () => {
+    const { push, repository } = build()
+    push.subscribe('u_ana', { endpoint: APPLE, keys: KEYS })
+    const other = build().push
+    const pair = { publicKey: other.publicKey(), privateKey: (other as unknown as { repository: typeof repository }).repository.vapid()!.privateKey }
+    assert.throws(() => push.importKeys(push.publicKey(), pair.privateKey), /does not match/)
+    assert.throws(() => push.importKeys(pair.publicKey, 'curta'), PushError)
+    push.importKeys(pair.publicKey, pair.privateKey)
+    assert.strictEqual(push.publicKey(), pair.publicKey)
+    assert.strictEqual(push.devices('u_ana'), 0)
+    assert.ok(!JSON.stringify(push.config()).includes(pair.privateKey))
+  })
+
+  it('gerar chaves novas troca a pública e desliga os aparelhos', () => {
+    const { push } = build()
+    const before = push.publicKey()
+    push.subscribe('u_ana', { endpoint: APPLE, keys: KEYS })
+    push.rotate()
+    assert.notStrictEqual(push.publicKey(), before)
+    assert.strictEqual(push.config().devices, 0)
+  })
+})

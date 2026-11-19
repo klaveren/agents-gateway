@@ -1,3 +1,4 @@
+import { createECDH } from 'node:crypto'
 import webpush from 'web-push'
 import { IPushNotice, IPushSubscription, PUSH_LIMITS } from '@domain/models/PushSubscription.Model'
 import type { IPushSubscriptionRepository } from '@domain/ports/PushSubscriptionRepository.Port'
@@ -22,7 +23,8 @@ const sendWithWebPush: TPushSend = async (subscription, payload, vapid) => {
 export class WebPushSender {
   constructor(
     private readonly repository: IPushSubscriptionRepository,
-    private readonly subject: string,
+    /** O contato do ambiente (`PUSH_SUBJECT`), usado quando a tela não definiu um. */
+    private readonly fallbackSubject: string,
     private readonly send: TPushSend = sendWithWebPush,
   ) {}
 
@@ -62,7 +64,7 @@ export class WebPushSender {
     if (!subscriptions.length) return Promise.resolve()
     const body = notice.body.replace(/\s+/g, ' ').trim()
     const payload = JSON.stringify({ ...notice, body: body.length > PUSH_LIMITS.body ? `${body.slice(0, PUSH_LIMITS.body - 1)}…` : body })
-    const vapid = { subject: this.subject, ...this.keys() }
+    const vapid = { subject: this.subject(), ...this.keys() }
     return Promise.all(
       subscriptions.map((subscription) =>
         this.send(subscription, payload, vapid).catch((error: unknown) => {
@@ -71,6 +73,52 @@ export class WebPushSender {
         }),
       ),
     ).then(() => undefined)
+  }
+
+  /** 🔐 O que a tela de Configurações mostra: a pública, o contato e quantos aparelhos recebem. A privada nunca sai. */
+  config(): { publicKey: string; contact: string; custom: boolean; devices: number } {
+    const custom = this.repository.contact()
+    return { publicKey: this.publicKey(), contact: custom ?? this.fallbackSubject, custom: !!custom, devices: this.repository.count() }
+  }
+
+  /** O contato: um e-mail (vira `mailto:`) ou um endereço `https:`; vazio = o do ambiente. */
+  setContact(contact: string | undefined): void {
+    const value = contact?.trim()
+    if (!value) return this.repository.setContact(undefined)
+    const normalized = /^[^\s@:]+@[^\s@]+\.[^\s@]+$/.test(value) ? `mailto:${value}` : value
+    if (!/^mailto:[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) && !/^https:\/\/[^\s]+$/.test(normalized)) throw new PushError('contact must be an e-mail or an https:// address')
+    this.repository.setContact(normalized.slice(0, 320))
+  }
+
+  /**
+   * 🔐 Usa um par VAPID trazido de fora (o mesmo de outra instalação, por exemplo). Confere que a privada gera a
+   * pública. Trocar o par invalida as assinaturas: os aparelhos precisam religar o aviso.
+   */
+  importKeys(publicKey: string, privateKey: string): void {
+    const pub = publicKey.trim()
+    const priv = privateKey.trim()
+    let derived: string
+    try {
+      const ecdh = createECDH('prime256v1')
+      ecdh.setPrivateKey(Buffer.from(priv, 'base64url'))
+      derived = ecdh.getPublicKey().toString('base64url')
+    } catch {
+      throw new PushError('privateKey is not a P-256 VAPID private key (base64url)')
+    }
+    if (Buffer.from(priv, 'base64url').length !== 32) throw new PushError('privateKey is not a P-256 VAPID private key (base64url)')
+    if (derived !== Buffer.from(pub, 'base64url').toString('base64url')) throw new PushError('publicKey does not match privateKey')
+    this.repository.setVapid({ publicKey: derived, privateKey: priv })
+    this.repository.clear()
+  }
+
+  /** 🔐 Gera um par novo (se o antigo vazou). Os aparelhos precisam religar o aviso. */
+  rotate(): void {
+    this.repository.setVapid(webpush.generateVAPIDKeys())
+    this.repository.clear()
+  }
+
+  private subject(): string {
+    return this.repository.contact() ?? this.fallbackSubject
   }
 
   private keys(): { publicKey: string; privateKey: string } {

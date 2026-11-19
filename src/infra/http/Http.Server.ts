@@ -642,6 +642,9 @@ function buildRoutes(
     { method: 'get', path: '/push/key', handler: controller.pushKey },
     { method: 'post', path: '/push/subscriptions', handler: controller.pushSubscribe },
     { method: 'delete', path: '/push/subscriptions', handler: controller.pushUnsubscribe },
+    { method: 'get', path: '/push/config', handler: controller.pushConfig },
+    { method: 'put', path: '/push/config', handler: controller.updatePushConfig },
+    { method: 'post', path: '/push/config/rotate', handler: controller.rotatePushKeys },
     { method: 'patch', path: '/conversations/:id', handler: controller.renameConversation },
     // O painel da conversa (ver `ConversationPanel.Model`): o agente mantém; a pessoa lê e corrige.
     { method: 'get', path: '/conversations/:id/panel', handler: controller.getConversationPanel },

@@ -11,4 +11,10 @@ export interface IPushSubscriptionRepository {
   /** 🔐 O par VAPID: a privada sai do banco só decifrada em memória. */
   vapid(): { publicKey: string; privateKey: string } | undefined
   setVapid(keys: { publicKey: string; privateKey: string }): void
+  /** O contato que vai junto (`mailto:` ou `https:`), definido na tela; ausente = o do ambiente. */
+  contact(): string | undefined
+  setContact(contact: string | undefined): void
+  /** Trocar o par VAPID invalida todas as assinaturas: os aparelhos religam. */
+  clear(): void
+  count(): number
 }

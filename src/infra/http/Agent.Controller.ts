@@ -349,6 +349,9 @@ export class AgentController {
     this.pushKey = this.pushKey.bind(this)
     this.pushSubscribe = this.pushSubscribe.bind(this)
     this.pushUnsubscribe = this.pushUnsubscribe.bind(this)
+    this.pushConfig = this.pushConfig.bind(this)
+    this.updatePushConfig = this.updatePushConfig.bind(this)
+    this.rotatePushKeys = this.rotatePushKeys.bind(this)
     this.replyMessage = this.replyMessage.bind(this)
     this.conversationActivity = this.conversationActivity.bind(this)
     this.renameConversation = this.renameConversation.bind(this)
@@ -2138,6 +2141,48 @@ export class AgentController {
       const endpoint = (req.body as { endpoint?: unknown } | undefined)?.endpoint
       if (typeof endpoint === 'string') push.unsubscribe(userId, endpoint)
       return { devices: push.devices(userId) }
+    })
+  }
+
+  /** 🔐 A configuração do push é do administrador, pela tela (a privada entra por aqui e nunca volta). */
+  private async pushAdmin(res: Response, operation: string): Promise<WebPushSender> {
+    const push = this.usecases.push
+    if (!push) throw new HttpError(404, 'not_found', 'Not found')
+    if (!fromScreen(res)) throw new HttpError(403, 'forbidden', 'Push settings are changed from the screen')
+    await this.requireAdmin(operation)
+    return push
+  }
+
+  /** `GET /push/config` — 🔐 a chave pública VAPID, o contato e quantos aparelhos recebem. */
+  async pushConfig(_req: Request, res: Response) {
+    await this.respond(res, async () => (await this.pushAdmin(res, 'pushConfig')).config())
+  }
+
+  /** `PUT /push/config { contact?, publicKey?, privateKey? }` — 🔐 o contato e, se vier, o par VAPID trazido de fora. */
+  async updatePushConfig(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const push = await this.pushAdmin(res, 'updatePushConfig')
+      const body = (req.body ?? {}) as { contact?: unknown; publicKey?: unknown; privateKey?: unknown }
+      try {
+        if (body.contact !== undefined) push.setContact(typeof body.contact === 'string' ? body.contact : undefined)
+        if (body.publicKey !== undefined || body.privateKey !== undefined) {
+          if (typeof body.publicKey !== 'string' || typeof body.privateKey !== 'string') throw new PushError('send publicKey and privateKey together')
+          push.importKeys(body.publicKey, body.privateKey)
+        }
+      } catch (error) {
+        if (error instanceof PushError) throw new HttpError(422, 'validation_error', error.message)
+        throw error
+      }
+      return push.config()
+    })
+  }
+
+  /** `POST /push/config/rotate` — 🔐 um par VAPID novo; os aparelhos precisam religar o aviso. */
+  async rotatePushKeys(_req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const push = await this.pushAdmin(res, 'rotatePushKeys')
+      push.rotate()
+      return push.config()
     })
   }
 

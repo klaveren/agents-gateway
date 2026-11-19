@@ -1,6 +1,7 @@
 <script setup lang="ts">
   import SaveFooter from '@/components/SaveFooter.vue'
   import MachineAgentsSetting from '@/components/MachineAgentsSetting.vue'
+  import PushSetting from '@/components/PushSetting.vue'
   import { computed, onMounted, ref, watch } from 'vue'
   import { ApiError } from '@/lib/api'
   import { lite } from '@/lib/edition'
@@ -308,6 +309,8 @@
       </section>
 
       <MachineAgentsSetting v-if="auth.isAdmin && settings.current" />
+
+      <PushSetting v-if="auth.isAdmin && settings.current" />
 
       <section v-if="!lite && auth.isAdmin && settings.current" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
         <h2 class="font-medium">Fallback</h2>

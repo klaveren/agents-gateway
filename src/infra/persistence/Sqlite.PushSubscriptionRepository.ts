@@ -20,6 +20,10 @@ const SCHEMA = `
     public_key  TEXT NOT NULL,
     sealed      TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS push_contact (
+    id       INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    contact  TEXT
+  );
 `
 const VAPID_OWNER = 'push:vapid'
 
@@ -70,6 +74,23 @@ export class SqlitePushSubscriptionRepository implements IPushSubscriptionReposi
     if (!row) return undefined
     const privateKey = this.box.open(String(row.sealed), VAPID_OWNER)
     return privateKey ? { publicKey: String(row.public_key), privateKey } : undefined
+  }
+
+  contact(): string | undefined {
+    const row = this.db.prepare('SELECT contact FROM push_contact WHERE id = 1').get() as TRow | undefined
+    return row?.contact ? String(row.contact) : undefined
+  }
+
+  setContact(contact: string | undefined): void {
+    this.db.prepare('INSERT INTO push_contact (id, contact) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET contact = excluded.contact').run(contact ?? null)
+  }
+
+  clear(): void {
+    this.db.exec('DELETE FROM push_subscriptions')
+  }
+
+  count(): number {
+    return Number((this.db.prepare('SELECT COUNT(*) AS total FROM push_subscriptions').get() as TRow).total)
   }
 
   setVapid(keys: { publicKey: string; privateKey: string }): void {
