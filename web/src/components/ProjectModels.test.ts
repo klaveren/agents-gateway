@@ -46,6 +46,16 @@ function mount(view: unknown, props: { gatewayAdmin: boolean; projectAdmin: bool
     if (path === '/providers/alfa--openai/models') return [{ modelId: 'gpt-x', enabled: true, available: true }]
     if (path === '/projects/alfa/model-groups') return { groups: [] }
     if (path === '/model-groups') return { groups: [{ id: 'global', name: 'Global' }] }
+    if (path === '/projects/alfa/members')
+      return [
+        { projectId: 'alfa', userId: 'u_ana', role: 'member' },
+        { projectId: 'alfa', userId: 'u_bia', role: 'member' },
+      ]
+    if (path === '/users')
+      return [
+        { id: 'u_ana', name: 'Ana', email: 'ana@x' },
+        { id: 'u_bia', name: 'Bia', email: 'bia@x' },
+      ]
     return view
   })
   const host = document.createElement('div')
@@ -166,5 +176,27 @@ describe('ProjectModels', () => {
     host.querySelector<HTMLButtonElement>('[data-test="project-caps-save"]')!.click()
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/caps', { method: 'PUT', body: { monthlyCostUsd: null, monthlyTokens: 2000000 } })
+  })
+
+  it('👤 exceção por pessoa: marca a Ana com lista própria (parte da do papel) e salva junto', async () => {
+    const host = mount(
+      { allowed: ['claude/opus', 'claude/haiku'], byRole: { member: ['claude/haiku'] }, byUser: {}, effective: ['claude/opus', 'claude/haiku'] },
+      { gatewayAdmin: false, projectAdmin: true },
+    )
+    await flush()
+    const users = host.querySelector('[data-test="project-models-users"]')!
+    const ana = [...users.querySelectorAll('[data-test="project-models-user"]')].find((row) => row.textContent?.includes('Ana'))!
+    expect(ana.textContent).toContain('como o papel')
+    ana.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()
+    await nextTick()
+    const opus = [...ana.querySelectorAll<HTMLLabelElement>('label')].find((label) => label.textContent?.includes('claude/opus'))!
+    opus.querySelector('input')!.click()
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('[data-test="project-models-roles-save"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/member-models', {
+      method: 'PUT',
+      body: { byRole: { member: ['claude/haiku'] }, byUser: { u_ana: ['claude/haiku', 'claude/opus'] } },
+    })
   })
 })
