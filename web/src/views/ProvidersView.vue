@@ -1,171 +1,180 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import AgentAvatar from '@/components/AgentAvatar.vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
-import MasterDetail from '@/components/MasterDetail.vue'
-import ProviderModels from '@/components/ProviderModels.vue'
-import SubscriptionLogin from '@/components/SubscriptionLogin.vue'
-import Icon from '@/components/Icon.vue'
-import ListFilter from '@/components/ListFilter.vue'
-import { countLabel, filterList, sortByName } from '@/lib/listFilter'
-import { ApiError } from '@/lib/api'
-import { fullTime } from '@/lib/format'
-import type { IProbeResult, IProviderStatus, TProvider } from '@/lib/types'
-import { useAuthStore } from '@/stores/auth'
-import { useProtocolsStore } from '@/stores/protocols'
-import { useProvidersStore, type INewProvider } from '@/stores/providers'
+  import { computed, onMounted, ref } from 'vue'
+  import { useRoute, useRouter } from 'vue-router'
+  import AgentAvatar from '@/components/AgentAvatar.vue'
+  import ConfirmDialog from '@/components/ConfirmDialog.vue'
+  import MasterDetail from '@/components/MasterDetail.vue'
+  import ProviderModels from '@/components/ProviderModels.vue'
+  import SubscriptionLogin from '@/components/SubscriptionLogin.vue'
+  import Icon from '@/components/Icon.vue'
+  import ListFilter from '@/components/ListFilter.vue'
+  import { countLabel, filterList, sortByName } from '@/lib/listFilter'
+  import { ApiError } from '@/lib/api'
+  import { fullTime } from '@/lib/format'
+  import type { IProbeResult, IProviderStatus, TProvider } from '@/lib/types'
+  import { useAuthStore } from '@/stores/auth'
+  import { useProtocolsStore } from '@/stores/protocols'
+  import { useProjectsStore } from '@/stores/projects'
+  import { useProvidersStore, type INewProvider } from '@/stores/providers'
 
-const props = defineProps<{ id?: string }>()
+  const props = defineProps<{ id?: string }>()
 
-const route = useRoute()
-const router = useRouter()
-const auth = useAuthStore()
-const providers = useProvidersStore()
-/** A busca do topo da lista. */
-const query = ref('')
-const shownProviders = computed(() =>
-  sortByName(
-    filterList(providers.list, { query: query.value }, (provider) => [provider.id, provider.name]),
-    (provider) => provider.name,
-  ),
-)
-const protocols = useProtocolsStore()
+  const route = useRoute()
+  const router = useRouter()
+  const auth = useAuthStore()
+  const providers = useProvidersStore()
+  const projects = useProjectsStore()
+  void projects.ensure().catch(() => undefined)
 
-/** `/models/new` abre o formulário no lugar do detalhe. */
-const adding = computed(() => route.name === 'provider-new')
-const selected = computed(() => (props.id ? providers.list.find((provider) => provider.id === props.id) : undefined))
-
-/** De onde vem o login de cada assinatura, para o texto da tela. */
-const SUBSCRIPTION_HINT: Record<string, string> = {
-  'claude-sub': 'Entre com a sua conta Claude (Pro/Max).',
-  codex: 'Entre com a sua conta do ChatGPT.',
-  antigravity: 'Entre com a sua conta Google do Antigravity.',
-}
-
-const drafts = ref<Record<string, string>>({})
-const results = ref<Record<string, IProbeResult & { saved?: boolean }>>({})
-const busy = ref<Record<string, boolean>>({})
-const loadError = ref<string>()
-const removingKey = ref<IProviderStatus>()
-const removingProvider = ref<IProviderStatus>()
-const form = ref<INewProvider>({ id: '', name: '', protocol: 'openai', baseUrl: '', key: '' })
-const formIssues = ref<Record<string, string[]>>({})
-const formError = ref<string>()
-
-onMounted(async () => {
-  if (auth.isAdmin) await providers.ensure().catch((error) => (loadError.value = error instanceof Error ? error.message : String(error)))
-})
-
-/** O rótulo do protocolo como o servidor o descreve; sem a lista carregada, o próprio id. */
-const protocolLabel = (protocol: string): string => protocols.get(protocol)?.label ?? protocol
-
-/** ⚠️ Todos os problemas de um 422, com o campo — inclusive de campos que não têm input na tela (senão sumiriam). */
-function issuesSummary(error: ApiError): string {
-  const items = Array.isArray(error.details) ? (error.details as Array<{ field?: string; message?: string }>) : []
-  const lines = items.map((item) => (item.field ? `${item.field}: ${item.message ?? 'inválido'}` : (item.message ?? 'inválido')))
-  return lines.join('; ') || error.message
-}
-
-function describe(error: unknown): string {
-  if (error instanceof ApiError && error.code === 'provider_in_use') return `${error.message}. Troque o provedor desses agentes antes.`
-  if (error instanceof ApiError && error.status === 422) return issuesSummary(error)
-  return error instanceof Error ? error.message : String(error)
-}
-
-async function run(id: string, work: () => Promise<void>) {
-  busy.value = { ...busy.value, [id]: true }
-  try {
-    await work()
-  } catch (error) {
-    results.value = { ...results.value, [id]: { ok: false, message: describe(error) } }
-  } finally {
-    busy.value = { ...busy.value, [id]: false }
+  /** De quem é a configuração: do gateway (todos os projetos) ou de um projeto (só ele vê e usa). */
+  function scopeOf(provider: Pick<IProviderStatus, 'projectId'>): { label: string; project: boolean } {
+    if (!provider.projectId) return { label: 'Gateway', project: false }
+    return { label: projects.list.find((project) => project.id === provider.projectId)?.name ?? provider.projectId, project: true }
   }
-}
+  /** A busca do topo da lista. */
+  const query = ref('')
+  const shownProviders = computed(() =>
+    sortByName(
+      filterList(providers.list, { query: query.value }, (provider) => [provider.id, provider.name]),
+      (provider) => provider.name,
+    ),
+  )
+  const protocols = useProtocolsStore()
 
-function test(id: string) {
-  return run(id, async () => {
-    // O resultado ANTES do spread: com o `await` dentro do objeto, um teste simultâneo apagava o outro.
-    const result = await providers.test(id, drafts.value[id]?.trim() || undefined)
-    results.value = { ...results.value, [id]: result }
-  })
-}
+  /** `/models/new` abre o formulário no lugar do detalhe. */
+  const adding = computed(() => route.name === 'provider-new')
+  const selected = computed(() => (props.id ? providers.list.find((provider) => provider.id === props.id) : undefined))
 
-/** Testa antes de salvar e mostra o resultado — mas salva mesmo se o teste falhar (rede fora, por ex.). */
-function save(id: string) {
-  const key = drafts.value[id]?.trim()
-  if (!key) return
-  return run(id, async () => {
-    const probe = await providers.test(id, key).catch((): IProbeResult => ({ ok: false, message: 'não foi possível testar' }))
-    await providers.save(id, key)
-    drafts.value = { ...drafts.value, [id]: '' }
-    results.value = { ...results.value, [id]: { ...probe, saved: true } }
-  })
-}
-
-/** Login da assinatura concluído: relê o estado (o token salvo não vem na resposta do login) e testa — o erro aparece no resultado, não se perde. */
-function loginDone(id: string) {
-  return run(id, async () => {
-    await providers.load()
-    results.value = { ...results.value, [id]: await providers.test(id) }
-  })
-}
-
-function toggle(provider: IProviderStatus) {
-  return run(provider.id, () => providers.update(provider.id, { enabled: !provider.enabled }))
-}
-
-async function confirmRemoveKey() {
-  const target = removingKey.value
-  if (!target) return
-  await run(target.id, async () => {
-    await providers.clear(target.id)
-    results.value = { ...results.value, [target.id]: { ok: true, message: 'Chave removida.' } }
-  })
-  removingKey.value = undefined
-}
-
-async function confirmRemoveProvider() {
-  const target = removingProvider.value
-  if (!target) return
-  await run(target.id, () => providers.remove(target.id))
-  removingProvider.value = undefined
-  if (!providers.list.some((provider) => provider.id === target.id)) await router.push('/models')
-}
-
-async function create() {
-  formIssues.value = {}
-  formError.value = undefined
-  try {
-    const id = form.value.id
-    await providers.create({ ...form.value, key: form.value.key?.trim() || undefined })
-    form.value = { id: '', name: '', protocol: 'openai', baseUrl: '', key: '' }
-    await router.push(`/models/${id}`)
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 422) formIssues.value = error.fieldIssues
-    formError.value = describe(error)
+  /** De onde vem o login de cada assinatura, para o texto da tela. */
+  const SUBSCRIPTION_HINT: Record<string, string> = {
+    'claude-sub': 'Entre com a sua conta Claude (Pro/Max).',
+    codex: 'Entre com a sua conta do ChatGPT.',
+    antigravity: 'Entre com a sua conta Google do Antigravity.',
   }
-}
 
-/** Como se paga: por token (chave de API), pela assinatura de alguém, ou por uma API compatível. */
-const billingOf = (provider: Pick<IProviderStatus, 'subscription' | 'official' | 'protocol'>) =>
-  provider.subscription ? 'assinatura' : provider.official ? 'por token' : `compatível ${protocolLabel(provider.protocol)}`
+  const drafts = ref<Record<string, string>>({})
+  const results = ref<Record<string, IProbeResult & { saved?: boolean }>>({})
+  const busy = ref<Record<string, boolean>>({})
+  const loadError = ref<string>()
+  const removingKey = ref<IProviderStatus>()
+  const removingProvider = ref<IProviderStatus>()
+  const form = ref<INewProvider>({ id: '', name: '', protocol: 'openai', baseUrl: '', key: '' })
+  const formIssues = ref<Record<string, string[]>>({})
+  const formError = ref<string>()
 
-/** A linha de baixo na lista: como se paga, e o que falta ou o resumo. */
-function rowStatus(provider: IProviderStatus): string {
-  const models = provider.catalog ? `${provider.catalog.enabled} de ${provider.catalog.total} modelos` : 'modelos não listados'
-  if (!provider.enabled) return `${billingOf(provider)} · desligado`
-  if (!provider.subscription && !provider.credential.configured) return `${billingOf(provider)} · sem chave`
-  return `${billingOf(provider)} · ${models}`
-}
+  onMounted(async () => {
+    if (auth.isAdmin) await providers.ensure().catch((error) => (loadError.value = error instanceof Error ? error.message : String(error)))
+  })
 
-function sourceLabel(provider: IProviderStatus): string {
-  const credential = provider.credential
-  if (provider.subscription) return credential.source === 'stored' ? `Token salvo · termina em …${credential.last4}` : 'Entra pela assinatura'
-  if (credential.source === 'stored') return `Chave salva · termina em …${credential.last4}`
-  return 'Sem chave'
-}
+  /** O rótulo do protocolo como o servidor o descreve; sem a lista carregada, o próprio id. */
+  const protocolLabel = (protocol: string): string => protocols.get(protocol)?.label ?? protocol
+
+  /** ⚠️ Todos os problemas de um 422, com o campo — inclusive de campos que não têm input na tela (senão sumiriam). */
+  function issuesSummary(error: ApiError): string {
+    const items = Array.isArray(error.details) ? (error.details as Array<{ field?: string; message?: string }>) : []
+    const lines = items.map((item) => (item.field ? `${item.field}: ${item.message ?? 'inválido'}` : (item.message ?? 'inválido')))
+    return lines.join('; ') || error.message
+  }
+
+  function describe(error: unknown): string {
+    if (error instanceof ApiError && error.code === 'provider_in_use') return `${error.message}. Troque o provedor desses agentes antes.`
+    if (error instanceof ApiError && error.status === 422) return issuesSummary(error)
+    return error instanceof Error ? error.message : String(error)
+  }
+
+  async function run(id: string, work: () => Promise<void>) {
+    busy.value = { ...busy.value, [id]: true }
+    try {
+      await work()
+    } catch (error) {
+      results.value = { ...results.value, [id]: { ok: false, message: describe(error) } }
+    } finally {
+      busy.value = { ...busy.value, [id]: false }
+    }
+  }
+
+  function test(id: string) {
+    return run(id, async () => {
+      // O resultado ANTES do spread: com o `await` dentro do objeto, um teste simultâneo apagava o outro.
+      const result = await providers.test(id, drafts.value[id]?.trim() || undefined)
+      results.value = { ...results.value, [id]: result }
+    })
+  }
+
+  /** Testa antes de salvar e mostra o resultado — mas salva mesmo se o teste falhar (rede fora, por ex.). */
+  function save(id: string) {
+    const key = drafts.value[id]?.trim()
+    if (!key) return
+    return run(id, async () => {
+      const probe = await providers.test(id, key).catch((): IProbeResult => ({ ok: false, message: 'não foi possível testar' }))
+      await providers.save(id, key)
+      drafts.value = { ...drafts.value, [id]: '' }
+      results.value = { ...results.value, [id]: { ...probe, saved: true } }
+    })
+  }
+
+  /** Login da assinatura concluído: relê o estado (o token salvo não vem na resposta do login) e testa — o erro aparece no resultado, não se perde. */
+  function loginDone(id: string) {
+    return run(id, async () => {
+      await providers.load()
+      results.value = { ...results.value, [id]: await providers.test(id) }
+    })
+  }
+
+  function toggle(provider: IProviderStatus) {
+    return run(provider.id, () => providers.update(provider.id, { enabled: !provider.enabled }))
+  }
+
+  async function confirmRemoveKey() {
+    const target = removingKey.value
+    if (!target) return
+    await run(target.id, async () => {
+      await providers.clear(target.id)
+      results.value = { ...results.value, [target.id]: { ok: true, message: 'Chave removida.' } }
+    })
+    removingKey.value = undefined
+  }
+
+  async function confirmRemoveProvider() {
+    const target = removingProvider.value
+    if (!target) return
+    await run(target.id, () => providers.remove(target.id))
+    removingProvider.value = undefined
+    if (!providers.list.some((provider) => provider.id === target.id)) await router.push('/models')
+  }
+
+  async function create() {
+    formIssues.value = {}
+    formError.value = undefined
+    try {
+      const id = form.value.id
+      await providers.create({ ...form.value, key: form.value.key?.trim() || undefined })
+      form.value = { id: '', name: '', protocol: 'openai', baseUrl: '', key: '' }
+      await router.push(`/models/${id}`)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 422) formIssues.value = error.fieldIssues
+      formError.value = describe(error)
+    }
+  }
+
+  /** Como se paga: por token (chave de API), pela assinatura de alguém, ou por uma API compatível. */
+  const billingOf = (provider: Pick<IProviderStatus, 'subscription' | 'official' | 'protocol'>) =>
+    provider.subscription ? 'assinatura' : provider.official ? 'por token' : `compatível ${protocolLabel(provider.protocol)}`
+
+  /** A linha de baixo na lista: como se paga, e o que falta ou o resumo. */
+  function rowStatus(provider: IProviderStatus): string {
+    const models = provider.catalog ? `${provider.catalog.enabled} de ${provider.catalog.total} modelos` : 'modelos não listados'
+    if (!provider.enabled) return `${billingOf(provider)} · desligado`
+    if (!provider.subscription && !provider.credential.configured) return `${billingOf(provider)} · sem chave`
+    return `${billingOf(provider)} · ${models}`
+  }
+
+  function sourceLabel(provider: IProviderStatus): string {
+    const credential = provider.credential
+    if (provider.subscription) return credential.source === 'stored' ? `Token salvo · termina em …${credential.last4}` : 'Entra pela assinatura'
+    if (credential.source === 'stored') return `Chave salva · termina em …${credential.last4}`
+    return 'Sem chave'
+  }
 </script>
 
 <template>
@@ -181,7 +190,13 @@ function sourceLabel(provider: IProviderStatus): string {
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">Provedores</h1>
         <span class="text-sm text-zinc-500" data-test="list-count">{{ countLabel(shownProviders.length, providers.list.length) }}</span>
-        <RouterLink to="/models/new" class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar provedor"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <RouterLink
+          to="/models/new"
+          class="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+          title="Adicionar provedor"
+        >
+          <Icon name="plus" class="h-5 w-5" />
+        </RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Provedores oficiais e APIs compatíveis com OpenAI ou Anthropic.</p>
       <ListFilter v-model:query="query" placeholder="Buscar provedor…" />
@@ -195,10 +210,26 @@ function sourceLabel(provider: IProviderStatus): string {
       >
         <AgentAvatar :name="provider.name" :provider="provider.id" size="sm" />
         <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm font-medium">{{ provider.name }}</span>
-          <span class="block truncate text-xs" :class="provider.enabled && !provider.credential.configured && !provider.subscription ? 'text-amber-300' : 'text-zinc-500'">{{ rowStatus(provider) }}</span>
+          <span class="flex min-w-0 items-center gap-1.5">
+            <span class="truncate text-sm font-medium">{{ provider.name }}</span>
+            <span
+              class="max-w-[50%] shrink-0 truncate rounded-full px-1.5 text-[10px]"
+              :class="scopeOf(provider).project ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-800 text-zinc-400'"
+              :title="scopeOf(provider).project ? `Do projeto ${scopeOf(provider).label}: só ele vê e usa` : 'Do gateway: vale para todos os projetos'"
+              data-test="provider-scope"
+            >
+              {{ scopeOf(provider).label }}
+            </span>
+          </span>
+          <span class="block truncate text-xs" :class="provider.enabled && !provider.credential.configured && !provider.subscription ? 'text-amber-300' : 'text-zinc-500'">
+            {{ rowStatus(provider) }}
+          </span>
         </span>
-        <span class="h-2 w-2 shrink-0 rounded-full" :class="provider.enabled && (provider.credential.configured || provider.subscription) ? 'bg-success-400' : 'bg-zinc-600'" :title="provider.enabled ? 'Ligado' : 'Desligado'" />
+        <span
+          class="h-2 w-2 shrink-0 rounded-full"
+          :class="provider.enabled && (provider.credential.configured || provider.subscription) ? 'bg-success-400' : 'bg-zinc-600'"
+          :title="provider.enabled ? 'Ligado' : 'Desligado'"
+        />
       </RouterLink>
     </template>
 
@@ -210,12 +241,29 @@ function sourceLabel(provider: IProviderStatus): string {
             <span class="text-xs text-zinc-400">Qualquer API compatível com OpenAI ou Anthropic (agregador, servidor local, da empresa).</span>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
-            <label class="field">Nome<input v-model="form.name" required class="input" /><small v-for="m in formIssues.name" :key="m" class="error">{{ m }}</small></label>
-            <label class="field">Identificador<input v-model="form.id" required pattern="[a-z0-9][a-z0-9-]{1,31}" class="input font-mono" placeholder="meu-provedor" /><small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small></label>
+            <label class="field">
+              Nome
+              <input v-model="form.name" required class="input" />
+              <small v-for="m in formIssues.name" :key="m" class="error">{{ m }}</small>
+            </label>
+            <label class="field">
+              Identificador
+              <input v-model="form.id" required pattern="[a-z0-9][a-z0-9-]{1,31}" class="input font-mono" placeholder="meu-provedor" />
+              <small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small>
+            </label>
             <div class="field">
               Protocolo
               <div class="flex flex-wrap gap-1.5">
-                <button v-for="protocol in (['openai', 'claude'] as TProvider[])" :key="protocol" type="button" class="chip" :class="{ on: form.protocol === protocol }" @click="form.protocol = protocol">{{ protocolLabel(protocol) }}</button>
+                <button
+                  v-for="protocol in ['openai', 'claude'] as TProvider[]"
+                  :key="protocol"
+                  type="button"
+                  class="chip"
+                  :class="{ on: form.protocol === protocol }"
+                  @click="form.protocol = protocol"
+                >
+                  {{ protocolLabel(protocol) }}
+                </button>
               </div>
               <small class="hint">Qual API o provedor segue. Se ele aceita as duas, cadastre uma vez para cada.</small>
             </div>
@@ -225,7 +273,10 @@ function sourceLabel(provider: IProviderStatus): string {
               <small class="hint">{{ form.protocol === 'claude' ? 'Sem o /v1 no final.' : 'Com o /v1 no final.' }}</small>
               <small v-for="m in formIssues.baseUrl" :key="m" class="error">{{ m }}</small>
             </label>
-            <label class="field sm:col-span-2">Chave (opcional agora)<input v-model="form.key" type="password" autocomplete="off" spellcheck="false" class="input font-mono" /></label>
+            <label class="field sm:col-span-2">
+              Chave (opcional agora)
+              <input v-model="form.key" type="password" autocomplete="off" spellcheck="false" class="input font-mono" />
+            </label>
           </div>
           <p class="text-xs text-amber-300/80">Nos compatíveis, ferramentas e raciocínio variam por modelo e podem falhar.</p>
           <p v-if="formError" class="text-sm text-rose-300">{{ formError }}</p>
@@ -239,21 +290,40 @@ function sourceLabel(provider: IProviderStatus): string {
         <div class="flex items-center gap-3">
           <AgentAvatar :name="selected.name" :provider="selected.id" size="lg" />
           <div class="min-w-0">
-            <h2 class="text-lg font-semibold">{{ selected.name }} <span class="ml-1 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-normal text-zinc-400">{{ billingOf(selected) }}</span></h2>
+            <h2 class="text-lg font-semibold">
+              {{ selected.name }}
+              <span class="ml-1 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-normal text-zinc-400">{{ billingOf(selected) }}</span>
+            </h2>
             <p class="text-xs break-all" :class="selected.credential.configured || selected.subscription ? 'text-zinc-400' : 'text-amber-300'">
-              {{ sourceLabel(selected) }}<template v-if="selected.baseUrl"> · <code>{{ selected.baseUrl }}</code></template>
+              {{ sourceLabel(selected) }}
+              <template v-if="selected.baseUrl">
+                ·
+                <code>{{ selected.baseUrl }}</code>
+              </template>
             </p>
           </div>
           <label class="ml-auto flex shrink-0 items-center gap-2 text-xs text-zinc-400">
             Ligado
-            <button type="button" role="switch" :aria-checked="selected.enabled" class="switch" :class="{ on: selected.enabled }" :disabled="busy[selected.id]" @click="toggle(selected)"><span /></button>
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="selected.enabled"
+              class="switch"
+              :class="{ on: selected.enabled }"
+              :disabled="busy[selected.id]"
+              @click="toggle(selected)"
+            >
+              <span />
+            </button>
           </label>
         </div>
 
         <p v-if="selected.credential.unreadable" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           Não foi possível ler a chave salva. Cole a chave de novo.
         </p>
-        <p v-if="selected.credential.updatedBy && selected.credential.source === 'stored'" class="text-xs text-zinc-500">Chave salva por {{ selected.credential.updatedBy }} em {{ fullTime(selected.credential.updatedAt) }}</p>
+        <p v-if="selected.credential.updatedBy && selected.credential.source === 'stored'" class="text-xs text-zinc-500">
+          Chave salva por {{ selected.credential.updatedBy }} em {{ fullTime(selected.credential.updatedAt) }}
+        </p>
 
         <template v-if="selected.subscription">
           <p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -275,17 +345,30 @@ function sourceLabel(provider: IProviderStatus): string {
             :placeholder="selected.subscription ? 'Token (opcional)' : selected.credential.configured ? 'Colar nova chave para trocar' : 'Colar a chave'"
             class="h-9 min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 font-mono text-sm outline-none focus:border-emerald-500/60"
           />
-          <button type="button" :disabled="busy[selected.id] || (!drafts[selected.id] && !selected.credential.configured && !selected.subscription)" class="btn btn-secondary" @click="test(selected.id)">Testar</button>
+          <button
+            type="button"
+            :disabled="busy[selected.id] || (!drafts[selected.id] && !selected.credential.configured && !selected.subscription)"
+            class="btn btn-secondary"
+            @click="test(selected.id)"
+          >
+            Testar
+          </button>
           <button type="submit" :disabled="busy[selected.id] || !drafts[selected.id]?.trim()" class="btn btn-primary">Gravar chave</button>
           <button v-if="selected.credential.source === 'stored'" type="button" class="btn btn-danger" @click="removingKey = selected">Remover chave</button>
         </form>
 
         <p v-if="results[selected.id]" class="text-sm" :class="results[selected.id].ok ? 'text-success-300' : 'text-rose-300'">
-          <template v-if="results[selected.id].saved">Salva. </template>
-          <template v-if="results[selected.id].ok && results[selected.id].unverified">⚠ {{ results[selected.id].message }} ({{ results[selected.id].models }} modelos listados)</template>
-          <template v-else-if="results[selected.id].ok && results[selected.id].models !== undefined">✓ A chave funciona — {{ results[selected.id].models }} modelos disponíveis.</template>
+          <template v-if="results[selected.id].saved">Salva.</template>
+          <template v-if="results[selected.id].ok && results[selected.id].unverified">
+            ⚠ {{ results[selected.id].message }} ({{ results[selected.id].models }} modelos listados)
+          </template>
+          <template v-else-if="results[selected.id].ok && results[selected.id].models !== undefined">
+            ✓ A chave funciona — {{ results[selected.id].models }} modelos disponíveis.
+          </template>
           <template v-else-if="results[selected.id].ok">{{ results[selected.id].message }}</template>
-          <template v-else>✕ {{ results[selected.id].status && !results[selected.id].message ? `HTTP ${results[selected.id].status}: ` : '' }}{{ results[selected.id].message }}</template>
+          <template v-else>
+            ✕ {{ results[selected.id].status && !results[selected.id].message ? `HTTP ${results[selected.id].status}: ` : '' }}{{ results[selected.id].message }}
+          </template>
         </p>
 
         <ProviderModels :provider="selected" />
@@ -294,7 +377,15 @@ function sourceLabel(provider: IProviderStatus): string {
           <span>Agentes:</span>
           <span v-for="agent in selected.agents" :key="agent.id" class="rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300">{{ agent.name }}</span>
           <span v-if="!selected.agents.length">nenhum ainda</span>
-          <a v-if="selected.official && protocols.get(selected.protocol)?.consoleUrl && !selected.subscription" :href="protocols.get(selected.protocol)?.consoleUrl" target="_blank" rel="noopener noreferrer" class="ml-auto text-emerald-400 hover:underline">Gerar chave ↗</a>
+          <a
+            v-if="selected.official && protocols.get(selected.protocol)?.consoleUrl && !selected.subscription"
+            :href="protocols.get(selected.protocol)?.consoleUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="ml-auto text-emerald-400 hover:underline"
+          >
+            Gerar chave ↗
+          </a>
           <button v-if="!selected.official" type="button" class="ml-auto text-rose-300 hover:underline" @click="removingProvider = selected">Remover provedor</button>
         </div>
       </section>
@@ -320,30 +411,30 @@ function sourceLabel(provider: IProviderStatus): string {
 </template>
 
 <style scoped>
-@reference '../style.css';
+  @reference '../style.css';
 
-.field {
-  @apply flex flex-col gap-1.5 text-sm font-medium text-zinc-300;
-}
-.input {
-  @apply rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
-}
-.hint {
-  @apply text-xs font-normal text-zinc-500;
-}
-.error {
-  @apply text-xs font-normal text-rose-300;
-}
-.switch {
-  @apply relative h-6 w-11 rounded-full bg-zinc-700 transition-colors disabled:opacity-40;
-}
-.switch span {
-  @apply absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform;
-}
-.switch.on {
-  @apply bg-emerald-500;
-}
-.switch.on span {
-  @apply translate-x-5;
-}
+  .field {
+    @apply flex flex-col gap-1.5 text-sm font-medium text-zinc-300;
+  }
+  .input {
+    @apply rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
+  }
+  .hint {
+    @apply text-xs font-normal text-zinc-500;
+  }
+  .error {
+    @apply text-xs font-normal text-rose-300;
+  }
+  .switch {
+    @apply relative h-6 w-11 rounded-full bg-zinc-700 transition-colors disabled:opacity-40;
+  }
+  .switch span {
+    @apply absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform;
+  }
+  .switch.on {
+    @apply bg-emerald-500;
+  }
+  .switch.on span {
+    @apply translate-x-5;
+  }
 </style>
