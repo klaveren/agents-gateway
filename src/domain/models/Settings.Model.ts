@@ -76,6 +76,13 @@ export interface IAgentSettings {
   suggestModel?: string
 
   /**
+   * 🖼️ O MODELO DE IMAGEM (ver `generate_image`): o que gera as imagens que os agentes pedem, qualquer que seja o modelo da
+   * conversa. Os dois juntos, provider OpenAI ou Google com chave de API e modelo ativado. Ausentes = sem geração de imagem.
+   */
+  imageProvider?: string
+  imageModel?: string
+
+  /**
    * O provider e o modelo do CONSTRUTOR (o agente do core que redige skills e commands, ver `Builder.Agents`).
    * Ausentes = os do Atlas. ⚖️ É o único botão sobre ele: o resto é do core.
    */
@@ -155,6 +162,8 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
     classifyTurns: typeof stored.classifyTurns === 'boolean' ? stored.classifyTurns : undefined,
     suggestProvider: text(stored.suggestProvider),
     suggestModel: text(stored.suggestModel),
+    imageProvider: text(stored.imageProvider),
+    imageModel: text(stored.imageModel),
     builderProvider: text(stored.builderProvider),
     builderModel: text(stored.builderModel),
     limits: normalizeLimits(stored.limits),
@@ -223,6 +232,8 @@ const EDITABLE = [
   'classifyTurns',
   'suggestProvider',
   'suggestModel',
+  'imageProvider',
+  'imageModel',
   'builderProvider',
   'builderModel',
   'limits',

@@ -377,6 +377,9 @@ export interface ISettings {
   /** O modelo da sugestão de próximo passo (Configuração). Ausentes = sem sugestão. */
   suggestProvider?: string
   suggestModel?: string
+  /** 🖼️ O modelo de imagem (o `generate_image`); os dois juntos, ou nenhum = sem imagem. */
+  imageProvider?: string
+  imageModel?: string
   /** O provider e o modelo do construtor (agente do core). Ausentes = os do Atlas. */
   builderProvider?: string
   builderModel?: string

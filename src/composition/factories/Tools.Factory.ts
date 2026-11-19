@@ -1,4 +1,8 @@
 import { makeProjects } from './Projects.Factory'
+import { conversationModelFilter } from '@domain/ModelAccess.Policy'
+import type { IProjectModels } from '@domain/models/Project.Model'
+import { makeProviders } from './Providers.Factory'
+import { makeSettings } from './Settings.Factory'
 import { makeHostApprovals } from './HostApprovals.Factory'
 import { projectFixedEnv } from './ProjectVariables.Factory'
 import { realAgentFolder } from '@infra/workspace/Resource.Files'
@@ -135,6 +139,28 @@ export function makeTools(): ITools {
               } catch {
                 return undefined
               }
+            },
+            // 🖼️ O modelo de imagem das Configurações, lido a cada chamada; o projeto da conversa ainda precisa liberá-lo.
+            images: {
+              current: async () => {
+                const settings = await makeSettings()
+                  .read()
+                  .catch(() => undefined)
+                if (!settings?.imageProvider || !settings.imageModel) return undefined
+                const connection = makeProviders().connection(settings.imageProvider)
+                if (!connection) return `${settings.imageProvider} is disabled`
+                if (!connection.key) return `${settings.imageProvider} has no API key`
+                return { connection, model: settings.imageModel }
+              },
+              allows: (projectId, provider, model) => {
+                let models: IProjectModels | undefined
+                try {
+                  models = projectId ? makeProjects().get(projectId).models : undefined
+                } catch {
+                  models = undefined
+                }
+                return conversationModelFilter(projectId, models, {}, (id) => makeProviders().get(id)?.projectId)(provider, model)
+              },
             },
             watches: watchDesk(),
             // 🖥️ O agente de máquina pede à pessoa o comando que o cerco sempre recusa (ver `HostApproval.Model`).
