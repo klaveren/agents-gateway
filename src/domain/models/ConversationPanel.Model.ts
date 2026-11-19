@@ -81,7 +81,8 @@ export interface IConversationPanel {
 export const BOARD_TOOL = 'board'
 /** ⚠️ OBSOLETO: o nome de antes do board (ver `Tool.Deprecations`). */
 export const LEGACY_BOARD_TOOL = 'conversation_panel'
-export const PANEL_LIMITS = { items: 100, decisions: 60, questions: 40, history: 300, text: 300, detail: 2000, links: 10 } as const
+/** Só o tamanho dos textos e o histórico (que rola): itens, decisões e perguntas não têm teto — o board acompanha a conversa inteira. */
+export const PANEL_LIMITS = { history: 300, text: 300, detail: 2000, links: 10 } as const
 
 export const emptyPanel = (): IConversationPanel => ({ items: [], decisions: [], questions: [], plans: [], history: [] })
 
@@ -147,7 +148,6 @@ export function applyPanelOp(
       ...(context.actor ? { actor: context.actor } : {}),
       itemStatus: (id) => items.find((item) => item.id === id)?.status,
       addItem: (step, plan) => {
-        if (items.length >= PANEL_LIMITS.items) throw new Error(`the board is full (${PANEL_LIMITS.items} items): finish or drop old ones first`)
         const item: IPanelItem = {
           id: nextId('p', items),
           title: step.title,
@@ -170,7 +170,6 @@ export function applyPanelOp(
         break
       }
       case 'add': {
-        if (panel.items.length >= PANEL_LIMITS.items) throw new Error(`at most ${PANEL_LIMITS.items} items: drop or finish old ones`)
         const status = op.status ?? 'queued'
         if (!PANEL_ITEM_STATUSES.includes(status)) throw new Error(`status: one of ${PANEL_ITEM_STATUSES.join(', ')}`)
         const item: IPanelItem = {
@@ -218,7 +217,6 @@ export function applyPanelOp(
         break
       }
       case 'decide': {
-        if (panel.decisions.length >= PANEL_LIMITS.decisions) throw new Error(`at most ${PANEL_LIMITS.decisions} decisions`)
         const decision: IPanelDecision = {
           id: nextId('d', panel.decisions),
           text: clip(need(op.text, 'text'), PANEL_LIMITS.detail),
@@ -231,7 +229,6 @@ export function applyPanelOp(
         break
       }
       case 'ask': {
-        if (panel.questions.filter((question) => !question.answer).length >= PANEL_LIMITS.questions) throw new Error(`at most ${PANEL_LIMITS.questions} open questions`)
         const question: IPanelQuestion = { id: nextId('q', panel.questions), text: clip(need(op.text, 'text'), PANEL_LIMITS.detail), ...turn }
         panel.questions.push(question)
         changed = `pergunta ${question.id}: ${question.text}`

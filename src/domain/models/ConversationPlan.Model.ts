@@ -20,7 +20,7 @@ export const PLAN_STATUS_LABEL: Record<TPlanStatus, string> = {
 }
 
 export const PLAN_TOOL = 'plan'
-export const PLAN_LIMITS = { plans: 20, steps: 40, title: 300, body: 20_000, detail: 2000 } as const
+export const PLAN_LIMITS = { steps: 40, title: 300, body: 20_000, detail: 2000 } as const
 
 export interface IPlanStep {
   id: string
@@ -121,7 +121,6 @@ export function applyPlanOp(current: readonly IPlan[], op: TPlanOp, context: IPl
   const opened = (plan: IPlan) => plan.status === 'draft' || plan.status === 'review' || plan.status === 'changes'
   switch (op.op) {
     case 'plan_create': {
-      if (plans.length >= PLAN_LIMITS.plans) throw new Error(`at most ${PLAN_LIMITS.plans} plans: close old ones`)
       const plan: IPlan = {
         id: nextId('pl', plans),
         title: clip(need(op.title, 'title'), PLAN_LIMITS.title),
