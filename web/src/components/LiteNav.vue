@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import { useMessagesStore } from '@/stores/messages'
   import { computed } from 'vue'
   import { useRoute } from 'vue-router'
   import { useAuthStore } from '@/stores/auth'
@@ -12,11 +13,13 @@
   /** O menu da lite: independente do `NavRail` (nada de condição de edição lá). Mesmo visual: trilho no desktop, barra no celular. */
   const route = useRoute()
   const auth = useAuthStore()
+  const messages = useMessagesStore()
   const conversations = useConversationsStore()
   const projects = useProjectsStore()
 
   const section = computed(() => {
     const name = String(route.name ?? '')
+    if (name === 'messages' || name === 'message') return 'messages'
     if (name.startsWith('agent')) return 'agents'
     if (name.startsWith('provider')) return 'providers'
     if (name === 'usage') return 'usage'
@@ -28,8 +31,9 @@
   })
 
   // Agentes e Modelos para o admin do gateway também: no gateway que acabou de nascer não há projeto (os agentes são globais).
-  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'chart' | 'agents' | 'users' | 'key' | 'plug' | 'settings'; badge: number }>>(() => [
+  const links = computed<Array<{ to: string; key: string; label: string; icon: 'inbox' | 'chart' | 'agents' | 'bell' | 'users' | 'key' | 'plug' | 'settings'; badge: number }>>(() => [
     { to: '/', key: 'inbox', label: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
+    ...(auth.signedIn ? [{ to: '/messages', key: 'messages', label: 'Mensagens', short: 'Mensagens', icon: 'bell' as const, badge: messages.unread }] : []),
     ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
     ...(projects.manages || auth.isAdmin ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
     ...(auth.isAdmin ? [{ to: '/users', key: 'users', label: 'Usuários', icon: 'users' as const, badge: 0 }] : []),

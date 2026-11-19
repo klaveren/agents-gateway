@@ -103,7 +103,7 @@ describe('store: a caixa do admin é dele; "De todos" liga o monitor', () => {
     expect(vi.mocked(api).mock.calls.at(-1)?.[1]).toMatchObject({ query: { scope: 'all', mine: 1 } })
 
     await store.setEveryone(true)
-    const query = (vi.mocked(api).mock.calls.at(-1)?.[1] as { query: Record<string, unknown> }).query
+    const query = (vi.mocked(api).mock.calls.filter((call) => call[0] !== '/messages').at(-1)?.[1] as { query: Record<string, unknown> }).query
     expect(query.scope).toBe('all')
     expect(query.mine).toBeUndefined()
     store.unsubscribe()
