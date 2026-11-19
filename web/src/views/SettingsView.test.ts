@@ -54,7 +54,7 @@ describe('SettingsView — grupo de modelos padrão', () => {
     app = createApp({ render: () => h(SettingsView) })
     app.use(pinia).use(router).mount(host)
     await flush()
-    return { host, calls }
+    return { host, calls, router }
   }
   const select = (host: HTMLElement) => host.querySelector<HTMLSelectElement>('select[aria-label="Sequência padrão"]')!
   const save = () => [...document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Salvar configurações')!
@@ -80,5 +80,24 @@ describe('SettingsView — grupo de modelos padrão', () => {
     save().click()
     await flush()
     expect(putOf(calls)).toMatchObject({ defaultModelGroup: null })
+  })
+
+  it('guias: Geral abre primeiro; a guia vai para o endereço; o salvar some onde não vale', async () => {
+    const { host, router } = await mount()
+    const tab = (id: string) => host.querySelector<HTMLButtonElement>(`[data-test="settings-tab-${id}"]`)!
+    const visible = (element: Element | null) => !!element && (element as HTMLElement).style.display !== 'none'
+    expect(tab('general').getAttribute('aria-selected')).toBe('true')
+    expect(visible(select(host).closest('section'))).toBe(false)
+    tab('models').click()
+    await flush()
+    expect(router.currentRoute.value.hash).toBe('#models')
+    expect(visible(select(host).closest('section'))).toBe(true)
+    expect(save()).toBeTruthy()
+    tab('notices').click()
+    await flush()
+    expect(save()).toBeUndefined()
+    await router.replace({ hash: '#limits' })
+    await flush()
+    expect(tab('limits').getAttribute('aria-selected')).toBe('true')
   })
 })
