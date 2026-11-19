@@ -8,7 +8,7 @@ export interface IProjectRepository {
   update(
     id: string,
     patch: Partial<
-      Pick<IProject, 'name' | 'description' | 'importIgnore' | 'importScope' | 'env' | 'mcpEnv' | 'color' | 'envFileAgents' | 'machineAgents' | 'models' | 'updatedAt' | 'updatedBy'>
+      Pick<IProject, 'name' | 'description' | 'importIgnore' | 'importScope' | 'env' | 'mcpEnv' | 'color' | 'envFileAgents' | 'machineAgents' | 'models' | 'documentTemplate' | 'updatedAt' | 'updatedBy'>
     >,
   ): IProject | undefined
   delete(id: string): boolean

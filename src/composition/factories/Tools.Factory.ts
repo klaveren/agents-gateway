@@ -1,3 +1,4 @@
+import { makeProjects } from './Projects.Factory'
 import { makeHostApprovals } from './HostApprovals.Factory'
 import { projectFixedEnv } from './ProjectVariables.Factory'
 import { realAgentFolder } from '@infra/workspace/Resource.Files'
@@ -125,6 +126,16 @@ export function makeTools(): ITools {
             todos: todoStore(),
             panels: panelStore(),
             deliveries: deliveryStore(),
+            // 📄 O modelo dos documentos do projeto da conversa: sem organização própria, o nome do projeto.
+            documentTemplate: (projectId) => {
+              if (!projectId) return undefined
+              try {
+                const project = makeProjects().get(projectId)
+                return { organization: project.name, ...project.documentTemplate }
+              } catch {
+                return undefined
+              }
+            },
             watches: watchDesk(),
             // 🖥️ O agente de máquina pede à pessoa o comando que o cerco sempre recusa (ver `HostApproval.Model`).
             hostApprovals: makeHostApprovals(),

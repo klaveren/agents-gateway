@@ -5,8 +5,10 @@ import { IAgent } from '@domain/models/Agent.Model'
 import {
   DEFAULT_PROJECT_ID,
   IProject,
+  IProjectDocumentTemplate,
   IProjectMcpVar,
   IProjectMember,
+  documentTemplateIssues,
   IProjectModels,
   PROJECT_ENV_LIMITS,
   PROJECT_ID_PATTERN,
@@ -242,6 +244,19 @@ export class ProjectsService {
       ...(caps.monthlyTokens !== undefined ? { monthlyTokens: caps.monthlyTokens } : {}),
     }
     return this.projects.update(id, { models: { ...rest, ...(Object.keys(kept).length ? { caps: kept } : {}) }, updatedAt: this.now(), updatedBy: by })!
+  }
+
+  /** 📄 O modelo dos documentos que os agentes do projeto geram (campo vazio = o padrão). Quem administra o projeto. */
+  setDocumentTemplate(id: string, template: IProjectDocumentTemplate, by: string): IProject {
+    this.get(id)
+    const tidy = {
+      ...(template.organization?.trim() ? { organization: template.organization.trim() } : {}),
+      ...(template.footer?.trim() ? { footer: template.footer.trim() } : {}),
+      ...(template.color?.trim() ? { color: template.color.trim() } : {}),
+    }
+    const issues = documentTemplateIssues(tidy)
+    if (issues.length) throw new InvalidProjectError(issues)
+    return this.projects.update(id, { documentTemplate: Object.keys(tidy).length ? tidy : undefined, updatedAt: this.now(), updatedBy: by })!
   }
 
   /** 🎨 A paleta do destaque da tela no projeto (`undefined` = o verde do tema). Desta máquina: sem revisão no catálogo. */

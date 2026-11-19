@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IAgenticScope, normalizeScope } from '@domain/Import.Scope'
-import { IProject, IProjectMcpVar, IProjectMember, IProjectModels, PROJECT_COLORS, TProjectColor, TProjectRole } from '@domain/models/Project.Model'
+import { IProject, IProjectDocumentTemplate, IProjectMcpVar, IProjectMember, IProjectModels, PROJECT_COLORS, TProjectColor, TProjectRole } from '@domain/models/Project.Model'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
 
 const SCHEMA = `
@@ -53,6 +53,8 @@ const ADDED_COLUMNS: ReadonlyArray<{ column: string; definition: string }> = [
   { column: 'machine_agents', definition: 'TEXT' },
   // JSON `IProjectModels` (os modelos liberados ao projeto e aos papéis/pessoas); NULL = tudo do gateway.
   { column: 'models', definition: 'TEXT' },
+  // JSON `IProjectDocumentTemplate` (o modelo dos documentos gerados); NULL = o padrão.
+  { column: 'document_template', definition: 'TEXT' },
 ]
 
 /** Os projetos e os membros, no mesmo arquivo das conversas. Sem arquivo, em memória (`:memory:`). */
@@ -93,7 +95,19 @@ export class SqliteProjectRepository implements IProjectRepository {
     patch: Partial<
       Pick<
         IProject,
-        'name' | 'description' | 'importIgnore' | 'importScope' | 'env' | 'mcpEnv' | 'color' | 'envFileAgents' | 'machineAgents' | 'models' | 'updatedAt' | 'updatedBy'
+        | 'name'
+        | 'description'
+        | 'importIgnore'
+        | 'importScope'
+        | 'env'
+        | 'mcpEnv'
+        | 'color'
+        | 'envFileAgents'
+        | 'machineAgents'
+        | 'models'
+        | 'documentTemplate'
+        | 'updatedAt'
+        | 'updatedBy'
       >
     >,
   ): IProject | undefined {
@@ -112,6 +126,10 @@ export class SqliteProjectRepository implements IProjectRepository {
       this.db.prepare('UPDATE projects SET env_file_agents = ? WHERE id = ?').run(patch.envFileAgents?.length ? JSON.stringify(patch.envFileAgents) : null, id)
     if ('machineAgents' in patch)
       this.db.prepare('UPDATE projects SET machine_agents = ? WHERE id = ?').run(patch.machineAgents?.length ? JSON.stringify(patch.machineAgents) : null, id)
+    if ('documentTemplate' in patch) {
+      const template = patch.documentTemplate && Object.values(patch.documentTemplate).some(Boolean) ? JSON.stringify(patch.documentTemplate) : null
+      this.db.prepare('UPDATE projects SET document_template = ? WHERE id = ?').run(template, id)
+    }
     if ('models' in patch) this.db.prepare('UPDATE projects SET models = ? WHERE id = ?').run(modelsJson(patch.models), id)
     if (patch.updatedAt) this.db.prepare('UPDATE projects SET updated_at = ?, updated_by = ? WHERE id = ?').run(patch.updatedAt.toISOString(), patch.updatedBy ?? null, id)
     return this.get(id)
@@ -168,6 +186,7 @@ function toProject(row: TRow): IProject {
     ...(envFileAgentsOf(row.env_file_agents).length ? { envFileAgents: envFileAgentsOf(row.env_file_agents) } : {}),
     ...(envFileAgentsOf(row.machine_agents).length ? { machineAgents: envFileAgentsOf(row.machine_agents) } : {}),
     ...(modelsOf(row.models) ? { models: modelsOf(row.models) } : {}),
+    ...(templateOf(row.document_template) ? { documentTemplate: templateOf(row.document_template) } : {}),
     ...(typeof row.color === 'string' && (PROJECT_COLORS as readonly string[]).includes(row.color) ? { color: row.color as TProjectColor } : {}),
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),
@@ -272,4 +291,18 @@ function capsOf(value: unknown): { monthlyCostUsd?: number; monthlyTokens?: numb
   const cost = positive(raw.monthlyCostUsd)
   const tokens = positive(raw.monthlyTokens)
   return { ...(cost !== undefined ? { monthlyCostUsd: cost } : {}), ...(tokens !== undefined ? { monthlyTokens: tokens } : {}) }
+}
+
+/** O modelo do documento lido do banco: só os campos de texto. */
+function templateOf(value: unknown): IProjectDocumentTemplate | undefined {
+  if (typeof value !== 'string' || !value) return undefined
+  try {
+    const raw = JSON.parse(value) as Record<string, unknown>
+    const text = (item: unknown) => (typeof item === 'string' && item ? item : undefined)
+    const template = { organization: text(raw.organization), footer: text(raw.footer), color: text(raw.color) }
+    const kept = Object.fromEntries(Object.entries(template).filter((entry) => entry[1] !== undefined)) as IProjectDocumentTemplate
+    return Object.keys(kept).length ? kept : undefined
+  } catch {
+    return undefined
+  }
 }
