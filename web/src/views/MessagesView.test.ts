@@ -26,16 +26,17 @@ const agentMessage = {
   turn: 4,
   createdAt: '2026-11-19T10:00:00Z',
 }
-const thread = { conversationId: 's1', agentId: 'zeus', title: 'Preciso do acesso', last: agentMessage, unread: 1, archived: false }
+const thread = { conversationId: 's1', agentId: 'zeus', title: 'Preciso do acesso', last: agentMessage, unread: 1, pending: 0, archived: false }
 
-async function mount(id?: string, threads: unknown[] = [thread]) {
+async function mount(id?: string, threads: unknown[] = [thread], fio: unknown[] = [agentMessage]) {
   const calls: Array<{ path: string; init?: Record<string, unknown> }> = []
   vi.mocked(api).mockImplementation((async (path: string, init?: Record<string, unknown>) => {
     calls.push({ path, init })
     if (path === '/agents') return [{ id: 'zeus', name: 'Zeus', providers: [] }]
-    if (path === '/messages') return { threads, unread: 1 }
+    if (path === '/messages') return { threads, unread: 1, pending: 2 }
     if (path.endsWith('/archive')) return { unread: 1 }
-    if (path === '/messages/s1') return { messages: [agentMessage] }
+    if (path === '/messages/s1') return { messages: fio }
+    if (path.endsWith('/status')) return { status: (init?.body as { status: string }).status, pending: 1 }
     if (path === '/messages/s1/read') return { unread: 0 }
     if (path === '/messages/s1/reply') return { queued: false }
     if (path === '/conversations/s1/turns') return { turns: [{ index: 3, request: 'Sobe a migração', text: 'Preciso de acesso ao banco.' }] }
@@ -109,5 +110,86 @@ describe('Mensagens', () => {
   it('na tela estreita o fio aberto também arquiva (pela barra de cima)', async () => {
     const { host } = await mount('s1')
     expect(host.querySelector('[data-test="message-archive-mobile"]')).not.toBeNull()
+  })
+
+  describe('📌 um pedido por vez', () => {
+    const pending = { ...agentMessage, id: 'm1', status: 'pending' }
+    const answered = { ...agentMessage, id: 'm2', title: 'Outro pedido', level: 'urgent', status: 'answered', answeredAt: '2026-11-19T13:58:00Z', createdAt: '2026-11-19T10:05:00Z' }
+    const resolved = { ...agentMessage, id: 'm3', title: 'Já tratado', status: 'resolved', createdAt: '2026-11-19T10:06:00Z' }
+    const info = { ...agentMessage, id: 'm4', title: 'Aviso', level: 'info', createdAt: '2026-11-19T10:07:00Z' }
+    const person = { id: 'p1', conversationId: 's1', agentId: 'zeus', from: 'person', body: 'Pode', level: 'info', createdAt: '2026-11-19T11:00:00Z', replyTo: 'm2' }
+    const fio = [pending, answered, resolved, info, person]
+    const withPending = { ...thread, pending: 1 }
+
+    it('cada pedido mostra o seu estado; aviso comum não tem tag', async () => {
+      const { host } = await mount('s1', [withPending], fio)
+      expect(host.querySelector('[data-test="message-status-pending"]')?.textContent).toContain('Pendente')
+      expect(host.querySelector('[data-test="message-status-answered"]')?.textContent).toMatch(/^\s*Respondido \S+/)
+      expect(host.querySelector('[data-test="message-status-resolved"]')?.textContent).toContain('Resolvido')
+      const cards = host.querySelectorAll('[data-test="message-agent"]')
+      expect(cards[3].querySelector('[data-test^="message-status-"]')).toBeNull()
+      expect(cards[3].querySelector('[data-test="message-reply-to"]')).toBeNull()
+      expect(host.querySelector('[data-test="message-in-reply-to"]')?.textContent).toContain('em resposta a Outro pedido')
+    })
+
+    it('Responder escolhe o pedido: chip, placeholder, replyTo no envio e o alvo some depois', async () => {
+      const { host, calls } = await mount('s1', [withPending], fio)
+      host.querySelectorAll<HTMLButtonElement>('[data-test="message-reply-to"]')[0].click()
+      await nextTick()
+      expect(host.querySelector('[data-test="reply-target"]')?.textContent).toContain('Respondendo: Preciso do acesso')
+      const box = host.querySelector<HTMLTextAreaElement>('[data-test="message-reply"]')!
+      expect(box.placeholder).toBe('Responder a este pedido…')
+      box.value = 'Liberado.'
+      box.dispatchEvent(new Event('input'))
+      await nextTick()
+      host.querySelector('form')!.dispatchEvent(new Event('submit'))
+      await flush()
+      expect(calls.find((call) => call.path === '/messages/s1/reply')?.init).toMatchObject({ body: { message: 'Liberado.', replyTo: 'm1' } })
+      expect(host.querySelector('[data-test="reply-target"]')).toBeNull()
+    })
+
+    it('o × cancela o alvo e a resposta segue sem replyTo', async () => {
+      const { host, calls } = await mount('s1', [withPending], fio)
+      host.querySelectorAll<HTMLButtonElement>('[data-test="message-reply-to"]')[0].click()
+      await nextTick()
+      host.querySelector<HTMLButtonElement>('[data-test="reply-target-cancel"]')!.click()
+      await nextTick()
+      expect(host.querySelector('[data-test="reply-target"]')).toBeNull()
+      const box = host.querySelector<HTMLTextAreaElement>('[data-test="message-reply"]')!
+      box.value = 'Solta'
+      box.dispatchEvent(new Event('input'))
+      await nextTick()
+      host.querySelector('form')!.dispatchEvent(new Event('submit'))
+      await flush()
+      expect(calls.find((call) => call.path === '/messages/s1/reply')?.init?.body).toEqual({ message: 'Solta' })
+    })
+
+    it('Marcar resolvido chama o endpoint e o cartão vira Resolvido; Reabrir volta a Pendente', async () => {
+      const { host, calls } = await mount('s1', [withPending], fio)
+      host.querySelector<HTMLButtonElement>('[data-test="message-resolve"]')!.click()
+      await flush()
+      expect(calls.find((call) => call.path === '/messages/s1/m1/status')?.init).toMatchObject({ method: 'PUT', body: { status: 'resolved' } })
+      expect(host.querySelectorAll('[data-test="message-status-resolved"]')).toHaveLength(2)
+      host.querySelectorAll<HTMLButtonElement>('[data-test="message-reopen"]')[0].click()
+      await flush()
+      expect(calls.filter((call) => call.path.endsWith('/status')).at(-1)?.init).toMatchObject({ body: { status: 'pending' } })
+      expect(host.querySelectorAll('[data-test="message-status-pending"]')).toHaveLength(1)
+    })
+
+    it('contador de pendentes no cabeçalho e na lista; "Só pendentes" esconde o resto', async () => {
+      const { host } = await mount('s1', [withPending], fio)
+      expect(host.querySelector('[data-test="thread-pending"]')?.textContent).toContain('1 pendente')
+      expect(host.querySelector('[data-test="thread-pending-count"]')?.textContent).toContain('1 pendente')
+      host.querySelector<HTMLButtonElement>('[data-test="only-pending"]')!.click()
+      await nextTick()
+      expect(host.querySelectorAll('[data-test="message-agent"]')).toHaveLength(1)
+      expect(host.querySelectorAll('[data-test="message-person"]')).toHaveLength(0)
+    })
+
+    it('sem pendentes não aparece contador', async () => {
+      const { host } = await mount('s1', [{ ...thread, pending: 0 }], [answered])
+      expect(host.querySelector('[data-test="thread-pending"]')).toBeNull()
+      expect(host.querySelector('[data-test="thread-pending-count"]')).toBeNull()
+    })
   })
 })

@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { TConversationEvent } from '@domain/ports/ConversationEvents.Port'
 import { SqlitePersonMessageRepository } from '@infra/persistence/Sqlite.PersonMessageRepository'
-import { PersonMessagesService } from './PersonMessages.Service'
+import { PersonMessageError, PersonMessagesService } from './PersonMessages.Service'
 
 const ACCOUNTS = [
   { id: 'u_root', email: 'root@x.test', name: 'Root', role: 'admin', disabled: false },
@@ -129,5 +129,85 @@ describe('Mensagens: o aviso no aparelho', () => {
     })
     await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', body: 'Oi' })
     assert.strictEqual(service.unread('u_ana'), 1)
+  })
+})
+
+describe('Mensagens: um pedido por vez', () => {
+  const request = (service: PersonMessagesService, title: string, level = 'attention') =>
+    service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', title, body: `Corpo de ${title}`, level })
+
+  it('attention/urgent nascem pending; info não tem estado; a contagem de pendentes vai no fio e no total', async () => {
+    const { service } = build()
+    await request(service, 'A')
+    await request(service, 'B', 'urgent')
+    await request(service, 'C', 'info')
+    const messages = service.thread('u_ana', 'gw_alfa')
+    assert.deepStrictEqual(
+      messages.map((message) => message.status),
+      ['pending', 'pending', undefined],
+    )
+    assert.deepStrictEqual([service.threads('u_ana')[0].pending, service.pending('u_ana')], [2, 2])
+  })
+
+  it('responder com replyTo: o pedido vira answered (só para quem respondeu), a resposta leva replyTo e o texto nomeia o pedido', async () => {
+    const { service } = build()
+    await request(service, 'Subir?')
+    await request(service, 'Apagar?')
+    const [first] = service.thread('u_ana', 'gw_alfa')
+    const reply = service.reply('u_ana', 'gw_alfa', 'Pode', 'Ana', first.id)
+    assert.strictEqual(reply.input, `[Resposta de Ana pela caixa de Mensagens a "Subir?" (pedido ${first.id})]\n\nPode`)
+    const mine = service.thread('u_ana', 'gw_alfa')
+    assert.deepStrictEqual([mine[0].status, mine[1].status, mine[0].answeredAt instanceof Date], ['answered', 'pending', true])
+    assert.strictEqual(mine.at(-1)?.replyTo, first.id)
+    assert.strictEqual(service.threads('u_ana')[0].pending, 1)
+    const bia = service.thread('u_bia', 'gw_alfa')
+    assert.strictEqual(bia[0].status, 'pending', 'o pedido do outro destinatário segue pendente')
+    assert.strictEqual(bia.at(-1)?.replyTo, bia[0].id, 'a cópia dele aponta para o pedido dele')
+  })
+
+  it('sem título o rótulo usa os primeiros 60 caracteres do corpo; sem replyTo nada muda de estado', async () => {
+    const { service } = build()
+    await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'owner', body: 'x'.repeat(100), level: 'urgent' })
+    const [asked] = service.thread('u_caio', 'gw_alfa')
+    assert.ok(service.reply('u_caio', 'gw_alfa', 'ok', 'Caio', asked.id).input.includes(`"${'x'.repeat(60)}" (pedido`))
+    await request(service, 'Outro')
+    service.reply('u_ana', 'gw_alfa', 'solta', 'Ana')
+    assert.strictEqual(service.thread('u_ana', 'gw_alfa')[0].status, 'pending')
+  })
+
+  it('replyTo inválido (info, pessoa, inexistente, de outro fio) é recusado com o campo replyTo', async () => {
+    const { service } = build()
+    await request(service, 'Pedido')
+    await request(service, 'Aviso', 'info')
+    const [, info] = service.thread('u_ana', 'gw_alfa')
+    for (const bad of [info.id, 'm_nao_existe']) {
+      assert.throws(
+        () => service.reply('u_ana', 'gw_alfa', 'x', 'Ana', bad),
+        (error: unknown) => error instanceof PersonMessageError && error.field === 'replyTo',
+      )
+    }
+    const otherThread = service.thread('u_bia', 'gw_alfa')[0].id
+    assert.throws(
+      () => service.reply('u_ana', 'gw_alfa', 'x', 'Ana', otherThread),
+      (error: unknown) => error instanceof PersonMessageError && error.field === 'replyTo',
+      'id da cópia de outro',
+    )
+  })
+
+  it('resolver e reabrir: só pedido do próprio fio; info e inexistente são recusados', async () => {
+    const { service } = build()
+    await request(service, 'Pedido')
+    await request(service, 'Aviso', 'info')
+    const [asked, info] = service.thread('u_ana', 'gw_alfa')
+    service.setStatus('u_ana', 'gw_alfa', asked.id, 'resolved')
+    assert.deepStrictEqual([service.thread('u_ana', 'gw_alfa')[0].status, service.pending('u_ana')], ['resolved', 0])
+    service.setStatus('u_ana', 'gw_alfa', asked.id, 'pending')
+    assert.strictEqual(service.pending('u_ana'), 1)
+    assert.throws(
+      () => service.setStatus('u_ana', 'gw_alfa', info.id, 'resolved'),
+      (error: unknown) => error instanceof PersonMessageError && error.field === 'status',
+    )
+    assert.throws(() => service.setStatus('u_bia', 'gw_alfa', asked.id, 'resolved'), /no such message/, 'o id é da cópia da Ana')
+    assert.throws(() => service.setStatus('u_ana', 'gw_alfa', asked.id, 'answered' as never), /status must be/)
   })
 })

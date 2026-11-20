@@ -89,6 +89,31 @@ describe('Mensagens (integração)', () => {
     else assert.deepStrictEqual([sent.status, thread.at(-1)?.from, thread.at(-1)?.body], [202, 'person', 'Sexta'])
   })
 
+  it('📌 pedido por pedido: pendentes no fio e no total; replyTo inválido é 422; status resolved/pending; info e alheio recusados', async () => {
+    const service = makePersonMessages()
+    await service.send({ sessionId: 'gw_da_ana', agentId: 'zeus', to: 'owner', title: 'Pedido novo', body: 'Posso?', level: 'urgent' })
+    await service.send({ sessionId: 'gw_da_ana', agentId: 'zeus', to: 'owner', body: 'Só um aviso' })
+    const listed = (await call('/messages?archived=1', { token: member })).body.result
+    const all = (await call('/messages', { token: member })).body.result
+    assert.ok(all.pending >= 1 && all.threads[0].pending >= 1 && typeof listed.pending === 'number')
+    const messages = (await call('/messages/gw_da_ana', { token: member })).body.result.messages as Array<{ id: string; status?: string; title?: string; level: string }>
+    const asked = messages.find((message) => message.title === 'Pedido novo')!
+    const info = messages.find((message) => message.level === 'info' && !message.status)!
+    assert.strictEqual(asked.status, 'pending')
+    // replyTo que não é pedido deste fio: 422 no campo replyTo.
+    const bad = await call('/messages/gw_da_ana/reply', { method: 'POST', token: member, body: { message: 'x', replyTo: info.id } })
+    assert.strictEqual(bad.status, 422)
+    assert.strictEqual(((bad.body as { details?: Array<{ field: string }> }).details ?? [])[0]?.field, 'replyTo')
+    const before = (await call('/messages', { token: member })).body.result.pending
+    const done = await call(`/messages/gw_da_ana/${asked.id}/status`, { method: 'PUT', token: member, body: { status: 'resolved' } })
+    assert.deepStrictEqual([done.status, done.body.result.status, done.body.result.pending], [200, 'resolved', before - 1])
+    assert.strictEqual((await call(`/messages/gw_da_ana/${asked.id}/status`, { method: 'PUT', token: member, body: { status: 'pending' } })).body.result.pending, before)
+    assert.strictEqual((await call(`/messages/gw_da_ana/${info.id}/status`, { method: 'PUT', token: member, body: { status: 'resolved' } })).status, 422)
+    assert.strictEqual((await call(`/messages/gw_da_ana/${asked.id}/status`, { method: 'PUT', token: member, body: { status: 'answered' } })).status, 422)
+    assert.strictEqual((await call(`/messages/gw_da_ana/${asked.id}/status`, { method: 'PUT', token: admin, body: { status: 'resolved' } })).status, 404)
+    assert.strictEqual((await call('/messages/gw_da_ana/nao_existe/status', { method: 'PUT', token: member, body: { status: 'resolved' } })).status, 404)
+  })
+
   it('📱 o aviso no aparelho só se liga pela tela: token de integração, 403; sem conta, 401', async () => {
     assert.strictEqual((await call('/push/key', { token: member })).status, 403)
     assert.strictEqual(

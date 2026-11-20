@@ -1,7 +1,7 @@
 import { LiveBrowser, liveBrowsers, TLiveBrowserInput } from '@infra/mcp/LiveBrowser.Adapter'
 import { PersonBrowsers } from '@infra/mcp/PersonBrowsers.Service'
 import { NOTIFY_TOOL } from '@domain/models/PersonMessage.Model'
-import type { PersonMessagesService } from '@application/PersonMessages.Service'
+import { PersonMessageError, type PersonMessagesService } from '@application/PersonMessages.Service'
 import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
 import { AUDIT_ERROR_LOCAL, AUDIT_STATUS_LOCAL } from './Audit.Controller'
 import type { UsageCapService } from '@application/UsageCap.Service'
@@ -435,6 +435,7 @@ export class AgentController {
     this.updatePushConfig = this.updatePushConfig.bind(this)
     this.rotatePushKeys = this.rotatePushKeys.bind(this)
     this.replyMessage = this.replyMessage.bind(this)
+    this.setMessageStatus = this.setMessageStatus.bind(this)
     this.conversationActivity = this.conversationActivity.bind(this)
     this.renameConversation = this.renameConversation.bind(this)
     this.listErrors = this.listErrors.bind(this)
@@ -2453,7 +2454,7 @@ export class AgentController {
     await this.respond(res, async () => {
       const { service, recipientId } = await this.messagesOf()
       const archived = req.query?.archived === '1' || req.query?.archived === 'true'
-      return { threads: service.threads(recipientId, archived), unread: service.unread(recipientId) }
+      return { threads: service.threads(recipientId, archived), unread: service.unread(recipientId), pending: service.pending(recipientId) }
     })
   }
 
@@ -2486,7 +2487,7 @@ export class AgentController {
   }
 
   /**
-   * `POST /messages/:conversationId/reply { message }` — 💬 a pessoa responde pela caixa: a resposta entra na conversa de
+   * `POST /messages/:conversationId/reply { message, replyTo? }` — 💬 a pessoa responde pela caixa: a resposta entra na conversa de
    * origem como mensagem dela (mesmo na conversa de OUTRA pessoa — quem recebeu o fio foi chamado pelo agente) e o turno
    * roda no servidor; o que o agente responder volta para o fio. Turno rodando: a resposta entra na fila dele.
    */
@@ -2497,16 +2498,28 @@ export class AgentController {
         const { service, recipientId } = await this.messagesOf()
         const conversationId = req.params.conversationId as string
         const text = String((req.body as { message?: unknown } | undefined)?.message ?? '')
+        const replyToRaw = (req.body as { replyTo?: unknown } | undefined)?.replyTo
+        if (replyToRaw !== undefined && replyToRaw !== null && typeof replyToRaw !== 'string') {
+          throw new HttpError(422, 'validation_error', 'replyTo must be a message id', [{ field: 'replyTo', message: 'must be a message id' }])
+        }
+        const replyTo = typeof replyToRaw === 'string' && replyToRaw ? replyToRaw : undefined
         const resolved = await this.requireCaller()
         const name = (resolved.identity as { name?: string } | undefined)?.name || resolved.identity?.email || 'a pessoa'
         // A conversa primeiro: se ela não roda mais, a resposta nem entra no fio (não fica "respondido" sem ter ido).
         if (!service.thread(recipientId, conversationId).length) throw new HttpError(404, 'not_found', 'Not found')
         if (!text.trim()) throw new HttpError(422, 'validation_error', 'message is required')
+        try {
+          service.checkReplyTo(recipientId, conversationId, replyTo)
+        } catch (error: unknown) {
+          if (error instanceof PersonMessageError && error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
+          throw error
+        }
         const session = await this.usecases.getSession.execute(conversationId)
         let reply: { input: string; agentId: string }
         try {
-          reply = service.reply(recipientId, conversationId, text, name)
+          reply = service.reply(recipientId, conversationId, text, name, replyTo)
         } catch (error: unknown) {
+          if (error instanceof PersonMessageError && error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
           throw new HttpError(
             error instanceof Error && /no such thread/.test(error.message) ? 404 : 422,
             error instanceof Error && /no such thread/.test(error.message) ? 'not_found' : 'validation_error',
@@ -2526,6 +2539,23 @@ export class AgentController {
       },
       { status: 202, message: 'Reply sent to the conversation' },
     )
+  }
+
+  /** `PUT /messages/:conversationId/:messageId/status { status }` — 📌 a pessoa dá o pedido por tratado (`resolved`) ou o reabre (`pending`). */
+  async setMessageStatus(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { service, recipientId } = await this.messagesOf()
+      const status = (req.body as { status?: unknown } | undefined)?.status
+      if (status !== 'resolved' && status !== 'pending') throw new HttpError(422, 'validation_error', 'status must be resolved or pending', [{ field: 'status', message: 'resolved or pending' }])
+      try {
+        service.setStatus(recipientId, req.params.conversationId as string, req.params.messageId as string, status)
+      } catch (error: unknown) {
+        if (!(error instanceof PersonMessageError)) throw error
+        if (error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
+        throw new HttpError(404, 'not_found', 'Not found')
+      }
+      return { status, pending: service.pending(recipientId) }
+    })
   }
 
   /** 💬 O turno que a resposta abriu terminou: o texto dele volta para o fio (a menos que o agente já tenha escrito com `notify`). */
