@@ -169,6 +169,14 @@ export function makeController(): AgentController {
     docker: () => dockerStatus(),
     guidance: makeGuidance(),
     secrets: makeResourceSecrets(),
+    accountOf: (userId) => {
+      try {
+        const user = makeAuth().accounts?.me(userId)
+        return user ? { name: user.name, email: user.email } : undefined
+      } catch {
+        return undefined
+      }
+    },
     repositoryAllowed: (agentId, projectId, repository) => makePermissions().test({ agentId, projectId }, { category: 'repository', value: repository }).allowed,
     maskText: (text) => makeSecretMasker().text(text),
     callbackSecret: (url, projectId) => callbackSecret(url, projectId ? (host) => makeProjectAccounts().callbackSecret(projectId, host) : undefined),

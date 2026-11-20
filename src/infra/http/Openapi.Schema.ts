@@ -6806,6 +6806,83 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/sessions/{id}/files': {
+      get: {
+        summary: "The files of the conversation's repository (tracked and new, by `.gitignore`, without secrets), or one file's content with `path`. Only the owner of the conversation",
+        description: 'Without `path`: `{ files, truncated }` (up to 20 000 paths). With `path`: `{ path, content, size, hash }` for text up to 1 MB, or `{ binary: true }`. Secrets (`.env`, `.credentials/`, keys), `.git` and paths outside the folder answer 404.',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'path', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) },
+          '404': failures['404'],
+          '413': { description: '`payload_too_large`: file larger than 1 MB', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
+      put: {
+        summary: "Save a file of the conversation's repository. Only the owner, never while the agent runs a turn",
+        description: '`baseHash`: the `hash` of what was opened (absent for a new file). If the file changed since, 409 `revision_conflict` with `details.current`.',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', required: ['path', 'content'], properties: { path: { type: 'string' }, content: { type: 'string' }, baseHash: { type: 'string' } } }),
+        },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { path: { type: 'string' }, size: { type: 'integer' }, hash: { type: 'string' } } })) },
+          '404': failures['404'],
+          '409': { description: '`session_busy` (the agent is running) or `revision_conflict` (the file changed)', ...json(failureEnvelope) },
+          '413': { description: '`payload_too_large`', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/sessions/{id}/scm': {
+      get: {
+        summary: "Source control of the conversation's repository: branch, ahead/behind its upstream (as the repository already knows; nothing is fetched), staged and unstaged files (without secrets). Only the owner",
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'] },
+      },
+    },
+    '/sessions/{id}/scm/diff': {
+      get: {
+        summary: 'The original and the current content of a file, for a side-by-side diff (`staged`: HEAD vs index; otherwise index vs working tree)',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'staged', in: 'query', required: false, schema: { type: 'boolean' } },
+        ],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+      },
+    },
+    '/sessions/{id}/scm/blame': {
+      get: {
+        summary: 'Who last changed a line of a file (author, time, commit summary), or `uncommitted`',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'line', in: 'query', required: true, schema: { type: 'integer', minimum: 1 } },
+        ],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+      },
+    },
+    '/sessions/{id}/scm/{action}': {
+      post: {
+        summary: '`stage` / `unstage` (`paths`) or `commit` (`message`; with nothing staged, commits every change). Only the owner, never while the agent runs a turn; the commit carries the account name and e-mail, runs no hook and never includes a secret',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'action', in: 'path', required: true, schema: { type: 'string', enum: ['stage', 'unstage', 'commit'] } },
+        ],
+        requestBody: { required: true, ...json({ type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } }, message: { type: 'string' } } }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) },
+          '404': failures['404'],
+          '409': { description: '`session_busy`: the agent is running a turn', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
+    },
     '/sessions/{id}/browser': {
       get: {
         summary: "The conversation's browser, live (SSE): what the agent sees in its Playwright MCP tab. The owner or an administrator; anyone else gets 404",

@@ -72,6 +72,8 @@ import { CALLBACK_METADATA_KEY, declaredMetadata, PROJECT_METADATA_KEY, REPOSITO
 import { CHANGE_SCOPES, changesOf, fileDiff, headOf, TChangeScope } from '@infra/workspace/Git.Changes'
 import { projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 import { currentBranch, IWorkFolder, resolveWorkFolder, WorkFolderError } from '@infra/workspace/Work.Folder'
+import { listRepositoryFiles, readRepositoryFile, RepositoryFileError, writeRepositoryFile } from '@infra/workspace/Repository.Files'
+import { scmBlame, scmCommit, scmDiff, scmStage, scmState, scmUnstage } from '@infra/workspace/Repository.Scm'
 import { deliverCallback } from './Turn.Callbacks'
 import { BUILDER_METADATA_KEY, builderKindOf, CORE_AGENT_IDS, IMPORT_METADATA_KEY } from '@domain/Builder.Agents'
 import { IAgentProviderFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
@@ -197,6 +199,8 @@ export interface IAgentControllerDeps {
   agents: AgentCatalog
   /** O agente pode ser ativado neste repositório do projeto (permissão `repository`)? Ausente = sim. */
   repositoryAllowed?: (agentId: string, projectId: string, repository: string) => boolean
+  /** O nome e o e-mail de uma conta da tela (o autor do commit feito pelo controle de versão). */
+  accountOf?: (userId: string) => { name: string; email: string } | undefined
   /** A conversa foi apagada: o que roda por ela (os processos em segundo plano, as vigias) para. */
   sessionEnded?: (sessionId: string) => void
   /** As vigias das conversas (ver `Watch.Model`), para a tela. Ausente = a rota responde vazio. */
@@ -410,6 +414,12 @@ export class AgentController {
     this.conversationEvents = this.conversationEvents.bind(this)
     this.sessionLive = this.sessionLive.bind(this)
     this.sessionBrowser = this.sessionBrowser.bind(this)
+    this.files = this.files.bind(this)
+    this.scm = this.scm.bind(this)
+    this.scmDiff = this.scmDiff.bind(this)
+    this.scmBlame = this.scmBlame.bind(this)
+    this.scmAction = this.scmAction.bind(this)
+    this.saveFile = this.saveFile.bind(this)
     this.browserViewport = this.browserViewport.bind(this)
     this.browserInput = this.browserInput.bind(this)
     this.browserInspect = this.browserInspect.bind(this)
@@ -2771,17 +2781,7 @@ export class AgentController {
     await this.respond(res, async () => {
       const sessionId = req.params.id as string
       const { metadata } = await this.requireOwnedConversation(sessionId)
-      const repository = metadata?.[REPOSITORY_METADATA_KEY]
-      const projectId = metadata?.[PROJECT_METADATA_KEY]
-      if (typeof repository !== 'string' || typeof projectId !== 'string' || !this.usecases.projects?.exists(projectId))
-        throw new HttpError(404, 'not_found', 'Esta conversa não foi aberta num repositório')
-      const worktree = typeof metadata?.[WORKTREE_METADATA_KEY] === 'string' ? (metadata[WORKTREE_METADATA_KEY] as string) : undefined
-      let dir: IWorkFolder
-      try {
-        dir = resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree)
-      } catch (error: unknown) {
-        throw new HttpError(404, 'not_found', error instanceof Error ? error.message : String(error))
-      }
+      const dir = this.conversationFolder(metadata)
       const scope = String(req.query.scope ?? 'conversation') as TChangeScope
       if (!CHANGE_SCOPES.includes(scope)) throw new HttpError(422, 'validation_error', `scope: one of ${CHANGE_SCOPES.join(', ')}`)
       const commit = typeof req.query.commit === 'string' && /^[0-9a-f]{7,40}$/i.test(req.query.commit) ? req.query.commit : undefined
@@ -2799,6 +2799,139 @@ export class AgentController {
         return { file, ...(await fileDiff(dir, changes, file)) }
       } catch (error: unknown) {
         throw new HttpError(404, 'not_found', error instanceof Error ? error.message : String(error))
+      }
+    })
+  }
+
+  /** A pasta do repositório da conversa (ou da worktree dela). 404 se a conversa não foi aberta num repositório. */
+  private conversationFolder(metadata: Record<string, unknown> | undefined): IWorkFolder {
+    const repository = metadata?.[REPOSITORY_METADATA_KEY]
+    const projectId = metadata?.[PROJECT_METADATA_KEY]
+    if (typeof repository !== 'string' || typeof projectId !== 'string' || !this.usecases.projects?.exists(projectId))
+      throw new HttpError(404, 'not_found', 'Esta conversa não foi aberta num repositório')
+    const worktree = typeof metadata?.[WORKTREE_METADATA_KEY] === 'string' ? (metadata[WORKTREE_METADATA_KEY] as string) : undefined
+    try {
+      return resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree)
+    } catch (error: unknown) {
+      throw new HttpError(404, 'not_found', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  /** O erro do editor de arquivos, em HTTP. */
+  private fileFailure(error: unknown): never {
+    if (error instanceof RepositoryFileError) {
+      if (error.kind === 'conflict') throw new HttpError(409, 'revision_conflict', error.message, error.current ? { current: error.current } : undefined)
+      if (error.kind === 'too_large') throw new HttpError(413, 'payload_too_large', error.message)
+      if (error.kind === 'invalid') throw new HttpError(422, 'validation_error', error.message)
+      throw new HttpError(404, 'not_found', error.message)
+    }
+    throw error
+  }
+
+  /**
+   * `GET /sessions/:id/files` — 📁 os arquivos do repositório da conversa (versionados e novos, pelo `.gitignore`), sem os
+   * de segredo. Com `path`, o conteúdo de um (texto até 1 MB; binário só avisa). ⛔ Só o dono da conversa.
+   */
+  async files(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { metadata } = await this.requireOwnedConversation(req.params.id as string)
+      const dir = this.conversationFolder(metadata)
+      const path = typeof req.query.path === 'string' ? req.query.path : undefined
+      try {
+        return path ? readRepositoryFile(dir, path) : await listRepositoryFiles(dir)
+      } catch (error: unknown) {
+        return this.fileFailure(error)
+      }
+    })
+  }
+
+  /**
+   * `PUT /sessions/:id/files` — ✏️ grava um arquivo do repositório (`path`, `content`, `baseHash` do que foi aberto).
+   * ⛔ Só o dono; nunca com o agente rodando um turno (409 `session_busy`); nunca segredo, `.git` ou fora da pasta;
+   * se o arquivo mudou desde que foi aberto, 409 `revision_conflict` com o atual.
+   */
+  async saveFile(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const sessionId = req.params.id as string
+      const { metadata } = await this.requireOwnedConversation(sessionId)
+      const dir = this.conversationFolder(metadata)
+      const body = (req.body ?? {}) as { path?: unknown; content?: unknown; baseHash?: unknown }
+      if (typeof body.path !== 'string' || typeof body.content !== 'string') throw new HttpError(422, 'validation_error', 'path and content are required strings')
+      if (body.baseHash !== undefined && typeof body.baseHash !== 'string') throw new HttpError(422, 'validation_error', 'baseHash: a string')
+      if (this.usecases.live?.snapshot(sessionId)) throw new HttpError(409, 'session_busy', 'The agent is running a turn in this conversation; save when it finishes')
+      try {
+        return writeRepositoryFile(dir, body.path, body.content, body.baseHash as string | undefined)
+      } catch (error: unknown) {
+        return this.fileFailure(error)
+      }
+    })
+  }
+
+  /** `GET /sessions/:id/scm` — 🌿 a branch, à frente/atrás do remoto e o que está preparado ou não (sem segredo). Só o dono. */
+  async scm(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { metadata } = await this.requireOwnedConversation(req.params.id as string)
+      return scmState(this.conversationFolder(metadata))
+    })
+  }
+
+  /** `GET /sessions/:id/scm/diff?path=&staged=` — o original e o atual de um arquivo, para o diff lado a lado. */
+  async scmDiff(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { metadata } = await this.requireOwnedConversation(req.params.id as string)
+      const path = typeof req.query.path === 'string' ? req.query.path : ''
+      try {
+        return await scmDiff(this.conversationFolder(metadata), path, req.query.staged === 'true' || req.query.staged === '1')
+      } catch (error: unknown) {
+        return this.fileFailure(error)
+      }
+    })
+  }
+
+  /** `GET /sessions/:id/scm/blame?path=&line=` — quem mudou a linha por último (a barra de status do editor). */
+  async scmBlame(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { metadata } = await this.requireOwnedConversation(req.params.id as string)
+      try {
+        return { blame: (await scmBlame(this.conversationFolder(metadata), String(req.query.path ?? ''), Number(req.query.line))) ?? null }
+      } catch (error: unknown) {
+        return this.fileFailure(error)
+      }
+    })
+  }
+
+  /**
+   * `POST /sessions/:id/scm/:action` — `stage` / `unstage` (`paths`) ou `commit` (`message`). ⛔ Só o dono; nunca com o
+   * agente rodando um turno; o commit sai com o nome e o e-mail da conta, sem hook e sem segredo.
+   */
+  async scmAction(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const sessionId = req.params.id as string
+      const { resolved, metadata } = await this.requireOwnedConversation(sessionId)
+      const folder = this.conversationFolder(metadata)
+      const action = req.params.action as string
+      if (this.usecases.live?.snapshot(sessionId)) throw new HttpError(409, 'session_busy', 'The agent is running a turn in this conversation; wait for it to finish')
+      const body = (req.body ?? {}) as { paths?: unknown; message?: unknown }
+      try {
+        if (action === 'stage' || action === 'unstage') {
+          if (!Array.isArray(body.paths) || !body.paths.every((path) => typeof path === 'string') || body.paths.length > 5000)
+            throw new HttpError(422, 'validation_error', 'paths: a list of file paths')
+          await (action === 'stage' ? scmStage : scmUnstage)(folder, body.paths as string[])
+          return scmState(folder)
+        }
+        if (action === 'commit') {
+          if (typeof body.message !== 'string' || body.message.length > 10_000) throw new HttpError(422, 'validation_error', 'message: the commit message')
+          const userId = resolved.identity?.id
+          const account = userId ? this.usecases.accountOf?.(userId) : undefined
+          const email = account?.email ?? resolved.identity?.email
+          if (!email) throw new HttpError(422, 'validation_error', 'the account has no e-mail for the commit author')
+          const done = await scmCommit(folder, body.message, { name: account?.name || email, email })
+          return { ...done, state: await scmState(folder) }
+        }
+        throw new HttpError(404, 'not_found', 'Not found')
+      } catch (error: unknown) {
+        if (error instanceof HttpError) throw error
+        return this.fileFailure(error)
       }
     })
   }

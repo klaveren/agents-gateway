@@ -1,0 +1,107 @@
+/* 🎨 Monokai: a paleta do editor de arquivos, das Alterações e de quem mais morar na coluna lateral da conversa. */
+/* 🎨 Monokai na coluna inteira: o mesmo do editor (fundo, lateral, seleção, cores de destaque). */
+.monokai {
+  background: #272822;
+  color: #f8f8f2;
+}
+.mk-side {
+  background: #1e1f1c;
+}
+.mk-border {
+  border-color: #3b3a32;
+}
+.mk-fg {
+  color: #f8f8f2;
+}
+.mk-muted {
+  color: #a59f85;
+}
+.mk-dim {
+  color: #75715e;
+}
+.mk-green {
+  color: #a6e22e;
+}
+.mk-orange {
+  color: #fd971f;
+}
+.mk-hover:hover {
+  background: #3e3d32;
+}
+.mk-selected {
+  background: #49483e;
+  color: #f8f8f2;
+}
+.mk-input {
+  background: #272822;
+  color: #f8f8f2;
+  border: 1px solid #3b3a32;
+}
+.mk-input:focus {
+  border-color: #75715e;
+}
+.mk-input::placeholder {
+  color: #75715e;
+}
+/* As cores do git no VS Code: modificado amarelo, novo verde, apagado vermelho. */
+.mk-modified {
+  color: #e2c08d;
+}
+.mk-added {
+  color: #73c991;
+}
+.mk-deleted {
+  color: #c74e39;
+}
+.mk-tab {
+  color: #75715e;
+  border-bottom: 2px solid transparent;
+}
+.mk-tab:hover {
+  color: #f8f8f2;
+}
+.mk-tab-on {
+  color: #f8f8f2;
+  border-bottom-color: #a6e22e;
+}
+.mk-count {
+  background: #49483e;
+  color: #f8f8f2;
+}
+.mk-commit {
+  background: #a6e22e;
+  color: #272822;
+}
+.mk-commit:disabled {
+  background: #3e3d32;
+  color: #75715e;
+}
+.mk-status {
+  background: #1e1f1c;
+  border-top: 1px solid #3b3a32;
+  color: #a59f85;
+}
+.mk-tabs {
+  background: #1e1f1c;
+  border-bottom: 1px solid #3b3a32;
+}
+.mk-editor-tab {
+  color: #75715e;
+  border-right: 1px solid #3b3a32;
+}
+.mk-editor-tab:hover {
+  color: #f8f8f2;
+}
+.mk-editor-tab-on {
+  background: #272822;
+  color: #f8f8f2;
+  box-shadow: inset 0 1px 0 #a6e22e;
+}
+.mk-notice {
+  background: #1e1f1c;
+  border-bottom: 1px solid #3b3a32;
+}
+.mk-badge {
+  background: rgb(253 151 31 / 0.15);
+  color: #fd971f;
+}

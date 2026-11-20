@@ -158,12 +158,20 @@ function argv(place: IGitPlace, args: readonly string[]): string[] {
 }
 
 /** O git endurecido, assíncrono. */
-export async function safeGit(place: IGitPlace, args: readonly string[], options: { maxBuffer?: number; timeout?: number } = {}): Promise<string> {
+export async function safeGit(
+  place: IGitPlace,
+  args: readonly string[],
+  options: { maxBuffer?: number; timeout?: number; author?: { name: string; email: string } } = {},
+): Promise<string> {
+  // O autor do commit (a pessoa da tela): só nome e e-mail, por variável do próprio git — nada mais do ambiente.
+  const author = options.author
+    ? { GIT_AUTHOR_NAME: options.author.name, GIT_AUTHOR_EMAIL: options.author.email, GIT_COMMITTER_NAME: options.author.name, GIT_COMMITTER_EMAIL: options.author.email }
+    : {}
   const { stdout } = await run('git', argv(place, args), {
     encoding: 'utf8',
     timeout: options.timeout ?? 15_000,
     maxBuffer: options.maxBuffer ?? 8 * 1024 * 1024,
-    env: safeGitEnv(place),
+    env: { ...safeGitEnv(place), ...author },
   })
   return stdout
 }

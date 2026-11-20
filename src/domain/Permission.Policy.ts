@@ -116,6 +116,11 @@ export const SYSTEM_RULES: readonly ISystemRule[] = [
   ...['sh', 'bash', 'zsh', 'dash'].map((pattern) => ({ category: 'terminal' as const, pattern, decision: 'deny' as const, note: 'shell lendo da entrada' })),
 ]
 
+/** 🔐 Arquivo de segredo (`.env`, `.credentials/`, chaves): o que o editor da tela não mostra nem grava. Caminho relativo à pasta. */
+export function isSecretPath(path: string): boolean {
+  return SYSTEM_RULES.some((rule) => rule.category === 'read' && rule.note === 'segredo' && matches(rule, { category: 'read', value: path }))
+}
+
 /** A trava do sistema que o projeto abriu (ver `ISystemRule.opensWith`). */
 export function opened(rule: ISystemRule, layers: IPermissionLayers): boolean {
   return rule.opensWith === 'envFiles' && layers.envFiles === true
