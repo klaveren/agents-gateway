@@ -6807,6 +6807,19 @@ export const OPENAPI_DOCUMENT = {
       },
     },
     '/sessions/{id}/files': {
+      delete: {
+        summary: 'Delete a file or folder of the conversation repository (a folder with a secret or .git inside is refused). Only the owner, never while the agent runs a turn, never a secret or .git',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { path: { type: 'string' } } })) },
+          '404': failures['404'],
+          '409': { description: '`session_busy`', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
       get: {
         summary: "The files of the conversation's repository (tracked and new, by `.gitignore`, without secrets), or one file's content with `path`. Only the owner of the conversation",
         description: 'Without `path`: `{ files, truncated }` (up to 20 000 paths). With `path`: `{ path, content, size, hash }` for text up to 1 MB, or `{ binary: true }`. Secrets (`.env`, `.credentials/`, keys), `.git` and paths outside the folder answer 404.',
@@ -6838,6 +6851,42 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/sessions/{id}/files/folder': {
+      get: {
+        summary: 'What a folder of the conversation repository holds (one level, names only): to open a folder the .gitignore hides. Only the owner',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'path', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'OK: `entries` (path, folder)', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'] },
+      },
+    },
+    '/sessions/{id}/files/copy': {
+      post: {
+        summary: 'Copy a file or folder of the conversation repository (`from`, `to`). Only the owner, never while the agent runs a turn; never a secret, .git or a folder that holds one',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', required: ['from', 'to'], properties: { from: { type: 'string' }, to: { type: 'string' } } }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } })) },
+          '404': failures['404'],
+          '409': { description: '`session_busy` or `revision_conflict` (the target exists)', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/sessions/{id}/files/rename': {
+      post: {
+        summary: 'Rename or move (inside the repository) a file or folder of the conversation. Only the owner, never while the agent runs a turn, never a secret or .git',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', required: ['from', 'to'], properties: { from: { type: 'string' }, to: { type: 'string' } } }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } } })) },
+          '404': failures['404'],
+          '409': { description: '`session_busy` or `revision_conflict` (the target exists)', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
+    },
     '/sessions/{id}/scm': {
       get: {
         summary: "Source control of the conversation's repository: branch, ahead/behind its upstream (as the repository already knows; nothing is fetched), staged and unstaged files (without secrets). Only the owner",
@@ -6852,6 +6901,55 @@ export const OPENAPI_DOCUMENT = {
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
           { name: 'staged', in: 'query', required: false, schema: { type: 'boolean' } },
+          { name: 'commit', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+      },
+    },
+    '/sessions/{id}/lint': {
+      get: {
+        summary: "ESLint of the conversation's repository on one file (the repository's own eslint and config), inside the conversation agent's sandbox, no network. Only the owner",
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: '`status` ok | ignored | unavailable | failed, and `messages`', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+      },
+    },
+    '/sessions/{id}/search': {
+      get: {
+        summary: "Search the conversation repository's files (git grep, by .gitignore, without secrets): `q`, `case`, `word`, `regex`, `include` and `exclude` globs (comma separated). Only the owner",
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'q', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'case', in: 'query', required: false, schema: { type: 'boolean' } },
+          { name: 'word', in: 'query', required: false, schema: { type: 'boolean' } },
+          { name: 'regex', in: 'query', required: false, schema: { type: 'boolean' } },
+          { name: 'include', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'exclude', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'OK: `files` with `matches` (line, column, text), `total`, `truncated`', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+      },
+    },
+    '/sessions/{id}/search/replace': {
+      post: {
+        summary: 'Replace in every file the search finds (or only `paths`). Only the owner, never while the agent runs a turn, never a secret',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', required: ['q', 'replace'], additionalProperties: true }) },
+        responses: {
+          '200': { description: 'OK: how many `files` and `replacements`', ...json(envelope({ type: 'object', additionalProperties: true })) },
+          '404': failures['404'],
+          '409': { description: '`session_busy`', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/sessions/{id}/scm/history': {
+      get: {
+        summary: 'The Timeline of a file: the commits that changed it (following renames), newest first',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
         ],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
       },

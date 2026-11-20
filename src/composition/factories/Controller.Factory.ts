@@ -33,6 +33,8 @@ import { makeScheduleRunner, makeSchedules } from './Schedules.Factory'
 import { makeWatches, useWatchNotice } from './Watches.Factory'
 import { identityFromToken, withCaller } from '@infra/mcp/Caller.Identity'
 import { dockerStatus } from '@infra/sandbox/Docker.Sandbox'
+import { cercoRunner } from '@infra/tools/Edit.Diagnostics'
+import { lintRepositoryFile } from '@infra/tools/Editor.Lint'
 import { GuidanceController } from '@infra/http/Guidance.Controller'
 import { makeGuidance } from './Guidance.Factory'
 import { SubscriptionLogins } from '@infra/providers/Subscription.Client'
@@ -169,6 +171,20 @@ export function makeController(): AgentController {
     docker: () => dockerStatus(),
     guidance: makeGuidance(),
     secrets: makeResourceSecrets(),
+    // 🔎 O ESLint do editor da tela: no cerco das regras do agente da conversa, como o diagnóstico depois da edição.
+    lintFile: (input) => {
+      const sandbox = projectSandbox()
+      const run = sandbox.wrapWith
+        ? cercoRunner(makePermissions(), sandbox, input.folder.dir, {
+            agentId: input.agentId,
+            projectId: input.projectId,
+            conversationProjectId: input.projectId,
+            sessionId: input.sessionId,
+            workFolder: input.folder,
+          } as Parameters<typeof cercoRunner>[3])
+        : undefined
+      return lintRepositoryFile(input.folder.dir, input.path, run)
+    },
     accountOf: (userId) => {
       try {
         const user = makeAuth().accounts?.me(userId)

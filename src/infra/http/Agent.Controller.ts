@@ -72,8 +72,20 @@ import { CALLBACK_METADATA_KEY, declaredMetadata, PROJECT_METADATA_KEY, REPOSITO
 import { CHANGE_SCOPES, changesOf, fileDiff, headOf, TChangeScope } from '@infra/workspace/Git.Changes'
 import { projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 import { currentBranch, IWorkFolder, resolveWorkFolder, WorkFolderError } from '@infra/workspace/Work.Folder'
-import { listRepositoryFiles, readRepositoryFile, RepositoryFileError, writeRepositoryFile } from '@infra/workspace/Repository.Files'
-import { scmBlame, scmCommit, scmDiff, scmStage, scmState, scmUnstage } from '@infra/workspace/Repository.Scm'
+import {
+  copyRepositoryFile,
+  deleteRepositoryFile,
+  IFileAccess,
+  listFolder,
+  listRepositoryFiles,
+  readRepositoryFile,
+  renameRepositoryFile,
+  RepositoryFileError,
+  writeRepositoryFile,
+} from '@infra/workspace/Repository.Files'
+import type { ILintResult } from '@infra/tools/Editor.Lint'
+import { ISearchQuery, replaceInRepository, searchRepository } from '@infra/workspace/Repository.Search'
+import { scmBlame, scmCommit, scmDiff, scmHistory, scmStage, scmState, scmUnstage } from '@infra/workspace/Repository.Scm'
 import { deliverCallback } from './Turn.Callbacks'
 import { BUILDER_METADATA_KEY, builderKindOf, CORE_AGENT_IDS, IMPORT_METADATA_KEY } from '@domain/Builder.Agents'
 import { IAgentProviderFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
@@ -203,6 +215,14 @@ export interface IAgentControllerDeps {
   repositoryAllowed?: (agentId: string, projectId: string, repository: string) => boolean
   /** O nome e o e-mail de uma conta da tela (o autor do commit feito pelo controle de versão). */
   accountOf?: (userId: string) => { name: string; email: string } | undefined
+  /** O ESLint do repositório sobre um arquivo, no cerco das regras do agente da conversa (o editor da tela). */
+  lintFile?: (input: {
+    agentId?: string
+    projectId: string
+    sessionId: string
+    folder: { dir: string; projectDir: string; repository?: string; worktree?: string; gitCommonDir?: string; worktreeGitDir?: string }
+    path: string
+  }) => Promise<ILintResult>
   /** A conversa foi apagada: o que roda por ela (os processos em segundo plano, as vigias) para. */
   sessionEnded?: (sessionId: string) => void
   /** As vigias das conversas (ver `Watch.Model`), para a tela. Ausente = a rota responde vazio. */
@@ -424,6 +444,7 @@ export class AgentController {
     this.sessionLive = this.sessionLive.bind(this)
     this.sessionBrowser = this.sessionBrowser.bind(this)
     this.files = this.files.bind(this)
+    this.filesFolder = this.filesFolder.bind(this)
     this.terminalStatus = this.terminalStatus.bind(this)
     this.terminalOpen = this.terminalOpen.bind(this)
     this.terminalStream = this.terminalStream.bind(this)
@@ -431,8 +452,14 @@ export class AgentController {
     this.scm = this.scm.bind(this)
     this.scmDiff = this.scmDiff.bind(this)
     this.scmBlame = this.scmBlame.bind(this)
+    this.scmHistory = this.scmHistory.bind(this)
+    this.search = this.search.bind(this)
+    this.searchReplace = this.searchReplace.bind(this)
+    this.lint = this.lint.bind(this)
     this.scmAction = this.scmAction.bind(this)
     this.saveFile = this.saveFile.bind(this)
+    this.renameFile = this.renameFile.bind(this)
+    this.deleteFile = this.deleteFile.bind(this)
     this.browserViewport = this.browserViewport.bind(this)
     this.browserInput = this.browserInput.bind(this)
     this.browserInspect = this.browserInspect.bind(this)
@@ -2834,12 +2861,35 @@ export class AgentController {
     }
   }
 
+  /**
+   * 🔐 Segredo (`.env`, `.credentials/`, chaves) pelo editor: só o ADMIN DO PROJETO da conversa abre, salva, move ou
+   * busca dentro. O admin do gateway não entra por ser admin do gateway; os demais veem só o nome.
+   */
+  private fileAccess(resolved: IResolvedCaller, metadata: Record<string, unknown> | undefined): IFileAccess {
+    const projectId = metadata?.[PROJECT_METADATA_KEY]
+    const userId = resolved.identity?.id
+    return { secrets: typeof projectId === 'string' && !!userId && this.usecases.projects?.roleOf(projectId, userId) === 'admin' }
+  }
+
+  /** `GET /sessions/:id/files/folder?path=` — o que tem numa pasta (um nível): para abrir uma pasta ignorada. Só o dono. */
+  async filesFolder(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { metadata } = await this.requireOwnedConversation(req.params.id as string)
+      try {
+        return listFolder(this.conversationFolder(metadata), typeof req.query.path === 'string' ? req.query.path : '')
+      } catch (error: unknown) {
+        return this.fileFailure(error)
+      }
+    })
+  }
+
   /** O erro do editor de arquivos, em HTTP. */
   private fileFailure(error: unknown): never {
     if (error instanceof RepositoryFileError) {
       if (error.kind === 'conflict') throw new HttpError(409, 'revision_conflict', error.message, error.current ? { current: error.current } : undefined)
       if (error.kind === 'too_large') throw new HttpError(413, 'payload_too_large', error.message)
       if (error.kind === 'invalid') throw new HttpError(422, 'validation_error', error.message)
+      if (error.kind === 'forbidden') throw new HttpError(403, 'forbidden', error.message)
       throw new HttpError(404, 'not_found', error.message)
     }
     throw error
@@ -2851,11 +2901,50 @@ export class AgentController {
    */
   async files(req: Request, res: Response) {
     await this.respond(res, async () => {
-      const { metadata } = await this.requireOwnedConversation(req.params.id as string)
+      const { resolved, metadata } = await this.requireOwnedConversation(req.params.id as string)
+      const access = this.fileAccess(resolved, metadata)
       const dir = this.conversationFolder(metadata)
       const path = typeof req.query.path === 'string' ? req.query.path : undefined
       try {
-        return path ? readRepositoryFile(dir, path) : await listRepositoryFiles(dir)
+        return path ? readRepositoryFile(dir, path, access) : { ...(await listRepositoryFiles(dir)), canOpenSecrets: !!access.secrets }
+      } catch (error: unknown) {
+        return this.fileFailure(error)
+      }
+    })
+  }
+
+  /**
+   * `POST /sessions/:id/files/rename` (`from`, `to`) e `DELETE /sessions/:id/files?path=` — ✏️ renomear e apagar um arquivo
+   * do repositório pela árvore do editor. ⛔ Só o dono; nunca com o agente rodando; nunca segredo, `.git` ou fora da pasta.
+   */
+  async renameFile(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const sessionId = req.params.id as string
+      const { resolved, metadata } = await this.requireOwnedConversation(sessionId)
+      const access = this.fileAccess(resolved, metadata)
+      const dir = this.conversationFolder(metadata)
+      const body = (req.body ?? {}) as { from?: unknown; to?: unknown }
+      if (typeof body.from !== 'string' || typeof body.to !== 'string') throw new HttpError(422, 'validation_error', 'from and to are required strings')
+      if (this.usecases.live?.snapshot(sessionId)) throw new HttpError(409, 'session_busy', 'The agent is running a turn in this conversation; wait for it to finish')
+      try {
+        return req.path.endsWith('/copy') ? copyRepositoryFile(dir, body.from, body.to, access) : renameRepositoryFile(dir, body.from, body.to, access)
+      } catch (error: unknown) {
+        return this.fileFailure(error)
+      }
+    })
+  }
+
+  async deleteFile(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const sessionId = req.params.id as string
+      const { resolved, metadata } = await this.requireOwnedConversation(sessionId)
+      const access = this.fileAccess(resolved, metadata)
+      const dir = this.conversationFolder(metadata)
+      const path = typeof req.query.path === 'string' ? req.query.path : ''
+      if (!path) throw new HttpError(422, 'validation_error', 'path: the file to delete')
+      if (this.usecases.live?.snapshot(sessionId)) throw new HttpError(409, 'session_busy', 'The agent is running a turn in this conversation; wait for it to finish')
+      try {
+        return deleteRepositoryFile(dir, path, access)
       } catch (error: unknown) {
         return this.fileFailure(error)
       }
@@ -2870,14 +2959,15 @@ export class AgentController {
   async saveFile(req: Request, res: Response) {
     await this.respond(res, async () => {
       const sessionId = req.params.id as string
-      const { metadata } = await this.requireOwnedConversation(sessionId)
+      const { resolved, metadata } = await this.requireOwnedConversation(sessionId)
+      const access = this.fileAccess(resolved, metadata)
       const dir = this.conversationFolder(metadata)
       const body = (req.body ?? {}) as { path?: unknown; content?: unknown; baseHash?: unknown }
       if (typeof body.path !== 'string' || typeof body.content !== 'string') throw new HttpError(422, 'validation_error', 'path and content are required strings')
       if (body.baseHash !== undefined && typeof body.baseHash !== 'string') throw new HttpError(422, 'validation_error', 'baseHash: a string')
       if (this.usecases.live?.snapshot(sessionId)) throw new HttpError(409, 'session_busy', 'The agent is running a turn in this conversation; save when it finishes')
       try {
-        return writeRepositoryFile(dir, body.path, body.content, body.baseHash as string | undefined)
+        return writeRepositoryFile(dir, body.path, body.content, body.baseHash as string | undefined, access)
       } catch (error: unknown) {
         return this.fileFailure(error)
       }
@@ -2895,22 +2985,108 @@ export class AgentController {
   /** `GET /sessions/:id/scm/diff?path=&staged=` — o original e o atual de um arquivo, para o diff lado a lado. */
   async scmDiff(req: Request, res: Response) {
     await this.respond(res, async () => {
-      const { metadata } = await this.requireOwnedConversation(req.params.id as string)
+      const { resolved, metadata } = await this.requireOwnedConversation(req.params.id as string)
+      const access = this.fileAccess(resolved, metadata)
       const path = typeof req.query.path === 'string' ? req.query.path : ''
       try {
-        return await scmDiff(this.conversationFolder(metadata), path, req.query.staged === 'true' || req.query.staged === '1')
+        const commit = typeof req.query.commit === 'string' && req.query.commit ? req.query.commit : undefined
+        return await scmDiff(this.conversationFolder(metadata), path, req.query.staged === 'true' || req.query.staged === '1', commit, access)
       } catch (error: unknown) {
         return this.fileFailure(error)
       }
     })
   }
 
+  /** `GET /sessions/:id/scm/history?path=` — 🕘 a Timeline do arquivo: os commits que mexeram nele. Só o dono. */
+  async scmHistory(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { resolved, metadata } = await this.requireOwnedConversation(req.params.id as string)
+      const access = this.fileAccess(resolved, metadata)
+      try {
+        return { commits: await scmHistory(this.conversationFolder(metadata), String(req.query.path ?? ''), 50, access) }
+      } catch (error: unknown) {
+        return this.fileFailure(error)
+      }
+    })
+  }
+
+  /** A busca pedida na tela (`q`, `case`, `word`, `regex`, `include`, `exclude`). */
+  private searchQuery(source: Record<string, unknown>): ISearchQuery {
+    const text = (value: unknown, max: number) => (typeof value === 'string' ? value.slice(0, max) : undefined)
+    const flag = (value: unknown) => value === true || value === 'true' || value === '1'
+    const query = text(source.q ?? source.query, 1000) ?? ''
+    if (!query) throw new HttpError(422, 'validation_error', 'q: what to search for')
+    return {
+      query,
+      caseSensitive: flag(source.case ?? source.caseSensitive),
+      wholeWord: flag(source.word ?? source.wholeWord),
+      regex: flag(source.regex),
+      include: text(source.include, 1000),
+      exclude: text(source.exclude, 1000),
+    }
+  }
+
+  /** `GET /sessions/:id/search` — 🔍 buscar nos arquivos do repositório da conversa (sem segredo). Só o dono. */
+  async search(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { resolved, metadata } = await this.requireOwnedConversation(req.params.id as string)
+      const access = this.fileAccess(resolved, metadata)
+      const query = this.searchQuery(req.query as Record<string, unknown>)
+      try {
+        return await searchRepository(this.conversationFolder(metadata), query, access)
+      } catch (error: unknown) {
+        return this.fileFailure(error)
+      }
+    })
+  }
+
+  /**
+   * `POST /sessions/:id/search/replace` — troca nos arquivos que a busca acha (`replace`; `paths` limita). ⛔ Só o dono,
+   * nunca com o agente rodando, nunca segredo.
+   */
+  async searchReplace(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const sessionId = req.params.id as string
+      const { resolved, metadata } = await this.requireOwnedConversation(sessionId)
+      const access = this.fileAccess(resolved, metadata)
+      const body = (req.body ?? {}) as Record<string, unknown>
+      const query = this.searchQuery(body)
+      if (typeof body.replace !== 'string') throw new HttpError(422, 'validation_error', 'replace: the new text')
+      const paths = Array.isArray(body.paths) ? body.paths.filter((path): path is string => typeof path === 'string') : undefined
+      if (this.usecases.live?.snapshot(sessionId)) throw new HttpError(409, 'session_busy', 'The agent is running a turn in this conversation; wait for it to finish')
+      try {
+        return await replaceInRepository(this.conversationFolder(metadata), query, body.replace, paths, access)
+      } catch (error: unknown) {
+        return this.fileFailure(error)
+      }
+    })
+  }
+
+  /** `GET /sessions/:id/lint?path=` — 🔎 o ESLint do repositório sobre o arquivo (no cerco do agente da conversa). Só o dono. */
+  async lint(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const sessionId = req.params.id as string
+      const { metadata } = await this.requireOwnedConversation(sessionId)
+      const folder = this.conversationFolder(metadata)
+      const path = String(req.query.path ?? '')
+      if (!path || path.startsWith('/') || path.split('/').includes('..')) throw new HttpError(422, 'validation_error', 'path: a relative path inside the repository')
+      const projectId = metadata?.[PROJECT_METADATA_KEY] as string
+      if (!this.usecases.lintFile || !this.usecases.projects) return { status: 'unavailable', messages: [], reason: 'sem ESLint neste servidor' }
+      const agentId = await this.usecases.getSession
+        .execute(sessionId)
+        .then((session) => session.agentId)
+        .catch(() => undefined)
+      return this.usecases.lintFile({ agentId, projectId, sessionId, folder: { ...folder, projectDir: this.usecases.projects.folderOf(projectId) }, path })
+    })
+  }
+
   /** `GET /sessions/:id/scm/blame?path=&line=` — quem mudou a linha por último (a barra de status do editor). */
   async scmBlame(req: Request, res: Response) {
     await this.respond(res, async () => {
-      const { metadata } = await this.requireOwnedConversation(req.params.id as string)
+      const { resolved, metadata } = await this.requireOwnedConversation(req.params.id as string)
+      const access = this.fileAccess(resolved, metadata)
       try {
-        return { blame: (await scmBlame(this.conversationFolder(metadata), String(req.query.path ?? ''), Number(req.query.line))) ?? null }
+        return { blame: (await scmBlame(this.conversationFolder(metadata), String(req.query.path ?? ''), Number(req.query.line), access)) ?? null }
       } catch (error: unknown) {
         return this.fileFailure(error)
       }

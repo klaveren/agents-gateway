@@ -9,7 +9,14 @@ import { defineConfig } from 'vitest/config'
  */
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
-  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
+  resolve: {
+    alias: [
+      { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
+      // O monaco-yaml (pelo monaco-worker-manager) ainda importa o caminho antigo do worker, que o mapa de exports do
+      // monaco-editor 0.56+ não aceita: aponta direto para o arquivo.
+      { find: /^monaco-editor\/esm\/vs\/(.*)$/, replacement: fileURLToPath(new URL('./node_modules/monaco-editor/esm/vs/', import.meta.url)) + '$1' },
+    ],
+  },
   server: {
     port: 5173,
     proxy: { '/v1': { target: process.env.GATEWAY_URL ?? 'http://127.0.0.1:3100' } },
