@@ -33,6 +33,8 @@
           {{ backLabel }}
         </RouterLink>
         <span v-if="title" class="min-w-0 truncate text-sm font-medium text-zinc-200">· {{ title }}</span>
+        <!-- As ações do item aberto (arquivar...): na tela estreita a barra do detalhe some, e elas vêm para cá. -->
+        <span class="ml-auto flex shrink-0 items-center gap-1"><slot name="actions" /></span>
       </header>
       <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-5">
         <slot name="detail" />

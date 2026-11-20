@@ -2,6 +2,7 @@
   import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import Icon from './Icon.vue'
   import { api, openStream } from '@/lib/api'
+  import { isControlKey, keyCodeOf } from '@/lib/keyCodes'
   import { readSse } from '@/lib/sse'
   import '@/styles/monokai.css'
 
@@ -213,22 +214,6 @@
     }, 50)
   }
 
-  /** As teclas que não escrevem nada: vão como tecla (com o código que a página espera). */
-  const KEY_CODES: Record<string, number> = {
-    Backspace: 8,
-    Tab: 9,
-    Enter: 13,
-    Escape: 27,
-    PageUp: 33,
-    PageDown: 34,
-    End: 35,
-    Home: 36,
-    ArrowLeft: 37,
-    ArrowUp: 38,
-    ArrowRight: 39,
-    ArrowDown: 40,
-    Delete: 46,
-  }
   function onKey(event: KeyboardEvent) {
     if (!props.interactive || !live.value) return
     if (picking.value && event.key === 'Escape') {
@@ -238,9 +223,9 @@
     // Colar: o evento `paste` traz o texto.
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') return
     const printable = event.key.length === 1 && !event.metaKey && !event.ctrlKey
-    if (!printable && !(event.key in KEY_CODES) && !event.metaKey && !event.ctrlKey) return
+    if (!printable && !isControlKey(event.key) && !event.metaKey && !event.ctrlKey) return
     event.preventDefault()
-    const keyCode = KEY_CODES[event.key] ?? (event.key.length === 1 ? event.key.toUpperCase().charCodeAt(0) : undefined)
+    const keyCode = keyCodeOf(event)
     send({ type: 'key', key: event.key, code: event.code, keyCode, text: printable ? event.key : event.key === 'Enter' ? '\r' : undefined, modifiers: modifiers(event) })
   }
   function onPaste(event: ClipboardEvent) {

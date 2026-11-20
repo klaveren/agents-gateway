@@ -28,12 +28,13 @@ const agentMessage = {
 }
 const thread = { conversationId: 's1', agentId: 'zeus', title: 'Preciso do acesso', last: agentMessage, unread: 1, archived: false }
 
-async function mount(id?: string) {
+async function mount(id?: string, threads: unknown[] = [thread]) {
   const calls: Array<{ path: string; init?: Record<string, unknown> }> = []
   vi.mocked(api).mockImplementation((async (path: string, init?: Record<string, unknown>) => {
     calls.push({ path, init })
     if (path === '/agents') return [{ id: 'zeus', name: 'Zeus', providers: [] }]
-    if (path === '/messages') return { threads: [thread], unread: 1 }
+    if (path === '/messages') return { threads, unread: 1 }
+    if (path.endsWith('/archive')) return { unread: 1 }
     if (path === '/messages/s1') return { messages: [agentMessage] }
     if (path === '/messages/s1/read') return { unread: 0 }
     if (path === '/messages/s1/reply') return { queued: false }
@@ -87,5 +88,26 @@ describe('Mensagens', () => {
     await flush()
     expect(calls.find((call) => call.path === '/messages/s1/reply')?.init).toMatchObject({ method: 'POST', body: { message: 'Liberado.' } })
     expect(host.textContent).toContain('A resposta do agente aparece aqui')
+  })
+
+  it('🗂️ arquiva direto da lista, sem abrir o fio', async () => {
+    const { host, calls } = await mount()
+    host.querySelector<HTMLButtonElement>('[data-test="message-thread-archive"]')!.click()
+    await flush()
+    expect(calls.find((call) => call.path === '/messages/s1/archive')?.init).toMatchObject({ method: 'PUT', body: { archived: true } })
+    expect(host.querySelectorAll('[data-test="message-thread"]')).toHaveLength(0)
+  })
+
+  it('"Arquivar lidas" leva só as lidas; a não lida fica', async () => {
+    const read = { ...thread, conversationId: 's2', unread: 0, last: { ...agentMessage, id: 'm2', conversationId: 's2' } }
+    const { host, calls } = await mount(undefined, [thread, read])
+    host.querySelector<HTMLButtonElement>('[data-test="archive-read"]')!.click()
+    await flush()
+    expect(calls.filter((call) => call.path.endsWith('/archive')).map((call) => call.path)).toEqual(['/messages/s2/archive'])
+  })
+
+  it('na tela estreita o fio aberto também arquiva (pela barra de cima)', async () => {
+    const { host } = await mount('s1')
+    expect(host.querySelector('[data-test="message-archive-mobile"]')).not.toBeNull()
   })
 })

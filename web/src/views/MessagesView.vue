@@ -141,6 +141,25 @@
     await router.push('/messages')
   }
 
+  /** 🗂️ Arquiva (ou devolve à caixa) direto da lista, sem abrir o fio; o aberto fecha junto. */
+  async function archiveThread(conversationId: string) {
+    await messages.archive(conversationId, !messages.archived)
+    if (conversationId === props.id) await router.push('/messages')
+  }
+
+  /** As lidas da caixa, de uma vez: o que ainda precisa de você (não lida) fica. */
+  const readThreads = computed(() => (messages.archived ? [] : shown.value.filter((thread) => !thread.unread)))
+  const archivingRead = ref(false)
+  async function archiveRead() {
+    archivingRead.value = true
+    try {
+      for (const thread of readThreads.value) await messages.archive(thread.conversationId, true)
+      if (props.id && !messages.threads.some((thread) => thread.conversationId === props.id)) await router.push('/messages')
+    } finally {
+      archivingRead.value = false
+    }
+  }
+
   const snippet = (text: string) => text.replace(/\s+/g, ' ').slice(0, 140)
 </script>
 
@@ -151,7 +170,19 @@
         <header class="flex items-center gap-2 px-4 pt-4 pb-2">
           <h1 class="text-xl font-semibold">Mensagens</h1>
           <span v-if="messages.unread" class="rounded-full bg-emerald-500 px-1.5 text-xs font-semibold text-zinc-950">{{ messages.unread }}</span>
-          <button type="button" class="btn btn-sm btn-ghost ml-auto" @click="messages.showArchived(!messages.archived)">
+          <button
+            v-if="readThreads.length"
+            type="button"
+            class="btn btn-sm btn-ghost ml-auto"
+            :disabled="archivingRead"
+            title="Arquivar as conversas já lidas"
+            data-test="archive-read"
+            @click="archiveRead"
+          >
+            <Icon name="archive" class="h-4 w-4" />
+            Arquivar lidas
+          </button>
+          <button type="button" class="btn btn-sm btn-ghost" :class="readThreads.length ? '' : 'ml-auto'" @click="messages.showArchived(!messages.archived)">
             {{ messages.archived ? 'Caixa de entrada' : 'Arquivadas' }}
           </button>
         </header>
@@ -181,7 +212,17 @@
           {{ messages.archived ? 'Nenhuma mensagem arquivada.' : 'Nenhuma mensagem. Quando um agente precisar de você, ela aparece aqui.' }}
         </p>
         <ul class="min-h-0 flex-1 overflow-y-auto px-2">
-          <li v-for="thread in shown" :key="thread.conversationId">
+          <li v-for="thread in shown" :key="thread.conversationId" class="group relative">
+            <button
+              type="button"
+              class="absolute top-2 right-2 z-10 rounded-full bg-zinc-800 p-1.5 text-zinc-300 opacity-0 group-hover:opacity-100 hover:text-zinc-50 focus:opacity-100 [@media(hover:none)]:opacity-100"
+              :title="messages.archived ? 'Voltar à caixa' : 'Arquivar'"
+              :aria-label="messages.archived ? 'Voltar à caixa' : 'Arquivar'"
+              data-test="message-thread-archive"
+              @click="archiveThread(thread.conversationId)"
+            >
+              <Icon name="archive" class="h-3.5 w-3.5" />
+            </button>
             <RouterLink
               :to="`/messages/${thread.conversationId}`"
               class="flex items-start gap-3 rounded-xl px-2 py-2.5 hover:bg-zinc-900"
@@ -212,6 +253,12 @@
           </li>
         </ul>
       </section>
+    </template>
+
+    <template #actions>
+      <button v-if="id" type="button" class="btn btn-sm btn-ghost" :title="messages.archived ? 'Voltar à caixa' : 'Arquivar'" data-test="message-archive-mobile" @click="archive">
+        <Icon name="archive" class="h-4 w-4" />
+      </button>
     </template>
 
     <template #detail>
