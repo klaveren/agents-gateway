@@ -58,9 +58,34 @@ export function loadServers(): Promise<void> {
   return (reading ??= ask({ op: 'list' }).catch(() => undefined))
 }
 
-/** A janela passa a mostrar o início desse servidor: esta tela sai. */
-export function switchServer(id: string): Promise<void> {
-  return ask({ op: 'switch', id })
+/** A janela passa a mostrar o início desse servidor (com `project`, já nele): esta tela sai. */
+export function switchServer(id: string, project?: string): Promise<void> {
+  return ask({ op: 'switch', id, ...(project ? { project } : {}) })
+}
+
+/** Os projetos de um OUTRO servidor, como o app os leu com o login que a janela guarda de lá. */
+export interface IServerProjects {
+  id: string
+  name: string
+  /** `login`: sem login lá (a tela oferece "Entrar"); `offline`: não respondeu. */
+  state: 'ok' | 'login' | 'offline'
+  projects?: Array<{ id: string; name: string; color?: string }>
+}
+
+const others = ref<IServerProjects[]>()
+/** Os projetos dos outros servidores (fora do app, nada). */
+export const otherServerProjects = computed(() => others.value)
+
+/** Pede ao app os projetos dos outros servidores (a cada abertura do menu: login e lista mudam). */
+export async function loadOtherProjects(): Promise<void> {
+  const native = bridge()
+  if (!native) return
+  try {
+    const reply = (await native.postMessage({ op: 'projects' })) as { servers?: IServerProjects[] } | undefined
+    if (Array.isArray(reply?.servers)) others.value = reply.servers.filter((server) => typeof server?.id === 'string')
+  } catch {
+    // App antigo (sem a operação) ou ponte fora: o menu fica como antes.
+  }
 }
 
 export function addServer(name: string, url: string): Promise<void> {

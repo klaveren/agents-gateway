@@ -98,9 +98,33 @@ describe('ProjectSwitcher — o servidor, no app do Mac', () => {
     await openMenu(host)
     servers(host)[1].click()
     await flush()
-    expect(post).toHaveBeenCalledTimes(1)
     expect(post).toHaveBeenCalledWith({ op: 'list' })
+    expect(post.mock.calls.some(([message]) => message.op === 'switch')).toBe(false)
     expect(host.querySelector('[role="menu"]')).toBeNull()
+  })
+
+  it('no app, os projetos de todos os servidores numa lista só, com a tag; o clique troca de servidor e abre o projeto', async () => {
+    const post = vi.fn(async (message: Record<string, unknown>) =>
+      message.op === 'projects'
+        ? {
+            servers: [
+              { id: 's4', name: 'Servidor 4', state: 'ok', projects: [{ id: 'beta', name: 'Beta' }] },
+              { id: 's5', name: 'Servidor 5', state: 'login' },
+            ],
+          }
+        : { current: 'local', manage: true, servers: SERVERS },
+    )
+    ;(globalThis as TWindow).webkit = { messageHandlers: { gatewayServers: { postMessage: post } } }
+    const host = await mount()
+    await openMenu(host)
+    expect(host.querySelector('[data-test="project-server-tag"]')!.textContent).toBe('Este Mac')
+    const other = host.querySelector<HTMLElement>('[data-test="other-project-item"]')!
+    expect(other.textContent).toContain('Beta')
+    expect(other.textContent).toContain('Servidor 4')
+    expect(host.querySelector('[data-test="other-server-login"]')!.textContent).toContain('Entrar em Servidor 5')
+    other.click()
+    await flush()
+    expect(post).toHaveBeenCalledWith({ op: 'switch', id: 's4', project: 'beta' })
   })
 
   it('na tela de outro servidor dá para trocar, mas o cadastro não aparece', async () => {

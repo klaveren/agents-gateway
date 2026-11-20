@@ -1,47 +1,56 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { lite } from '@/lib/edition'
-import { initials } from '@/lib/format'
-import { PALETTES } from '@/lib/projectColors'
-import { useAboveBar, usePopover } from '@/lib/popover'
-import { loadServers, serverList, switchServer } from '@/lib/servers'
-import { useAuthStore } from '@/stores/auth'
-import { useProjectsStore } from '@/stores/projects'
-import Icon from './Icon.vue'
+  import { computed } from 'vue'
+  import { lite } from '@/lib/edition'
+  import { initials } from '@/lib/format'
+  import { PALETTES } from '@/lib/projectColors'
+  import { useAboveBar, usePopover } from '@/lib/popover'
+  import { loadOtherProjects, loadServers, otherServerProjects, serverList, switchServer } from '@/lib/servers'
+  import { watch } from 'vue'
+  import { useAuthStore } from '@/stores/auth'
+  import { useProjectsStore } from '@/stores/projects'
+  import Icon from './Icon.vue'
 
-/**
- * O seletor de PROJETO, no topo do trilho: o projeto atual recorta Conversas, Agentes e a conversa nova.
- * A lite não troca de projeto: só mostra o atual (o padrão).
- * ⚖️ No app do Mac, o mesmo menu troca de SERVIDOR (ver `lib/servers`): o bloco fica acima dos projetos, que são os do
- * servidor que está na janela. Na lite ele é o menu inteiro.
- * `placement`: no trilho (desktop) abre para o lado; na barra do celular, para cima.
- */
-defineProps<{ placement: 'side' | 'up' }>()
-const auth = useAuthStore()
-const projects = useProjectsStore()
-const { open, root } = usePopover()
-const above = useAboveBar(open, root)
+  /**
+   * O seletor de PROJETO, no topo do trilho: o projeto atual recorta Conversas, Agentes e a conversa nova.
+   * A lite não troca de projeto: só mostra o atual (o padrão).
+   * ⚖️ No app do Mac, o mesmo menu troca de SERVIDOR (ver `lib/servers`): o bloco fica acima dos projetos, que são os do
+   * servidor que está na janela. Na lite ele é o menu inteiro.
+   * `placement`: no trilho (desktop) abre para o lado; na barra do celular, para cima.
+   */
+  defineProps<{ placement: 'side' | 'up' }>()
+  const auth = useAuthStore()
+  const projects = useProjectsStore()
+  const { open, root } = usePopover()
+  const above = useAboveBar(open, root)
 
-const label = computed(() => projects.currentProject?.name ?? 'Sem projeto')
+  const label = computed(() => projects.currentProject?.name ?? 'Sem projeto')
 
-void loadServers()
-/** Sem o que escolher (a lite, fora do app), o botão só mostra o projeto. */
-const fixed = computed(() => lite.value && !serverList.value)
+  void loadServers()
+  /** Sem o que escolher (a lite, fora do app), o botão só mostra o projeto. */
+  const fixed = computed(() => lite.value && !serverList.value)
 
-async function choose(id: string) {
-  open.value = false
-  await projects.select(id)
-}
+  async function choose(id: string) {
+    open.value = false
+    await projects.select(id)
+  }
 
-async function go(id: string) {
-  open.value = false
-  if (id === serverList.value?.current) return
-  // A falha de abrir é do app, que avisa na janela; aqui só sobra o servidor que saiu da lista, e não há o que mostrar.
-  await switchServer(id).catch(() => undefined)
-}
+  /** O nome do servidor que está na janela (a tag dos projetos daqui). */
+  const currentServerName = computed(() => serverList.value?.servers.find((server) => server.id === serverList.value?.current)?.name)
+  // Ao abrir o menu, o app relê os projetos dos outros servidores (login e lista mudam).
+  watch(open, (isOpen) => {
+    if (isOpen && serverList.value) void loadOtherProjects()
+  })
 
-/** A paleta do projeto, se ele tem cor. */
-const paletteOf = (color: string | undefined) => (color && color in PALETTES ? PALETTES[color as keyof typeof PALETTES] : undefined)
+  async function go(id: string, project?: string) {
+    open.value = false
+    if (id === serverList.value?.current && !project) return
+    if (id === serverList.value?.current && project) return void (await projects.select(project))
+    // A falha de abrir é do app, que avisa na janela; aqui só sobra o servidor que saiu da lista, e não há o que mostrar.
+    await switchServer(id, project).catch(() => undefined)
+  }
+
+  /** A paleta do projeto, se ele tem cor. */
+  const paletteOf = (color: string | undefined) => (color && color in PALETTES ? PALETTES[color as keyof typeof PALETTES] : undefined)
 </script>
 
 <template>
@@ -59,8 +68,9 @@ const paletteOf = (color: string | undefined) => (color && color in PALETTES ? P
       <span
         class="grid place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-accent-end font-bold text-zinc-950"
         :class="[placement === 'up' ? 'h-[22px] w-[22px] rounded-md text-[9px]' : 'h-8 w-8 text-xs', open ? 'ring-2 ring-emerald-300/60' : '']"
-        >{{ projects.currentProject ? initials(projects.currentProject.name) : 'AG' }}</span
       >
+        {{ projects.currentProject ? initials(projects.currentProject.name) : 'AG' }}
+      </span>
       <span v-if="placement === 'up'" class="max-w-full truncate px-0.5">{{ label }}</span>
     </button>
 
@@ -88,7 +98,6 @@ const paletteOf = (color: string | undefined) => (color && color in PALETTES ? P
           <span class="min-w-0 flex-1 truncate">{{ server.name }}</span>
           <span v-if="server.id === serverList.current" class="text-xs">✓</span>
         </button>
-        <RouterLink v-if="serverList.manage" to="/servers" role="menuitem" class="block px-3 py-2.5 text-zinc-300 hover:bg-zinc-800" data-test="servers-manage">Gerenciar servidores</RouterLink>
       </template>
       <template v-if="!lite">
         <div class="border-b border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-500" :class="serverList ? 'border-t' : ''">Projeto</div>
@@ -112,11 +121,65 @@ const paletteOf = (color: string | undefined) => (color && color in PALETTES ? P
             {{ initials(project.name) }}
           </span>
           <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
+          <span v-if="serverList && currentServerName" class="server-tag shrink-0" data-test="project-server-tag">{{ currentServerName }}</span>
           <span v-if="project.id === projects.current" class="text-xs">✓</span>
         </button>
-        <p v-if="!projects.list.length" class="px-3 py-2 text-xs text-zinc-500">{{ auth.isAdmin ? 'Nenhum projeto ainda.' : 'Você não está em nenhum projeto: peça a quem administra.' }}</p>
-        <RouterLink v-if="auth.isAdmin || projects.managesAny" to="/projects" role="menuitem" class="block border-t border-zinc-800 px-3 py-2.5 text-zinc-300 hover:bg-zinc-800">Gerenciar projetos</RouterLink>
+        <!-- 🗂️ No app do Mac: os projetos dos OUTROS servidores, na mesma lista, com a tag de qual é. O clique troca de servidor e abre o projeto. -->
+        <template v-for="server in serverList ? (otherServerProjects ?? []) : []" :key="`server:${server.id}`">
+          <button
+            v-for="project in server.state === 'ok' ? (server.projects ?? []) : []"
+            :key="`${server.id}:${project.id}`"
+            type="button"
+            role="menuitem"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
+            data-test="other-project-item"
+            @click="go(server.id, project.id)"
+          >
+            <span
+              class="grid h-6 w-6 shrink-0 place-items-center rounded-md text-[10px] font-semibold"
+              :class="paletteOf(project.color) ? 'text-zinc-950' : 'bg-zinc-800'"
+              :style="paletteOf(project.color) ? { background: paletteOf(project.color)!['500'] } : undefined"
+            >
+              {{ initials(project.name) }}
+            </span>
+            <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
+            <span class="server-tag shrink-0">{{ server.name }}</span>
+          </button>
+          <button
+            v-if="server.state !== 'ok'"
+            type="button"
+            role="menuitem"
+            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-zinc-400 hover:bg-zinc-800"
+            :disabled="server.state === 'offline'"
+            data-test="other-server-login"
+            @click="go(server.id)"
+          >
+            <span class="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-zinc-800"><Icon name="globe" class="h-3.5 w-3.5" /></span>
+            <span class="min-w-0 flex-1 truncate">{{ server.state === 'login' ? `Entrar em ${server.name}` : `${server.name} não respondeu` }}</span>
+          </button>
+        </template>
+        <p v-if="!projects.list.length" class="px-3 py-2 text-xs text-zinc-500">
+          {{ auth.isAdmin ? 'Nenhum projeto ainda.' : 'Você não está em nenhum projeto: peça a quem administra.' }}
+        </p>
+        <RouterLink v-if="auth.isAdmin || projects.managesAny" to="/projects" role="menuitem" class="block border-t border-zinc-800 px-3 py-2.5 text-zinc-300 hover:bg-zinc-800">
+          Gerenciar projetos
+        </RouterLink>
+        <RouterLink v-if="serverList?.manage" to="/servers" role="menuitem" class="block px-3 py-2.5 text-zinc-300 hover:bg-zinc-800" data-test="servers-manage">
+          Gerenciar servidores
+        </RouterLink>
       </template>
     </div>
   </div>
 </template>
+
+<style scoped>
+  /* A tag do servidor de cada projeto (só no app do Mac, com mais de um servidor). */
+  .server-tag {
+    border-radius: 9999px;
+    background: rgb(39 39 42);
+    padding: 0 0.4rem;
+    font-size: 10px;
+    line-height: 1.1rem;
+    color: rgb(161 161 170);
+  }
+</style>
