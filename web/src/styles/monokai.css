@@ -105,3 +105,123 @@
   background: rgb(253 151 31 / 0.15);
   color: #fd971f;
 }
+
+/* 🧩 Better Comments e Error Lens, dentro do editor (as classes que o Monaco põe nas decorações). */
+.bc-alert {
+  color: #ff2d00 !important;
+}
+.bc-query {
+  color: #3498db !important;
+}
+.bc-todo {
+  color: #ff8c00 !important;
+}
+.bc-highlight {
+  color: #98c379 !important;
+}
+.bc-strike {
+  color: #75715e !important;
+  text-decoration: line-through;
+}
+.el-line-error {
+  background: rgb(249 38 114 / 0.08);
+}
+.el-line-warn {
+  background: rgb(253 151 31 / 0.06);
+}
+.el-text-error {
+  color: #f92672 !important;
+  font-style: italic;
+  opacity: 0.85;
+}
+.el-text-warn {
+  color: #fd971f !important;
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.mk-menu {
+  background: #1e1f1c;
+  border: 1px solid #3b3a32;
+  color: #f8f8f2;
+}
+
+/* A barra de uma seção (Timeline), como no VS Code: um tom acima da lateral e a linha em cima. */
+.mk-section-head {
+  background: #272822;
+  border-bottom: 1px solid #3b3a32;
+}
+.mk-section-head:hover {
+  background: #3e3d32;
+}
+/* A Timeline: um círculo por commit, ligados por uma linha. */
+.mk-timeline-item::before {
+  content: '';
+  position: absolute;
+  left: calc(0.75rem + 4px);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #3b3a32;
+}
+.mk-timeline-item:first-child::before {
+  top: 50%;
+}
+.mk-timeline-item:last-child::before {
+  bottom: 50%;
+}
+.mk-timeline-dot {
+  position: relative;
+  z-index: 1;
+  height: 9px;
+  width: 9px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  border: 1.5px solid #a59f85;
+  background: #1e1f1c;
+}
+.mk-timeline-item:hover .mk-timeline-dot,
+.mk-selected .mk-timeline-dot {
+  border-color: #a6e22e;
+}
+
+/* A busca: as opções (Aa, ab, .*) e o trecho achado. */
+.search-flag {
+  display: grid;
+  height: 1.375rem;
+  min-width: 1.5rem;
+  place-items: center;
+  border-radius: 0.25rem;
+  padding: 0 0.25rem;
+  font-size: 11px;
+  color: #a59f85;
+}
+.search-flag:hover {
+  background: #3e3d32;
+}
+.search-flag.on {
+  background: #49483e;
+  color: #a6e22e;
+  outline: 1px solid #a6e22e;
+}
+.search-hit {
+  background: rgb(230 219 116 / 0.3);
+  color: #f8f8f2;
+  border-radius: 2px;
+}
+
+/* Arrastar e soltar: a pasta de destino acesa. */
+.mk-drop {
+  background: rgb(166 226 46 / 0.15) !important;
+  outline: 1px dashed #a6e22e;
+  outline-offset: -1px;
+}
+.mk-drop-root {
+  outline: 1px dashed #a6e22e;
+  outline-offset: -2px;
+}
+
+/* O que o .gitignore esconde: apagado, como no VS Code. */
+.mk-ignored {
+  opacity: 0.55;
+}

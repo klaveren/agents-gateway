@@ -2,7 +2,7 @@ import { existsSync, lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isSecretPath } from '@domain/Permission.Policy'
 import { safeGit } from './Git.Safe'
-import { MAX_EDITOR_BYTES, RepositoryFileError, TFileStatus } from './Repository.Files'
+import { IFileAccess, MAX_EDITOR_BYTES, RepositoryFileError, TFileStatus } from './Repository.Files'
 import { IWorkFolder } from './Work.Folder'
 
 /**
@@ -45,7 +45,7 @@ export function parseStatusV2(out: string): IScmState {
       state.behind = Math.abs(Number.parseInt(behind, 10)) || 0
     } else if (record.startsWith('? ')) {
       const path = record.slice(2)
-      if (!isSecretPath(path)) state.changes.push({ path, status: 'U' })
+      state.changes.push({ path, status: 'U' })
     } else if (record.startsWith('1 ') || record.startsWith('2 ') || record.startsWith('u ')) {
       const kind = record[0]
       const fields = record.split(' ')
@@ -54,7 +54,6 @@ export function parseStatusV2(out: string): IScmState {
       const before = kind === '1' ? 8 : kind === '2' ? 9 : 10
       const path = fields.slice(before).join(' ')
       if (kind === '2') index += 1
-      if (isSecretPath(path)) continue
       if (kind === 'u') {
         state.changes.push({ path, status: 'M' })
         continue
@@ -71,12 +70,12 @@ export async function scmState(folder: IWorkFolder): Promise<IScmState> {
 }
 
 /** ⛔ O caminho para o git: relativo, sem `..`, sem `.git`, sem segredo. Vai como `:(literal)`: nada de curinga do git. */
-function pathspec(path: string): string {
+function pathspec(path: string, access: IFileAccess = {}): string {
   const clean = path.replace(/\\/g, '/').replace(/^\.\//, '')
   if (!clean || clean.startsWith('/') || clean.split('/').some((part) => part === '..' || part === '' || part === '.git')) {
     throw new RepositoryFileError('invalid', `path: ${path}`)
   }
-  if (isSecretPath(clean)) throw new RepositoryFileError('not_found', 'not found')
+  if (isSecretPath(clean) && !access.secrets) throw new RepositoryFileError('forbidden', 'secret file: only a project admin opens it')
   return `:(literal)${clean}`
 }
 
@@ -93,8 +92,19 @@ async function blob(folder: IWorkFolder, spec: string): Promise<string> {
  * O diff de um arquivo, como o VS Code: o preparado compara o último commit com o index; o não preparado, o index (ou o
  * último commit) com a pasta.
  */
-export async function scmDiff(folder: IWorkFolder, path: string, staged: boolean): Promise<{ path: string; original: string; modified: string }> {
-  pathspec(path)
+export async function scmDiff(
+  folder: IWorkFolder,
+  path: string,
+  staged: boolean,
+  commit?: string,
+  access: IFileAccess = {},
+): Promise<{ path: string; original: string; modified: string }> {
+  pathspec(path, access)
+  // De um commit da Timeline: o arquivo antes dele (o pai) e depois dele.
+  if (commit) {
+    if (!/^[0-9a-f]{7,40}$/i.test(commit)) throw new RepositoryFileError('invalid', 'commit: a commit sha')
+    return { path, original: await blob(folder, `${commit}^:${path}`), modified: await blob(folder, `${commit}:${path}`) }
+  }
   if (staged) return { path, original: await blob(folder, `HEAD:${path}`), modified: await blob(folder, `:${path}`) }
   const full = join(folder.dir, path)
   let modified = ''
@@ -109,12 +119,12 @@ export async function scmDiff(folder: IWorkFolder, path: string, staged: boolean
 
 export async function scmStage(folder: IWorkFolder, paths: readonly string[]): Promise<void> {
   if (!paths.length) return
-  await safeGit(folder, ['add', '-A', '--', ...paths.map(pathspec)])
+  await safeGit(folder, ['add', '-A', '--', ...paths.map((path) => pathspec(path))])
 }
 
 export async function scmUnstage(folder: IWorkFolder, paths: readonly string[]): Promise<void> {
   if (!paths.length) return
-  const specs = paths.map(pathspec)
+  const specs = paths.map((path) => pathspec(path))
   const hasHead = await safeGit(folder, ['rev-parse', '--verify', '--quiet', 'HEAD']).then(
     () => true,
     () => false,
@@ -135,11 +145,10 @@ export async function scmCommit(folder: IWorkFolder, message: string, author: { 
   if (secret) throw new RepositoryFileError('invalid', `a secret file is staged (${secret}): unstage it before committing`)
   const state = await scmState(folder)
   if (!state.staged.length) {
-    if (!state.changes.length) throw new RepositoryFileError('invalid', 'nothing to commit')
-    await scmStage(
-      folder,
-      state.changes.map((entry) => entry.path),
-    )
+    // ⛔ Segredo nunca entra no commit automático: ele aparece na lista, mas fica de fora.
+    const toStage = state.changes.filter((entry) => !isSecretPath(entry.path)).map((entry) => entry.path)
+    if (!toStage.length) throw new RepositoryFileError('invalid', 'nothing to commit')
+    await scmStage(folder, toStage)
   }
   await safeGit(folder, ['-c', 'commit.gpgSign=false', 'commit', '--no-verify', '--quiet', '-m', text], { author })
   return { commit: (await safeGit(folder, ['rev-parse', 'HEAD'])).trim() }
@@ -163,12 +172,39 @@ export function parseBlame(out: string): IScmBlame | undefined {
   return { commit, author: field('author'), time: Number(field('author-time')) || undefined, summary: field('summary') }
 }
 
-export async function scmBlame(folder: IWorkFolder, path: string, line: number): Promise<IScmBlame | undefined> {
-  const spec = pathspec(path).replace(/^:\(literal\)/, '')
+export async function scmBlame(folder: IWorkFolder, path: string, line: number, access: IFileAccess = {}): Promise<IScmBlame | undefined> {
+  const spec = pathspec(path, access).replace(/^:\(literal\)/, '')
   if (!Number.isInteger(line) || line < 1) throw new RepositoryFileError('invalid', 'line: a positive integer')
   try {
     return parseBlame(await safeGit(folder, ['blame', '--porcelain', '-L', `${line},${line}`, '--', spec], { maxBuffer: 1024 * 1024 }))
   } catch {
     return undefined
   }
+}
+
+/** Um commit da Timeline do arquivo. */
+export interface IScmCommit {
+  sha: string
+  author: string
+  time: number
+  subject: string
+}
+
+/** A TIMELINE: os commits que mexeram no arquivo (seguindo renomeação), do mais novo ao mais velho. */
+export async function scmHistory(folder: IWorkFolder, path: string, limit = 50, access: IFileAccess = {}): Promise<IScmCommit[]> {
+  const spec = pathspec(path, access).replace(/^:\(literal\)/, '')
+  let out: string
+  try {
+    out = await safeGit(folder, ['log', '--follow', `-n${Math.min(200, Math.max(1, limit))}`, '--format=%H%x1f%an%x1f%at%x1f%s%x1e', '--', spec], { maxBuffer: 4 * 1024 * 1024 })
+  } catch {
+    return []
+  }
+  return out
+    .split('\x1e')
+    .map((record) => record.trim())
+    .filter(Boolean)
+    .map((record) => {
+      const [sha, author, time, subject] = record.split('\x1f')
+      return { sha, author, time: Number(time) || 0, subject: subject ?? '' }
+    })
 }

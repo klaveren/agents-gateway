@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
-import { parseStatusV2, scmBlame, scmCommit, scmDiff, scmStage, scmState, scmUnstage } from './Repository.Scm'
+import { parseStatusV2, scmBlame, scmCommit, scmHistory, scmDiff, scmStage, scmState, scmUnstage } from './Repository.Scm'
 import { IWorkFolder } from './Work.Folder'
 
 const author = { name: 'Pessoa Teste', email: 'pessoa@teste.local' }
@@ -48,9 +48,11 @@ describe('Repository.Scm — o controle de versão da conversa', () => {
     assert.equal(state.ahead, 2)
     assert.equal(state.behind, 13)
     assert.deepEqual(state.staged, [{ path: 'src/a b.ts', status: 'M' }])
+    // O segredo aparece pelo NOME (o valor segue protegido).
     assert.deepEqual(state.changes, [
       { path: 'b.ts', status: 'M' },
       { path: 'novo.ts', status: 'U' },
+      { path: '.env', status: 'U' },
     ])
   })
 
@@ -62,7 +64,7 @@ describe('Repository.Scm — o controle de versão da conversa', () => {
     writeFileSync(join(root, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
     let state = await scmState(folder)
     assert.equal(state.branch, 'main')
-    assert.deepEqual(state.changes.map((entry) => entry.path).sort(), ['a.txt', 'b.txt'])
+    assert.deepEqual(state.changes.map((entry) => entry.path).sort(), ['.env', 'a.txt', 'b.txt'])
     assert.deepEqual(await scmDiff(folder, 'a.txt', false), { path: 'a.txt', original: 'um\n', modified: 'dois\n' })
     await scmStage(folder, ['a.txt'])
     state = await scmState(folder)
@@ -83,6 +85,18 @@ describe('Repository.Scm — o controle de versão da conversa', () => {
     assert.equal(blame?.summary, 'mudanças da tela')
     writeFileSync(join(root, 'a.txt'), 'três\n')
     assert.deepEqual(await scmBlame(folder, 'a.txt', 1), { uncommitted: true })
+  })
+
+  it('a Timeline lista os commits do arquivo e o diff de um commit', async () => {
+    const history = await scmHistory(folder, 'a.txt')
+    assert.deepEqual(
+      history.map((commit) => commit.subject),
+      ['mudanças da tela', 'início'],
+    )
+    assert.equal(history[0].author, 'Pessoa Teste')
+    const diff = await scmDiff(folder, 'a.txt', false, history[0].sha)
+    assert.deepEqual([diff.original, diff.modified], ['um\n', 'dois\n'])
+    await assert.rejects(scmDiff(folder, 'a.txt', false, 'nao-e-sha'))
   })
 
   it('recusa commitar segredo que o agente preparou sozinho', async () => {

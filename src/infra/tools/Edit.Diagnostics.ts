@@ -159,6 +159,11 @@ export function makeEditDiagnostics(deps: { permissions?: IPermissionChecker; sa
   }
 }
 
+/** A linha do gateway no cerco montado das regras do agente da conversa (sem rede). Também o ESLint do editor da tela. */
+export function cercoRunner(permissions: IPermissionChecker, sandbox: IProjectSandbox, root: string, context: IExecutionContext | undefined): TDiagnosticRun {
+  return cercado(permissions, sandbox, root, context)
+}
+
 function cercado(permissions: IPermissionChecker, sandbox: IProjectSandbox, root: string, context: IExecutionContext | undefined): TDiagnosticRun {
   const projectId = context?.conversationProjectId ?? context?.projectId
   const asker = { ...(context?.agentId ? { agentId: context.agentId } : {}), ...(projectId ? { projectId } : {}), ...(context?.sessionId ? { sessionId: context.sessionId } : {}) }

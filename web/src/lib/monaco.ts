@@ -64,6 +64,15 @@ monaco.editor.defineTheme('monokai', {
     { token: 'variable.md', foreground: 'FD971F' },
     { token: 'emphasis', fontStyle: 'italic' },
     { token: 'strong', fontStyle: 'bold' },
+    // Rainbow CSV: uma cor por coluna.
+    { token: 'rainbow0', foreground: 'F8F8F2' },
+    { token: 'rainbow1', foreground: '66D9EF' },
+    { token: 'rainbow2', foreground: 'A6E22E' },
+    { token: 'rainbow3', foreground: 'E6DB74' },
+    { token: 'rainbow4', foreground: 'FD971F' },
+    { token: 'rainbow5', foreground: 'F92672' },
+    { token: 'rainbow6', foreground: 'AE81FF' },
+    { token: 'rainbow7', foreground: 'A1EFE4' },
   ],
   colors: {
     'editor.background': '#272822',
