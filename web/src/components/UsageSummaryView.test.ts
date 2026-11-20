@@ -89,4 +89,12 @@ describe('UsageSummaryView', () => {
     const host = await mount({ summary: summary(), showCost: false })
     expect(host.querySelector('[data-test="by-tool"]')).toBeNull()
   })
+
+  it('a voz das mensagens aparece como "Voz (mensagens)" e a linha dela não vira link de conversa', async () => {
+    const voice = { ...figure, agentId: 'voice-messages' }
+    const host = await mount({ summary: summary({ byAgent: [voice], top: [{ ...voice, id: 'speech:u1', title: 'Voz (mensagens)', provider: 'p', model: 'm' }] }), showCost: false })
+    expect(host.textContent).toContain('Voz (mensagens)')
+    expect(host.textContent).not.toContain('voice-messages')
+    expect(host.querySelector('a[href="/c/speech:u1"]')).toBeNull()
+  })
 })

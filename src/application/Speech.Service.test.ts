@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { SqliteUserPreferenceRepository } from '@infra/persistence/Sqlite.UserPreferenceRepository'
+import type { ISpeechUsageEntry } from '@domain/models/SpeechUsage.Model'
 import { ISpeechEngine, SpeechFailedError, SpeechService, SpeechUnavailableError, speechEngineOf } from './Speech.Service'
 
 const ENGINE: ISpeechEngine = { connection: { providerId: 'p', protocol: EProvider.OPENAI, key: 'k-secret' }, model: 'm', voice: 'Cherry' }
@@ -75,5 +76,39 @@ describe('SpeechService', () => {
       undefined,
     )
     assert.deepStrictEqual(speechEngineOf({ audience: 'all', speechProvider: 'p', speechModel: 'm', speechVoice: 'v' }, connection)?.voice, 'v')
+  })
+
+  it('💰 uso: uma linha por chamada ao provider (com os tokens dele), nenhuma no cache; falha ao gravar não derruba a fala', async () => {
+    const entries: ISpeechUsageEntry[] = []
+    let calls = 0
+    const service = new SpeechService({
+      prefs: new SqliteUserPreferenceRepository(),
+      engine: async () => ENGINE,
+      synthesize: async (_connection, _model, text) => {
+        calls += 1
+        return { data: Buffer.from(text), mime: 'audio/mpeg', usage: { inputTokens: 7, outputTokens: 3, characters: text.length } }
+      },
+      record: (entry) => entries.push(entry),
+      now: () => new Date('2026-11-20T10:00:00Z'),
+    })
+    await service.speak('u1', 'Olá', { projectId: 'logiccus' })
+    await service.speak('u1', 'Olá', { projectId: 'logiccus' })
+    assert.strictEqual(calls, 1)
+    assert.deepStrictEqual(entries, [
+      { at: new Date('2026-11-20T10:00:00Z'), userId: 'u1', projectId: 'logiccus', provider: 'p', model: 'm', inputTokens: 7, outputTokens: 3, totalTokens: 10, characters: 3 },
+    ])
+    await service.sample('u1')
+    assert.strictEqual(entries.length, 2)
+    assert.strictEqual(entries[1]!.projectId, undefined)
+
+    const broken = new SpeechService({
+      prefs: new SqliteUserPreferenceRepository(),
+      engine: async () => ENGINE,
+      synthesize: async () => ({ data: Buffer.from('x'), mime: 'audio/mpeg' }),
+      record: () => {
+        throw new Error('disk full')
+      },
+    })
+    assert.strictEqual((await broken.speak('u1', 'oi')).data.toString(), 'x')
   })
 })

@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'node:test'
 import { makeAuth } from '@composition/factories/Auth.Factory'
 import { makeAuthController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
 import { makePersonMessages } from '@composition/factories/PersonMessages.Factory'
+import { makeSpeechUsage } from '@composition/factories/SpeechUsage.Factory'
 import { ISpeechEngine, SpeechService } from '@application/Speech.Service'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { SqliteUserPreferenceRepository } from '@infra/persistence/Sqlite.UserPreferenceRepository'
@@ -48,8 +49,9 @@ describe('Voz (integração)', () => {
         synthesize: async (_connection, _model, text) => {
           spoken.push(text)
           if (failWith) throw new Error(failWith)
-          return { data: Buffer.from(`audio:${text}`), mime: 'audio/mpeg' }
+          return { data: Buffer.from(`audio:${text}`), mime: 'audio/mpeg', usage: { inputTokens: 10, outputTokens: 20, characters: text.length } }
         },
+        record: (entry) => makeSpeechUsage().record(entry),
       }),
       messages: makePersonMessages(),
       proof: makeAuth().proof,
@@ -129,6 +131,19 @@ describe('Voz (integração)', () => {
     const none = await call(`/messages/gw_voz_ana/${messageId}/speech`, { token: member })
     assert.deepStrictEqual([none.status, none.body.code], [409, 'speech_unavailable'])
     assert.strictEqual((await call('/me/voice/sample', { token: member })).status, 409)
+  })
+
+  it('💰 a voz aparece na tela Uso: nos totais, por modelo e por "agente", e só a chamada ao provider conta (cache não)', async () => {
+    const all = (await call('/usage/all', { token: admin })).body.result
+    const voice = all.byAgent.find((item: { agentId: string }) => item.agentId === 'voice-messages')
+    // O áudio da mensagem e o "Testar" foram sintetizados no provider; a segunda ouvida da mensagem veio do cache.
+    assert.deepStrictEqual([voice.turns, voice.usage.inputTokens, voice.usage.outputTokens, voice.usage.totalTokens], [2, 20, 40, 60])
+    const model = all.byModel.find((item: { provider: string; model: string }) => item.provider === 'p' && item.model === 'm')
+    assert.strictEqual(model.usage.totalTokens, 60)
+    assert.ok(all.totals.usage.totalTokens >= 60)
+    const mine = (await call('/usage/me', { token: member })).body.result
+    assert.strictEqual(mine.byAgent.find((item: { agentId: string }) => item.agentId === 'voice-messages').turns, 2)
+    assert.strictEqual((await call('/usage/me', { token: admin })).body.result.byAgent.some((item: { agentId: string }) => item.agentId === 'voice-messages'), false)
   })
 
   it('🔊 configurações da voz: provider e modelo juntos, provider existente com chave', async () => {

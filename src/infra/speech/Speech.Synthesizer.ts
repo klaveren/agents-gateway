@@ -11,6 +11,14 @@ import { isAlwaysBlockedHost, isCloudMetadataHost } from '@domain/Url.Policy'
 export interface ISynthesizedSpeech {
   data: Buffer
   mime: string
+  /** O que o provider cobrou: os tokens e os caracteres (a DashScope informa; a OpenAI não: aí são os caracteres do texto). */
+  usage?: ISpeechProviderUsage
+}
+
+export interface ISpeechProviderUsage {
+  inputTokens?: number
+  outputTokens?: number
+  characters?: number
 }
 
 export interface ISpeechOptions {
@@ -69,10 +77,25 @@ async function openai(base: string, key: string, model: string, text: string, vo
   }
   const data = Buffer.from(await response.arrayBuffer())
   if (!data.length) throw new Error('the provider answered without audio')
-  return { data, mime: response.headers.get('content-type')?.split(';')[0].trim() || 'audio/mpeg' }
+  return { data, mime: response.headers.get('content-type')?.split(';')[0].trim() || 'audio/mpeg', usage: { characters: text.length } }
 }
 
-type TDashscope = { output?: { audio?: { url?: string; data?: string } }; code?: string; message?: string }
+type TDashscope = {
+  output?: { audio?: { url?: string; data?: string } }
+  usage?: { input_tokens?: number; output_tokens?: number; characters?: number }
+  code?: string
+  message?: string
+}
+
+/** O `usage` da DashScope (só os números); ausente se ela não mandou nada que sirva. */
+function dashscopeUsage(raw: TDashscope['usage']): ISpeechProviderUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const usage: ISpeechProviderUsage = {}
+  if (Number.isFinite(raw.input_tokens)) usage.inputTokens = raw.input_tokens
+  if (Number.isFinite(raw.output_tokens)) usage.outputTokens = raw.output_tokens
+  if (Number.isFinite(raw.characters)) usage.characters = raw.characters
+  return Object.keys(usage).length ? usage : undefined
+}
 
 async function dashscope(
   origin: string,
@@ -94,12 +117,14 @@ async function dashscope(
   const body = (await response.json().catch(() => undefined)) as TDashscope | undefined
   if (!response.ok || body?.code) throw new Error(clean(body?.message ?? body?.code ?? `HTTP ${response.status}`, key))
   const audio = body?.output?.audio
+  const usage = dashscopeUsage(body?.usage)
+  const withUsage = <T extends ISynthesizedSpeech>(speech: T): T => (usage ? { ...speech, usage } : speech)
   if (audio?.data) {
     const data = Buffer.from(audio.data, 'base64')
-    if (data.length) return { data, mime: 'audio/mpeg' }
+    if (data.length) return withUsage({ data, mime: 'audio/mpeg' })
   }
   if (!audio?.url) throw new Error('the provider answered without audio')
-  return download(audio.url, key, fetcher)
+  return withUsage(await download(audio.url, key, fetcher))
 }
 
 /** O áudio que a DashScope hospeda: só https, nunca um endereço interno, sem a chave, com teto de tamanho. */
