@@ -32,7 +32,7 @@ import {
 } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { cliToolResultDirs } from '@infra/adapters/support/Cli.ToolResults'
-import { projectAliases } from '@infra/workspace/Work.Folder'
+import { projectAliases, repositoryDirs, siblingReader } from '@infra/workspace/Work.Folder'
 import type { IHostApprovals } from '@application/HostApprovals.Service'
 import { commandDirOf, ISshKitIdentity, removeSshKit, writeSshKit, writeSshRoute } from '@infra/accounts/Ssh.Kit'
 import { CLUSTER_SECRET_REFUSAL, dumpsClusterSecret } from '@domain/Secret.Mask'
@@ -291,7 +291,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     // O rascunho (HOME, caches, as contas) fica na pasta do projeto, fora da worktree; o `.git` comum entra no cerco.
     const own = context?.agentId ? deps.agentFolder?.(context.agentId, context.conversationProjectId) : undefined
     const shared = [...(deps.sharedFolders?.(asker.projectId, context?.agentId) ?? []), ...cliToolResultDirs(context?.sessionId)]
-    const place: { scratchBase?: string; gitCommonDir?: string; worktreeGitDir?: string; agentFolder?: IOwnFolder; sharedFolders?: string[] } = {
+    const repositories = repositoryDirs(folder?.projectDir ?? root)
+    const place: { repositories?: string[]; scratchBase?: string; gitCommonDir?: string; worktreeGitDir?: string; agentFolder?: IOwnFolder; sharedFolders?: string[] } = {
       ...(folder
         ? {
             scratchBase: realOf(folder.projectDir),
@@ -299,6 +300,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
             ...(folder.worktreeGitDir ? { worktreeGitDir: realOf(folder.worktreeGitDir) } : {}),
           }
         : {}),
+      // Os repositórios do projeto: irmãos só leitura e o `.git` de cada um protegido (ver `ICercoBase.repositories`).
+      ...(repositories.length ? { repositories } : {}),
       ...(own ? { agentFolder: { ...own, dir: realOf(own.dir) } } : {}),
       ...(shared.length ? { sharedFolders: shared } : {}),
     }
@@ -560,6 +563,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     // 🖥️ O agente de máquina: o caminho absoluto fora da pasta vale (ver `IFileToolDeps.machine`).
     machine: (context) => deps.permissions?.layers?.(askerOf(context)).machine === true,
     ownFolder: (context) => (context?.agentId ? deps.agentFolder?.(context.agentId, context.conversationProjectId) : undefined),
+    // ⛔ Só leitura: o repositório irmão liberado por regra (ver `siblingReader`).
+    siblingRead: (context) => siblingReader(context?.workFolder, deps.permissions?.layers?.(askerOf(context))),
     // Junto das pastas compartilhadas, a saída grande que o CLI do Claude guardou DESTA conversa (ver `Cli.ToolResults`).
     sharedFolders: (context) => [...(deps.sharedFolders?.(askerOf(context).projectId, context?.agentId) ?? []), ...cliToolResultDirs(context?.sessionId)],
     ...(deps.permissions

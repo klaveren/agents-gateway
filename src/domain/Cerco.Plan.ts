@@ -1,4 +1,5 @@
 import { isAbsolute, join, relative } from 'node:path'
+import { siblingDir, siblingPattern } from './SiblingRepository.Policy'
 import { decide, globToRegex, IPermissionLayers, IPermissionRule, ISystemRule, opened, SYSTEM_RULES } from './Permission.Policy'
 
 /**
@@ -72,6 +73,11 @@ export interface ICercoBase {
    * no Mac (`/`, o perfil aceita o padrão); no Linux, a casa e a pasta de dados (lá o runtime percorre as pastas).
    */
   anywhere?: readonly string[]
+  /**
+   * Os repositórios de verdade do projeto (`<projeto>/repositories/<nome>`, com `.git` diretório), caminhos reais. Com eles: o
+   * irmão do repositório da conversa nunca se grava, e na conversa sem repositório o `.git` de cada um fica protegido.
+   */
+  repositories?: readonly string[]
 }
 
 /**
@@ -144,14 +150,37 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
         const anchored = projectAnchored(rule.pattern, base.root, base.projectRoot)
         return anchored ? (both ? [toSandboxPath(rule.pattern, base.root), anchored] : [anchored]) : [toSandboxPath(rule.pattern, base.root)]
       })
+    // ⚖️ O REPOSITÓRIO IRMÃO (ver `SiblingRepository.Policy`): só a LEITURA o abre. A liberação que o nomeia vale pelo caminho
+    // absoluto (`repositories/B/**` ancorado na raiz não existe), e as negações valem também nele, ancoradas na pasta dele.
+    // A ESCRITA nunca: nenhuma liberação de escrita fica numa pasta de irmão.
+    const projectRoot = base.projectRoot
+    const sibling = (pattern: string) => (projectRoot ? siblingPattern(pattern, projectRoot, base.root) : undefined)
+    const siblingDirs =
+      category === 'read' && projectRoot ? [...new Set([...agentAllow, ...projectAllow].flatMap((rule) => siblingDir(rule.pattern, projectRoot, base.root) ?? []))] : []
+    const allowPaths = paths([...agentAllow, ...projectAllow], false)
     return {
-      allow: [...new Set(paths([...agentAllow, ...projectAllow], false))],
-      deny: [...new Set(paths(deny, true))],
+      allow:
+        category === 'read'
+          ? [...new Set([...allowPaths, ...[...agentAllow, ...projectAllow].flatMap((rule) => sibling(rule.pattern) ?? [])])]
+          : [...new Set(allowPaths)].filter((path) => !(projectRoot && siblingDir(path, projectRoot, base.root))),
+      deny: [
+        ...new Set([
+          ...paths(deny, true),
+          ...(category === 'read'
+            ? deny.flatMap((rule) => [...[sibling(rule.pattern)].filter((path): path is string => !!path), ...siblingDirs.map((dir) => toSandboxPath(rule.pattern, dir))])
+            : []),
+        ]),
+      ],
     }
   }
   const read = lists('read')
   const write = lists('write')
   const git = base.gitCommonDir ? [base.gitCommonDir] : []
+  const repositories = base.repositories ?? []
+  // Conversa SEM repositório (a raiz é o projeto): o `.git` de cada repositório dentro dela, como no caso de um só (ver `gitWriteDenies`).
+  const inner = repositories.filter((dir) => dir !== base.root && contains(base.root, dir)).flatMap((dir) => gitWriteDenies(join(dir, '.git')))
+  // Conversa NUM repositório: os irmãos não se gravam, nem por regra absoluta.
+  const siblings = repositories.filter((dir) => !contains(dir, base.root) && !contains(base.root, dir))
   return {
     // A raiz fechada para leitura por padrão: só o que as regras liberam (e as pastas de trabalho) se lê dentro dela.
     readDeny: [...new Set([...(base.readAllowlist ? ['/'] : []), ...base.alwaysDeny, base.root, ...read.deny])],
@@ -173,6 +202,8 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
         ...base.alwaysDeny.filter((path) => !contains(path, base.root)),
         ...write.deny,
         ...(base.gitCommonDir ? gitWriteDenies(base.gitCommonDir, base.worktreeGitDir ? { dir: base.root, gitDir: base.worktreeGitDir } : undefined) : []),
+        ...inner,
+        ...siblings,
         ...(base.readOnly ?? []),
       ]),
     ],

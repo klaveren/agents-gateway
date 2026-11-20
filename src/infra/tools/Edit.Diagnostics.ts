@@ -1,4 +1,5 @@
 import type { IPermissionChecker } from '@application/Permissions.Service'
+import { repositoryDirs } from '@infra/workspace/Work.Folder'
 import { cercoPlan } from '@domain/Cerco.Plan'
 import { DEFAULT_DIAGNOSTICS_SECONDS, diagnosticsOn, IAgentDiagnostics } from '@domain/models/Agent.Model'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -173,6 +174,7 @@ function cercado(permissions: IPermissionChecker, sandbox: IProjectSandbox, root
         scratchBase: realOf(folder.projectDir),
         ...(folder.gitCommonDir ? { gitCommonDir: realOf(folder.gitCommonDir) } : {}),
         ...(folder.worktreeGitDir ? { worktreeGitDir: realOf(folder.worktreeGitDir) } : {}),
+        ...(repositoryDirs(folder.projectDir).length ? { repositories: repositoryDirs(folder.projectDir) } : {}),
       }
     : {}
   const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }

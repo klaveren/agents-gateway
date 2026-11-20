@@ -4,6 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, s
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deniedPath, makeFileTools, resolveInside } from './File.Tools'
+import { siblingReader } from '@infra/workspace/Work.Folder'
+import { IPermissionLayers, IPermissionRule } from '@domain/Permission.Policy'
 
 describe('File.Tools', () => {
   let base: string
@@ -376,3 +378,114 @@ function dataDirForTest(): string {
   mkdirSync(dir, { recursive: true })
   return dir
 }
+
+describe('File.Tools — ⛔ repositório irmão do projeto (só leitura, por regra)', () => {
+  const rule = (category: IPermissionRule['category'], pattern: string, decision: IPermissionRule['decision'] = 'allow'): IPermissionRule => ({ category, pattern, decision })
+  let project: string
+  let other: string
+  let repoA: string
+  let repoB: string
+  const read = (layers: IPermissionLayers, path: string, workDir = repoA) =>
+    makeFileTools({
+      rootFor: () => workDir,
+      siblingRead: () => siblingReader({ dir: workDir, projectDir: project }, layers),
+    })
+      .find((tool) => tool.name === 'read_file')!
+      .execute({ path })
+  const write = (layers: IPermissionLayers, path: string) =>
+    makeFileTools({ rootFor: () => repoA, siblingRead: () => siblingReader({ dir: repoA, projectDir: project }, layers) })
+      .find((tool) => tool.name === 'write_file')!
+      .execute({ path, content: 'x' })
+
+  before(() => {
+    const data = join(dataDirForTest(), 'projects')
+    mkdirSync(data, { recursive: true })
+    project = realpathSync(mkdtempSync(join(data, 'sib-')))
+    other = realpathSync(mkdtempSync(join(data, 'sib-other-')))
+    repoA = join(project, 'repositories', 'A')
+    repoB = join(project, 'repositories', 'B')
+    for (const dir of [repoA, repoB, join(other, 'repositories', 'B')]) mkdirSync(join(dir, '.git'), { recursive: true })
+    mkdirSync(join(repoB, '_worktrees', 'x'), { recursive: true })
+    mkdirSync(join(repoB, 'infra'), { recursive: true })
+    mkdirSync(join(project, 'repositories', 'plain'), { recursive: true })
+    writeFileSync(join(repoB, 'README.md'), 'readme de B')
+    writeFileSync(join(repoB, 'infra', 'k.yaml'), 'infra')
+    writeFileSync(join(repoB, '.env'), 'KEY=1')
+    writeFileSync(join(repoB, '.git', 'config'), '[core]')
+    writeFileSync(join(project, 'repositories', 'plain', 'a.txt'), 'sem git')
+    writeFileSync(join(other, 'repositories', 'B', 'README.md'), 'de outro projeto')
+    writeFileSync(join(repoA, 'a.txt'), 'de A')
+    symlinkSync('/etc/hosts', join(repoB, 'escape'))
+    symlinkSync(join(other, 'repositories', 'B', 'README.md'), join(repoB, 'to-other'))
+  })
+  after(() => {
+    rmSync(project, { recursive: true, force: true })
+    rmSync(other, { recursive: true, force: true })
+  })
+
+  it('lê o irmão com `read allow repositories/B/**`, na camada do agente e na do projeto, e com padrão absoluto', async () => {
+    for (const layers of [
+      { agent: [rule('read', 'repositories/B/**')] },
+      { project: [rule('read', 'repositories/B/**')] },
+      { agent: [rule('read', `${repoB}/**`)] },
+    ])
+      assert.match(String((await read(layers, join(repoB, 'README.md'))).result), /readme de B/)
+    // A pasta da própria conversa segue como sempre.
+    assert.match(String((await read({}, 'a.txt')).result), /de A/)
+  })
+
+  it('numa worktree de A também lê o irmão', async () => {
+    const tree = join(repoA, '_worktrees', 'EP-1')
+    mkdirSync(tree, { recursive: true })
+    const layers = { project: [rule('read', 'repositories/B/**')] }
+    assert.match(String((await read(layers, join(repoB, 'README.md'), tree)).result), /readme de B/)
+  })
+
+  it('⛔ sem regra, ou com regra de outro nome, recusa; relativo `..` também', async () => {
+    assert.equal((await read({}, join(repoB, 'README.md'))).status, 'error')
+    assert.equal((await read({ agent: [rule('read', 'repositories/C/**')] }, join(repoB, 'README.md'))).status, 'error')
+    assert.equal((await read({ agent: [rule('read', 'repositories/B/**')] }, '../B/README.md')).status, 'error')
+  })
+
+  it('⛔ uma negação de leitura vence a liberação (qualquer camada)', async () => {
+    const allow = rule('read', 'repositories/B/**')
+    assert.equal((await read({ agent: [allow, rule('read', 'repositories/B/infra/**', 'deny')] }, join(repoB, 'infra', 'k.yaml'))).status, 'error')
+    assert.equal((await read({ agent: [allow], project: [rule('read', '**/README.md', 'deny')] }, join(repoB, 'README.md'))).status, 'error')
+    assert.equal((await read({ agent: [allow], project: [rule('read', `${repoB}/infra/**`, 'deny')] }, join(repoB, 'infra', 'k.yaml'))).status, 'error')
+  })
+
+  it('⛔ escrever no irmão recusa, mesmo com regra de escrita', async () => {
+    const layers = { agent: [rule('read', 'repositories/B/**'), rule('write', 'repositories/B/**'), rule('write', `${repoB}/**`)] }
+    assert.equal((await write(layers, join(repoB, 'novo.txt'))).status, 'error')
+    assert.equal((await write(layers, join(repoB, 'README.md'))).status, 'error')
+  })
+
+  it('⛔ `.env` e `.git/config` do irmão seguem protegidos', async () => {
+    const layers = { agent: [rule('read', 'repositories/B/**')], envFiles: true }
+    assert.match(String((await read(layers, join(repoB, '.env'))).result), /protected/)
+    assert.match(String((await read(layers, join(repoB, '.git', 'config'))).result), /protected/)
+  })
+
+  it('⛔ curinga no nome do repositório não abre irmão', async () => {
+    for (const pattern of ['repositories/*/**', 'repositories/**', 'repositories/{B}/**', '**'])
+      assert.equal((await read({ agent: [rule('read', pattern)] }, join(repoB, 'README.md'))).status, 'error', pattern)
+  })
+
+  it('⛔ repositório de outro projeto, `_worktrees` do irmão e pasta sem `.git` não abrem', async () => {
+    assert.equal((await read({ agent: [rule('read', `${other}/repositories/B/**`)] }, join(other, 'repositories', 'B', 'README.md'))).status, 'error')
+    assert.equal((await read({ agent: [rule('read', 'repositories/plain/**')] }, join(project, 'repositories', 'plain', 'a.txt'))).status, 'error')
+    assert.equal((await read({ agent: [rule('read', 'repositories/_worktrees/**')] }, join(repoB, '_worktrees', 'x', 'f'))).status, 'error')
+  })
+
+  it('⛔ link do irmão que sai dele (para fora ou para outro projeto) recusa', async () => {
+    const layers = { agent: [rule('read', 'repositories/B/**')] }
+    assert.equal((await read(layers, join(repoB, 'escape'))).status, 'error')
+    assert.equal((await read(layers, join(repoB, 'to-other'))).status, 'error')
+  })
+
+  it('agente de máquina e conversa sem repositório: sem leitor de irmão', () => {
+    assert.equal(siblingReader({ dir: repoA, projectDir: project }, { machine: true, project: [rule('read', 'repositories/B/**')] }), undefined)
+    assert.equal(siblingReader({ dir: project, projectDir: project }, {}), undefined)
+    assert.equal(siblingReader(undefined, {}), undefined)
+  })
+})

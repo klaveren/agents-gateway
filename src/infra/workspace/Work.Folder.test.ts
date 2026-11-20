@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { changesOf } from './Git.Changes'
-import { currentBranch, listRepositories, listWorktrees, projectAliases, resolveWorkFolder, WorkFolderError, worktreeFolders } from './Work.Folder'
+import { currentBranch, listRepositories, listWorktrees, projectAliases, repositoryDirs, resolveWorkFolder, WorkFolderError, worktreeFolders } from './Work.Folder'
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', ['-C', cwd, ...args], {
@@ -183,5 +183,23 @@ describe('Work.Folder: o git calculado pelo servidor (o agente reescreve o .git 
     symlinkSync(real, join(other, '.git'))
     assert.throws(() => resolveWorkFolder(project, 'forjado'), /não é um repositório git/)
     assert.deepStrictEqual(listWorktrees(other), [])
+  })
+})
+
+describe('repositoryDirs', () => {
+  it('só as pastas com `.git` diretório de verdade (sem worktree irmã, sem arquivo, sem link)', () => {
+    const project = realpathSync(mkdtempSync(join(tmpdir(), 'repo-dirs-')))
+    try {
+      mkdirSync(join(project, 'repositories', 'A', '.git'), { recursive: true })
+      mkdirSync(join(project, 'repositories', 'B', '.git'), { recursive: true })
+      mkdirSync(join(project, 'repositories', 'plain'), { recursive: true })
+      mkdirSync(join(project, 'repositories', 'wt'), { recursive: true })
+      writeFileSync(join(project, 'repositories', 'wt', '.git'), 'gitdir: /x')
+      symlinkSync(join(project, 'repositories', 'A'), join(project, 'repositories', 'link'))
+      assert.deepStrictEqual(repositoryDirs(project).sort(), [join(project, 'repositories', 'A'), join(project, 'repositories', 'B')])
+      assert.deepStrictEqual(repositoryDirs(join(project, 'nada')), [])
+    } finally {
+      rmSync(project, { recursive: true, force: true })
+    }
   })
 })

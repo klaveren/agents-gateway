@@ -1,5 +1,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { IPermissionLayers, IPermissionRule } from '@domain/Permission.Policy'
+import { siblingDir, siblingReadAllowed } from '@domain/SiblingRepository.Policy'
 import { IGitPlace, safeGitSync } from './Git.Safe'
 
 /** O nome de um repositório em `<projeto>/repositories/`: uma pasta só, sem barra. */
@@ -60,6 +62,37 @@ function repositoryGit(repositoryDir: string): string | undefined {
     return commonDir === join(real(repositoryDir), '.git') ? commonDir : undefined
   } catch {
     return undefined
+  }
+}
+
+/** Os repositórios de verdade de `<projeto>/repositories/` (`.git` diretório), pelo caminho real. Leve: sem chamar o git. */
+export function repositoryDirs(projectDir: string): string[] {
+  const root = join(real(projectDir), REPOSITORIES_DIR)
+  try {
+    return readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && REPOSITORY_NAME.test(entry.name) && !!repositoryGit(join(root, entry.name)))
+      .map((entry) => join(root, entry.name))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * ⛔ Pode a conversa LER este caminho REAL de um repositório irmão do projeto dela? Só se é um repositório de verdade (`.git`
+ * diretório) do MESMO projeto e uma regra de leitura o libera pelo nome (ver `siblingReadAllowed`). Sem pasta de trabalho
+ * dentro de um projeto, no agente de máquina ou fora de `<projeto>/repositories/<nome>/`: nunca. Só para LEITURA.
+ */
+export function siblingReader(
+  folder: { dir: string; projectDir: string } | undefined,
+  layers: (IPermissionLayers & { system?: readonly IPermissionRule[] }) | undefined,
+): ((target: string) => boolean) | undefined {
+  if (!folder || !layers || layers.machine) return undefined
+  const projectRoot = real(folder.projectDir)
+  const root = real(folder.dir)
+  if (projectRoot === root) return undefined
+  return (target) => {
+    const dir = siblingDir(target, projectRoot, root)
+    return !!dir && !!repositoryGit(dir) && siblingReadAllowed(target, { projectRoot, root, layers, ...(layers.system ? { system: layers.system } : {}) })
   }
 }
 

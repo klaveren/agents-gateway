@@ -91,6 +91,33 @@ describe('RepositoriesView — os repositórios do projeto', () => {
     expect(test(host, 'tab-rules')).toBeNull()
   })
 
+  it('📖 a chave "Leitura para os agentes" grava (e tira) a regra de leitura do projeto', async () => {
+    let rules: Array<Record<string, string>> = [{ category: 'read', decision: 'allow', pattern: 'repositories/notas/**' }]
+    const { host, calls } = await mount({
+      reply: (path, init) => {
+        if (path !== '/projects/p1/permissions') return undefined
+        if (init?.method === 'PUT') rules = (init.body as { rules: typeof rules }).rules
+        return { rules, system: [] }
+      },
+    })
+    const api = test(host, 'read-api') as HTMLInputElement
+    const notas = test(host, 'read-notas') as HTMLInputElement
+    expect(api.checked).toBe(false)
+    expect(notas.checked).toBe(true)
+    api.click()
+    await flush()
+    expect(rules.map((rule) => rule.pattern)).toEqual(['repositories/notas/**', 'repositories/api/**'])
+    notas.click()
+    await flush()
+    expect(rules.map((rule) => rule.pattern)).toEqual(['repositories/api/**'])
+    expect(calls.filter((call) => call.path === '/projects/p1/permissions' && call.init?.method === 'PUT')).toHaveLength(2)
+  })
+
+  it('quem não administra o projeto não vê a chave', async () => {
+    const { host } = await mount({ role: 'member' })
+    expect(test(host, 'read-api')).toBeNull()
+  })
+
   it('cria o git local só com o nome; o 422 marca o campo', async () => {
     let refuse = true
     const { host, calls } = await mount({
