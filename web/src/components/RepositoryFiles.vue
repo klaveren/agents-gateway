@@ -724,9 +724,6 @@
               </button>
             </div>
           </div>
-          <button type="button" class="mk-muted mk-hover grid h-8 w-8 shrink-0 place-items-center" title="Fechar o editor" data-test="files-close" @click="emit('close')">
-            <Icon name="x" class="h-4 w-4" />
-          </button>
         </div>
         <div
           v-if="notice || conflict"

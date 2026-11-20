@@ -143,6 +143,14 @@ export function viaSessionCookie(res: Response): boolean {
   return res.locals[VIA_SESSION_COOKIE] === true
 }
 
+/**
+ * A credencial veio do cookie da tela (e não de cabeçalho), com ou sem a prova de navegador. Para LEITURA (GET), onde o
+ * navegador nem manda `Origin`: o agente, o MCP e o token de API chegam sempre pelo cabeçalho, que vence o cookie.
+ */
+export function cameViaSessionCookie(res: Response): boolean {
+  return Object.hasOwn(res.locals, VIA_SESSION_COOKIE)
+}
+
 /** O pedido saiu de uma página DESTA origem? Sem `Origin` nem `Referer` (fetch antigo), não. */
 export function sameOrigin(req: Request): boolean {
   const source = req.headers.origin ?? req.headers.referer

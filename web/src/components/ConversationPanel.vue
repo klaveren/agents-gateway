@@ -26,7 +26,7 @@
    * (`PATCH`), que devolve o painel novo: a tela nunca monta o documento sozinha, então não diverge do que o agente lê.
    */
   const props = defineProps<{ conversationId: string; refreshKey?: number; page?: boolean; closable?: boolean }>()
-  const emit = defineEmits<{ close: []; count: [number] }>()
+  const emit = defineEmits<{ close: []; count: [number]; waiting: [number] }>()
   const agents = useAgentsStore()
 
   const panel = ref<IConversationPanel>()
@@ -106,6 +106,7 @@
     const first = !panel.value
     panel.value = { ...next, items: next.items ?? [], decisions: next.decisions ?? [], questions: next.questions ?? [], plans: next.plans ?? [], history: next.history ?? [] }
     emit('count', openCount(panel.value))
+    emit('waiting', panel.value.plans.filter((plan) => plan.status === 'review').length)
     // Ao abrir: com plano esperando a pessoa, vai direto a ele.
     const pending = panel.value.plans.find((plan) => plan.status === 'review')
     if (first && pending) showPlan(pending.id)

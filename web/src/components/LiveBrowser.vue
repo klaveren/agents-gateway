@@ -3,6 +3,7 @@
   import Icon from './Icon.vue'
   import { api, openStream } from '@/lib/api'
   import { readSse } from '@/lib/sse'
+  import '@/styles/monokai.css'
 
   /**
    * 👁️ O navegador da conversa, ao vivo: os quadros que o gateway tira da aba que o agente está usando (`/sessions/:id/browser`).
@@ -11,7 +12,7 @@
    * cabe aqui, e um pixel da imagem é um pixel da aba. 🖱️ Com `interactive`, o clique, a rolagem e o teclado vão para a aba.
    */
   const props = defineProps<{ sessionId: string; interactive?: boolean }>()
-  const emit = defineEmits<{ close: []; pick: [element: IPickedElement] }>()
+  const emit = defineEmits<{ pick: [element: IPickedElement] }>()
 
   /** O elemento sob a seta (ver `ILiveBrowserElement` no gateway). */
   interface IPickedElement {
@@ -24,6 +25,10 @@
   }
 
   const live = ref<boolean>()
+  /** 🗂️ As abas do navegador do agente; clicar mostra outra (o agente segue na dele). */
+  const tabs = ref<Array<{ id: string; title: string; url: string }>>([])
+  const currentTab = ref<string>()
+  const tabLabel = (tab: { title: string; url: string }) => tab.title || (tab.url === 'about:blank' ? 'Nova aba' : tab.url.replace(/^https?:\/\//, ''))
   const frame = ref<{ src: string; url?: string; title?: string; width?: number; height?: number }>()
   const error = ref<string>()
   const screen = ref<HTMLElement>()
@@ -42,8 +47,21 @@
     try {
       const body = await openStream(`/sessions/${encodeURIComponent(sessionId)}/browser`, { signal: controller.signal })
       for await (const event of readSse(body)) {
-        const data = event.data as { live?: boolean; data?: string; url?: string; title?: string; width?: number; height?: number }
-        if (event.event === 'browser.state') {
+        const data = event.data as {
+          live?: boolean
+          data?: string
+          url?: string
+          title?: string
+          width?: number
+          height?: number
+          tabs?: Array<{ id: string; title: string; url: string }>
+          current?: string
+        }
+        if (event.event === 'browser.tabs') {
+          tabs.value = data.tabs ?? []
+          currentTab.value = data.current
+        } else if (event.event === 'browser.state') {
+          if (!data.live) tabs.value = []
           live.value = !!data.live
           // Navegador novo (ou o mesmo, numa conexão nova): ele ainda não sabe o tamanho da gaveta.
           if (data.live) sendViewport()
@@ -252,25 +270,51 @@
 
 <template>
   <div class="flex h-full min-h-0 flex-col" data-test="live-browser">
-    <header class="flex items-center gap-2 px-3 pt-2">
-      <Icon name="globe" class="h-4 w-4 shrink-0 text-zinc-400" />
-      <h2 class="text-sm font-medium text-zinc-100">Navegador</h2>
-      <span v-if="live" class="flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 text-[11px] leading-5 text-emerald-300" data-test="live-browser-on">
-        <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-        ao vivo
-      </span>
-      <span v-else-if="live === false" class="rounded-full bg-zinc-800 px-2 text-[11px] leading-5 text-zinc-400">fechado</span>
+    <div v-if="tabs.length" class="mk-tabs flex h-8 shrink-0" data-test="live-browser-tabs">
+      <div class="flex min-w-0 flex-1 overflow-x-auto" role="tablist">
+        <div
+          v-for="tab in tabs"
+          :key="tab.id"
+          role="tab"
+          :aria-selected="tab.id === currentTab"
+          class="mk-editor-tab group flex max-w-52 min-w-0 shrink-0 cursor-pointer items-center gap-1.5 pr-1 pl-3 text-xs"
+          :class="{ 'mk-editor-tab-on': tab.id === currentTab }"
+          :title="tab.url"
+          data-test="live-browser-tab"
+          @click="send({ type: 'tab-select', targetId: tab.id })"
+          @auxclick.middle.prevent="tabs.length > 1 && send({ type: 'tab-close', targetId: tab.id })"
+        >
+          <span class="min-w-0 truncate">{{ tabLabel(tab) }}</span>
+          <button
+            v-if="interactive && tabs.length > 1"
+            type="button"
+            class="mk-hover grid h-5 w-5 shrink-0 place-items-center rounded opacity-0 group-hover:opacity-100"
+            title="Fechar a aba"
+            data-test="live-browser-tab-close"
+            @click.stop="send({ type: 'tab-close', targetId: tab.id })"
+          >
+            <Icon name="x" class="h-3 w-3" />
+          </button>
+        </div>
+      </div>
       <button
+        v-if="interactive"
         type="button"
-        class="ml-auto grid h-8 w-8 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800"
-        title="Fechar"
-        data-test="live-browser-close"
-        @click="emit('close')"
+        class="mk-muted mk-hover grid h-8 w-8 shrink-0 place-items-center"
+        title="Nova aba"
+        data-test="live-browser-tab-new"
+        @click="send({ type: 'tab-new' })"
       >
-        <Icon name="x" class="h-4 w-4" />
+        <Icon name="plus" class="h-4 w-4" />
       </button>
-    </header>
+    </div>
     <div class="flex items-center gap-1 px-2 py-1.5" data-test="live-browser-bar">
+      <span
+        class="h-2 w-2 shrink-0 rounded-full"
+        :class="live ? 'animate-pulse bg-emerald-400' : 'bg-zinc-600'"
+        :title="live ? 'Ao vivo' : 'Navegador fechado'"
+        data-test="live-browser-state"
+      />
       <button type="button" class="bar-btn" title="Voltar" :disabled="!interactive || !live" data-test="live-browser-back" @click="send({ type: 'back' })">
         <Icon name="back" class="h-4 w-4" />
       </button>

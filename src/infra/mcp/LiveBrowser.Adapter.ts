@@ -24,6 +24,9 @@ export type TLiveBrowserInput =
   | { type: 'forward' }
   | { type: 'reload' }
   | { type: 'navigate'; url: string }
+  | { type: 'tab-select'; targetId: string }
+  | { type: 'tab-new'; url?: string }
+  | { type: 'tab-close'; targetId: string }
 
 /** O elemento sob o ponto (a seta da barra): o bastante para a pessoa (e o agente) saber de qual se fala. */
 export interface ILiveBrowserElement {
@@ -60,7 +63,13 @@ export interface ILiveBrowserViewport {
   scale: number
 }
 
-export type TLiveBrowserListener = (event: { type: 'frame'; frame: ILiveBrowserFrame } | { type: 'state'; live: boolean }) => void
+/** As abas do navegador (só as páginas), na ordem em que abriram, e a que a tela mostra. */
+export interface ILiveBrowserTabs {
+  tabs: Array<{ id: string; title: string; url: string }>
+  current?: string
+}
+
+export type TLiveBrowserListener = (event: { type: 'frame'; frame: ILiveBrowserFrame } | { type: 'state'; live: boolean } | ({ type: 'tabs' } & ILiveBrowserTabs)) => void
 
 interface ITarget {
   targetId: string
@@ -240,12 +249,14 @@ export class LiveBrowser {
         // A aba nova, ou a que mudou de endereço, vira a que a tela mostra.
         if (!before || (before.url !== info.url && info.url !== 'about:blank')) this.focus(info.targetId)
         else if (this.last && info.targetId === this.current) this.last = { ...this.last, url: info.url, title: info.title }
+        this.announceTabs()
         return
       }
       case 'Target.targetDestroyed': {
         const targetId = String(params.targetId)
         this.pages.delete(targetId)
         if (this.current === targetId) this.focus([...this.pages.keys()].pop())
+        this.announceTabs()
         return
       }
       case 'Page.screencastFrame': {
@@ -263,6 +274,17 @@ export class LiveBrowser {
   private focus(targetId: string | undefined): void {
     this.current = targetId
     void this.restream()
+    this.announceTabs()
+  }
+
+  tabs(): ILiveBrowserTabs {
+    return { tabs: [...this.pages.values()].map((page) => ({ id: page.targetId, title: page.title, url: page.url })), current: this.current }
+  }
+
+  /** As abas mudaram (abriu, fechou, trocou de endereço ou de foco): avisa quem olha. */
+  private announceTabs(): void {
+    const tabs = this.tabs()
+    for (const listener of this.listeners) listener({ type: 'tabs', ...tabs })
   }
 
   /** Liga a transmissão na aba em uso (e desliga da anterior), só com alguém olhando. */
@@ -309,6 +331,21 @@ export class LiveBrowser {
 
   /** 🖱️ O clique, a rolagem e o teclado da pessoa, na aba que a tela mostra. */
   async input(event: TLiveBrowserInput): Promise<void> {
+    // As abas não dependem da aba à mostra.
+    if (event.type === 'tab-select') {
+      if (!this.pages.has(event.targetId)) throw new Error('tab not found')
+      await this.send('Target.activateTarget', { targetId: event.targetId }).catch(() => undefined)
+      return this.focus(event.targetId)
+    }
+    if (event.type === 'tab-new') {
+      await this.send('Target.createTarget', { url: event.url ?? 'about:blank' })
+      return
+    }
+    if (event.type === 'tab-close') {
+      if (!this.pages.has(event.targetId)) throw new Error('tab not found')
+      await this.send('Target.closeTarget', { targetId: event.targetId })
+      return
+    }
     const target = this.attached
     if (!target) throw new Error('nobody is watching this browser')
     const sid = target.sessionId
@@ -370,6 +407,7 @@ export class LiveBrowser {
 
   watch(listener: TLiveBrowserListener): () => void {
     this.listeners.add(listener)
+    listener({ type: 'tabs', ...this.tabs() })
     if (this.last) listener({ type: 'frame', frame: this.last })
     void this.restream()
     return () => {
