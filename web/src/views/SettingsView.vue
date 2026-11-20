@@ -397,8 +397,8 @@
                   </div>
                 </div>
                 <small class="text-xs text-zinc-500">
-                  Aparecem os modelos de voz ativados no provider (Modelos → provider). As vozes do qwen-audio-3.0-tts-plus do Token
-                  Plan são de chinês e inglês: teste o português no Perfil (Testar). A pessoa pode trocar a voz no Perfil.
+                  Aparecem os modelos com a tag "gera voz" ativados no provider (Modelos → provider). O texto vai em português; teste no Perfil (Testar).
+                  A pessoa pode trocar a voz no Perfil.
                 </small>
               </div>
               <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">

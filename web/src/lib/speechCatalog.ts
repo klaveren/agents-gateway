@@ -50,10 +50,10 @@ export const KNOWN_SPEECH_MODELS: Record<TSpeechEngine, ISpeechModel[]> = {
     },
     {
       id: 'qwen-audio-3.0-tts-plus',
-      label: 'qwen-audio-3.0-tts-plus · vozes do plano: chinês e inglês',
+      label: 'qwen-audio-3.0-tts-plus · fala português (testado)',
       voices: [
-        { id: 'longanlingxin', label: 'Longanlingxin · chinês e inglês, feminina' },
-        { id: 'longanlufeng', label: 'Longanlufeng · chinês e inglês, masculina' },
+        { id: 'longanlingxin', label: 'Longanlingxin · feminina' },
+        { id: 'longanlufeng', label: 'Longanlufeng · masculina' },
       ],
     },
   ],
