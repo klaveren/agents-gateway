@@ -114,7 +114,7 @@ describe('Voz (integração)', () => {
     assert.strictEqual((await call(`/messages/gw_voz_ana/${messageId}/speech`)).status, 401)
     assert.strictEqual((await call('/messages/gw_voz_ana/m_inexistente/speech', { token: member })).status, 404)
     const heard = await call(`/messages/gw_voz_ana/${messageId}/speech`, { token: member })
-    assert.deepStrictEqual([heard.status, heard.type, heard.cache, heard.audio], [200, 'audio/mpeg', 'private, max-age=86400', 'audio:Aviso. Pronto para revisar.'])
+    assert.deepStrictEqual([heard.status, heard.type, heard.cache, heard.audio], [200, 'audio/mpeg', 'private, no-store', 'audio:Aviso. Pronto para revisar.'])
     failWith = 'boom k-secret'
     spoken.length = 0
     const failed = await call(`/messages/gw_voz_ana/${messageId}/speech`, { token: member })

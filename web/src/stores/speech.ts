@@ -67,6 +67,9 @@ export const useSpeechStore = defineStore('speech', () => {
     }
   }
 
+  /** O motivo da última falha ao tocar (o nome do erro do navegador), para a mensagem do Perfil. */
+  let failure = ''
+
   function element(): HTMLAudioElement {
     return (audio ??= new Audio())
   }
@@ -76,10 +79,20 @@ export const useSpeechStore = defineStore('speech', () => {
       const element_ = element()
       finish = resolve
       element_.onended = () => resolve('ended')
-      element_.onerror = () => resolve('error')
+      element_.onerror = () => {
+        failure = `código ${element_.error?.code ?? '?'}`
+        resolve('error')
+      }
       element_.src = url
       playing.value = true
-      element_.play().catch((error: unknown) => resolve((error as { name?: string } | undefined)?.name === 'NotAllowedError' ? 'blocked' : 'error'))
+      element_.play().catch((error: unknown) => {
+        const name = (error as { name?: string } | undefined)?.name
+        // ⚖️ AbortError = um carregamento novo interrompeu o anterior (o mudo do clique): não é falha; o fim ou o erro do
+        // áudio de verdade resolvem.
+        if (name === 'AbortError') return
+        if (name !== 'NotAllowedError') failure = name ?? 'erro'
+        resolve(name === 'NotAllowedError' ? 'blocked' : 'error')
+      })
     })
   }
 
@@ -109,7 +122,7 @@ export const useSpeechStore = defineStore('speech', () => {
         if (result === 'blocked') {
           queue.unshift(item)
           blocked.value = true
-        } else if (result === 'error') error.value = 'Não consegui tocar o áudio neste navegador.'
+        } else if (result === 'error') error.value = `Não consegui tocar o áudio neste navegador (${failure}).`
         else if (result === 'ended') {
           last = item
           error.value = undefined
