@@ -47,10 +47,16 @@ export const useMessagesStore = defineStore('messages', () => {
     loaded.value = true
   }
 
-  async function openThread(conversationId: string): Promise<void> {
+  /**
+   * 👀 A pessoa está OLHANDO a tela: aba visível e janela em foco. ⚖️ Mensagem que chega com o fio aberto numa janela de
+   * fundo (outra aba, o app do Mac atrás de outro) fica NÃO LIDA: o selo avisa, e ela vira lida quando a pessoa volta.
+   */
+  const looking = () => typeof document === 'undefined' || (document.visibilityState === 'visible' && document.hasFocus())
+
+  async function openThread(conversationId: string, markRead = true): Promise<void> {
     const { messages } = await api<{ messages: IPersonMessage[] }>(`/messages/${encodeURIComponent(conversationId)}`)
     open.value = { conversationId, messages }
-    if (messages.some((message) => message.from === 'agent' && !message.readAt)) {
+    if (markRead && messages.some((message) => message.from === 'agent' && !message.readAt)) {
       const read = await api<{ unread: number }>(`/messages/${encodeURIComponent(conversationId)}/read`, { method: 'POST' })
       unread.value = read.unread
       threads.value = threads.value.map((thread) => (thread.conversationId === conversationId ? { ...thread, unread: 0 } : thread))
@@ -78,7 +84,18 @@ export const useMessagesStore = defineStore('messages', () => {
   function changed(event: { conversationId: string; unread: number }): void {
     unread.value = event.unread
     void load().catch(() => undefined)
-    if (open.value?.conversationId === event.conversationId) void openThread(event.conversationId).catch(() => undefined)
+    if (open.value?.conversationId === event.conversationId) void openThread(event.conversationId, looking()).catch(() => undefined)
+  }
+
+  /** A pessoa voltou à janela com o fio aberto: o que chegou enquanto ela estava fora vira lido agora. */
+  function returned(): void {
+    const current = open.value
+    if (!current || !looking() || !current.messages.some((message) => message.from === 'agent' && !message.readAt)) return
+    void openThread(current.conversationId).catch(() => undefined)
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', returned)
+    document.addEventListener('visibilitychange', returned)
   }
 
   function reset(): void {
