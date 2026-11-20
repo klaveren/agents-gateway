@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countLabel, filterList, matchesSearch, normalizeTag, sortByName, tagCounts, tagNames } from './listFilter'
+import { conversationIdOf, countLabel, filterList, matchesSearch, normalizeTag, sortByName, tagCounts, tagNames } from './listFilter'
 
 describe('listFilter', () => {
   it('a busca ignora acento e maiúscula, e cada palavra tem de aparecer em algum campo', () => {
@@ -44,5 +44,17 @@ describe('listFilter', () => {
     expect(countLabel(12, 12)).toBe('12')
     expect(countLabel(3, 12)).toBe('3 de 12')
     expect(countLabel(0, 0)).toBe('0')
+  })
+})
+
+describe('conversationIdOf', () => {
+  it('reconhece o id de conversa digitado sozinho', () => {
+    expect(conversationIdOf('  gw_abc123XY-z  ')).toBe('gw_abc123XY-z')
+  })
+
+  it('texto comum, pedaço curto ou id no meio de frase não é id', () => {
+    expect(conversationIdOf('relatório de vendas')).toBeUndefined()
+    expect(conversationIdOf('gw_a')).toBeUndefined()
+    expect(conversationIdOf('abre gw_abc123')).toBeUndefined()
   })
 })
