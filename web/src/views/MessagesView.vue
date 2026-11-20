@@ -4,6 +4,7 @@
   import AgentAvatar from '@/components/AgentAvatar.vue'
   import Icon from '@/components/Icon.vue'
   import MasterDetail from '@/components/MasterDetail.vue'
+  import MessageThreadRow from '@/components/MessageThreadRow.vue'
   import { api } from '@/lib/api'
   import { disablePush, enablePush, pushState, type TPushState } from '@/lib/push'
   import { shortTime, fullTime } from '@/lib/format'
@@ -249,47 +250,15 @@
           {{ messages.archived ? 'Nenhuma mensagem arquivada.' : 'Nenhuma mensagem. Quando um agente precisar de você, ela aparece aqui.' }}
         </p>
         <ul class="min-h-0 flex-1 overflow-y-auto px-2">
-          <li v-for="thread in shown" :key="thread.conversationId" class="group relative">
-            <button
-              type="button"
-              class="absolute top-2 right-2 z-10 rounded-full bg-zinc-800 p-1.5 text-zinc-300 opacity-0 group-hover:opacity-100 hover:text-zinc-50 focus:opacity-100 [@media(hover:none)]:opacity-100"
-              :title="messages.archived ? 'Voltar à caixa' : 'Arquivar'"
-              :aria-label="messages.archived ? 'Voltar à caixa' : 'Arquivar'"
-              data-test="message-thread-archive"
-              @click="archiveThread(thread.conversationId)"
-            >
-              <Icon name="archive" class="h-3.5 w-3.5" />
-            </button>
-            <RouterLink
-              :to="`/messages/${thread.conversationId}`"
-              class="flex items-start gap-3 rounded-xl px-2 py-2.5 hover:bg-zinc-900"
-              :class="thread.conversationId === id ? 'bg-zinc-900' : ''"
-              data-test="message-thread"
-            >
-              <AgentAvatar :name="agentName(thread.agentId)" :provider="agentProvider(thread.agentId)" size="sm" />
-              <span class="min-w-0 flex-1">
-                <span class="flex items-baseline gap-2">
-                  <span class="truncate text-sm" :class="thread.unread ? 'font-semibold text-zinc-50' : 'text-zinc-200'">{{ thread.title || agentName(thread.agentId) }}</span>
-                  <span class="ml-auto shrink-0 text-xs text-zinc-500">{{ shortTime(thread.last.createdAt) }}</span>
-                </span>
-                <span class="flex items-center gap-2">
-                  <span class="min-w-0 flex-1 truncate text-xs text-zinc-400">
-                    <template v-if="thread.last.from === 'person'">Você:</template>
-                    <template v-else>{{ agentName(thread.agentId) }}:</template>
-                    {{ snippet(thread.last.body) }}
-                  </span>
-                  <span
-                    v-if="thread.last.level !== 'info' && thread.last.from === 'agent'"
-                    class="h-2 w-2 shrink-0 rounded-full"
-                    :class="thread.last.level === 'urgent' ? 'bg-rose-400' : 'bg-amber-400'"
-                  />
-                  <span v-if="thread.pending" class="shrink-0 rounded-full bg-amber-500/20 px-1.5 text-[10px] font-semibold text-amber-300" data-test="thread-pending">
-                    {{ thread.pending }} {{ thread.pending === 1 ? 'pendente' : 'pendentes' }}
-                  </span>
-                  <span v-if="thread.unread" class="shrink-0 rounded-full bg-emerald-500 px-1.5 text-[10px] font-semibold text-zinc-950">{{ thread.unread }}</span>
-                </span>
-              </span>
-            </RouterLink>
+          <li v-for="thread in shown" :key="thread.conversationId">
+            <MessageThreadRow
+              :thread="thread"
+              :active="thread.conversationId === id"
+              :archived="messages.archived"
+              :name="agentName(thread.agentId)"
+              :provider="agentProvider(thread.agentId)"
+              @archive="archiveThread"
+            />
           </li>
         </ul>
       </section>
