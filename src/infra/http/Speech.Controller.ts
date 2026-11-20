@@ -91,7 +91,7 @@ export class SpeechController {
   private audio(res: Response, audio: { data: Buffer; mime: string }): void {
     res
       .status(200)
-      .set({ 'Content-Type': audio.mime, 'Cache-Control': 'private, max-age=86400', 'Content-Length': String(audio.data.length) })
+      .set({ 'Content-Type': audio.mime, 'Cache-Control': 'private, no-store', 'Content-Length': String(audio.data.length) })
       .end(audio.data)
   }
 

@@ -6066,7 +6066,7 @@ export const OPENAPI_DOCUMENT = {
     '/messages/{conversationId}/{messageId}/speech': {
       get: {
         summary:
-          'The audio of one message of the signed-in person (title and body as speech), with their voice and rate. `Content-Type: audio/mpeg`, `Cache-Control: private, max-age=86400`. 404 when the message is not in their thread; 409 `speech_unavailable` without a voice engine (Settings); 502 `speech_failed` when the engine fails',
+          'The audio of one message of the signed-in person (title and body as speech), with their voice and rate. `Content-Type: audio/mpeg`, `Cache-Control: private, no-store` (the gateway caches the audio; the browser does not, so a voice change applies at once). 404 when the message is not in their thread; 409 `speech_unavailable` without a voice engine (Settings); 502 `speech_failed` when the engine fails',
         parameters: [
           { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'messageId', in: 'path', required: true, schema: { type: 'string' } },
