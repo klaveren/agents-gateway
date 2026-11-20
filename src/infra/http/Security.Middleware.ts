@@ -49,6 +49,8 @@ export function securityHeaders(): RequestHandler {
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self'",
     "img-src 'self' data: blob:",
+    // 🔊 A voz das mensagens toca o áudio que a tela baixa (blob) e o mudo que libera o som (data).
+    "media-src 'self' data: blob:",
     "connect-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'none'",
