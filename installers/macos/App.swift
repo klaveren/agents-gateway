@@ -36,6 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     setupVoice()
     let settings = WKWebViewConfiguration()
     settings.websiteDataStore = .default()
+    // 🔊 A voz das mensagens toca sem clique (o áudio chega pelo stream): a janela é do próprio gateway, não um site qualquer.
+    settings.mediaTypesRequiringUserActionForPlayback = []
     settings.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "gatewayServers")
     web = WKWebView(frame: .zero, configuration: settings)
     web.navigationDelegate = self
