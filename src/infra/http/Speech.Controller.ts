@@ -39,7 +39,7 @@ export class SpeechController {
       const userId = await this.userId()
       const message = this.deps.messages?.thread(userId, req.params.conversationId as string).find((item) => item.id === req.params.messageId)
       if (!message) throw new HttpError(404, 'not_found', 'Not found')
-      this.audio(res, await this.run(() => this.deps.speech.speak(userId, speechText(message))))
+      this.audio(res, await this.run(() => this.deps.speech.speak(userId, speechText(message), { ...(message.projectId ? { projectId: message.projectId } : {}) })))
     } catch (error: unknown) {
       this.failure(res, error)
     }

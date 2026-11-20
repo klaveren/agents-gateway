@@ -59,6 +59,8 @@ import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
 import { ConnectService } from '@application/Connect.Service'
 import { SqliteRemoteUsageRepository } from '@infra/persistence/Sqlite.RemoteUsageRepository'
 import { remoteUsageRows } from '@domain/models/RemoteUsage.Model'
+import { speechUsageRows } from '@domain/models/SpeechUsage.Model'
+import { makeSpeechUsage } from './SpeechUsage.Factory'
 import { ProjectConnectionService } from '@application/ProjectConnection.Service'
 import { PermissionDecisionNoticeService } from '@application/PermissionDecisionNotice.Service'
 import { catalogItemKey } from '@application/CatalogHistory.Service'
@@ -340,11 +342,13 @@ function makeRemoteUsage(): SqliteRemoteUsageRepository {
   return remoteUsage
 }
 
-/** Os relatórios de uso com as linhas dos gateways conectados junto (o resto do repositório, como é). */
+/** Os relatórios de uso com as linhas dos gateways conectados e da voz junto (o resto do repositório, como é). */
 function withRemoteUsage(conversations: AgentController['conversations']): AgentController['conversations'] {
   const usage: IConversationRepository['usage'] = async (query) => [
     ...(await conversations.usage(query)),
     ...remoteUsageRows(makeRemoteUsage().since(query.since.toISOString().slice(0, 10)), query),
+    // 🔊 A voz das mensagens (cada fala que o provider cobrou), junto, como uma linha "Voz (mensagens)".
+    ...speechUsageRows(makeSpeechUsage().since(query.since), query),
   ]
   return new Proxy(conversations, {
     get: (target, property) => {

@@ -7,6 +7,7 @@ import { makeAuth } from './Auth.Factory'
 import { makePersonMessages } from './PersonMessages.Factory'
 import { makeProviderVoices } from './ProviderVoices.Factory'
 import { makeProviders } from './Providers.Factory'
+import { makeSpeechUsage } from './SpeechUsage.Factory'
 import { makeSettings } from './Settings.Factory'
 
 let service: SpeechService | undefined
@@ -20,6 +21,7 @@ export function makeSpeech(): SpeechService {
     prefs: new SqliteUserPreferenceRepository(path),
     engine: async () => speechEngineOf(await makeSettings().read(), (providerId) => makeProviders().connection(providerId)),
     synthesize: (connection, model, text, options) => synthesizeSpeech(connection, model, text, options),
+    record: (entry) => makeSpeechUsage().record(entry),
     accountVoices: (providerId) => makeProviderVoices().get(providerId).voices,
   })
   return service

@@ -3,6 +3,7 @@ import type { IProviderConnection } from '@domain/models/Provider.Model'
 import type { IAgentSettings } from '@domain/models/Settings.Model'
 import { DEFAULT_VOICE_PREFERENCES, IVoicePreferences, normalizeVoicePreferences, SPEECH_MAX_CHARS, SPEECH_SAMPLE_TEXT } from '@domain/models/Speech.Model'
 import { IProviderVoice, voicesForModel } from '@domain/models/ProviderVoice.Model'
+import type { ISpeechUsageEntry } from '@domain/models/SpeechUsage.Model'
 import type { IUserPreferenceRepository } from '@domain/ports/UserPreferenceRepository.Port'
 
 /** A voz não está configurada (sem motor nas Configurações). */
@@ -13,6 +14,13 @@ export class SpeechFailedError extends Error {}
 export interface ISpeechAudio {
   data: Buffer
   mime: string
+  /** O que o provider cobrou (tokens e caracteres), quando informou; vira o uso da voz (ver `SpeechUsage.Model`). */
+  usage?: { inputTokens?: number; outputTokens?: number; characters?: number }
+}
+
+/** De onde vem a fala: o projeto da mensagem (o "Testar" do Perfil não tem). */
+export interface ISpeechContext {
+  projectId?: string
 }
 
 export interface ISpeechEngine {
@@ -29,6 +37,8 @@ export interface ISpeechDeps {
   synthesize(connection: ISpeechEngine['connection'], model: string, text: string, options: { voice?: string; rate: number; language?: string }): Promise<ISpeechAudio>
   /** 🎙️ As vozes da conta do provider do motor (DashScope); ausente = nenhuma. */
   accountVoices?(providerId: string): IProviderVoice[]
+  /** Grava o uso de uma fala que o provider cobrou (cache não passa por aqui). Ausente = não grava. */
+  record?(entry: ISpeechUsageEntry): void
   now?: () => Date
 }
 
@@ -106,7 +116,7 @@ export class SpeechService {
   }
 
   /** O áudio de um texto, com a voz e a velocidade da pessoa. */
-  async speak(userId: string, text: string): Promise<ISpeechAudio> {
+  async speak(userId: string, text: string, context: ISpeechContext = {}): Promise<ISpeechAudio> {
     const engine = await this.deps.engine().catch(() => undefined)
     if (!engine) throw new SpeechUnavailableError('the voice has not been configured by the administrator')
     const prefs = this.preferences(userId)
@@ -129,12 +139,35 @@ export class SpeechService {
       throw new SpeechFailedError(failureMessage(error, engine.connection.key))
     }
     this.remember(key, audio)
+    this.record(userId, engine, spoken, audio, context)
     return audio
   }
 
   /** A frase fixa do "Testar" do Perfil. */
   sample(userId: string): Promise<ISpeechAudio> {
     return this.speak(userId, SPEECH_SAMPLE_TEXT)
+  }
+
+  /** 💰 Uma chamada ao provider = uma linha de uso. ⛔ Nunca derruba a fala: se não gravar, o áudio sai igual. */
+  private record(userId: string, engine: ISpeechEngine, spoken: string, audio: ISpeechAudio, context: ISpeechContext): void {
+    if (!this.deps.record) return
+    const inputTokens = audio.usage?.inputTokens ?? 0
+    const outputTokens = audio.usage?.outputTokens ?? 0
+    try {
+      this.deps.record({
+        at: (this.deps.now ?? (() => new Date()))(),
+        userId,
+        ...(context.projectId ? { projectId: context.projectId } : {}),
+        provider: engine.connection.providerId ?? '',
+        model: engine.model,
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+        characters: audio.usage?.characters ?? spoken.length,
+      })
+    } catch (error: unknown) {
+      console.warn('[SpeechService] could not record the voice usage:', error instanceof Error ? error.message : error)
+    }
   }
 
   private remember(key: string, audio: ISpeechAudio): void {

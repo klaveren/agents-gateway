@@ -88,4 +88,20 @@ describe('synthesizeSpeech', () => {
     await assert.rejects(synthesizeSpeech({ protocol: EProvider.OPENAI }, 'm', 'x', { rate: 1 }), /no API key/)
     await assert.rejects(synthesizeSpeech({ protocol: EProvider.GOOGLE, key: 'k' }, 'm', 'x', { rate: 1 }), /does not speak/)
   })
+
+  it('💰 DashScope: o usage do provider vem junto (link ou base64); sem usage, ausente', async () => {
+    const usage = { input_tokens: 12, output_tokens: 34, total_tokens: 46, characters: 20 }
+    const inline = scripted(new Response(JSON.stringify({ output: { audio: { data: Buffer.from('x').toString('base64') } }, usage })))
+    assert.deepStrictEqual((await synthesizeSpeech(BAILIAN, 'm', 'x', { voice: 'Cherry', rate: 1 }, inline.fetcher)).usage, { inputTokens: 12, outputTokens: 34, characters: 20 })
+    const linked = scripted(new Response(JSON.stringify({ output: { audio: { url: 'https://oss.aliyuncs.com/a.mp3' } }, usage })), new Response(Buffer.from('mp3')))
+    assert.strictEqual((await synthesizeSpeech(BAILIAN, 'm', 'x', { voice: 'Cherry', rate: 1 }, linked.fetcher)).usage?.outputTokens, 34)
+    const bare = scripted(new Response(JSON.stringify({ output: { audio: { data: Buffer.from('x').toString('base64') } } })))
+    assert.strictEqual((await synthesizeSpeech(BAILIAN, 'm', 'x', { voice: 'Cherry', rate: 1 }, bare.fetcher)).usage, undefined)
+  })
+
+  it('💰 OpenAI: sem usage no provider, os caracteres do texto', async () => {
+    const { fetcher } = scripted(new Response(Buffer.from('mp3'), { headers: { 'content-type': 'audio/mpeg' } }))
+    const audio = await synthesizeSpeech({ protocol: EProvider.OPENAI, key: 'k' }, 'tts-1', 'Olá, mundo', { rate: 1 }, fetcher)
+    assert.deepStrictEqual(audio.usage, { characters: 10 })
+  })
 })
