@@ -16,6 +16,11 @@ export interface IPersonMessage {
   turn?: number
   createdAt: string
   readAt?: string
+  /** Só no pedido (`attention`/`urgent`): pendente, respondido ou resolvido. */
+  status?: 'pending' | 'answered' | 'resolved'
+  answeredAt?: string
+  /** Na resposta da pessoa: o id do pedido a que ela respondeu. */
+  replyTo?: string
 }
 
 /** 💬 Um fio: a conversa que escreveu, a última mensagem e quantas não lidas. */
@@ -26,6 +31,8 @@ export interface IPersonThread {
   title?: string
   last: IPersonMessage
   unread: number
+  /** Quantos pedidos do fio ainda estão pendentes. */
+  pending: number
   archived: boolean
 }
 
@@ -36,14 +43,16 @@ export interface IPersonThread {
 export const useMessagesStore = defineStore('messages', () => {
   const threads = ref<IPersonThread[]>([])
   const unread = ref(0)
+  const pending = ref(0)
   const archived = ref(false)
   const loaded = ref(false)
   const open = ref<{ conversationId: string; messages: IPersonMessage[] }>()
 
   async function load(): Promise<void> {
-    const result = await api<{ threads: IPersonThread[]; unread: number }>('/messages', { query: archived.value ? { archived: 1 } : {} })
+    const result = await api<{ threads: IPersonThread[]; unread: number; pending?: number }>('/messages', { query: archived.value ? { archived: 1 } : {} })
     threads.value = result.threads
     unread.value = result.unread
+    pending.value = result.pending ?? 0
     loaded.value = true
   }
 
@@ -63,10 +72,28 @@ export const useMessagesStore = defineStore('messages', () => {
     }
   }
 
-  async function reply(conversationId: string, message: string): Promise<{ queued: boolean }> {
-    const result = await api<{ queued: boolean }>(`/messages/${encodeURIComponent(conversationId)}/reply`, { method: 'POST', body: { message } })
+  /** Responde pela caixa; com `replyTo`, é a resposta a UM pedido (que vira respondido). */
+  async function reply(conversationId: string, message: string, replyTo?: string): Promise<{ queued: boolean }> {
+    const result = await api<{ queued: boolean }>(`/messages/${encodeURIComponent(conversationId)}/reply`, {
+      method: 'POST',
+      body: replyTo ? { message, replyTo } : { message },
+    })
     await Promise.all([openThread(conversationId), load()])
     return result
+  }
+
+  /** 📌 Dá o pedido por tratado (`resolved`) ou o reabre (`pending`); o estado local muda sem reler tudo. */
+  async function setStatus(conversationId: string, messageId: string, status: 'resolved' | 'pending'): Promise<void> {
+    const result = await api<{ status: 'resolved' | 'pending'; pending: number }>(`/messages/${encodeURIComponent(conversationId)}/${encodeURIComponent(messageId)}/status`, {
+      method: 'PUT',
+      body: { status },
+    })
+    pending.value = result.pending
+    if (open.value?.conversationId === conversationId) {
+      open.value = { ...open.value, messages: open.value.messages.map((message) => (message.id === messageId ? { ...message, status: result.status, ...(result.status === 'pending' ? { answeredAt: undefined } : {}) } : message)) }
+    }
+    const requests = open.value?.conversationId === conversationId ? open.value.messages.filter((message) => message.status === 'pending').length : undefined
+    if (requests !== undefined) threads.value = threads.value.map((thread) => (thread.conversationId === conversationId ? { ...thread, pending: requests } : thread))
   }
 
   async function archive(conversationId: string, value = true): Promise<void> {
@@ -101,11 +128,12 @@ export const useMessagesStore = defineStore('messages', () => {
   function reset(): void {
     threads.value = []
     unread.value = 0
+    pending.value = 0
     open.value = undefined
     loaded.value = false
   }
 
   const waiting = computed(() => threads.value.filter((thread) => thread.unread > 0).length)
 
-  return { threads, unread, archived, loaded, open, waiting, load, openThread, reply, archive, showArchived, changed, reset }
+  return { threads, unread, pending, archived, loaded, open, waiting, load, openThread, reply, setStatus, archive, showArchived, changed, reset }
 })

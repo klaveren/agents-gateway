@@ -4,13 +4,14 @@
   import AgentAvatar from '@/components/AgentAvatar.vue'
   import Icon from '@/components/Icon.vue'
   import MasterDetail from '@/components/MasterDetail.vue'
+  import MessageThreadRow from '@/components/MessageThreadRow.vue'
   import { api } from '@/lib/api'
   import { disablePush, enablePush, pushState, type TPushState } from '@/lib/push'
   import { shortTime, fullTime } from '@/lib/format'
   import { renderMarkdown } from '@/lib/markdown'
   import type { ITurn } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
-  import { useMessagesStore, type IPersonThread } from '@/stores/messages'
+  import { useMessagesStore, type IPersonMessage, type IPersonThread } from '@/stores/messages'
 
   /**
    * 💬 MENSAGENS: o que os agentes escreveram para a pessoa (`notify`), num fio por conversa — como um app de mensagens. A
@@ -48,6 +49,19 @@
 
   const LEVEL: Record<string, string> = { info: '', attention: 'Precisa de você', urgent: 'Urgente' }
 
+  // 📌 Cada pedido (attention/urgent) tem o seu estado e a sua resposta.
+  const STATUS = {
+    pending: { label: 'Pendente', css: 'bg-amber-500/20 text-amber-300' },
+    answered: { label: 'Respondido', css: 'bg-emerald-500/20 text-emerald-300' },
+    resolved: { label: 'Resolvido', css: 'bg-zinc-700/60 text-zinc-300' },
+  } as const
+  const statusLabel = (message: IPersonMessage) => (message.status === 'answered' && message.answeredAt ? `Respondido ${shortTime(message.answeredAt)}` : STATUS[message.status ?? 'pending'].label)
+  /** O nome do pedido: o título ou o começo do texto. */
+  const requestLabel = (message: IPersonMessage) => (message.title || message.body.replace(/\s+/g, ' ').trim()).slice(0, 60)
+  const replyTarget = ref<string>()
+  const onlyPending = ref(false)
+  const composer = ref<HTMLTextAreaElement>()
+
   onMounted(() => {
     void pushState()
       .then((state) => (push.value = state))
@@ -65,6 +79,27 @@
   const current = computed<IPersonThread | undefined>(() => messages.threads.find((thread) => thread.conversationId === props.id))
   const fio = computed(() => (messages.open?.conversationId === props.id ? (messages.open?.messages ?? []) : []))
   /** O turno do contexto: o da última mensagem do agente (é ali que ele precisou da pessoa). */
+  const targetMessage = computed(() => fio.value.find((message) => message.id === replyTarget.value))
+  const shownFio = computed(() => (onlyPending.value ? fio.value.filter((message) => message.status === 'pending') : fio.value))
+  const requestOf = (message: IPersonMessage) => (message.replyTo ? fio.value.find((candidate) => candidate.id === message.replyTo) : undefined)
+
+  function replyTo(message: IPersonMessage) {
+    replyTarget.value = message.id
+    void nextTick(() => composer.value?.focus())
+  }
+  async function setStatus(message: IPersonMessage, status: 'resolved' | 'pending') {
+    if (!props.id) return
+    error.value = undefined
+    try {
+      await messages.setStatus(props.id, message.id, status)
+    } catch (failure) {
+      error.value = failure instanceof Error ? failure.message : String(failure)
+    }
+  }
+  function goToRequest(id: string) {
+    document.querySelector(`[data-message-id="${id}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }
+
   const turn = computed(() => [...fio.value].reverse().find((message) => message.from === 'agent' && message.turn !== undefined)?.turn)
 
   // O CONTEXTO: os turnos até aquele em que o agente escreveu; "Ler mais acima" traz mais.
@@ -88,6 +123,8 @@
     async (id) => {
       sentNote.value = undefined
       draft.value = ''
+      replyTarget.value = undefined
+      onlyPending.value = false
       contextLimit.value = 2
       if (!id) return
       try {
@@ -116,8 +153,9 @@
     sending.value = true
     error.value = undefined
     try {
-      const result = await messages.reply(props.id, text)
+      const result = await messages.reply(props.id, text, replyTarget.value)
       draft.value = ''
+      replyTarget.value = undefined
       sentNote.value = result.queued
         ? 'Enviado: a conversa está rodando, sua resposta entra no turno atual. A resposta do agente aparece aqui.'
         : 'Enviado para a conversa. A resposta do agente aparece aqui.'
@@ -212,44 +250,15 @@
           {{ messages.archived ? 'Nenhuma mensagem arquivada.' : 'Nenhuma mensagem. Quando um agente precisar de você, ela aparece aqui.' }}
         </p>
         <ul class="min-h-0 flex-1 overflow-y-auto px-2">
-          <li v-for="thread in shown" :key="thread.conversationId" class="group relative">
-            <button
-              type="button"
-              class="absolute top-2 right-2 z-10 rounded-full bg-zinc-800 p-1.5 text-zinc-300 opacity-0 group-hover:opacity-100 hover:text-zinc-50 focus:opacity-100 [@media(hover:none)]:opacity-100"
-              :title="messages.archived ? 'Voltar à caixa' : 'Arquivar'"
-              :aria-label="messages.archived ? 'Voltar à caixa' : 'Arquivar'"
-              data-test="message-thread-archive"
-              @click="archiveThread(thread.conversationId)"
-            >
-              <Icon name="archive" class="h-3.5 w-3.5" />
-            </button>
-            <RouterLink
-              :to="`/messages/${thread.conversationId}`"
-              class="flex items-start gap-3 rounded-xl px-2 py-2.5 hover:bg-zinc-900"
-              :class="thread.conversationId === id ? 'bg-zinc-900' : ''"
-              data-test="message-thread"
-            >
-              <AgentAvatar :name="agentName(thread.agentId)" :provider="agentProvider(thread.agentId)" size="sm" />
-              <span class="min-w-0 flex-1">
-                <span class="flex items-baseline gap-2">
-                  <span class="truncate text-sm" :class="thread.unread ? 'font-semibold text-zinc-50' : 'text-zinc-200'">{{ thread.title || agentName(thread.agentId) }}</span>
-                  <span class="ml-auto shrink-0 text-xs text-zinc-500">{{ shortTime(thread.last.createdAt) }}</span>
-                </span>
-                <span class="flex items-center gap-2">
-                  <span class="min-w-0 flex-1 truncate text-xs text-zinc-400">
-                    <template v-if="thread.last.from === 'person'">Você:</template>
-                    <template v-else>{{ agentName(thread.agentId) }}:</template>
-                    {{ snippet(thread.last.body) }}
-                  </span>
-                  <span
-                    v-if="thread.last.level !== 'info' && thread.last.from === 'agent'"
-                    class="h-2 w-2 shrink-0 rounded-full"
-                    :class="thread.last.level === 'urgent' ? 'bg-rose-400' : 'bg-amber-400'"
-                  />
-                  <span v-if="thread.unread" class="shrink-0 rounded-full bg-emerald-500 px-1.5 text-[10px] font-semibold text-zinc-950">{{ thread.unread }}</span>
-                </span>
-              </span>
-            </RouterLink>
+          <li v-for="thread in shown" :key="thread.conversationId">
+            <MessageThreadRow
+              :thread="thread"
+              :active="thread.conversationId === id"
+              :archived="messages.archived"
+              :name="agentName(thread.agentId)"
+              :provider="agentProvider(thread.agentId)"
+              @archive="archiveThread"
+            />
           </li>
         </ul>
       </section>
@@ -269,6 +278,20 @@
             <span class="block truncate font-medium">{{ current?.title || (current ? agentName(current.agentId) : '') }}</span>
             <span v-if="current" class="block truncate text-xs text-zinc-500">{{ agentName(current.agentId) }}{{ current.projectId ? ` · ${current.projectId}` : '' }}</span>
           </span>
+          <span v-if="current?.pending" class="shrink-0 rounded-full bg-amber-500/20 px-2 text-xs font-semibold text-amber-300" data-test="thread-pending-count">
+            {{ current.pending }} {{ current.pending === 1 ? 'pendente' : 'pendentes' }}
+          </span>
+          <button
+            v-if="current?.pending || onlyPending"
+            type="button"
+            class="btn btn-sm btn-ghost"
+            :class="onlyPending ? 'text-amber-300' : ''"
+            :aria-pressed="onlyPending"
+            data-test="only-pending"
+            @click="onlyPending = !onlyPending"
+          >
+            Só pendentes
+          </button>
           <button type="button" class="btn btn-sm btn-ghost" :title="messages.archived ? 'Voltar à caixa' : 'Arquivar'" @click="archive">
             <Icon name="archive" class="h-4 w-4" />
           </button>
@@ -308,22 +331,52 @@
             </section>
 
             <!-- O fio: o que o agente escreveu e o que foi respondido. -->
-            <template v-for="message in fio" :key="message.id">
-              <div v-if="message.from === 'agent'" class="flex max-w-[90%] flex-col gap-1 self-start" data-test="message-agent">
-                <span
-                  v-if="LEVEL[message.level]"
-                  class="self-start rounded-full px-2 text-[10px] font-semibold"
-                  :class="message.level === 'urgent' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'"
-                >
-                  {{ LEVEL[message.level] }}
-                </span>
-                <div class="rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5 py-2 text-sm">
+            <template v-for="message in shownFio" :key="message.id">
+              <div v-if="message.from === 'agent'" class="flex max-w-[90%] flex-col gap-1 self-start" :data-message-id="message.id" data-test="message-agent">
+                <div class="flex items-center gap-1.5">
+                  <span
+                    v-if="LEVEL[message.level]"
+                    class="rounded-full px-2 text-[10px] font-semibold"
+                    :class="message.level === 'urgent' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'"
+                  >
+                    {{ LEVEL[message.level] }}
+                  </span>
+                  <span
+                    v-if="message.status"
+                    class="rounded-full px-2 text-[10px] font-semibold"
+                    :class="STATUS[message.status].css"
+                    :data-test="`message-status-${message.status}`"
+                  >
+                    {{ statusLabel(message) }}
+                  </span>
+                </div>
+                <div class="rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5 py-2 text-sm" :class="replyTarget === message.id ? 'ring-1 ring-emerald-500/60' : ''">
                   <strong v-if="message.title" class="mb-1 block">{{ message.title }}</strong>
                   <div class="prose-agent wrap-anywhere" v-html="renderMarkdown(message.body)" />
                 </div>
-                <span class="text-[11px] text-zinc-500" :title="fullTime(message.createdAt)">{{ shortTime(message.createdAt) }}</span>
+                <div class="flex items-center gap-2 text-[11px] text-zinc-500">
+                  <span :title="fullTime(message.createdAt)">{{ shortTime(message.createdAt) }}</span>
+                  <template v-if="message.status">
+                    <button type="button" class="text-emerald-300 hover:underline" data-test="message-reply-to" @click="replyTo(message)">Responder</button>
+                    <button
+                      v-if="message.status === 'resolved'"
+                      type="button"
+                      class="hover:text-zinc-300 hover:underline"
+                      data-test="message-reopen"
+                      @click="setStatus(message, 'pending')"
+                    >
+                      Reabrir
+                    </button>
+                    <button v-else type="button" class="hover:text-zinc-300 hover:underline" data-test="message-resolve" @click="setStatus(message, 'resolved')">
+                      Marcar resolvido
+                    </button>
+                  </template>
+                </div>
               </div>
               <div v-else class="flex max-w-[85%] flex-col items-end gap-1 self-end" data-test="message-person">
+                <button v-if="requestOf(message)" type="button" class="text-[11px] text-zinc-500 hover:text-zinc-300" data-test="message-in-reply-to" @click="goToRequest(message.replyTo!)">
+                  ↳ em resposta a {{ requestLabel(requestOf(message)!) }}
+                </button>
                 <div class="rounded-2xl rounded-br-md bg-violet-600/80 px-3.5 py-2 text-sm whitespace-pre-wrap text-white">{{ message.body }}</div>
                 <span class="text-[11px] text-zinc-500">{{ shortTime(message.createdAt) }}</span>
               </div>
@@ -334,12 +387,19 @@
         </div>
         <form class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3" @submit.prevent="send">
           <p v-if="error" class="mb-2 text-sm text-rose-300">{{ error }}</p>
+          <div v-if="targetMessage" class="mx-auto mb-2 flex max-w-3xl items-center gap-2 text-xs" data-test="reply-target">
+            <span class="min-w-0 truncate rounded-full bg-emerald-500/15 px-3 py-1 text-emerald-300">Respondendo: {{ requestLabel(targetMessage) }}</span>
+            <button type="button" class="text-zinc-400 hover:text-zinc-100" title="Cancelar" aria-label="Cancelar a resposta ao pedido" data-test="reply-target-cancel" @click="replyTarget = undefined">
+              ×
+            </button>
+          </div>
           <div class="mx-auto flex max-w-3xl items-end gap-2">
             <textarea
+              ref="composer"
               v-model="draft"
               rows="1"
               class="max-h-[200px] min-h-10 flex-1 resize-none rounded-2xl bg-zinc-800 px-4 py-2.5 text-sm outline-none placeholder:text-zinc-500 focus:ring-1 focus:ring-emerald-500/60"
-              :placeholder="current ? `Responder a ${agentName(current.agentId)} (vai para a conversa)` : 'Responder'"
+              :placeholder="targetMessage ? 'Responder a este pedido…' : current ? `Responder a ${agentName(current.agentId)} (vai para a conversa)` : 'Responder'"
               data-test="message-reply"
               @keydown="onKey"
             />

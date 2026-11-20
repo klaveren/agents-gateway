@@ -11,6 +11,16 @@ export const NOTIFY_TOOL = 'notify'
 export const PERSON_MESSAGE_LEVELS = ['info', 'attention', 'urgent'] as const
 export type TPersonMessageLevel = (typeof PERSON_MESSAGE_LEVELS)[number]
 
+/**
+ * 📌 PEDIDO: a mensagem do agente com nível `attention` ou `urgent`. Cada pedido tem o seu estado, para a pessoa responder
+ * e acompanhar um por um: `pending` (esperando), `answered` (ela respondeu a ele) e `resolved` (ela deu por tratado, fora
+ * da caixa). Mensagem `info` não tem estado.
+ */
+export const PERSON_MESSAGE_STATUSES = ['pending', 'answered', 'resolved'] as const
+export type TPersonMessageStatus = (typeof PERSON_MESSAGE_STATUSES)[number]
+
+export const isRequestLevel = (level: TPersonMessageLevel): boolean => level === 'attention' || level === 'urgent'
+
 export const PERSON_MESSAGE_LIMITS = { title: 120, body: 8000 } as const
 
 export interface IPersonMessage {
@@ -34,6 +44,12 @@ export interface IPersonMessage {
   createdAt: Date
   readAt?: Date
   archivedAt?: Date
+  /** Só no pedido (agente, `attention`/`urgent`): o estado dele para quem recebeu. */
+  status?: TPersonMessageStatus
+  /** Quando o pedido foi respondido. */
+  answeredAt?: Date
+  /** Na resposta da pessoa: o id do pedido a que ela responde. */
+  replyTo?: string
 }
 
 /** Um fio na lista: a conversa, a última mensagem e quantas não lidas. */
@@ -44,5 +60,7 @@ export interface IPersonThread {
   title?: string
   last: IPersonMessage
   unread: number
+  /** Quantos pedidos do fio ainda estão pendentes. */
+  pending: number
   archived: boolean
 }

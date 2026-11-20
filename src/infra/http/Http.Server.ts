@@ -652,6 +652,7 @@ function buildRoutes(
     { method: 'post', path: '/messages/:conversationId/read', handler: controller.readMessages },
     { method: 'put', path: '/messages/:conversationId/archive', handler: controller.archiveMessages },
     { method: 'post', path: '/messages/:conversationId/reply', handler: controller.replyMessage },
+    { method: 'put', path: '/messages/:conversationId/:messageId/status', handler: controller.setMessageStatus },
     { method: 'get', path: '/push/key', handler: controller.pushKey },
     { method: 'post', path: '/push/subscriptions', handler: controller.pushSubscribe },
     { method: 'delete', path: '/push/subscriptions', handler: controller.pushUnsubscribe },

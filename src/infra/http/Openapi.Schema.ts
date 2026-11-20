@@ -6002,17 +6002,17 @@ export const OPENAPI_DOCUMENT = {
     '/messages': {
       get: {
         summary:
-          'The Messages inbox of the signed-in person: one thread per conversation whose agent wrote to them (`notify`), the latest first, with the unread count; `?archived=1` lists the archived ones. Only the recipient sees a thread (no administrator reads someone else’s)',
+          'The Messages inbox of the signed-in person: one thread per conversation whose agent wrote to them (`notify`), the latest first, with the unread count and the number of pending requests (`pending`); each thread also has its own `pending`; `?archived=1` lists the archived ones. Only the recipient sees a thread (no administrator reads someone else’s)',
         parameters: [{ name: 'archived', in: 'query', required: false, schema: { type: 'string' } }],
         responses: {
-          '200': { description: 'OK: `{ threads, unread }`', ...json(envelope({ type: 'object' })) },
+          '200': { description: 'OK: `{ threads, unread, pending }`', ...json(envelope({ type: 'object' })) },
           '401': { description: 'Not signed in', content: { 'application/json': { schema: failureEnvelope } } },
         },
       },
     },
     '/messages/{conversationId}': {
       get: {
-        summary: 'The messages of one thread of the signed-in person, in order (`from`: agent or person; `turn`: the turn of the conversation when it was sent)',
+        summary: 'The messages of one thread of the signed-in person, in order (`from`: agent or person; `turn`: the turn of the conversation when it was sent). Agent messages of level `attention`/`urgent` are requests with `status` (`pending` | `answered` | `resolved`) and `answeredAt`; a person message that answered one has `replyTo` (the request id)',
         parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'OK: `{ messages }`', ...json(envelope({ type: 'object' })) },
@@ -6082,11 +6082,26 @@ export const OPENAPI_DOCUMENT = {
         summary:
           'Replies to a thread of the signed-in person: the reply goes to the thread of everyone who received that conversation and ENTERS the conversation as a message from them (even someone else’s conversation: the agent called them), running the turn on the server; the agent’s answer comes back to the thread (unless it wrote with `notify`). With the turn running, the reply joins its queue. 202',
         parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
-        requestBody: { required: true, ...json({ type: 'object', properties: { message: { type: 'string' } }, required: ['message'] }) },
+        requestBody: { required: true, ...json({ type: 'object', properties: { message: { type: 'string' }, replyTo: { type: 'string', description: 'The id of the request (an attention/urgent agent message of this thread) being answered: it becomes `answered` and the agent gets the reply labelled with it' } }, required: ['message'] }) },
         responses: {
           '202': { description: 'Sent: `{ queued }`', ...json(envelope({ type: 'object' })) },
           '404': { description: 'No such thread for this person, or the conversation no longer runs', content: { 'application/json': { schema: failureEnvelope } } },
-          '422': { description: 'Empty message', content: { 'application/json': { schema: failureEnvelope } } },
+          '422': { description: 'Empty message, or `replyTo` that is not a request of this thread (field `replyTo`)', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/messages/{conversationId}/{messageId}/status': {
+      put: {
+        summary: 'Marks a request (attention/urgent agent message) of a thread of the signed-in person as `resolved` (handled elsewhere) or reopens it as `pending`. Answering with `replyTo` sets `answered` by itself',
+        parameters: [
+          { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'messageId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: { required: true, ...json({ type: 'object', properties: { status: { type: 'string', enum: ['resolved', 'pending'] } }, required: ['status'] }) },
+        responses: {
+          '200': { description: 'OK: `{ status, pending }`', ...json(envelope({ type: 'object' })) },
+          '404': { description: 'No such message in a thread of this person', content: { 'application/json': { schema: failureEnvelope } } },
+          '422': { description: 'Invalid status, or the message is not a request', content: { 'application/json': { schema: failureEnvelope } } },
         },
       },
     },
