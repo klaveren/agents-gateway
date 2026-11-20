@@ -34,6 +34,8 @@ describe('security middleware', () => {
     const csp = headers['Content-Security-Policy']
     assert.ok(csp.includes("font-src 'self';"))
     assert.ok(!/google|gstatic/.test(csp))
+    // A voz toca o áudio baixado (blob) e o mudo que libera o som (data); nada de fora.
+    assert.ok(csp.includes("media-src 'self' data: blob:;"))
   })
 
   describe('requireCaller', () => {
