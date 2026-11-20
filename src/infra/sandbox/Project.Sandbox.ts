@@ -89,6 +89,8 @@ export interface ICercoPlace {
   agentFolder?: { dir: string; read: boolean; write: boolean }
   /** ⛔ As pastas de skills e commands que outro projeto compartilhou com este: só leitura (entram em `readOnly`). */
   sharedFolders?: readonly string[]
+  /** Os repositórios de verdade do projeto (ver `ICercoBase.repositories`): irmãos só leitura e `.git` protegido. */
+  repositories?: readonly string[]
   /**
    * As portas de serviço LOCAL que as regras liberam exatas (`localhost:<porta>`): no Linux ganham um encaminhador; no Mac,
    * o perfil abre a porta para ouvir e conectar (ver `withMacLocalPorts`).
@@ -328,6 +330,7 @@ export class ProjectSandbox implements IProjectSandbox {
       scratch: ['.home', '.tmp', '.cache'].map((name) => join(place.scratchBase ?? root, name)),
       ...(place.gitCommonDir ? { gitCommonDir: place.gitCommonDir } : {}),
       ...(place.gitCommonDir && place.worktreeGitDir ? { worktreeGitDir: place.worktreeGitDir } : {}),
+      ...(place.repositories?.length ? { repositories: place.repositories } : {}),
       // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.
       alwaysRead: [join(dataDir(this.env), 'tools'), dirname(dirname(process.execPath)), ...runtimeHelpers()],
       // ⛔ As pastas privadas dos OUTROS agentes: fechadas para ler e gravar, mesmo com regra que as cubra (`**`).

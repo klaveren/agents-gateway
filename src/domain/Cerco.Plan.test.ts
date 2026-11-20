@@ -171,4 +171,40 @@ describe('machinePlan — o cerco aberto do agente de máquina', () => {
     assert.ok(plan.writeDeny.includes('/w/p/.git/hooks'))
     assert.ok(plan.readAllow.includes('/w/p/.git'))
   })
+
+  it('⚖️ repositório irmão: a leitura nomeada abre o caminho absoluto dele; a escrita nunca; as negações valem nele', () => {
+    const repo = '/w/p/repositories/A'
+    const common = { ...base, root: repo, projectRoot: '/w/p', gitCommonDir: `${repo}/.git`, repositories: [repo, '/w/p/repositories/B'] }
+    const plan = cercoPlan(
+      {
+        agent: [rule('read', 'repositories/B/**'), rule('write', 'repositories/B/**'), rule('write', '/w/p/repositories/B/**')],
+        project: [rule('read', 'repositories/B/infra/**', 'deny'), rule('read', '/w/p/repositories/C/**')],
+      },
+      common,
+    )
+    assert.ok(plan.readAllow.includes('/w/p/repositories/B/**'))
+    assert.ok(plan.readAllow.includes('/w/p/repositories/C/**'))
+    assert.ok(plan.readDeny.includes('/w/p/repositories/B/infra/**'), 'a negação que nomeia o irmão vale nele')
+    assert.ok(plan.readDeny.includes('/w/p/repositories/B/**/.env'), 'os segredos do sistema valem na pasta do irmão')
+    assert.ok(!plan.writeAllow.some((path) => path.startsWith('/w/p/repositories/B')), 'sem liberação de escrita no irmão')
+    assert.ok(plan.writeDeny.includes('/w/p/repositories/B'), 'o irmão fechado para escrita')
+    assert.ok(!plan.writeDeny.includes(repo))
+  })
+
+  it('⛔ curinga no nome, o próprio repositório e `_worktrees` não viram irmão no cerco', () => {
+    const repo = '/w/p/repositories/A'
+    const plan = cercoPlan(
+      { agent: [rule('read', 'repositories/*/**'), rule('read', 'repositories/A/**'), rule('read', 'repositories/_worktrees/**'), rule('read', 'repositories/**')] },
+      { ...base, root: repo, projectRoot: '/w/p' },
+    )
+    assert.ok(!plan.readAllow.some((path) => path.startsWith('/w/p/repositories') && !path.startsWith(`${repo}/`)), plan.readAllow.join(' '))
+  })
+
+  it('⛔ conversa sem repositório (raiz = projeto): o .git de cada repositório fica sem config, hooks, modules e atributos', () => {
+    const plan = cercoPlan({ agent: [rule('write', '**')] }, { ...base, root: '/w/p', repositories: ['/w/p/repositories/A', '/w/p/repositories/B'] })
+    for (const name of ['A', 'B'])
+      for (const path of ['config', 'hooks', 'modules', 'info/attributes']) assert.ok(plan.writeDeny.includes(`/w/p/repositories/${name}/.git/${path}`), `${name}/${path}`)
+    assert.ok(!plan.writeDeny.includes('/w/p/repositories/A'), 'o repositório em si segue gravável')
+    assert.ok(!plan.readDeny.some((path) => path.startsWith('/w/p/repositories')))
+  })
 })

@@ -42,6 +42,11 @@ export interface IFileToolDeps {
    * chamada vira `/`), com os dados e a configuração do gateway ainda protegidos (`deniedPath`). Ausente = não.
    */
   machine?: (context?: IExecutionContext) => boolean
+  /**
+   * ⛔ Só LEITURA: pode a conversa ler este caminho REAL, dentro de outro repositório do projeto dela? (ver `siblingReader`). Ausente
+   * = nunca. Escrever, listar e buscar não passam por aqui.
+   */
+  siblingRead?: (context?: IExecutionContext) => ((target: string) => boolean) | undefined
 }
 
 export interface IOwnFolder {
@@ -119,7 +124,7 @@ export function resolveInside(root: string, path: string): string | undefined {
 }
 
 /** ⛔ Os arquivos sempre protegidos: segredos e o dado interno do gateway (fora da raiz das tools). */
-export function deniedPath(absPath: string, root: string, machine = false): string | undefined {
+export function deniedPath(absPath: string, root: string, machine = false, sibling?: (real: string) => boolean): string | undefined {
   // ⛔ Sem distinção de caixa: no disco do Mac (APFS) `.ENV` é o `.env` e `.GIT/config` é o `.git/config`.
   const name = basename(absPath).toLowerCase()
   if (name === '.env' || name.startsWith('.env.')) return 'environment file'
@@ -132,7 +137,8 @@ export function deniedPath(absPath: string, root: string, machine = false): stri
   if (/(^|[\\/])\.git([\\/]|$)/i.test(absPath)) return 'git internals'
   const real = realOf(resolve(absPath))
   // Os arquivos de recurso globais se LEEM (a gravação é recusada à parte: `isResourceFilePath`).
-  if (isInside(realOf(dataDir()), real) && !isInside(realOf(resolve(root)), real) && !isInside(realOf(globalResourcesDir()), real)) return 'gateway data'
+  // ⚖️ Exceção só de LEITURA (`sibling`): o repositório irmão liberado por regra (ver `SiblingRepository.Policy`). Tudo acima já recusou.
+  if (isInside(realOf(dataDir()), real) && !isInside(realOf(resolve(root)), real) && !isInside(realOf(globalResourcesDir()), real) && !sibling?.(real)) return 'gateway data'
   // 🖥️ No agente de máquina a raiz é `/`: a pasta de dados vale pelo que é dela (só os projetos se alcançam), e a configuração
   // do gateway (no Mac, `config.env` e a chave) nunca.
   if (machine && isInside(realOf(dataDir()), real) && !isInside(realOf(join(dataDir(), 'projects')), real) && !isInside(realOf(globalResourcesDir()), real)) return 'gateway data'
@@ -188,11 +194,21 @@ function guard(
   own?: IOwnFolder,
   shared = false,
   machine = false,
+  sibling?: (real: string) => boolean,
 ): { abs: string } | { error: IToolResult } {
   if (typeof path !== 'string' || !path.trim()) return { error: fail('path is required.') }
-  const abs = resolveInside(root, path)
+  let abs = resolveInside(root, path)
+  // ⛔ O caminho ABSOLUTO de um repositório irmão liberado, só para LER (`sibling` só vem nas leituras); o relativo segue na raiz.
+  let outside = false
+  if (!abs && !write && sibling && isAbsolute(path)) {
+    const target = realOf(resolve(path))
+    if (!path.includes('\0') && sibling(target)) {
+      abs = target
+      outside = true
+    }
+  }
   if (!abs) return { error: fail('path is outside the allowed folder') }
-  const reason = deniedPath(abs, root, machine)
+  const reason = deniedPath(abs, root, machine, outside ? sibling : undefined)
   if (reason) return { error: fail(`${reason}: this file is protected`) }
   // ⛔ A pasta privada: a de outro agente nunca; a própria pela capacidade, sem regra.
   const folder = folderOf(abs, own)
@@ -206,7 +222,7 @@ function guard(
   // A pasta compartilhada é lida sem regra (como a global): o gateway a mantém, e a raiz da chamada já é ela.
   if (shared && !write) return { abs }
   // 🖥️ Fora da raiz (agente de máquina), a regra recebe o caminho absoluto: as do sistema e as absolutas casam por ele.
-  const denied = permit?.(machine ? abs : relOf(root, abs))
+  const denied = permit?.(machine || outside ? abs : relOf(root, abs))
   if (denied) return { error: fail(`Not permitted: ${denied}`) }
   return { abs }
 }
@@ -329,7 +345,7 @@ function readFileTool(deps: IFileToolDeps): ILocalTool {
     },
     async execute(args, context): Promise<IToolResult> {
       const { root, own, shared, machine, show } = placeOf(deps, context, args.path, true)
-      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, own, !!shared, !!machine)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, own, !!shared, !!machine, deps.siblingRead?.(context))
       if ('error' in checked) return checked.error
       try {
         const { handle, size } = await openChecked(checked.abs, fsc.O_RDONLY)

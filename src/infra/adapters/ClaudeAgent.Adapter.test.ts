@@ -210,6 +210,40 @@ describe('ClaudeAgentAdapter', () => {
     assert.match((await reader('Write', { file_path: join(mine, 'b.md'), content: 'x' }, {})).message ?? '', /read-only for you/)
   })
 
+  it('⛔ repositório irmão: só o Read lê, só com regra de leitura que o nomeia; escrever, .env e regra com curinga seguem negados', async () => {
+    const seen: TQueryParams[] = []
+    const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['Read', 'Write'] }
+    mkdirSync(dataDir(), { recursive: true })
+    const project = realpathSync(mkdtempSync(join(dataDir(), 'projects-sib-')))
+    const repoA = join(project, 'repositories', 'A')
+    const repoB = join(project, 'repositories', 'B')
+    for (const dir of [repoA, repoB]) mkdirSync(join(dir, '.git'), { recursive: true })
+    writeFileSync(join(repoB, 'README.md'), 'b')
+    writeFileSync(join(repoB, '.env'), 'K=1')
+    try {
+      let rules: IPermissionRule[] = [{ category: 'read', pattern: 'repositories/B/**', decision: 'allow' }, { category: 'write', pattern: 'repositories/B/**', decision: 'allow' }]
+      const permissions = {
+        check: (_asker: unknown, subject: Parameters<typeof decide>[0]) => decide(subject, { project: rules }),
+        layers: () => ({ project: rules, system: [] }),
+      }
+      const adapter = new ClaudeAgentAdapter({ query: queryWith(() => [init, ...turn()], seen), permissions })
+      const agent = { ...getAgent(), allowedTools: ['sdk:Read', 'sdk:Write'] }
+      const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
+      await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, { workFolder: { dir: repoA, projectDir: project, repository: 'A' } }))
+      const gate = seen.at(-1)!.options?.canUseTool as (name: string, input: Record<string, unknown>, options: unknown) => Promise<{ behavior: string; message?: string }>
+      assert.strictEqual((await gate('Read', { file_path: join(repoB, 'README.md') }, {})).behavior, 'allow')
+      assert.strictEqual((await gate('Write', { file_path: join(repoB, 'novo.md'), content: 'x' }, {})).behavior, 'deny')
+      assert.strictEqual((await gate('Read', { file_path: join(repoB, '.env') }, {})).behavior, 'deny')
+      assert.strictEqual((await gate('Read', { file_path: join(repoB, '.git', 'config') }, {})).behavior, 'deny')
+      rules = [{ category: 'read', pattern: 'repositories/*/**', decision: 'allow' }]
+      assert.strictEqual((await gate('Read', { file_path: join(repoB, 'README.md') }, {})).behavior, 'deny')
+      rules = []
+      assert.strictEqual((await gate('Read', { file_path: join(repoB, 'README.md') }, {})).behavior, 'deny')
+    } finally {
+      rmSync(project, { recursive: true, force: true })
+    }
+  })
+
   it('⛔ a pasta de uma skill compartilhada com o projeto: Read lê, nada grava, o resto do projeto de origem e parada de compartilhar negam', async () => {
     const seen: TQueryParams[] = []
     const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['Read', 'Write'] }

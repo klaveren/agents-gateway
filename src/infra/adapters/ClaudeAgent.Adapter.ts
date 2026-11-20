@@ -35,7 +35,7 @@ import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 import { agentFolderOwner, isResourceFilePath } from '@infra/workspace/Resource.Files'
 import { networkGate } from '@infra/permissions/Network.Gate'
-import { projectAliases } from '@infra/workspace/Work.Folder'
+import { projectAliases, siblingReader } from '@infra/workspace/Work.Folder'
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
 type TImageType = (typeof IMAGE_TYPES)[number]
@@ -517,7 +517,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         if (shared.allowed) return { behavior: 'allow' }
         // ⛔ Em qualquer agente, de projeto ou global: as nativas de arquivo nunca tocam .env, chaves nem os dados do gateway.
         // Na própria pasta, ela é a raiz (a do agente de projeto mora nos dados, fora da worktree): só os nomes protegidos valem.
-        const protectedPath = protectedPathOf(bare, input, folder.mine ? own!.dir : project?.dir)
+        // ⛔ Só o `Read` alcança um repositório irmão do projeto, e só o liberado por regra de leitura (ver `siblingReader`).
+        const sibling = bare === 'Read' && who && !folder.mine ? siblingReader(who.folder, this.permissions?.layers?.(who.asker)) : undefined
+        const protectedPath = protectedPathOf(bare, input, folder.mine ? own!.dir : project?.dir, sibling)
         if (protectedPath) return { behavior: 'deny', message: `${protectedPath}: este arquivo é protegido.` }
         // ⛔ Bash, Grep e Glob do CLI rodam FORA do cerco e das regras (`terminal`/`read`/`write`, SYSTEM_RULES, Bash.Guard, rede
         // com token): leem o ambiente do gateway (/proc), o HOME e as pastas de outros agentes. Só o agente GLOBAL e `adminOnly`
@@ -538,7 +540,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         if (fetchRefused) return { behavior: 'deny', message: fetchRefused }
         // 🖥️ O agente de máquina não fica na pasta do projeto: as regras (e as do sistema, com os dados do gateway) já decidiram.
         const machine = !!who && this.permissions?.layers?.(who.asker).machine === true
-        return project && !machine ? this.confined(bare, input, project) : { behavior: 'allow' }
+        return project && !machine ? this.confined(bare, input, project, sibling, who?.cwd) : { behavior: 'allow' }
       }
 
       return { behavior: 'deny', message: `Tool "${bare}" is not enabled for this agent.` }
@@ -608,7 +610,16 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
    * ⛔ O AGENTE DE PROJETO SÓ ALCANÇA A PASTA DELE: o Bash roda embrulhado no cerco do sistema operacional
    * (sem cerco, não roda), e as ferramentas de arquivo passam pelo filtro de caminho.
    */
-  private async confined(bare: string, input: Record<string, unknown>, project: { projectId: string; dir: string }): Promise<PermissionResult> {
+  private async confined(
+    bare: string,
+    input: Record<string, unknown>,
+    project: { projectId: string; dir: string },
+    sibling?: (real: string) => boolean,
+    cwd = project.dir,
+  ): Promise<PermissionResult> {
+    // O repositório irmão liberado: o `Read` de um arquivo dele (as regras e a lista protegida já decidiram acima).
+    const wanted = bare === 'Read' && typeof input.file_path === 'string' && input.file_path ? realOf(resolve(cwd, input.file_path)) : undefined
+    if (wanted && sibling?.(wanted)) return { behavior: 'allow' }
     const issue = projectPathIssue(project.dir, project.dir, bare, input)
     return issue ? { behavior: 'deny', message: `${issue}: o agente deste projeto só lê e grava na pasta dele.` } : { behavior: 'allow' }
   }
@@ -795,12 +806,12 @@ function resultText(content: unknown): string {
 }
 
 /** O caminho protegido que uma nativa de arquivo do Claude pediu (ver `deniedPath`), ou nada. Glob relativo não aponta para fora. */
-function protectedPathOf(toolName: string, input: Record<string, unknown>, root = PROTECTED_ROOT): string | undefined {
+function protectedPathOf(toolName: string, input: Record<string, unknown>, root = PROTECTED_ROOT, sibling?: (real: string) => boolean): string | undefined {
   for (const field of PATH_FIELDS[toolName] ?? []) {
     const value = input[field]
     if (typeof value !== 'string' || !value || ((field === 'pattern' || field === 'glob') && !isAbsolute(value))) continue
     const abs = resolve(root === PROTECTED_ROOT ? process.cwd() : root, value)
-    const reason = deniedPath(abs, root)
+    const reason = deniedPath(abs, root, false, sibling)
     if (reason) return `${toolName}: ${value} (${reason})`
     if (WRITE_TOOLS.has(toolName) && isResourceFilePath(abs)) return `${toolName}: ${value} (resource files are read-only: edit them in the gateway)`
   }

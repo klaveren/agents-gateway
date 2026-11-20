@@ -9,6 +9,7 @@ import ListPager from '@/components/ListPager.vue'
 import { usePaged } from '@/composables/usePaged'
 import { useAccountsStore } from '@/stores/accounts'
 import { useAuthStore } from '@/stores/auth'
+import { usePermissionsStore } from '@/stores/permissions'
 import { useProjectsStore } from '@/stores/projects'
 import { type IProjectRepository, useRepositoriesStore } from '@/stores/repositories'
 import { useSettingsStore } from '@/stores/settings'
@@ -93,6 +94,42 @@ async function add() {
 }
 
 /** O repositório que espera a confirmação de remover (na tela: o `confirm()` nativo não abre em navegador embutido). */
+/**
+ * 📖 A LEITURA PARA OS AGENTES: a chave de cada repositório é a regra do projeto `read allow repositories/<nome>/**`. Com
+ * ela, o agente de uma conversa aberta em OUTRO repositório do projeto lê este (só lê: escrever num repositório irmão
+ * segue fechado). ⚖️ É só um atalho para a regra: ela aparece (e se apaga) também em Permissões do projeto.
+ */
+const permissions = usePermissionsStore()
+const canGrant = computed(() => auth.isAdmin || project.value?.role === 'admin')
+const ruleKey = () => (canGrant.value ? key() : undefined)
+const projectRules = useResource(permissions.projects, ruleKey)
+const readPattern = (name: string) => `repositories/${name}/**`
+const readable = (name: string) =>
+  (projectRules.data.value?.rules ?? []).some((rule) => rule.category === 'read' && rule.decision === 'allow' && rule.pattern === readPattern(name))
+const granting = ref<string>()
+async function toggleRead(name: string) {
+  if (!project.value) return
+  const projectId = project.value.id
+  granting.value = name
+  actionError.value = undefined
+  try {
+    if (readable(name)) {
+      // Relê antes de gravar: a gravação troca a lista INTEIRA.
+      const current = (await permissions.projects.refresh(projectId)).rules
+      await permissions.save(
+        projectId,
+        current.filter((rule) => !(rule.category === 'read' && rule.decision === 'allow' && rule.pattern === readPattern(name))),
+      )
+    } else {
+      await permissions.addMissing(projectId, [{ category: 'read', decision: 'allow', pattern: readPattern(name), note: 'Leitura para os agentes (Repositórios)' }])
+    }
+  } catch (failure) {
+    actionError.value = text(failure)
+  } finally {
+    granting.value = undefined
+  }
+}
+
 const removing = ref<IProjectRepository>()
 const removeBusy = ref(false)
 
@@ -280,7 +317,24 @@ watch(
                 <template v-else>
                   <code v-if="item.branch" class="text-xs text-zinc-400" title="A branch da pasta principal">{{ item.branch }}</code>
                   <span v-if="!item.origin" class="rounded-full border border-zinc-700 px-2 text-[11px] text-zinc-400" title="Sem remoto: nada é publicado">local</span>
-                  <button type="button" class="btn btn-ghost btn-sm ml-auto text-rose-300" :data-test="`remove-${item.name}`" @click="removing = item">Remover</button>
+                  <label
+                    v-if="canGrant"
+                    class="ml-auto flex items-center gap-1.5 text-xs text-zinc-400"
+                    title="Os agentes de conversas em outros repositórios deste projeto podem LER este (escrever, não)"
+                  >
+                    <input
+                      type="checkbox"
+                      class="accent-emerald-500"
+                      :checked="readable(item.name)"
+                      :disabled="granting === item.name || projectRules.loading.value"
+                      :data-test="`read-${item.name}`"
+                      @change="toggleRead(item.name)"
+                    />
+                    Leitura para os agentes
+                  </label>
+                  <button type="button" class="btn btn-ghost btn-sm text-rose-300" :class="canGrant ? '' : 'ml-auto'" :data-test="`remove-${item.name}`" @click="removing = item">
+                    Remover
+                  </button>
                 </template>
               </div>
               <p v-if="!item.cloning" class="text-xs break-all text-zinc-500">
