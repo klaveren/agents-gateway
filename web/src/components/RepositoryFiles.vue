@@ -120,9 +120,19 @@
     lineNumbers: boolean
     whitespace: boolean
     sideBySide: boolean
+    formatOnSave: boolean
     theme: 'monokai' | 'vs-dark'
   }
-  const DEFAULT_SETTINGS: IEditorSettings = { fontSize: 12, wordWrap: false, minimap: false, lineNumbers: true, whitespace: false, sideBySide: true, theme: 'monokai' }
+  const DEFAULT_SETTINGS: IEditorSettings = {
+    fontSize: 12,
+    wordWrap: false,
+    minimap: false,
+    lineNumbers: true,
+    whitespace: false,
+    sideBySide: true,
+    formatOnSave: true,
+    theme: 'monokai',
+  }
   const storedSettings = (): Partial<IEditorSettings> => {
     try {
       return JSON.parse(remembered('gw.files.settings', '{}')) as Partial<IEditorSettings>
@@ -422,6 +432,13 @@
       if (tab?.kind === 'file' && tab.file) tab.dirty = editor?.getValue() !== tab.file.content
     })
     editor.addCommand(loaded.KeyMod.CtrlCmd | loaded.KeyCode.KeyS, () => void save())
+    editor.addAction({
+      id: 'gateway.prettier.format',
+      label: 'Formatar documento (Prettier)',
+      keybindings: [loaded.KeyMod.Shift | loaded.KeyMod.Alt | loaded.KeyCode.KeyF],
+      contextMenuGroupId: '1_modification',
+      run: () => void format(),
+    })
     editor.onDidChangeCursorSelection(() => readCursor())
     editor.onDidChangeModel(() => readCursor())
   }
@@ -447,12 +464,73 @@
     }
   }
 
+  /**
+   * ✨ PRETTIER (no navegador, ver `@/lib/prettier`): a config do repositório é lida uma vez por conversa, como dado
+   * (`.prettierrc` JSON/YAML ou a chave do `package.json`); o `.prettierignore` vale por prefixo de caminho.
+   */
+  let prettierSetup: Promise<{ config?: import('prettier').Options; ignore: string[] }> | undefined
+  async function readText(path: string): Promise<string | undefined> {
+    if (!files.value.includes(path)) return undefined
+    return (await api<IFile>(base(), { query: { path } }).catch(() => undefined))?.content
+  }
+  function loadPrettierSetup() {
+    prettierSetup ??= (async () => {
+      const { parseConfig } = await import('@/lib/prettier')
+      let config: import('prettier').Options | undefined
+      for (const name of ['.prettierrc', '.prettierrc.json', '.prettierrc.yaml', '.prettierrc.yml', 'package.json']) {
+        const content = await readText(name)
+        if (content === undefined) continue
+        try {
+          config = await parseConfig({ name, content })
+        } catch {
+          config = undefined
+        }
+        if (config) break
+      }
+      const ignore = ((await readText('.prettierignore')) ?? '')
+        .split('\n')
+        .map((line) =>
+          line
+            .trim()
+            .replace(/^\//, '')
+            .replace(/\/\*\*?$/, '/'),
+        )
+        .filter((line) => line && !line.startsWith('#') && !/[*?[]/.test(line))
+      return { config, ignore }
+    })()
+    return prettierSetup
+  }
+  /** Formata a aba ativa (desfazível com ⌘Z). `quiet`: ao salvar, sem aviso quando o arquivo não tem formatador. */
+  async function format(quiet = false): Promise<void> {
+    const tab = active.value
+    const model = editor?.getModel()
+    if (!editor || !model || tab?.kind !== 'file' || !editable.value) return
+    try {
+      const { formatText, parserFor } = await import('@/lib/prettier')
+      if (!parserFor(tab.path)) {
+        if (!quiet) notice.value = { tone: 'error', text: 'O Prettier não formata este tipo de arquivo.' }
+        return
+      }
+      const setup = await loadPrettierSetup()
+      if (setup.ignore.some((rule) => tab.path === rule || tab.path.startsWith(rule.endsWith('/') ? rule : `${rule}/`))) return
+      const text = model.getValue()
+      const formatted = await formatText(tab.path, text, setup.config)
+      if (formatted === undefined || formatted === text) return
+      editor.pushUndoStop()
+      editor.executeEdits('prettier', [{ range: model.getFullModelRange(), text: formatted }])
+      editor.pushUndoStop()
+    } catch (failure) {
+      notice.value = { tone: 'error', text: `Prettier: ${failure instanceof Error ? failure.message.split('\n')[0] : 'não deu para formatar'}` }
+    }
+  }
+
   async function save(force = false) {
     const tab = active.value
     if (!editor || tab?.kind !== 'file' || !tab.file || !editable.value || saving.value) return
     if (props.running) return void (notice.value = { tone: 'error', text: 'O agente está trabalhando. Salve quando ele terminar.' })
     saving.value = true
     notice.value = undefined
+    if (settings.value.formatOnSave) await format(true)
     const content = editor.getValue()
     try {
       const baseHash = force && conflict.value ? conflict.value.hash : tab.file.hash
@@ -488,6 +566,7 @@
     () => props.sessionId,
     () => {
       closeAll()
+      prettierSetup = undefined
       void loadTree()
     },
     { immediate: true },
@@ -594,6 +673,7 @@
               { key: 'minimap', label: 'Minimapa' },
               { key: 'whitespace', label: 'Mostrar espaços e tabs' },
               { key: 'sideBySide', label: 'Diff lado a lado' },
+              { key: 'formatOnSave', label: 'Formatar ao salvar (Prettier)' },
             ] as const"
             :key="option.key"
             class="flex cursor-pointer items-center gap-2"
