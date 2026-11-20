@@ -7092,6 +7092,32 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/sessions/{id}/browser/open': {
+      post: {
+        summary: "Open the conversation's browser for the person (to sign in to a site), or take the open one to `url`. Only the owner of the conversation",
+        description:
+          'Without waiting for the agent to use the Playwright MCP. The agent uses this same browser afterwards (same cookies and sign-ins). It closes by itself after 10 minutes with nobody watching and no agent using it. `url` is http or https (no scheme means https); metadata, link-local and loopback hosts are refused. Off with `GATEWAY_LIVE_BROWSER=0`.',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: false, ...json({ type: 'object', properties: { url: { type: 'string' } } }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { live: { type: 'boolean' } } })) },
+          '404': failures['404'],
+          '409': { description: '`browser_unavailable` (no Chromium on the server) or `browser_disabled` (`GATEWAY_LIVE_BROWSER=0`)', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`, or `url_blocked` (an address the browser never opens)', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/sessions/{id}/browser/close': {
+      post: {
+        summary: 'Close the browser the person opened. Only the owner of the conversation',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { live: { type: 'boolean' } } })) },
+          '404': failures['404'],
+          '409': { description: '`browser_in_use`: the agent is using this browser (or the agent opened it); it closes when the agent is done', ...json(failureEnvelope) },
+        },
+      },
+    },
     '/sessions/{id}/browser/viewport': {
       post: {
         summary: 'Size the live browser tab to the viewer (CSS pixels and device scale) while someone watches. Only the owner of the conversation',

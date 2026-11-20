@@ -702,6 +702,8 @@ function buildRoutes(
     { method: 'delete', path: '/sessions/:id/watches/:watchId', handler: controller.stopWatch },
     { method: 'get', path: '/sessions/:id/live', handler: controller.sessionLive },
     { method: 'get', path: '/sessions/:id/browser', handler: controller.sessionBrowser },
+    { method: 'post', path: '/sessions/:id/browser/open', handler: controller.browserOpen },
+    { method: 'post', path: '/sessions/:id/browser/close', handler: controller.browserClose },
     { method: 'post', path: '/sessions/:id/browser/viewport', handler: controller.browserViewport },
     { method: 'post', path: '/sessions/:id/browser/input', handler: controller.browserInput },
     { method: 'post', path: '/sessions/:id/browser/inspect', handler: controller.browserInspect },

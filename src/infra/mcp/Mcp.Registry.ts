@@ -13,7 +13,8 @@ import { IToolDefinition } from '@infra/tools/Tool.Types'
 import { INSTALL_PASSTHROUGH, isWritable } from '@infra/adapters/support/Subscription.Workspace'
 import { installDir, resolveCommand } from './Mcp.Install'
 import { IMcpClientOptions, McpServerClient, TURN_WAKE_MS } from './McpServer.Client'
-import { argsForEndpoint, chromiumExecutable, isPlaywrightMcp, LiveBrowser, liveBrowserEnabled, liveBrowsers, takesExternalBrowser } from './LiveBrowser.Adapter'
+import { argsForEndpoint, chromiumExecutable, isPlaywrightMcp, LiveBrowser, liveBrowserEnabled, liveBrowsers, systemChromium, takesExternalBrowser } from './LiveBrowser.Adapter'
+import type { IBrowserLaunch } from './PersonBrowsers.Service'
 
 export interface IMcpServerStatus {
   /** A chave (`mcpServerKey`). */
@@ -234,19 +235,26 @@ export class McpRegistry {
     // ⚠️ No pod o HOME é só leitura (`readOnlyRootFilesystem`), e MCP grava nele (o Playwright, em `~/.cache`).
     // Sem HOME gravável, o processo ganha um próprio: a pasta de trabalho dele.
     if (!isWritable(env.HOME)) env.HOME = cwd
-    const browser = shared ? undefined : await this.openLiveBrowser(config, sessionId, cwd, env)
+    const opened = shared ? undefined : await this.openLiveBrowser(config, sessionId, cwd, env)
+    const browser = opened?.browser
     const args = browser ? argsForEndpoint(proc.args, browser.endpoint) : proc.args
     const client = new McpServerClient(`process://${serverKey}`, {}, { auth: 'none', label: serverKey, stdio: { command, args, env, cwd } })
     return {
       client,
       cleanup: async () => {
-        if (browser) {
-          liveBrowsers().unregister(sessionId, browser)
-          await browser.close()
-        }
+        await this.dropBrowser(sessionId, opened)
         if (!shared) rmSync(cwd, { recursive: true, force: true })
       },
     }
+  }
+
+  /** ⛔ O MCP só fecha o navegador que ELE abriu: o da pessoa (adotado) segue com ela, e o MCP só o larga. */
+  private async dropBrowser(sessionId: string, opened: { browser: LiveBrowser; launched: boolean } | undefined): Promise<void> {
+    if (!opened) return
+    if (opened.launched) {
+      liveBrowsers().unregister(sessionId, opened.browser)
+      await opened.browser.close()
+    } else opened.browser.release()
   }
 
   /**
@@ -254,19 +262,47 @@ export class McpRegistry {
    * que o agente vê (`LiveBrowser`). ⚖️ Quem já aponta o MCP para outro navegador, o teste do cadastro e a falha ao abrir
    * seguem como antes: o MCP abre o dele.
    */
-  private async openLiveBrowser(config: IMcpServerConfig, sessionId: string, cwd: string, env: Record<string, string>): Promise<LiveBrowser | undefined> {
+  private async openLiveBrowser(
+    config: IMcpServerConfig,
+    sessionId: string,
+    cwd: string,
+    env: Record<string, string>,
+  ): Promise<{ browser: LiveBrowser; launched: boolean } | undefined> {
     const proc = config.process!
     if (!liveBrowserEnabled() || !isPlaywrightMcp(proc.package) || takesExternalBrowser(proc.args) || sessionId.startsWith('probe:')) return undefined
+    // 🙋 A pessoa já abriu o navegador desta conversa (a tela): o MCP usa ESSE, com o login dela, e não abre outro.
+    const adopted = liveBrowsers().get(sessionId)
+    if (adopted) {
+      adopted.lease()
+      return { browser: adopted, launched: false }
+    }
     const executable = chromiumExecutable(installDir(mcpServerKey(config)), env)
     if (!executable) return undefined
     try {
       const browser = await LiveBrowser.launch({ executable, userDataDir: join(cwd, '.browser'), noSandbox: proc.args.includes('--no-sandbox'), env })
+      browser.lease()
       liveBrowsers().register(sessionId, browser)
-      return browser
+      return { browser, launched: true }
     } catch (error: unknown) {
       console.warn(`[McpRegistry] live browser for ${mcpServerKey(config)} did not open; the MCP opens its own:`, error instanceof Error ? error.message : error)
       return undefined
     }
+  }
+
+  /**
+   * Onde abrir o navegador que a PESSOA pede (a tela, sem o agente ter usado o Playwright): o Chromium do Playwright MCP
+   * instalado e, sem ele, um do sistema. ⚖️ `noSandbox` como o MCP: a opção dele, ou rodando como root (contêiner).
+   */
+  browserLaunch(): IBrowserLaunch | undefined {
+    const env: Record<string, string> = { ...getDefaultEnvironment() }
+    for (const name of INSTALL_PASSTHROUGH) if (process.env[name]) env[name] = process.env[name] as string
+    const playwright = this.servers
+      .list()
+      .find((config) => config.enabled && config.process && isPlaywrightMcp(config.process.package) && !takesExternalBrowser(config.process.args))
+    const executable = (playwright && chromiumExecutable(installDir(mcpServerKey(playwright)), env)) || systemChromium(process.env)
+    if (!executable) return undefined
+    if (!isWritable(env.HOME)) delete env.HOME
+    return { executable, noSandbox: !!playwright?.process?.args.includes('--no-sandbox') || process.getuid?.() === 0, env }
   }
 
   /** Encerra as instâncias ociosas (ou todas, de um servidor — `serverId` é a chave). */
