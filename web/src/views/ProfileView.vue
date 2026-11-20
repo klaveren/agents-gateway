@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import AccessTokens from '@/components/AccessTokens.vue'
 import { ApiError } from '@/lib/api'
 import type { TVoiceLevel } from '@/lib/speech'
+import { KNOWN_SPEECH_MODELS } from '@/lib/speechCatalog'
 import { useAuthStore } from '@/stores/auth'
 import { useSpeechStore } from '@/stores/speech'
 
@@ -12,6 +13,20 @@ const auth = useAuthStore()
 const speech = useSpeechStore()
 const voiceError = ref<string>()
 const voiceDraft = ref('')
+/** 🔊 As vozes do modelo que o admin escolheu (ver `speechCatalog`); sem lista conhecida, o campo livre. */
+const voiceChoices = computed(() => {
+  const model = speech.voice?.engine.model
+  return model ? [...KNOWN_SPEECH_MODELS.dashscope, ...KNOWN_SPEECH_MODELS.openai].find((item) => item.id === model)?.voices ?? [] : []
+})
+const typingVoice = ref(false)
+function pickVoice(value: string) {
+  if (value === '__other__') {
+    typingVoice.value = true
+    return
+  }
+  voiceDraft.value = value
+  void saveVoice({ voice: value || null })
+}
 const LEVEL_OPTIONS: Array<{ value: TVoiceLevel; label: string }> = [
   { value: 'info', label: 'Todas' },
   { value: 'attention', label: 'Atenção e urgentes' },
@@ -110,7 +125,20 @@ async function changePassword() {
             </label>
             <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
               Voz
+              <select
+                v-if="voiceChoices.length && !typingVoice"
+                :value="voiceDraft"
+                class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm"
+                data-test="voice-name"
+                @change="pickVoice(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">Padrão{{ speech.voice.engine.defaultVoice ? ` (${speech.voice.engine.defaultVoice})` : '' }}</option>
+                <option v-if="voiceDraft && !voiceChoices.some((voice) => voice.id === voiceDraft)" :value="voiceDraft">{{ voiceDraft }}</option>
+                <option v-for="voice in voiceChoices" :key="voice.id" :value="voice.id">{{ voice.label }}</option>
+                <option value="__other__">Outra…</option>
+              </select>
               <input
+                v-else
                 v-model="voiceDraft"
                 type="text"
                 class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm"

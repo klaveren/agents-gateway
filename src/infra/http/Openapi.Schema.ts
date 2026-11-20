@@ -506,7 +506,7 @@ const voiceSchema = {
     voice: { type: 'string', description: 'The person’s voice; absent = the engine default.' },
     rate: { type: 'number', minimum: 0.5, maximum: 2, description: 'Default 1.' },
     minLevel: { type: 'string', enum: ['info', 'attention', 'urgent'], description: 'Read from this level up. Default `info`.' },
-    engine: { type: 'object', properties: { available: { type: 'boolean' }, defaultVoice: { type: 'string' } }, required: ['available'] },
+    engine: { type: 'object', properties: { available: { type: 'boolean' }, model: { type: 'string' }, defaultVoice: { type: 'string' } }, required: ['available'] },
   },
   required: ['enabled', 'rate', 'minLevel', 'engine'],
 }

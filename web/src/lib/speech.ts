@@ -8,7 +8,7 @@ export interface IVoice {
   voice?: string
   rate: number
   minLevel: TVoiceLevel
-  engine: { available: boolean; defaultVoice?: string }
+  engine: { available: boolean; model?: string; defaultVoice?: string }
 }
 
 const LEVELS: TVoiceLevel[] = ['info', 'attention', 'urgent']

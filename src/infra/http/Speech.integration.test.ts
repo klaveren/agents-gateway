@@ -92,7 +92,7 @@ describe('Voz (integração)', () => {
       enabled: false,
       rate: 1,
       minLevel: 'info',
-      engine: { available: true, defaultVoice: 'Cherry' },
+      engine: { available: true, model: 'm', defaultVoice: 'Cherry' },
     })
     const saved = await call('/me/voice', { method: 'PUT', token: member, body: { enabled: true, rate: 1.4, minLevel: 'urgent', voice: 'Ethan' } })
     assert.deepStrictEqual(

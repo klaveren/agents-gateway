@@ -6,6 +6,7 @@
   import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import { ApiError } from '@/lib/api'
+  import { speechEngineOf, speechModelsFor } from '@/lib/speechCatalog'
   import { lite } from '@/lib/edition'
   import type { IProviderStatus, TAudience, TLimitName } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
@@ -129,6 +130,31 @@
       .flatMap((provider) => enabledModels(provider, true)),
   )
   const speechProviders = computed(() => runnableProviders.value.filter((provider) => !provider.subscription && provider.protocol === 'openai'))
+  /** 🔊 Modelo e voz em LISTA: os conhecidos do motor e os de voz do catálogo; "Outro…" abre o campo para um id qualquer. */
+  const OTHER = '__other__'
+  const speechEngine = computed(() => speechEngineOf(providers.list.find((provider) => provider.id === speechProvider.value)?.baseUrl))
+  const speechModelOptions = computed(() =>
+    speechProvider.value ? speechModelsFor(speechEngine.value, (providers.catalogs.get(speechProvider.value) ?? []).map((model) => model.modelId)) : [],
+  )
+  const speechVoiceOptions = computed(() => speechModelOptions.value.find((model) => model.id === speechModel.value)?.voices ?? [])
+  const typingModel = ref(false)
+  const typingVoice = ref(false)
+  const speechModelPick = computed({
+    get: () => (typingModel.value ? OTHER : speechModel.value),
+    set: (value: string) => {
+      typingModel.value = value === OTHER
+      if (value !== OTHER) speechModel.value = value
+      // Trocou o modelo: a voz de outro modelo não serve; vale a primeira da lista (a recomendada).
+      if (value !== OTHER && !speechVoiceOptions.value.some((voice) => voice.id === speechVoice.value)) speechVoice.value = speechVoiceOptions.value[0]?.id ?? ''
+    },
+  })
+  const speechVoicePick = computed({
+    get: () => (typingVoice.value ? OTHER : speechVoice.value),
+    set: (value: string) => {
+      typingVoice.value = value === OTHER
+      if (value !== OTHER) speechVoice.value = value
+    },
+  })
   const builderOptions = computed(() => runnableProviders.value.flatMap((provider) => enabledModels(provider)))
 
   watch(
@@ -312,22 +338,55 @@
                     <option value="">Nenhum (sem voz)</option>
                     <option v-for="provider in speechProviders" :key="provider.id" :value="provider.id">{{ protocols.providerName(provider.id) }}</option>
                   </select>
-                  <input
-                    v-model="speechModel"
-                    type="text"
-                    aria-label="Modelo da voz"
-                    placeholder="Modelo"
-                    class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm"
-                  />
-                  <input
-                    v-model="speechVoice"
-                    type="text"
-                    aria-label="Voz padrão"
-                    placeholder="Voz padrão"
-                    class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm"
-                  />
+                  <div class="flex min-w-0 flex-col gap-2">
+                    <select
+                      v-model="speechModelPick"
+                      aria-label="Modelo da voz"
+                      :disabled="!speechProvider"
+                      class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm"
+                      data-test="speech-model-select"
+                    >
+                      <option value="">Modelo…</option>
+                      <option v-if="speechModel && !speechModelOptions.some((model) => model.id === speechModel)" :value="speechModel">{{ speechModel }}</option>
+                      <option v-for="model in speechModelOptions" :key="model.id" :value="model.id">{{ model.label }}</option>
+                      <option :value="OTHER">Outro…</option>
+                    </select>
+                    <input
+                      v-if="typingModel"
+                      v-model="speechModel"
+                      type="text"
+                      aria-label="Id do modelo da voz"
+                      placeholder="id do modelo"
+                      class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 font-mono text-sm"
+                    />
+                  </div>
+                  <div class="flex min-w-0 flex-col gap-2">
+                    <select
+                      v-model="speechVoicePick"
+                      aria-label="Voz padrão"
+                      :disabled="!speechModel"
+                      class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm"
+                      data-test="speech-voice-select"
+                    >
+                      <option value="">{{ speechEngine === 'openai' ? 'Voz padrão (alloy)' : 'Voz…' }}</option>
+                      <option v-if="speechVoice && !speechVoiceOptions.some((voice) => voice.id === speechVoice)" :value="speechVoice">{{ speechVoice }}</option>
+                      <option v-for="voice in speechVoiceOptions" :key="voice.id" :value="voice.id">{{ voice.label }}</option>
+                      <option :value="OTHER">Outra…</option>
+                    </select>
+                    <input
+                      v-if="typingVoice"
+                      v-model="speechVoice"
+                      type="text"
+                      aria-label="Id da voz"
+                      placeholder="id da voz"
+                      class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 font-mono text-sm"
+                    />
+                  </div>
                 </div>
-                <small class="text-xs text-zinc-500">Alibaba (Token Plan): qwen-audio-3.0-tts-plus. OpenAI: gpt-4o-mini-tts. Provider e modelo juntos, com chave de API.</small>
+                <small class="text-xs text-zinc-500">
+                  Para português: OpenAI gpt-4o-mini-tts (qualquer voz), ou Alibaba qwen-audio-3.1-tts-flash com a voz Aurora (cobrado à parte). O qwen-audio-3.0-tts-plus do Token
+                  Plan só fala chinês e inglês. A pessoa pode trocar a voz no Perfil.
+                </small>
               </div>
               <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">
                 Modelo do construtor
