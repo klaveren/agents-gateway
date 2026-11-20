@@ -54,11 +54,21 @@ describe('synthesizeSpeech', () => {
   })
 
   it('⛔ DashScope: link de áudio em host bloqueado ou sem https é recusado', async () => {
-    for (const url of ['https://169.254.169.254/a.mp3', 'https://localhost/a.mp3', 'http://oss.aliyuncs.com/a.mp3']) {
+    for (const url of ['https://169.254.169.254/a.mp3', 'https://localhost/a.mp3', 'http://example.com/a.mp3']) {
       const { calls, fetcher } = scripted(new Response(JSON.stringify({ output: { audio: { url } } })))
       await assert.rejects(synthesizeSpeech(BAILIAN, 'm', 'x', { voice: 'v', rate: 1 }, fetcher), /not allowed/)
       assert.strictEqual(calls.length, 1)
     }
+  })
+
+  it('DashScope: o link http do OSS da Alibaba é baixado em https', async () => {
+    const { calls, fetcher } = scripted(
+      new Response(JSON.stringify({ output: { audio: { url: 'http://dashscope-result.oss-ap-southeast-1.aliyuncs.com/a.mp3?Expires=1' } } })),
+      new Response(Buffer.from('mp3'), { headers: { 'content-type': 'audio/mpeg' } }),
+    )
+    const audio = await synthesizeSpeech(BAILIAN, 'm', 'x', { voice: 'v', rate: 1 }, fetcher)
+    assert.strictEqual(calls[1].url, 'https://dashscope-result.oss-ap-southeast-1.aliyuncs.com/a.mp3?Expires=1')
+    assert.strictEqual(audio.data.toString(), 'mp3')
   })
 
   it('OpenAI: /audio/speech com mp3 e velocidade; voz padrão alloy', async () => {
