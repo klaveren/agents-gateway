@@ -10,6 +10,7 @@
   import AgentReplyCard from './AgentReplyCard.vue'
   import Icon from './Icon.vue'
   import type { IPendingTurn } from '@/stores/thread'
+  import { visibleWarnings } from '@/lib/turnWarnings'
 
   /** Um turno vira dois balões: a pergunta (direita) e a resposta do agente (esquerda). */
   const props = defineProps<{ turn?: ITurn; pending?: IPendingTurn; showCost: boolean }>()
@@ -91,7 +92,7 @@
     }),
   )
   const fileUrl = (id: string) => url(`/conversations/${encodeURIComponent(props.turn!.sessionId)}/files/${encodeURIComponent(id)}`)
-  const warnings = computed(() => props.turn?.warnings ?? props.pending?.warnings ?? [])
+  const warnings = computed(() => visibleWarnings(props.turn?.warnings ?? props.pending?.warnings ?? []))
   const aborted = computed(() => props.turn?.aborted ?? props.pending?.aborted ?? false)
   const error = computed(() => props.turn?.error ?? props.pending?.error)
   const usage = computed(() => props.turn?.usage ?? props.pending?.usage)
