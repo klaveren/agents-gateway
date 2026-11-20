@@ -1,6 +1,8 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { IUsageRow } from '@domain/models/Usage.Model'
+import { imageUsageRows } from '@domain/models/ImageUsage.Model'
+import { speechUsageRows } from '@domain/models/SpeechUsage.Model'
 import { UsageCapService } from './UsageCap.Service'
 
 const row = (ownerId: string, inputTokens: number, outputTokens: number): IUsageRow => ({
@@ -96,5 +98,25 @@ describe('UsageCapService — 💰 o teto do projeto e a chave do projeto', () =
     const status = await service.status('ana', undefined, 'alfa')
     assert.strictEqual(status.gateway.tokens, 600_000)
     assert.strictEqual(status.reached, undefined)
+  })
+
+  it('🎞️ a voz e as imagens (as linhas de mídia) contam nos tokens da pessoa', async () => {
+    const query = { since: new Date('2026-11-01T00:00:00Z'), tzOffsetMinutes: 0 }
+    const at = new Date('2026-11-05T12:00:00Z')
+    const media = { at, provider: 'p', model: 'm', projectId: undefined }
+    const rows = [
+      row('ana', 500, 0),
+      ...speechUsageRows([{ ...media, userId: 'ana', inputTokens: 100, outputTokens: 200, totalTokens: 300, characters: 50 }], query),
+      ...imageUsageRows([{ ...media, userId: 'ana', agentId: 'atena', inputTokens: 10, outputTokens: 1_000, totalTokens: 1_010 }], query),
+    ]
+    const service = new UsageCapService(
+      async () => rows,
+      () => pricing,
+      () => new Date('2026-11-09T12:00:00Z'),
+      () => ({ userMonthlyTokens: 1_500 }),
+    )
+    const status = await service.status('ana')
+    assert.strictEqual(status.user?.tokens, 500 + 300 + 1_010)
+    assert.match((await service.refusal('ana')) ?? '', /Você atingiu o teto de uso do mês/)
   })
 })

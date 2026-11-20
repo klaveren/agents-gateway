@@ -4,6 +4,7 @@ import { conversationModelFilter } from '@domain/ModelAccess.Policy'
 import type { IProjectModels } from '@domain/models/Project.Model'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
+import { makeImageUsage } from './ImageUsage.Factory'
 import { makeHostApprovals } from './HostApprovals.Factory'
 import { projectFixedEnv } from './ProjectVariables.Factory'
 import { realAgentFolder } from '@infra/workspace/Resource.Files'
@@ -164,6 +165,24 @@ export function makeTools(): ITools {
                 }
                 return conversationModelFilter(projectId, models, {}, (id) => makeProviders().get(id)?.projectId)(provider, model)
               },
+              // 📊 O uso vai para a pessoa dona da conversa (a viva primeiro: o cabeçalho só é gravado no fim do turno); sem dono, não se anota.
+              record: async (sessionId, entry) => {
+                const live = makeSessionStore().get(sessionId)?.metadata
+                todos ??= makeConversationRepository()
+                const ownerId = await ownerOfConversation(live, todos, sessionId)
+                if (!ownerId) return
+                makeImageUsage().record({
+                  at: new Date(),
+                  userId: ownerId,
+                  ...(entry.projectId ? { projectId: entry.projectId } : {}),
+                  ...(entry.agentId ? { agentId: entry.agentId } : {}),
+                  provider: entry.provider,
+                  model: entry.model,
+                  inputTokens: entry.usage?.inputTokens ?? 0,
+                  outputTokens: entry.usage?.outputTokens ?? 0,
+                  totalTokens: entry.usage?.totalTokens ?? 0,
+                })
+              },
             },
             watches: watchDesk(),
             // 🖥️ O agente de máquina pede à pessoa o comando que o cerco sempre recusa (ver `HostApproval.Model`).
@@ -210,6 +229,15 @@ export function makeTools(): ITools {
 const lazyPermissions: IPermissionChecker = {
   check: (asker, subject, options) => makePermissions().check(asker, subject, options),
   layers: (asker) => makePermissions().layers(asker),
+}
+
+/** O dono (`metadata.owner.id`) da conversa: o da sessão viva, ou o da gravada. */
+async function ownerOfConversation(live: Record<string, unknown> | undefined, repository: IConversationRepository, sessionId: string): Promise<string | undefined> {
+  const idOf = (metadata: Record<string, unknown> | undefined) => {
+    const id = (metadata?.owner as { id?: unknown } | undefined)?.id
+    return typeof id === 'string' && id ? id : undefined
+  }
+  return idOf(live) ?? idOf((await repository.findSession(sessionId).catch(() => undefined))?.metadata)
 }
 
 /** Onde o `update_todos` grava: o banco das conversas, aberto na primeira tarefa (uma conexão a mais no mesmo arquivo). */

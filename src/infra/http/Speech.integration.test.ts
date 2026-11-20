@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'node:test'
 import { makeAuth } from '@composition/factories/Auth.Factory'
 import { makeAuthController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
 import { makePersonMessages } from '@composition/factories/PersonMessages.Factory'
+import { makeImageUsage } from '@composition/factories/ImageUsage.Factory'
 import { makeSpeechUsage } from '@composition/factories/SpeechUsage.Factory'
 import { ISpeechEngine, SpeechService } from '@application/Speech.Service'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -144,6 +145,18 @@ describe('Voz (integração)', () => {
     const mine = (await call('/usage/me', { token: member })).body.result
     assert.strictEqual(mine.byAgent.find((item: { agentId: string }) => item.agentId === 'voice-messages').turns, 2)
     assert.strictEqual((await call('/usage/me', { token: admin })).body.result.byAgent.some((item: { agentId: string }) => item.agentId === 'voice-messages'), false)
+  })
+
+  it('🖼️ a imagem aparece na tela Uso sob o agente que a pediu, e só para a pessoa dona (mesmas linhas que o teto lê)', async () => {
+    const ana = (await call('/usage/me', { token: member })).body.result
+    const userId = ana.byAgent.find((item: { agentId: string }) => item.agentId === 'voice-messages') ? makeSpeechUsage().since(new Date(0))[0].userId : ''
+    makeImageUsage().record({ at: new Date(), userId, agentId: 'zeus', provider: 'p', model: 'm', inputTokens: 5, outputTokens: 400, totalTokens: 405 })
+    const mine = (await call('/usage/me', { token: member })).body.result
+    const zeus = mine.byAgent.find((item: { agentId: string }) => item.agentId === 'zeus')
+    assert.deepStrictEqual([zeus.turns, zeus.usage.inputTokens, zeus.usage.outputTokens], [1, 5, 400])
+    const top = mine.top.find((item: { id: string }) => item.id === `image:${userId}`)
+    assert.deepStrictEqual([top.title, top.agentId], ['Imagens', 'zeus'])
+    assert.strictEqual((await call('/usage/me', { token: admin })).body.result.byAgent.some((item: { agentId: string }) => item.agentId === 'zeus'), false)
   })
 
   it('🔊 configurações da voz: provider e modelo juntos, provider existente com chave', async () => {

@@ -97,4 +97,12 @@ describe('UsageSummaryView', () => {
     expect(host.textContent).not.toContain('voice-messages')
     expect(host.querySelector('a[href="/c/speech:u1"]')).toBeNull()
   })
+
+  it('as imagens: sem agente, "Imagens"; e a linha dela não vira link de conversa', async () => {
+    const image = { ...figure, agentId: 'image-generation' }
+    const host = await mount({ summary: summary({ byAgent: [image], top: [{ ...image, id: 'image:u1', title: 'Imagens', provider: 'p', model: 'm' }] }), showCost: false })
+    expect(host.textContent).toContain('Imagens')
+    expect(host.textContent).not.toContain('image-generation')
+    expect(host.querySelector('a[href="/c/image:u1"]')).toBeNull()
+  })
 })
