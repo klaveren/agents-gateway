@@ -18,11 +18,13 @@
     commands?: ICommandHint[]
     queued?: string[]
     restore?: string
+    /** Texto que entra no FIM da caixa (o elemento escolhido no navegador ao vivo). */
+    append?: string
     draftKey?: string
     suggestion?: string
   }>()
   /** `settle(false)`: o envio falhou — o texto e os anexos voltam para a caixa. */
-  const emit = defineEmits<{ send: [text: string, files: IOutgoingFile[], settle: (ok: boolean) => void]; stop: []; restored: [] }>()
+  const emit = defineEmits<{ send: [text: string, files: IOutgoingFile[], settle: (ok: boolean) => void]; stop: []; restored: []; appended: [] }>()
 
   const text = ref('')
   const files = ref<IOutgoingFile[]>([])
@@ -150,6 +152,14 @@
   }
 
   // A fila que não entrou volta para a caixa (sem apagar o que já está digitado).
+  watch(
+    () => props.append,
+    (append) => {
+      if (!append) return
+      text.value = text.value ? `${text.value}\n\n${append}` : append
+      emit('appended')
+    },
+  )
   watch(
     () => props.restore,
     (restore) => {

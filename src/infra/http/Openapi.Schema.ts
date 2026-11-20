@@ -6806,6 +6806,85 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/sessions/{id}/browser': {
+      get: {
+        summary: "The conversation's browser, live (SSE): what the agent sees in its Playwright MCP tab. The owner or an administrator; anyone else gets 404",
+        description:
+          '`browser.state` with `{ live }` (the browser is open or not; the stream waits for it to open) and `browser.frame` with `{ data, url, title, width, height }` (a base64 JPEG of the tab in use). Only for the Playwright MCP the gateway launches for the conversation; off with `GATEWAY_LIVE_BROWSER=0`. Counts toward the per-account stream cap.',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'An event stream', content: { 'text/event-stream': { schema: { type: 'string' } } } },
+          '401': failures['401'],
+          '404': failures['404'],
+          '429': { description: '`rate_limited`: too many open event streams for this account', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/sessions/{id}/browser/viewport': {
+      post: {
+        summary: 'Size the live browser tab to the viewer (CSS pixels and device scale) while someone watches. Only the owner of the conversation',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', required: ['width', 'height'], properties: { width: { type: 'number' }, height: { type: 'number' }, scale: { type: 'number' } } }),
+        },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { width: { type: 'integer' }, height: { type: 'integer' }, scale: { type: 'number' } } })) },
+          '404': failures['404'],
+          '409': { description: '`browser_closed`: the browser of this conversation is not open', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/sessions/{id}/browser/input': {
+      post: {
+        summary: 'Click, scroll, type or navigate in the live browser tab. Only the owner of the conversation',
+        description:
+          '`type`: `click` (`x`, `y`, `button`, `clickCount`, `modifiers`), `move` (`x`, `y`), `wheel` (`x`, `y`, `deltaX`, `deltaY`), `key` (`key`, `code`, `keyCode`, `text`, `modifiers`), `text` (`text`), `back`, `forward`, `reload` or `navigate` (`url`, http or https only). Coordinates in CSS pixels of the tab.',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', required: ['type'], properties: { type: { type: 'string' } }, additionalProperties: true }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { done: { type: 'boolean' } } })) },
+          '404': failures['404'],
+          '409': { description: '`browser_closed`: the browser of this conversation is not open', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/sessions/{id}/browser/inspect': {
+      post: {
+        summary: 'The element under a point of the live browser tab (tag, short selector, text, HTML). Only the owner of the conversation',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', required: ['x', 'y'], properties: { x: { type: 'number' }, y: { type: 'number' } } }) },
+        responses: {
+          '200': {
+            description: 'OK; `element` is null when nothing is there',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  element: {
+                    type: 'object',
+                    nullable: true,
+                    properties: {
+                      tag: { type: 'string' },
+                      selector: { type: 'string' },
+                      text: { type: 'string' },
+                      html: { type: 'string' },
+                      url: { type: 'string' },
+                      rect: { type: 'object', additionalProperties: true },
+                    },
+                  },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+          '409': { description: '`browser_closed`: the browser of this conversation is not open', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
+    },
     '/sessions/{id}/turns/{turn}': {
       get: {
         summary: 'The state of a turn: running (with the text so far) or finished (ok, error, aborted)',

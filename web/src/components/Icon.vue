@@ -45,6 +45,8 @@
       | 'chevron'
       | 'compress'
       | 'tokens'
+      | 'forward'
+      | 'pick'
   }>()
 </script>
 
@@ -120,6 +122,8 @@
     <template v-else-if="name === 'stop'"><rect x="6.5" y="6.5" width="11" height="11" rx="2" /></template>
     <template v-else-if="name === 'clip'"><path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8" /></template>
     <template v-else-if="name === 'back'"><path d="M15 5l-7 7 7 7" /></template>
+    <template v-else-if="name === 'forward'"><path d="M9 5l7 7-7 7" /></template>
+    <template v-else-if="name === 'pick'"><path d="M5 3l14 7-6 2-2 6z" /></template>
     <template v-else-if="name === 'share'">
       <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
       <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />

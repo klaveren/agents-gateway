@@ -65,6 +65,7 @@ import {
 
 export type TErrorCode =
   | 'validation_error'
+  | 'browser_closed'
   | 'not_resumable'
   | 'agent_not_found'
   | 'provider_in_use'

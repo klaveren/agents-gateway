@@ -13,6 +13,7 @@ import { IToolDefinition } from '@infra/tools/Tool.Types'
 import { INSTALL_PASSTHROUGH, isWritable } from '@infra/adapters/support/Subscription.Workspace'
 import { installDir, resolveCommand } from './Mcp.Install'
 import { IMcpClientOptions, McpServerClient, TURN_WAKE_MS } from './McpServer.Client'
+import { argsForEndpoint, chromiumExecutable, isPlaywrightMcp, LiveBrowser, liveBrowserEnabled, liveBrowsers, takesExternalBrowser } from './LiveBrowser.Adapter'
 
 export interface IMcpServerStatus {
   /** A chave (`mcpServerKey`). */
@@ -161,7 +162,7 @@ export class McpRegistry {
     // As fixas por baixo, as do projeto por cima. A conversa (não a instância compartilhada nem o teste) aprende os secretos.
     const conversation = sessionId.startsWith(SHARED) || sessionId.startsWith('probe:') ? undefined : sessionId
     const vars = { ...mcpFixedVars(config), ...this.projectEnv(config, project, conversation) }
-    const { client, cleanup } = config.kind === 'process' ? this.launchProcess(config, sessionId, vars, project) : await this.launchContainer(config, sessionId, vars)
+    const { client, cleanup } = config.kind === 'process' ? await this.launchProcess(config, sessionId, vars, project) : await this.launchContainer(config, sessionId, vars)
     if (!(await client.connect())) {
       await client.close()
       await cleanup()
@@ -213,7 +214,12 @@ export class McpRegistry {
    * (`PATH`, `HOME`…) e as variáveis declaradas — o `.env` do gateway (chaves de API, segredo do JWT) não vai.
    * Por conversa, uma pasta de trabalho vazia, apagada junto com a instância; em `shared`, a do servidor.
    */
-  private launchProcess(config: IMcpServerConfig, sessionId: string, vars: Record<string, string>, project?: string): { client: McpServerClient; cleanup: () => Promise<void> } {
+  private async launchProcess(
+    config: IMcpServerConfig,
+    sessionId: string,
+    vars: Record<string, string>,
+    project?: string,
+  ): Promise<{ client: McpServerClient; cleanup: () => Promise<void> }> {
     const proc = config.process!
     const serverKey = mcpServerKey(config)
     const command = resolveCommand(serverKey, proc)
@@ -228,8 +234,39 @@ export class McpRegistry {
     // ⚠️ No pod o HOME é só leitura (`readOnlyRootFilesystem`), e MCP grava nele (o Playwright, em `~/.cache`).
     // Sem HOME gravável, o processo ganha um próprio: a pasta de trabalho dele.
     if (!isWritable(env.HOME)) env.HOME = cwd
-    const client = new McpServerClient(`process://${serverKey}`, {}, { auth: 'none', label: serverKey, stdio: { command, args: proc.args, env, cwd } })
-    return { client, cleanup: async () => (shared ? undefined : rmSync(cwd, { recursive: true, force: true })) }
+    const browser = shared ? undefined : await this.openLiveBrowser(config, sessionId, cwd, env)
+    const args = browser ? argsForEndpoint(proc.args, browser.endpoint) : proc.args
+    const client = new McpServerClient(`process://${serverKey}`, {}, { auth: 'none', label: serverKey, stdio: { command, args, env, cwd } })
+    return {
+      client,
+      cleanup: async () => {
+        if (browser) {
+          liveBrowsers().unregister(sessionId, browser)
+          await browser.close()
+        }
+        if (!shared) rmSync(cwd, { recursive: true, force: true })
+      },
+    }
+  }
+
+  /**
+   * 👁️ O Playwright MCP de uma conversa usa o navegador que o GATEWAY abre (headless, CDP local), para a tela poder ver o
+   * que o agente vê (`LiveBrowser`). ⚖️ Quem já aponta o MCP para outro navegador, o teste do cadastro e a falha ao abrir
+   * seguem como antes: o MCP abre o dele.
+   */
+  private async openLiveBrowser(config: IMcpServerConfig, sessionId: string, cwd: string, env: Record<string, string>): Promise<LiveBrowser | undefined> {
+    const proc = config.process!
+    if (!liveBrowserEnabled() || !isPlaywrightMcp(proc.package) || takesExternalBrowser(proc.args) || sessionId.startsWith('probe:')) return undefined
+    const executable = chromiumExecutable(installDir(mcpServerKey(config)), env)
+    if (!executable) return undefined
+    try {
+      const browser = await LiveBrowser.launch({ executable, userDataDir: join(cwd, '.browser'), noSandbox: proc.args.includes('--no-sandbox'), env })
+      liveBrowsers().register(sessionId, browser)
+      return browser
+    } catch (error: unknown) {
+      console.warn(`[McpRegistry] live browser for ${mcpServerKey(config)} did not open; the MCP opens its own:`, error instanceof Error ? error.message : error)
+      return undefined
+    }
   }
 
   /** Encerra as instâncias ociosas (ou todas, de um servidor — `serverId` é a chave). */

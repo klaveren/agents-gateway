@@ -4,6 +4,7 @@
   import ConversationList from '@/components/ConversationList.vue'
   import ListResizer from '@/components/ListResizer.vue'
   import { useListWidth } from '@/composables/useListWidth'
+  import { useListHidden } from '@/composables/useListHidden'
   import NewConversation from '@/components/NewConversation.vue'
   import ThreadView from '@/components/ThreadView.vue'
   import { useConversationsStore } from '@/stores/conversations'
@@ -17,6 +18,7 @@
   const conversations = useConversationsStore()
   const thread = useThreadStore()
   const { width: listWidth } = useListWidth()
+  const { hidden: listHidden } = useListHidden()
 
   const isNew = computed(() => route.name === 'new')
   const hasDetail = computed(() => isNew.value || !!props.id)
@@ -48,7 +50,7 @@
   <div class="flex h-full">
     <aside
       class="relative h-full w-full shrink-0 border-r border-zinc-800/80 lg:w-(--list-w)"
-      :class="hasDetail ? 'hidden lg:block' : 'block'"
+      :class="hasDetail ? (listHidden ? 'hidden' : 'hidden lg:block') : 'block'"
       :style="{ '--list-w': `${listWidth}px` }"
     >
       <ConversationList />
