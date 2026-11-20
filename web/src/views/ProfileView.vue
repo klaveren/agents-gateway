@@ -166,7 +166,8 @@ async function changePassword() {
           </div>
           <div class="flex items-center gap-3">
             <button type="button" class="btn btn-secondary" data-test="voice-test" :disabled="!speech.voice.engine.available" @click="testVoice">Testar</button>
-            <span v-if="voiceError" class="text-sm text-rose-300">{{ voiceError }}</span>
+            <button v-if="speech.blocked" type="button" class="btn btn-ghost btn-sm" data-test="voice-unlock" @click="speech.unlock()">Ativar som</button>
+            <span v-if="voiceError || speech.error" class="text-sm text-rose-300" data-test="voice-error">{{ voiceError || speech.error }}</span>
           </div>
         </section>
 

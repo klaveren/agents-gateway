@@ -22,6 +22,8 @@ export const useSpeechStore = defineStore('speech', () => {
   const voice = ref<IVoice>()
   const blocked = ref(false)
   const playing = ref(false)
+  /** O último problema ao tocar (o Perfil mostra junto do Testar); some no próximo sucesso. */
+  const error = ref<string>()
   const startedAt = Date.now()
   const seen = new Set<string>()
   let queue: IItem[] = []
@@ -92,7 +94,8 @@ export const useSpeechStore = defineStore('speech', () => {
         let blob: Blob
         try {
           blob = await apiBlob(item.path)
-        } catch {
+        } catch (failure) {
+          error.value = failure instanceof Error ? failure.message : String(failure)
           continue
         }
         if (mine !== generation) break
@@ -106,7 +109,11 @@ export const useSpeechStore = defineStore('speech', () => {
         if (result === 'blocked') {
           queue.unshift(item)
           blocked.value = true
-        } else if (result === 'ended') last = item
+        } else if (result === 'error') error.value = 'Não consegui tocar o áudio neste navegador.'
+        else if (result === 'ended') {
+          last = item
+          error.value = undefined
+        }
       }
     } finally {
       busy = false
@@ -137,6 +144,13 @@ export const useSpeechStore = defineStore('speech', () => {
   /** A frase de teste do Perfil (com a voz e a velocidade que a pessoa escolheu). */
   function sample(): void {
     stop()
+    error.value = undefined
+    // ⚠️ O Safari (e o app do Mac) só deixa tocar o elemento que o CLIQUE já tocou: o áudio de teste chega depois, então
+    // o mudo toca agora, ainda dentro do gesto, e o mesmo elemento fica liberado para a frase.
+    const element_ = element()
+    element_.src = SILENT_AUDIO
+    void element_.play().catch(() => undefined)
+    blocked.value = false
     queue.push({ key: 'sample', path: '/me/voice/sample' })
     void pump()
   }
@@ -163,5 +177,5 @@ export const useSpeechStore = defineStore('speech', () => {
     last = undefined
   }
 
-  return { voice, blocked, playing, active, load, ensure, save, onMessageCreated, stop, replayLast, sample, unlock, reset }
+  return { voice, blocked, playing, error, active, load, ensure, save, onMessageCreated, stop, replayLast, sample, unlock, reset }
 })
