@@ -110,8 +110,11 @@ async function download(raw: string, key: string, fetcher: typeof fetch): Promis
   } catch {
     throw new Error('the provider returned an invalid audio address')
   }
+  // ⚖️ A DashScope devolve o link do OSS dela em `http://`: o mesmo arquivo serve em https, então sobe para https (nunca
+  // baixa em claro). Outro host em http segue recusado.
+  if (url.protocol === 'http:' && /(^|\.)aliyuncs\.com$/i.test(url.hostname)) url.protocol = 'https:'
   if (url.protocol !== 'https:' || isAlwaysBlockedHost(url.hostname) || isCloudMetadataHost(url.hostname))
-    throw new Error('the provider returned an audio address that is not allowed')
+    throw new Error(`the provider returned an audio address that is not allowed (${url.protocol}//${url.hostname})`)
   const response = await fetcher(url.toString(), { method: 'GET', signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' })
   if (!response.ok) throw new Error(clean(`could not download the audio (HTTP ${response.status})`, key))
   const declared = Number(response.headers.get('content-length') ?? 0)
