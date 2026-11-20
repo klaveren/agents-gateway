@@ -54,3 +54,9 @@ export const tagNames = (items: readonly object[]): string[] => tagCounts(items)
 
 /** As duas listas de tags são iguais (mesma ordem)? Ausente = vazia. */
 export const sameTags = (a: readonly string[] | undefined, b: readonly string[] | undefined): boolean => (a ?? []).join(',') === (b ?? []).join(',')
+
+/** O id de conversa (`gw_…`) que a busca contém por inteiro, sozinho; senão, ausente (texto comum só filtra). */
+export function conversationIdOf(query: string): string | undefined {
+  const term = query.trim()
+  return /^gw_[\w-]{4,}$/.test(term) ? term : undefined
+}

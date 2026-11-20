@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { conversationIdOf } from '@/lib/listFilter'
 import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL } from '@/lib/format'
 import { usePopover } from '@/lib/popover'
 import { useAgentsStore } from '@/stores/agents'
@@ -10,6 +12,7 @@ import ConversationRow from './ConversationRow.vue'
 import Icon from './Icon.vue'
 
 const auth = useAuthStore()
+const router = useRouter()
 const projects = useProjectsStore()
 const agents = useAgentsStore()
 const conversations = useConversationsStore()
@@ -18,6 +21,12 @@ const search = ref(conversations.filters.q)
 const sentinel = ref<HTMLElement>()
 let debounce: ReturnType<typeof setTimeout> | undefined
 let observer: IntersectionObserver | undefined
+
+/** Enter com o id completo de uma conversa abre a conversa direto (a tela dela diz se não existe ou não é sua). */
+function openById() {
+  const id = conversationIdOf(search.value)
+  if (id) void router.push(`/c/${encodeURIComponent(id)}`)
+}
 
 watch(search, (value) => {
   clearTimeout(debounce)
@@ -94,6 +103,8 @@ function pick(action: () => void) {
         <input
           v-model="search"
           type="search"
+          data-testid="conversation-search"
+          @keydown.enter.prevent="openById"
           :placeholder="projects.seesAll && conversations.everyone && !inArchived ? 'Buscar por título, e-mail, conta ou id…' : 'Buscar por título ou id…'"
           class="w-full bg-transparent outline-none placeholder:text-zinc-500"
         />
