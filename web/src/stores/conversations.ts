@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { useMessagesStore } from './messages'
+import { useSpeechStore } from './speech'
 import { computed, ref, watch } from 'vue'
 import { api, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
@@ -354,7 +355,12 @@ export const useConversationsStore = defineStore('conversations', () => {
               if (turn.sessionId === followed) for (const listener of turnListeners) listener(turn)
             } else if (event.type === 'catalog.changed') catalogChanged(event.changes)
             // 💬 Uma mensagem de agente para a pessoa (a tela Mensagens e o selo da navegação).
-            else if ((event.type as string) === 'message.created') useMessagesStore().changed(event as unknown as { conversationId: string; unread: number })
+            else if ((event.type as string) === 'message.created') {
+              const created = event as unknown as { conversationId: string; unread: number }
+              useMessagesStore().changed(created)
+              // 🔊 Lê em voz alta, se a pessoa ligou (no app do Mac, quem fala é o ícone da barra de menus).
+              void useSpeechStore().onMessageCreated(created.conversationId)
+            }
             else if (event.type === 'conversation.running' || event.type === 'conversation.idle')
               markRunning(event.sessionId, event.type === 'conversation.running', event.type === 'conversation.running' ? event.at : undefined)
             else apply(event as TConversationEvent)

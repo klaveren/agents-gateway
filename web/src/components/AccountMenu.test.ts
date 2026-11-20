@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { api } from '@/lib/api'
 import { forgetServers } from '@/lib/servers'
 import { useAuthStore } from '@/stores/auth'
+import { useSpeechStore } from '@/stores/speech'
 import AccountMenu from './AccountMenu.vue'
 
 vi.mock('@/lib/api', async (original) => ({ ...(await original<typeof import('@/lib/api')>()), api: vi.fn() }))
@@ -117,5 +118,22 @@ describe('AccountMenu — Servidores', () => {
     await menu()
     expect(test('about-item')).not.toBeNull()
     expect(test('servers-item')).toBeNull()
+  })
+})
+
+describe('AccountMenu — voz', () => {
+  it('som bloqueado: o item "Ativar som"; lendo: "Parar leitura"', async () => {
+    const host = await mount({})
+    const speech = useSpeechStore()
+    speech.blocked = true
+    await flush()
+    host.querySelector('button')!.click()
+    await flush()
+    expect(test('speech-unlock-item')?.textContent).toContain('Ativar som')
+    speech.blocked = false
+    speech.playing = true
+    await flush()
+    expect(test('speech-unlock-item')).toBeNull()
+    expect(test('speech-stop-item')?.textContent).toContain('Parar leitura')
   })
 })

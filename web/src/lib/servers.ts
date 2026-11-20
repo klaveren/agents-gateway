@@ -32,6 +32,11 @@ function bridge(): IBridge | undefined {
   return (globalThis as { webkit?: { messageHandlers?: { gatewayServers?: IBridge } } }).webkit?.messageHandlers?.gatewayServers
 }
 
+/** Dentro do app do Mac (a ponte existe)? Lá o ícone da barra de menus é quem fala as mensagens. */
+export function inMacApp(): boolean {
+  return bridge() !== undefined
+}
+
 function parse(reply: unknown): IServerList | undefined {
   const value = reply as Partial<IServerList> | undefined
   if (!value || typeof value.current !== 'string' || !Array.isArray(value.servers)) return undefined

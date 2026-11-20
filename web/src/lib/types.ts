@@ -380,6 +380,9 @@ export interface ISettings {
   /** 🖼️ O modelo de imagem (o `generate_image`); os dois juntos, ou nenhum = sem imagem. */
   imageProvider?: string
   imageModel?: string
+  speechProvider?: string
+  speechModel?: string
+  speechVoice?: string
   /** O provider e o modelo do construtor (agente do core). Ausentes = os do Atlas. */
   builderProvider?: string
   builderModel?: string

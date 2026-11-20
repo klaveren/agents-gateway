@@ -15,6 +15,7 @@ import { useImportsStore } from './imports'
 import { useProvidersStore } from './providers'
 import { useSchedulesStore } from './schedules'
 import { useMessagesStore } from './messages'
+import { useSpeechStore } from './speech'
 import { useSettingsStore } from './settings'
 import { useThreadStore } from './thread'
 import { useUsageStore } from './usage'
@@ -62,6 +63,7 @@ export const useAuthStore = defineStore('auth', () => {
     useUsersStore().reset()
     useSchedulesStore().reset()
     useMessagesStore().reset()
+    useSpeechStore().reset()
     usePackagesStore().reset()
     useImportsStore().reset()
     useConnectionsStore().reset()

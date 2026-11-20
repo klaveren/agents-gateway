@@ -25,6 +25,9 @@ import { AgentController } from './Agent.Controller'
 import { AuthController } from './Auth.Controller'
 import { ProvidersController } from './Providers.Controller'
 import { UsageController } from './Usage.Controller'
+import { SpeechController } from './Speech.Controller'
+import { SpeechService } from '@application/Speech.Service'
+import { SqliteUserPreferenceRepository } from '@infra/persistence/Sqlite.UserPreferenceRepository'
 import { McpServersController } from './McpServers.Controller'
 import { McpProxyController } from './McpProxy.Controller'
 import { TurnToolsController } from './TurnTools.Controller'
@@ -166,6 +169,8 @@ export class HttpServer {
     variables: ProjectVariablesController = new ProjectVariablesController({}),
     /** A camada do projeto dos agentes globais (ver `AgentProjectLayer.Controller`). */
     agentLayers: AgentProjectLayerController = new AgentProjectLayerController({}),
+    /** 🔊 A voz das mensagens (ver `Speech.Controller`). */
+    speech: SpeechController = defaultSpeech(),
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -222,6 +227,12 @@ export class HttpServer {
       ledger ?? new LedgerController({}),
     )
     this.routes.push({ method: 'get', path: '/audit', handler: this.audit.list })
+    this.routes.push(
+      { method: 'get', path: '/messages/:conversationId/:messageId/speech', handler: speech.messageSpeech },
+      { method: 'get', path: '/me/voice', handler: speech.getVoice },
+      { method: 'put', path: '/me/voice', handler: speech.putVoice },
+      { method: 'get', path: '/me/voice/sample', handler: speech.voiceSample },
+    )
     this.routes.push(
       { method: 'get', path: '/connect/:projectId/version', handler: connect.version },
       { method: 'get', path: '/connect/:projectId/changes', handler: connect.changes },
@@ -749,6 +760,14 @@ function defaultPermissions(): PermissionsController {
     agentExists: () => false,
     installationRules: () => [],
   })
+}
+
+/** Sem composição: preferências em memória, sem motor de voz (as rotas respondem 409) e sem caixa de mensagens. */
+function defaultSpeech(): SpeechController {
+  const unavailable = async () => {
+    throw new Error('no voice engine')
+  }
+  return new SpeechController({ speech: new SpeechService({ prefs: new SqliteUserPreferenceRepository(), engine: async () => undefined, synthesize: unavailable }) })
 }
 
 /** Sem composição (testes que sobem só o servidor): hooks em memória, sem agentes. */

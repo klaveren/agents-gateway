@@ -115,6 +115,8 @@ export type TErrorCode =
   | 'connection_busy'
   | 'project_read_only'
   | 'variable_exists'
+  | 'speech_unavailable'
+  | 'speech_failed'
   | 'internal_error'
 
 export interface IHttpFailure {

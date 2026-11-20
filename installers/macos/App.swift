@@ -7,8 +7,9 @@
 // Compilado pelo `build-app.sh`: swiftc -O -target arm64-apple-macos12.0 App.swift -o "Agents Gateway"
 import Cocoa
 import WebKit
+import AVFoundation
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandlerWithReply {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandlerWithReply, AVAudioPlayerDelegate {
   private var window: NSWindow!
   private var web: WKWebView!
   private var home: URL?
@@ -32,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
   func applicationDidFinishLaunching(_ notification: Notification) {
     loadServers()
     buildMenu()
+    setupVoice()
     let settings = WKWebViewConfiguration()
     settings.websiteDataStore = .default()
     settings.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "gatewayServers")
@@ -66,7 +68,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
   }
 
-  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+  // ⚖️ Fechar a janela não encerra o app: o ícone da barra de menus segue ouvindo e lendo as mensagens. Sair é ⌘Q ou o menu do ícone.
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    if !flag { showWindow() }
+    return true
+  }
 
   // MARK: o servidor
 
@@ -126,6 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         self.stopped = false
         self.home = URL(string: "\(url.scheme ?? "http")://\(url.host ?? "localhost"):\(url.port ?? 3210)/")
+        self.rebuildListeners()
         if reveal { self.web.load(URLRequest(url: back ?? url)) }
       }
     }
@@ -142,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         self.refreshStatus()
         guard result.ok else { return self.warn("Não consegui parar o servidor deste Mac", result.reason) }
         self.stopped = true
+        self.rebuildListeners()
         if self.current == Self.localId { self.show(Self.localId) }
       }
     }
@@ -166,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         self.network = parts.count >= 3 && parts[2] == "1"
         self.lanAddress = parts.count >= 4 ? String(parts[3]) : nil
         if self.activity == nil { self.stopped = parts[0] == "stopped" }
+        self.rebuildListeners()
         self.refreshStatusLine()
       }
     }
@@ -255,6 +266,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     case #selector(startLocal(_:)): return activity == nil && stopped
     case #selector(stopLocal(_:)), #selector(restartLocal(_:)): return activity == nil && !stopped
     case #selector(toggleNetwork(_:)): return activity == nil
+    case #selector(stopVoice(_:)): return voicePlayer != nil || !voiceQueue.isEmpty
+    case #selector(repeatVoice(_:)): return voiceLast != nil
     default: return true
     }
   }
@@ -305,6 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
   private func storeServers() {
     UserDefaults.standard.set(servers.map { ["id": $0.id, "name": $0.name, "url": $0.url.absoluteString] }, forKey: "servers")
     rebuildServerMenu()
+    rebuildListeners()
   }
 
   private static func port(_ url: URL) -> Int { url.port ?? (url.scheme == "https" ? 443 : 80) }
@@ -396,7 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
   /// Carrega o início do servidor na janela. `false`: não existe (ou o daqui ainda não subiu).
   @discardableResult
-  private func show(_ id: String, project: String? = nil) -> Bool {
+  private func show(_ id: String, project: String? = nil, path: String? = nil) -> Bool {
     if id == Self.localId, stopped {
       web.loadHTMLString(Self.stoppedPage, baseURL: nil)
       // A página parada não tem endereço: o `didCommit` não a reconhece, quem marca a janela como "Este Mac" é aqui.
@@ -408,9 +422,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     guard let base = id == Self.localId ? home : servers.first(where: { $0.id == id })?.url else { return false }
     // Com projeto: a tela de lá abre já nele (`?project=`, que ela lê e tira do endereço).
     var url = base
-    if let project, Self.isProjectId(project), var parts = URLComponents(url: base, resolvingAgainstBaseURL: false) {
-      parts.queryItems = [URLQueryItem(name: "project", value: project)]
+    // Com caminho (já codificado): abre direto nele, como a mensagem que o ícone da voz leu.
+    if let path, var parts = URLComponents(url: base, resolvingAgainstBaseURL: false) {
+      parts.percentEncodedPath = "/" + path
       url = parts.url ?? base
+    }
+    if let project, Self.isProjectId(project), var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+      parts.queryItems = [URLQueryItem(name: "project", value: project)]
+      url = parts.url ?? url
     }
     web.load(URLRequest(url: url))
     return true
@@ -521,6 +540,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     window.title = shown.map { "Agents Gateway — \($0.name)" } ?? "Agents Gateway"
     rebuildServerMenu()
   }
+
+  /// ⚖️ O login pode ter mudado (ou o cookie renovado): os ouvintes de voz conferem os cookies de novo.
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { rebuildListeners() }
 
   func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
     let failure = error as NSError
@@ -729,6 +751,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     NSApp.mainMenu = main
   }
 
+  // MARK: voz (estado)
+
+  fileprivate let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+  fileprivate let voiceMenu = NSMenu(title: "Voz")
+  fileprivate var listeners: [String: VoiceListener] = [:]
+  fileprivate var voiceQueue: [VoiceItem] = []
+  fileprivate var voicePlayer: AVAudioPlayer?
+  fileprivate var voiceLast: VoiceItem?
+  fileprivate var voiceRecent: [VoiceItem] = []
+
   private static let stoppedPage = """
   <html><body style="margin:0;height:100vh;display:grid;place-items:center;background:#09090b;color:#a1a1aa;font:15px/1.6 -apple-system">
   <div style="text-align:center;max-width:460px;padding:24px"><div style="font-size:28px;color:#71717a;margin-bottom:8px">◎</div>
@@ -743,6 +775,398 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
   <div style="text-align:center"><div style="font-size:28px;color:#6ee7b7;margin-bottom:8px">◉</div>Iniciando o Agents Gateway…</div>
   </body></html>
   """
+}
+
+// MARK: voz
+
+/// Uma mensagem de agente: a que chegou (`audio == nil`) ou a que está pronta para tocar.
+struct VoiceItem {
+  let serverId: String
+  let serverName: String
+  let conversationId: String
+  let messageId: String
+  let label: String
+  var audio: Data?
+  var rate = 1.0
+}
+
+struct VoiceHooks {
+  let changed: () -> Void
+  let speak: (VoiceItem) -> Void
+  let record: (VoiceItem) -> Void
+  let enabled: () -> Bool
+}
+
+/**
+ * 🔊 UM OUVINTE POR SERVIDOR: mantém aberto o SSE `/v1/conversations/events` com o COOKIE DE LOGIN que a janela já guarda
+ * (⛔ nada novo é guardado: nem senha, nem token) e, a cada `message.created`, pede o áudio que o gateway gera.
+ * ⚖️ Só se fala o que chegou DEPOIS da conexão: nada antigo é lido ao abrir. Tudo roda na thread principal.
+ */
+final class VoiceListener: NSObject, URLSessionDataDelegate {
+  enum State { case connecting, listening, login, offline }
+  struct Prefs { var enabled: Bool; var engine: Bool; var rate: Double; var minLevel: Int }
+
+  let id: String, name: String, base: URL, cookie: String
+  private(set) var state = State.connecting
+  private(set) var prefs: Prefs?
+  private(set) var unread = 0
+  private(set) var started = false
+  private let hooks: VoiceHooks
+  private var session: URLSession?, task: URLSessionDataTask?, retry: DispatchWorkItem?
+  private var buffer = Data(), backoff = 5.0, prefsAt = Date.distantPast
+  private var connectedAt = Date(), anchored = false, seen = Set<String>(), stopped = false
+  private static let httpDate: DateFormatter = {
+    let format = DateFormatter()
+    format.locale = Locale(identifier: "en_US_POSIX")
+    format.timeZone = TimeZone(identifier: "GMT")
+    format.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+    return format
+  }()
+
+  init(id: String, name: String, base: URL, cookie: String, hooks: VoiceHooks) {
+    (self.id, self.name, self.base, self.cookie, self.hooks) = (id, name, base, cookie, hooks)
+  }
+
+  static func level(_ text: String?) -> Int { text == "urgent" ? 2 : text == "attention" ? 1 : 0 }
+
+  /// Um pedaço de caminho seguro (o id vem do servidor).
+  static func seg(_ value: String) -> String {
+    value.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? ""
+  }
+
+  func start() { started = true; connect() }
+
+  func stop() {
+    stopped = true
+    retry?.cancel()
+    session?.invalidateAndCancel()
+    session = nil
+    task = nil
+  }
+
+  private func request(_ path: String, accept: String, timeout: TimeInterval) -> URLRequest {
+    var root = base.absoluteString
+    while root.hasSuffix("/") { root.removeLast() }
+    var request = URLRequest(url: URL(string: root + "/v1/" + path) ?? base, timeoutInterval: timeout)
+    request.httpShouldHandleCookies = false
+    if !cookie.isEmpty { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
+    request.setValue("web", forHTTPHeaderField: "X-Gateway-Client")
+    request.setValue(accept, forHTTPHeaderField: "Accept")
+    return request
+  }
+
+  private func fetch(_ path: String, accept: String = "application/json", timeout: TimeInterval = 15, _ done: @escaping (Int, Data?) -> Void) {
+    URLSession.shared.dataTask(with: request(path, accept: accept, timeout: timeout)) { data, response, _ in
+      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+      DispatchQueue.main.async { if !self.stopped { done(status, data) } }
+    }.resume()
+  }
+
+  private func result(_ data: Data?) -> [String: Any]? {
+    (data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])?["result"] as? [String: Any]
+  }
+
+  private func connect() {
+    guard !stopped else { return }
+    buffer = Data()
+    let config = URLSessionConfiguration.default
+    config.requestCachePolicy = .reloadIgnoringLocalCacheData
+    let session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue.main)
+    self.session = session
+    // O servidor manda `: ping` a cada 15 s: 60 s sem um byte é conexão morta.
+    task = session.dataTask(with: request("conversations/events", accept: "text/event-stream", timeout: 60))
+    task?.resume()
+  }
+
+  private func retryLater(_ delay: TimeInterval) {
+    session?.invalidateAndCancel()
+    session = nil
+    task = nil
+    let work = DispatchWorkItem { [weak self] in self?.connect() }
+    retry = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+  }
+
+  private func fail(_ next: State) {
+    state = next
+    // Sem login: confere a cada 60 s (a pessoa pode entrar pela janela). Fora do ar: 5 s → 60 s.
+    let delay = next == .login ? 60 : backoff
+    if next != .login { backoff = min(backoff * 2, 60) }
+    retryLater(delay)
+    hooks.changed()
+  }
+
+  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+    guard dataTask === task, !stopped else { return completionHandler(.cancel) }
+    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    guard status == 200 else {
+      completionHandler(.cancel)
+      return fail(status == 401 || status == 403 ? .login : .offline)
+    }
+    completionHandler(.allow)
+    state = .listening
+    backoff = 5
+    // ⚖️ O marco é o RELÓGIO DO SERVIDOR (cabeçalho `Date`), não o do Mac: relógio torto não lê mensagem velha nem perde
+    // a nova. E só na primeira conexão: o que chegou durante uma queda é lido na volta.
+    if !anchored {
+      let server = ((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Date")).flatMap { Self.httpDate.date(from: $0) }
+      connectedAt = (server ?? Date()).addingTimeInterval(-1)
+      anchored = true
+    }
+    refreshPrefs()
+    fetch("messages") { status, data in
+      if status == 200, let count = self.result(data)?["unread"] as? Int { self.unread = count; self.hooks.changed() }
+    }
+    hooks.changed()
+  }
+
+  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+    guard dataTask === task else { return }
+    buffer.append(data)
+    let separator = Data("\n\n".utf8)
+    while let end = buffer.range(of: separator) {
+      let frame = Data(buffer[buffer.startIndex..<end.lowerBound])
+      buffer.removeSubrange(buffer.startIndex..<end.upperBound)
+      parse(frame)
+    }
+  }
+
+  func urlSession(_ session: URLSession, task finished: URLSessionTask, didCompleteWithError error: Error?) {
+    guard finished === task, !stopped else { return }
+    fail(.offline)
+  }
+
+  private func parse(_ frame: Data) {
+    var event = "", payload = ""
+    for line in String(decoding: frame, as: UTF8.self).split(separator: "\n") where !line.hasPrefix(":") {
+      if line.hasPrefix("event:") { event = line.dropFirst(6).trimmingCharacters(in: .whitespacesAndNewlines) }
+      if line.hasPrefix("data:") { payload += line.dropFirst(5).trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+    guard event == "message.created", let json = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any],
+          let conversation = json["conversationId"] as? String else { return }
+    if let count = json["unread"] as? Int { unread = count; hooks.changed() }
+    let go = { self.read(conversation) }
+    if Date().timeIntervalSince(prefsAt) > 60 { refreshPrefs(go) } else { go() }
+  }
+
+  private func refreshPrefs(_ then: (() -> Void)? = nil) {
+    fetch("me/voice") { status, data in
+      if status == 200, let reply = self.result(data) {
+        let engine = reply["engine"] as? [String: Any]
+        self.prefs = Prefs(enabled: reply["enabled"] as? Bool ?? false, engine: engine?["available"] as? Bool ?? false,
+                           rate: reply["rate"] as? Double ?? 1, minLevel: Self.level(reply["minLevel"] as? String))
+        self.prefsAt = Date()
+        self.hooks.changed()
+      }
+      then?()
+    }
+  }
+
+  /// Lê a conversa, separa as mensagens de agente novas (depois da conexão, ainda não vistas) e fala as que valem.
+  private func read(_ conversation: String) {
+    fetch("messages/" + Self.seg(conversation)) { status, data in
+      guard status == 200, let list = self.result(data)?["messages"] as? [[String: Any]] else { return }
+      let fractional = ISO8601DateFormatter()
+      fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+      let plain = ISO8601DateFormatter()
+      let fresh = list.compactMap { message -> (id: String, label: String, level: Int, at: Date)? in
+        guard message["from"] as? String == "agent", let id = message["id"] as? String, !self.seen.contains(id),
+              let stamp = message["createdAt"] as? String, let at = fractional.date(from: stamp) ?? plain.date(from: stamp),
+              at > self.connectedAt else { return nil }
+        let title = (message["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? String((message["body"] as? String ?? "").prefix(40))
+        return (id, title, Self.level(message["level"] as? String), at)
+      }.sorted { $0.at < $1.at }
+      guard !fresh.isEmpty else { return }
+      for message in fresh {
+        self.seen.insert(message.id)
+        self.hooks.record(VoiceItem(serverId: self.id, serverName: self.name, conversationId: conversation, messageId: message.id, label: message.label))
+      }
+      guard let prefs = self.prefs, prefs.enabled, prefs.engine, self.hooks.enabled() else { return }
+      // Um áudio de cada vez, do mais antigo ao mais novo: a ordem da fila é a da conversa.
+      func next(_ rest: ArraySlice<(id: String, label: String, level: Int, at: Date)>) {
+        guard let message = rest.first else { return }
+        guard message.level >= prefs.minLevel else { return next(rest.dropFirst()) }
+        self.fetch("messages/\(Self.seg(conversation))/\(Self.seg(message.id))/speech", accept: "audio/mpeg", timeout: 60) { status, audio in
+          if status == 200, let audio, !audio.isEmpty {
+            self.hooks.speak(VoiceItem(serverId: self.id, serverName: self.name, conversationId: conversation, messageId: message.id,
+                                       label: message.label, audio: audio, rate: prefs.rate))
+          } else if status == 409 {
+            self.prefs?.engine = false
+            self.hooks.changed()
+          }
+          next(rest.dropFirst())
+        }
+      }
+      next(fresh[...])
+    }
+  }
+}
+
+extension AppDelegate {
+  fileprivate var voiceOn: Bool { UserDefaults.standard.object(forKey: "voiceOn") as? Bool ?? true }
+
+  fileprivate func setupVoice() {
+    statusItem.button?.toolTip = "Agents Gateway — voz"
+    voiceMenu.delegate = self
+    statusItem.menu = voiceMenu
+    updateVoiceIcon()
+  }
+
+  /// ⚖️ O conjunto de ouvintes segue `servers`, o servidor deste Mac e o login da janela. Quem não mudou (mesmo endereço e
+  /// mesmo cookie) segue como está, sem perder o instante de conexão.
+  fileprivate func rebuildListeners() {
+    guard web != nil else { return }
+    var targets: [(id: String, name: String, url: URL)] = []
+    if let home, !stopped { targets.append((Self.localId, Self.localName, home)) }
+    targets += servers.map { ($0.id, $0.name, $0.url) }
+    let hooks = VoiceHooks(
+      changed: { [weak self] in self?.updateVoiceIcon() },
+      speak: { [weak self] in self?.speak($0) },
+      record: { [weak self] item in
+        guard let self else { return }
+        self.voiceRecent.removeAll { $0.serverId == item.serverId && $0.messageId == item.messageId }
+        self.voiceRecent = Array(([item] + self.voiceRecent).prefix(8))
+      },
+      enabled: { [weak self] in self?.voiceOn ?? false })
+    web.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+      DispatchQueue.main.async {
+        var next: [String: VoiceListener] = [:]
+        for target in targets {
+          let host = target.url.host?.lowercased() ?? ""
+          let mine = cookies.filter { $0.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) == host }
+          let header = HTTPCookie.requestHeaderFields(with: mine)["Cookie"] ?? ""
+          if let old = self.listeners[target.id], old.base == target.url, old.name == target.name, old.cookie == header {
+            next[target.id] = old
+          } else {
+            self.listeners[target.id]?.stop()
+            next[target.id] = VoiceListener(id: target.id, name: target.name, base: target.url, cookie: header, hooks: hooks)
+          }
+        }
+        for (id, listener) in self.listeners where next[id] == nil { listener.stop() }
+        self.listeners = next
+        for listener in next.values where !listener.started { listener.start() }
+        self.updateVoiceIcon()
+      }
+    }
+  }
+
+  fileprivate func updateVoiceIcon() {
+    let unread = listeners.values.reduce(0) { $0 + $1.unread }
+    let symbol = voicePlayer != nil ? "speaker.wave.2.fill" : unread > 0 ? "waveform.badge.exclamationmark" : "waveform"
+    // `waveform.badge.exclamationmark` é do macOS 13: no 12 cai no `waveform`, e o número ao lado mostra as não lidas.
+    let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Agents Gateway — voz") ?? NSImage(systemSymbolName: "waveform", accessibilityDescription: "Agents Gateway — voz")
+    image?.isTemplate = true
+    statusItem.button?.image = image
+    statusItem.button?.imagePosition = .imageLeft
+    statusItem.button?.title = unread > 0 ? " \(unread)" : ""
+  }
+
+  // ⚖️ Uma fila só para todos os servidores: toca em sequência, nunca sobreposto.
+  fileprivate func speak(_ item: VoiceItem) {
+    voiceQueue.append(item)
+    if voicePlayer == nil { playNext() }
+  }
+
+  private func playNext() {
+    while !voiceQueue.isEmpty {
+      let item = voiceQueue.removeFirst()
+      guard let data = item.audio, let player = try? AVAudioPlayer(data: data) else { continue }
+      player.delegate = self
+      player.enableRate = true
+      player.prepareToPlay()
+      player.rate = Float(min(max(item.rate, 0.5), 2))
+      voiceLast = item
+      voicePlayer = player
+      if player.play() { return updateVoiceIcon() }
+    }
+    voicePlayer = nil
+    updateVoiceIcon()
+  }
+
+  func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    if player === voicePlayer { playNext() }
+  }
+
+  func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+    if player === voicePlayer { playNext() }
+  }
+
+  @objc fileprivate func stopVoice(_ sender: Any?) {
+    voiceQueue.removeAll()
+    voicePlayer?.stop()
+    voicePlayer = nil
+    updateVoiceIcon()
+  }
+
+  @objc fileprivate func repeatVoice(_ sender: Any?) {
+    guard let last = voiceLast else { return }
+    stopVoice(nil)
+    speak(last)
+  }
+
+  @objc fileprivate func toggleVoice(_ sender: Any?) {
+    UserDefaults.standard.set(!voiceOn, forKey: "voiceOn")
+  }
+
+  fileprivate func showWindow() {
+    window.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+  }
+
+  @objc fileprivate func openVoiceServer(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? String else { return }
+    show(id)
+    showWindow()
+  }
+
+  @objc fileprivate func openVoiceItem(_ sender: NSMenuItem) {
+    guard let item = sender.representedObject as? VoiceItem else { return }
+    show(item.serverId, path: "messages/" + VoiceListener.seg(item.conversationId))
+    showWindow()
+  }
+
+  /// O menu do ícone é refeito a cada abertura.
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    guard menu === voiceMenu else { return }
+    menu.removeAllItems()
+    @discardableResult
+    func add(_ title: String, _ action: Selector?, object: Any? = nil, on: Bool = false) -> NSMenuItem {
+      let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      entry.target = self
+      entry.representedObject = object
+      entry.state = on ? .on : .off
+      menu.addItem(entry)
+      return entry
+    }
+    add("Ler mensagens em voz alta", #selector(toggleVoice(_:)), on: voiceOn)
+    add("Parar", #selector(stopVoice(_:)))
+    add("Repetir a última", #selector(repeatVoice(_:)))
+    menu.addItem(.separator())
+    add("Últimas mensagens", nil)
+    if voiceRecent.isEmpty { add("   nada ainda", nil) }
+    for item in voiceRecent { add("   \(item.serverName) · \(item.label)", #selector(openVoiceItem(_:)), object: item) }
+    menu.addItem(.separator())
+    for (id, name) in [(Self.localId, Self.localName)] + servers.map({ ($0.id, $0.name) }) {
+      var text = "conectando"
+      var action: Selector?
+      if id == Self.localId && (stopped || home == nil) {
+        text = stopped ? "parado" : "iniciando"
+      } else if let listener = listeners[id] {
+        switch listener.state {
+        case .listening: text = listener.prefs?.enabled == false ? "voz desligada no Perfil" : listener.prefs?.engine == false ? "sem voz configurada" : "ouvindo"
+        case .login: (text, action) = ("entrar", #selector(openVoiceServer(_:)))
+        case .offline: text = "sem resposta"
+        case .connecting: break
+        }
+      }
+      add("\(name) — \(text)", action, object: id)
+    }
+    menu.addItem(.separator())
+    add("Abrir o Agents Gateway", #selector(showWindowAction(_:)))
+    add("Sair do Agents Gateway", #selector(NSApplication.terminate(_:))).target = NSApp
+  }
+
+  @objc fileprivate func showWindowAction(_ sender: Any?) { showWindow() }
 }
 
 // `--server`: o LaunchAgent roda o PRÓPRIO executável do app (não o `zsh`), para os Itens de Início do macOS mostrarem o

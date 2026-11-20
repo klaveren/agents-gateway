@@ -32,6 +32,7 @@ import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
 import { persistInstalls } from '@infra/packages/Persistent.Installs'
 import { migrateToProjects } from '@composition/factories/Projects.Factory'
 import { makeProjectVariablesController, migrateMcpEnvToProjects } from '@composition/factories/ProjectVariables.Factory'
+import { makeSpeechController } from '@composition/factories/Speech.Factory'
 import { makeAgentProjectLayerController } from '@composition/factories/AgentProjectLayers.Factory'
 import { reconcileCatalogHistory } from '@composition/factories/CatalogHistory.Factory'
 import { syncResourceFiles } from '@composition/factories/ResourceFiles.Factory'
@@ -140,6 +141,7 @@ async function bootstrap() {
     makeProjectConnectionsController(),
     makeProjectVariablesController(),
     makeAgentProjectLayerController(),
+    makeSpeechController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
   listening = true

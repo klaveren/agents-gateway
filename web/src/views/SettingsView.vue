@@ -49,6 +49,10 @@
   const suggester = ref('')
   /** 🖼️ O modelo de imagem (`provider::modelo`; vazio = sem imagem). */
   const imager = ref('')
+  /** 🔊 A voz: o provider (protocolo OpenAI, com chave), o modelo (texto livre) e a voz padrão. Vazio = sem voz. */
+  const speechProvider = ref('')
+  const speechModel = ref('')
+  const speechVoice = ref('')
   /** `provider::modelo` do construtor de skills e commands — vazio = o do Atlas. Lane agent: assinatura serve. */
   const builder = ref('')
   const saved = ref<string>()
@@ -124,6 +128,7 @@
       .filter((provider) => !provider.subscription && (provider.protocol === 'openai' || provider.protocol === 'google'))
       .flatMap((provider) => enabledModels(provider, true)),
   )
+  const speechProviders = computed(() => runnableProviders.value.filter((provider) => !provider.subscription && provider.protocol === 'openai'))
   const builderOptions = computed(() => runnableProviders.value.flatMap((provider) => enabledModels(provider)))
 
   watch(
@@ -138,6 +143,9 @@
       classifyTurns.value = current.classifyTurns ?? false
       suggester.value = current.suggestModel ? `${current.suggestProvider ?? ''}::${current.suggestModel}` : ''
       imager.value = current.imageModel ? `${current.imageProvider ?? ''}::${current.imageModel}` : ''
+      speechProvider.value = current.speechProvider ?? ''
+      speechModel.value = current.speechModel ?? ''
+      speechVoice.value = current.speechVoice ?? ''
       builder.value = current.builderModel ? `${current.builderProvider ?? ''}::${current.builderModel}` : ''
       defaultGroup.value = current.defaultModelGroup ?? ''
       limitDrafts.value = Object.fromEntries(LIMITS.map(({ name }) => [name, current.limits?.[name] ?? ''])) as Partial<Record<TLimitName, number | ''>>
@@ -177,6 +185,9 @@
         suggestModel: suggestModel || null,
         imageProvider: imageProvider || null,
         imageModel: imageModel || null,
+        speechProvider: speechProvider.value || null,
+        speechModel: speechModel.value.trim() || null,
+        speechVoice: speechVoice.value.trim() || null,
         builderProvider: builderProvider || null,
         builderModel: builderModel || null,
         // A sequência padrão vai junto (um salvar só por tela); "Nenhum" = `null` desliga a troca dos agentes sem sequência.
@@ -294,6 +305,30 @@
                   de imagem), com chave. Aparecem só os ativados com o selo "gera imagem" em Modelos → provider (Adicionar modelo pelo identificador, se a lista não o trouxer).
                 </small>
               </label>
+              <div class="flex min-w-0 flex-col gap-2 sm:col-span-2" data-test="speech-model">
+                <span class="text-sm text-zinc-300">Voz (ler mensagens em voz alta)</span>
+                <div class="grid gap-2 sm:grid-cols-3">
+                  <select v-model="speechProvider" aria-label="Provider da voz" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
+                    <option value="">Nenhum (sem voz)</option>
+                    <option v-for="provider in speechProviders" :key="provider.id" :value="provider.id">{{ protocols.providerName(provider.id) }}</option>
+                  </select>
+                  <input
+                    v-model="speechModel"
+                    type="text"
+                    aria-label="Modelo da voz"
+                    placeholder="Modelo"
+                    class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm"
+                  />
+                  <input
+                    v-model="speechVoice"
+                    type="text"
+                    aria-label="Voz padrão"
+                    placeholder="Voz padrão"
+                    class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm"
+                  />
+                </div>
+                <small class="text-xs text-zinc-500">Alibaba (Token Plan): qwen-audio-3.0-tts-plus. OpenAI: gpt-4o-mini-tts. Provider e modelo juntos, com chave de API.</small>
+              </div>
               <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">
                 Modelo do construtor
                 <select v-model="builder" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">

@@ -603,6 +603,8 @@ export class AgentController {
     suggestModel?: string | null
     imageProvider?: string | null
     imageModel?: string | null
+    speechProvider?: string | null
+    speechModel?: string | null
     builderProvider?: string | null
     builderModel?: string | null
     modelGroups?: IModelGroup[] | null
@@ -695,6 +697,18 @@ export class AgentController {
       else if (image && !image.key) issues.push({ field: 'imageProvider', message: `${image.providerId} has no API key` })
       else if (imageProvider && imageModel && this.usecases.models && !this.usecases.models.isEnabled(imageProvider, imageModel))
         issues.push({ field: 'imageModel', message: `${imageModel} is not enabled in ${imageProvider}` })
+    }
+
+    // 🔊 A voz: os dois juntos (ou nenhum = sem voz), provider OpenAI com chave. O modelo é texto livre: os de voz não estão no catálogo.
+    const speechProvider = body.speechProvider === undefined ? current.speechProvider : body.speechProvider || undefined
+    const speechModel = body.speechModel === undefined ? current.speechModel : body.speechModel || undefined
+    if (body.speechProvider !== undefined || body.speechModel !== undefined) {
+      const speech = speechProvider ? this.usecases.providers?.connection(speechProvider) : undefined
+      if (!!speechProvider !== !!speechModel) issues.push({ field: 'speechModel', message: 'choose the provider and the model together (or neither: no voice)' })
+      else if (speechProvider && this.usecases.providers && !speech) issues.push({ field: 'speechProvider', message: `${speechProvider} is disabled or does not exist` })
+      else if (speech && speech.protocol !== EProvider.OPENAI)
+        issues.push({ field: 'speechProvider', message: `${speech.providerId} does not speak here: use an OpenAI-protocol provider (API key)` })
+      else if (speech && !speech.key) issues.push({ field: 'speechProvider', message: `${speech.providerId} has no API key` })
     }
 
     // O construtor: os dois juntos, provider ligado e modelo ativado nele (ou nenhum dos dois = o do Atlas).

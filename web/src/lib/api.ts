@@ -108,6 +108,17 @@ export async function api<T>(path: string, request: IRequest = {}): Promise<T> {
   return envelope.result as T
 }
 
+/** Uma chamada que devolve bytes (o áudio da voz): as mesmas credenciais; a falha vem do envelope, como em `api`. */
+export async function apiBlob(path: string, request: Pick<IRequest, 'query' | 'signal'> = {}): Promise<Blob> {
+  const response = await fetch(url(path, request.query), { headers: authHeaders(), signal: request.signal })
+  if (!response.ok) {
+    const envelope = (await response.json().catch(() => undefined)) as { message?: string; code?: string; details?: unknown } | undefined
+    checkUnauthorized(response.status)
+    throw new ApiError(response.status, envelope?.code, envelope?.message ?? `HTTP ${response.status}`, envelope?.details)
+  }
+  return response.blob()
+}
+
 /** Abre um stream SSE autenticado (POST com corpo, ou GET). */
 export async function openStream(path: string, request: IRequest = {}): Promise<ReadableStream<Uint8Array>> {
   const response = await fetch(url(path, request.query), {

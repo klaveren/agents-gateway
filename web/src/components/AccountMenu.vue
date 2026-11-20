@@ -8,6 +8,7 @@
   import { useAuthStore } from '@/stores/auth'
   import { usePermissionRequestsStore } from '@/stores/permissionRequests'
   import { useProjectsStore } from '@/stores/projects'
+import { useSpeechStore } from '@/stores/speech'
   import AboutDialog from './AboutDialog.vue'
   import Icon from './Icon.vue'
 
@@ -20,6 +21,7 @@
   const auth = useAuthStore()
   const projects = useProjectsStore()
   const router = useRouter()
+  const speech = useSpeechStore()
   const { open, root } = usePopover()
   const above = useAboveBar(open, root)
 
@@ -74,6 +76,7 @@
         >
           {{ pending }}
         </span>
+        <span v-if="speech.blocked" class="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-amber-400" title="Ativar som" data-test="speech-blocked-dot" />
       </span>
       <span v-if="placement === 'up'">Conta</span>
     </button>
@@ -108,6 +111,29 @@
         Notificações
         <span v-if="pending" class="ml-auto rounded-full bg-amber-500 px-1.5 text-[10px] leading-4 font-semibold text-zinc-950" data-test="notifications-pill">{{ pending }}</span>
       </RouterLink>
+      <button
+        v-if="speech.blocked"
+        type="button"
+        role="menuitem"
+        class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-amber-300 hover:bg-zinc-800"
+        data-test="speech-unlock-item"
+        title="O navegador bloqueou o som até você interagir com a página."
+        @click="speech.unlock()"
+      >
+        <Icon name="bell" class="h-4 w-4" />
+        Ativar som
+      </button>
+      <button
+        v-else-if="speech.active"
+        type="button"
+        role="menuitem"
+        class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+        data-test="speech-stop-item"
+        @click="speech.stop()"
+      >
+        <Icon name="stop" class="h-4 w-4 text-zinc-400" />
+        Parar leitura
+      </button>
       <RouterLink
         v-if="serverList?.manage"
         to="/servers"

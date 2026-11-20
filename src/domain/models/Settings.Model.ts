@@ -83,6 +83,15 @@ export interface IAgentSettings {
   imageModel?: string
 
   /**
+   * 🔊 A VOZ (ver `Speech.Service`): o modelo de texto-para-fala que lê as mensagens dos agentes em voz alta, e a voz padrão
+   * dele. Provider (protocolo OpenAI, com chave de API) e modelo juntos; o modelo é texto livre (os de voz quase nunca
+   * estão no catálogo). Ausentes = sem voz.
+   */
+  speechProvider?: string
+  speechModel?: string
+  speechVoice?: string
+
+  /**
    * O provider e o modelo do CONSTRUTOR (o agente do core que redige skills e commands, ver `Builder.Agents`).
    * Ausentes = os do Atlas. ⚖️ É o único botão sobre ele: o resto é do core.
    */
@@ -164,6 +173,9 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
     suggestModel: text(stored.suggestModel),
     imageProvider: text(stored.imageProvider),
     imageModel: text(stored.imageModel),
+    speechProvider: text(stored.speechProvider),
+    speechModel: text(stored.speechModel),
+    speechVoice: text(stored.speechVoice),
     builderProvider: text(stored.builderProvider),
     builderModel: text(stored.builderModel),
     limits: normalizeLimits(stored.limits),
@@ -234,6 +246,9 @@ const EDITABLE = [
   'suggestModel',
   'imageProvider',
   'imageModel',
+  'speechProvider',
+  'speechModel',
+  'speechVoice',
   'builderProvider',
   'builderModel',
   'limits',
