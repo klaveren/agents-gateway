@@ -31,6 +31,16 @@ describe('SpeechService', () => {
     assert.strictEqual((await service.view('u2')).enabled, false)
   })
 
+  it('🎙️ vozes da conta no motor: só as do modelo do motor (ou sem modelo conhecido)', async () => {
+    const service = new SpeechService({
+      prefs: new SqliteUserPreferenceRepository(),
+      engine: async () => ENGINE,
+      synthesize: async () => ({ data: Buffer.from('x'), mime: 'audio/mpeg' }),
+      accountVoices: (providerId) => (providerId === 'p' ? [{ id: 'a', model: 'm' }, { id: 'b', model: 'outro' }, { id: 'c' }] : []),
+    })
+    assert.deepStrictEqual((await service.view('u')).engine.voices, ['a', 'c'])
+  })
+
   it('sem motor: indisponível; erro do motor sai sem a chave', async () => {
     await assert.rejects(build(null).service.speak('u', 'oi'), SpeechUnavailableError)
     assert.strictEqual((await build(null).service.view('u')).engine.available, false)

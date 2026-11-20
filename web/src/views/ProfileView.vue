@@ -16,7 +16,10 @@ const voiceDraft = ref('')
 /** 🔊 As vozes do modelo que o admin escolheu (ver `speechCatalog`); sem lista conhecida, o campo livre. */
 const voiceChoices = computed(() => {
   const model = speech.voice?.engine.model
-  return model ? [...KNOWN_SPEECH_MODELS.dashscope, ...KNOWN_SPEECH_MODELS.openai].find((item) => item.id === model)?.voices ?? [] : []
+  const known = model ? ([...KNOWN_SPEECH_MODELS.dashscope, ...KNOWN_SPEECH_MODELS.openai].find((item) => item.id === model)?.voices ?? []) : []
+  // 🎙️ As vozes da conta (já filtradas pelo servidor para o modelo do motor) vão depois das conhecidas.
+  const account = (speech.voice?.engine.voices ?? []).filter((id) => !known.some((voice) => voice.id === id)).map((id) => ({ id, label: `${id} · voz da conta` }))
+  return [...known, ...account]
 })
 const typingVoice = ref(false)
 function pickVoice(value: string) {

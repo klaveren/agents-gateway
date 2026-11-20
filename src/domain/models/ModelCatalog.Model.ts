@@ -48,6 +48,28 @@ export function modelImage(model: { modelId: string; image?: IModelImage }): IMo
   return model.image ?? guessModelImage(model.modelId)
 }
 
+/**
+ * 🔊 Se o modelo GERA VOZ (texto → fala). ⚖️ Só palpite pelo id (`heuristic`): `output_modalities` com áudio, nos
+ * compatíveis com OpenRouter, é conversa com áudio, não síntese; por isso a listagem nunca diz. Calculado na leitura
+ * (`modelSpeech`), sem coluna no banco.
+ */
+export interface IModelSpeech {
+  output: boolean
+  source: 'listing' | 'heuristic'
+}
+
+/** "tts" ou "speech" no nome; reconhecimento (asr), conversa ao vivo (realtime) e transcrição não. */
+const SPEECH_OUTPUT = /tts|speech/i
+const SPEECH_NOT = /asr|realtime|transcri/i
+
+export function guessModelSpeech(modelId: string): IModelSpeech {
+  return { output: SPEECH_OUTPUT.test(modelId) && !SPEECH_NOT.test(modelId), source: 'heuristic' }
+}
+
+export function modelSpeech(model: { modelId: string; speech?: IModelSpeech }): IModelSpeech {
+  return model.speech ?? guessModelSpeech(model.modelId)
+}
+
 /** Um modelo que um provider oferece — e se ele pode ser usado aqui. */
 export interface ICatalogModel {
   providerId: string
@@ -62,6 +84,7 @@ export interface ICatalogModel {
   priceSource?: TPriceSource
   reasoning?: IModelReasoning
   image?: IModelImage
+  speech?: IModelSpeech
   syncedAt?: Date
   updatedAt: Date
   updatedBy?: string

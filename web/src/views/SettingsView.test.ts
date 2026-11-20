@@ -130,3 +130,47 @@ describe('SettingsView — modelo de imagem', () => {
     expect(options('suggest-model')).toEqual(['Nenhum (sem sugestão)', 'OpenAI · gpt-5.6'])
   })
 })
+
+describe('SettingsView — voz', () => {
+  it('🔊 a lista de modelos de voz usa a flag speech; 🎙️ as vozes da conta entram na lista de vozes', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().isAdmin = true
+    const model = (modelId: string, speech: object) => ({ modelId, enabled: true, available: true, updatedAt: '', speech })
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === '/settings') return { audience: 'all', speechProvider: 'qwen', speechModel: 'qwen-audio-3.0-tts-plus' }
+      if (path === '/providers')
+        return [
+          {
+            id: 'qwen',
+            name: 'Qwen',
+            protocol: 'openai',
+            baseUrl: 'https://x.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+            official: false,
+            enabled: true,
+            credential: { configured: true, source: 'stored' },
+          },
+        ]
+      if (path === '/providers/qwen/models')
+        return [
+          model('qwen-audio-3.0-tts-plus', { output: true, source: 'heuristic' }),
+          model('voz-estranha', { output: true, source: 'heuristic' }),
+          model('qwen-tts-falso', { output: false, source: 'heuristic' }),
+        ]
+      if (path === '/providers/qwen/voices')
+        return { voices: [{ id: 'minha-voz', model: 'qwen-audio-3.0-tts-plus' }, { id: 'de-outro', model: 'cosyvoice-tts-v3' }] }
+      return []
+    })
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { render: () => h('div') } }] })
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp({ render: () => h(SettingsView) })
+    app.use(pinia).use(router).mount(host)
+    await flush()
+    const options = (test: string) => [...host.querySelectorAll(`[data-test="${test}"] option`)].map((option) => option.textContent?.trim())
+    expect(options('speech-model-select').join('|')).toMatch(/qwen-audio-3.0-tts-plus.*\|voz-estranha\|/)
+    expect(options('speech-model-select')).not.toContain('qwen-tts-falso')
+    expect(options('speech-voice-select')).toContain('minha-voz · voz da conta')
+    expect(options('speech-voice-select')).not.toContain('de-outro · voz da conta')
+  })
+})

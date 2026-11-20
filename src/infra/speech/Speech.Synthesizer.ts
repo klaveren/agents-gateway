@@ -44,7 +44,7 @@ export async function synthesizeSpeech(
 }
 
 /** A origem do provider se ele é da Alibaba (DashScope); senão, ausente. */
-function dashscopeOrigin(baseUrl: string | undefined): string | undefined {
+export function dashscopeOrigin(baseUrl: string | undefined): string | undefined {
   if (!baseUrl) return undefined
   try {
     const url = new URL(baseUrl)

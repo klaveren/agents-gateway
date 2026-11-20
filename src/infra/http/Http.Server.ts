@@ -594,6 +594,7 @@ function buildRoutes(
     { method: 'post', path: '/providers/:id/test', handler: providers.test },
     { method: 'get', path: '/providers/:id/models', handler: providers.listModels },
     { method: 'post', path: '/providers/:id/models/sync', handler: providers.syncModels },
+    { method: 'get', path: '/providers/:id/voices', handler: providers.providerVoices },
     { method: 'put', path: '/providers/:id/models', handler: providers.updateModel },
     { method: 'post', path: '/providers/:id/models', handler: providers.addModel },
     { method: 'get', path: '/providers/:id/login', handler: providers.loginStatus },

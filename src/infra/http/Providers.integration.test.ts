@@ -245,6 +245,15 @@ describe('probeKey', () => {
   })
 })
 
+const voiceCalls: Array<{ url: string; auth: string | null }> = []
+const voiceFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+  voiceCalls.push({ url: String(url), auth: new Headers(init?.headers).get('authorization') })
+  return new Response(
+    JSON.stringify({ output: { voice_list: [{ voice_id: 'qwen-audio-3.0-tts-flash-minha-1', target_model: 'qwen-audio-3.0-tts-flash', status: 'OK' }] } }),
+    { status: 200 },
+  )
+}) as typeof fetch
+
 describe('catálogo de modelos (integração)', () => {
   let base: string
   let stop: () => void
@@ -267,6 +276,8 @@ describe('catálogo de modelos (integração)', () => {
     const { makeAuth } = await import('@composition/factories/Auth.Factory')
     const { ProvidersController } = await import('./Providers.Controller')
     const { makeModelGroupRetirement } = await import('@composition/factories/Controller.Factory')
+    const { makeProviderVoices } = await import('@composition/factories/ProviderVoices.Factory')
+    const { listAccountVoices } = await import('@infra/speech/Voice.Listing')
 
     const providers = new ProvidersController({
       providers: makeProviders(),
@@ -275,7 +286,9 @@ describe('catálogo de modelos (integração)', () => {
       models: makeModelCatalog(),
       retire: (by) => makeModelGroupRetirement().retire(by),
       proof: makeAuth().proof,
-      list: async () => [{ id: 'vendor/a', price: { input: 1, output: 2 } }, { id: 'vendor/b' }],
+      list: async () => [{ id: 'vendor/a', price: { input: 1, output: 2 } }, { id: 'vendor/b' }, { id: 'qwen-audio-3.0-tts-flash' }],
+      voices: makeProviderVoices(),
+      listVoices: (connection) => listAccountVoices(connection, voiceFetch, () => undefined),
     })
     const server = new HttpServer(makeController(), makeAuthController(), providers).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
@@ -313,14 +326,39 @@ describe('catálogo de modelos (integração)', () => {
 
   it('sincronizar → os novos entram desligados; ligar e dar preço manual por corpo (id com barra)', async () => {
     const synced = await call('/providers/agregador/models/sync', { method: 'POST', token: admin })
-    assert.deepStrictEqual([synced.status, synced.body.result.added], [200, 2])
+    assert.deepStrictEqual([synced.status, synced.body.result.added], [200, 3])
 
     const on = await call('/providers/agregador/models', { method: 'PUT', token: admin, body: { modelId: 'vendor/a', enabled: true, price: { input: 5, output: 6 } } })
     assert.deepStrictEqual([on.status, on.body.result.enabled, on.body.result.priceSource], [200, true, 'manual'])
 
     const listed = await call('/providers', { token: admin })
     const agregador = listed.body.result.find((item: { id: string }) => item.id === 'agregador')
-    assert.deepStrictEqual(agregador.catalog, { total: 2, enabled: 1 })
+    assert.deepStrictEqual(agregador.catalog, { total: 3, enabled: 1 })
+  })
+
+  it('🎙️ vozes da conta: só provider da DashScope é consultado na sincronização; GET /providers/:id/voices é só do admin', async () => {
+    voiceCalls.length = 0
+    await call('/providers/agregador/models/sync', { method: 'POST', token: admin })
+    assert.strictEqual(voiceCalls.length, 0)
+    assert.deepStrictEqual((await call('/providers/agregador/voices', { token: admin })).body.result, { voices: [] })
+
+    const created = await call('/providers', {
+      method: 'POST',
+      token: admin,
+      body: { id: 'qwen', name: 'Qwen', protocol: 'openai', baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', key: 'sk-qwen-1234567' },
+    })
+    assert.strictEqual(created.status, 201)
+    assert.strictEqual((await call('/providers/qwen/models/sync', { method: 'POST', token: admin })).status, 200)
+    assert.deepStrictEqual(voiceCalls, [{ url: 'https://dashscope-intl.aliyuncs.com/api/v1/services/audio/tts/customization', auth: 'Bearer sk-qwen-1234567' }])
+
+    const voices = (await call('/providers/qwen/voices', { token: admin })).body.result
+    assert.deepStrictEqual(voices.voices, [{ id: 'qwen-audio-3.0-tts-flash-minha-1', model: 'qwen-audio-3.0-tts-flash' }])
+    assert.ok(voices.fetchedAt)
+
+    const models = (await call('/providers/qwen/models', { token: admin })).body.result as Array<{ modelId: string; speech: { output: boolean } }>
+    assert.strictEqual(models.find((model) => model.modelId === 'qwen-audio-3.0-tts-flash')?.speech.output, true)
+
+    assert.strictEqual((await call('/providers/qwen/voices')).status, 401)
   })
 
   it('⚖️ desligar o modelo tira ele do agente na hora; sem nenhum ativo, a sessão é recusada (422 agent_without_model)', async () => {

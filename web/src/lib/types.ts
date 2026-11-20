@@ -488,6 +488,8 @@ export interface ICatalogModel {
   reasoning?: { supported: boolean; levels?: string[]; source: 'provider' | 'heuristic' }
   /** 🖼️ Gera imagem; `only` = só imagem (não conversa). `heuristic` = palpite pelo id. */
   image?: { output: boolean; only?: boolean; source: 'provider' | 'heuristic' }
+  /** 🔊 Gera voz (texto → fala). Sempre palpite pelo id (`heuristic`); ausente num servidor anterior. */
+  speech?: { output: boolean; source: 'listing' | 'heuristic' }
   syncedAt?: string
   updatedAt: string
   updatedBy?: string

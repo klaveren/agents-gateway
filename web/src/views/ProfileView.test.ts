@@ -58,4 +58,10 @@ describe('ProfileView — Voz', () => {
     expect(host.querySelector('[data-test="voice-unavailable"]')?.textContent).toContain('A voz ainda não foi configurada pelo administrador (Ajustes → Voz).')
     expect((host.querySelector('[data-test="voice-enabled"]') as HTMLInputElement).disabled).toBe(true)
   })
+
+  it('🎙️ as vozes da conta do motor entram na lista de vozes', async () => {
+    const host = await mount({ enabled: true, rate: 1, minLevel: 'info', engine: { available: true, model: 'qwen-audio-3.0-tts-plus', voices: ['minha-voz'] } })
+    const options = [...host.querySelectorAll('[data-test="voice-name"] option')].map((option) => option.textContent?.trim())
+    expect(options).toContain('minha-voz · voz da conta')
+  })
 })
