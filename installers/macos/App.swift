@@ -396,7 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
   /// Carrega o início do servidor na janela. `false`: não existe (ou o daqui ainda não subiu).
   @discardableResult
-  private func show(_ id: String) -> Bool {
+  private func show(_ id: String, project: String? = nil) -> Bool {
     if id == Self.localId, stopped {
       web.loadHTMLString(Self.stoppedPage, baseURL: nil)
       // A página parada não tem endereço: o `didCommit` não a reconhece, quem marca a janela como "Este Mac" é aqui.
@@ -405,9 +405,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
       rebuildServerMenu()
       return true
     }
-    guard let url = id == Self.localId ? home : servers.first(where: { $0.id == id })?.url else { return false }
+    guard let base = id == Self.localId ? home : servers.first(where: { $0.id == id })?.url else { return false }
+    // Com projeto: a tela de lá abre já nele (`?project=`, que ela lê e tira do endereço).
+    var url = base
+    if let project, Self.isProjectId(project), var parts = URLComponents(url: base, resolvingAgainstBaseURL: false) {
+      parts.queryItems = [URLQueryItem(name: "project", value: project)]
+      url = parts.url ?? base
+    }
     web.load(URLRequest(url: url))
     return true
+  }
+
+  /// O id de projeto que a tela pode pedir para abrir: o formato dos ids do gateway, nada mais.
+  private static func isProjectId(_ value: String) -> Bool {
+    !value.isEmpty && value.count <= 64 && value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
+  }
+
+  /**
+   * 🗂️ OS PROJETOS DE TODOS OS SERVIDORES, para o menu mostrar numa lista só: o app pergunta `/v1/projects` a cada um
+   * com o COOKIE DE LOGIN que a janela já guarda daquele endereço. ⛔ Nada novo é guardado (nem senha, nem token); quem
+   * não tem login lá volta como `login` (a tela oferece "Entrar"), quem não responde, `offline`. Só lê.
+   */
+  private func otherProjects(excluding currentId: String, done: @escaping ([[String: Any]]) -> Void) {
+    var targets: [(id: String, name: String, url: URL)] = []
+    if let home, currentId != Self.localId, !stopped { targets.append((Self.localId, Self.localName, home)) }
+    targets += servers.filter { $0.id != currentId }.map { ($0.id, $0.name, $0.url) }
+    guard !targets.isEmpty else { return done([]) }
+    web.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+      let group = DispatchGroup()
+      var rows = [[String: Any]](repeating: [:], count: targets.count)
+      for (index, target) in targets.enumerated() {
+        group.enter()
+        let host = target.url.host?.lowercased() ?? ""
+        let mine = cookies.filter { cookie in
+          let domain = cookie.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+          return domain == host
+        }
+        var request = URLRequest(url: target.url.appendingPathComponent("v1/projects"), timeoutInterval: 5)
+        request.httpShouldHandleCookies = false
+        for (name, value) in HTTPCookie.requestHeaderFields(with: mine) { request.setValue(value, forHTTPHeaderField: name) }
+        request.setValue("web", forHTTPHeaderField: "X-Gateway-Client")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        URLSession.shared.dataTask(with: request) { data, response, error in
+          var row: [String: Any] = ["id": target.id, "name": target.name]
+          let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+          if error != nil || status == 0 {
+            row["state"] = "offline"
+          } else if status == 401 || status == 403 {
+            row["state"] = "login"
+          } else if let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let list = json["result"] as? [[String: Any]] {
+            row["state"] = "ok"
+            row["projects"] = list.compactMap { project -> [String: Any]? in
+              guard let id = project["id"] as? String, let name = project["name"] as? String else { return nil }
+              var item: [String: Any] = ["id": id, "name": name]
+              if let color = project["color"] as? String { item["color"] = color }
+              return item
+            }
+          } else {
+            row["state"] = "offline"
+          }
+          DispatchQueue.main.async {
+            rows[index] = row
+            group.leave()
+          }
+        }.resume()
+      }
+      group.notify(queue: .main) { done(rows) }
+    }
   }
 
   @objc private func chooseServer(_ sender: NSMenuItem) {
@@ -485,7 +549,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     case "list":
       break
     case "switch":
-      guard let id = body["id"] as? String, show(id) else { return replyHandler(nil, "Servidor não encontrado.") }
+      guard let id = body["id"] as? String, show(id, project: body["project"] as? String) else { return replyHandler(nil, "Servidor não encontrado.") }
+    case "projects":
+      // Os projetos dos OUTROS servidores (o da janela, a própria tela já tem): pelo login que a janela guarda de cada um.
+      return otherProjects(excluding: server(of: page)?.id ?? Self.localId) { replyHandler(["servers": $0], nil) }
     case "add":
       guard manages else { return replyHandler(nil, "O cadastro é feito na tela deste Mac.") }
       if let problem = addServer(name: body["name"] as? String ?? "", address: body["url"] as? String ?? "") { return replyHandler(nil, problem) }

@@ -63,6 +63,14 @@ export const useProjectsStore = defineStore('projects', () => {
 
   function put(projects: IProject[]): void {
     list.value = projects
+    // 🗂️ Vindo de outro servidor pelo menu do app (`?project=`): abre já nele, e o parâmetro sai do endereço.
+    const asked = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('project')
+    if (asked) {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('project')
+      window.history.replaceState(window.history.state, '', url.toString())
+      if (projects.some((project) => project.id === asked)) setCurrent(asked)
+    }
     // A lite fica no projeto padrão, quando a pessoa está nele.
     if (lite.value && list.value.some((project) => project.id === LITE_PROJECT)) return setCurrent(LITE_PROJECT)
     // O guardado sumiu (apagado, ou a pessoa saiu dele): vale o primeiro que ela tem.
