@@ -23,7 +23,7 @@ function build(engine: ISpeechEngine | null = ENGINE, fail?: string) {
 describe('SpeechService', () => {
   it('padrões, salvar parcial e voz nula', async () => {
     const { service } = build()
-    assert.deepStrictEqual(await service.view('u1'), { enabled: false, rate: 1, minLevel: 'info', engine: { available: true, defaultVoice: 'Cherry' } })
+    assert.deepStrictEqual(await service.view('u1'), { enabled: false, rate: 1, minLevel: 'info', engine: { available: true, model: 'm', defaultVoice: 'Cherry' } })
     await service.save('u1', { enabled: true, voice: 'Ethan', rate: 1.5 })
     const saved = await service.save('u1', { minLevel: 'urgent' })
     assert.deepStrictEqual([saved.enabled, saved.voice, saved.rate, saved.minLevel], [true, 'Ethan', 1.5, 'urgent'])

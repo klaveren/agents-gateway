@@ -30,7 +30,8 @@ export interface ISpeechDeps {
 }
 
 export interface IVoiceView extends IVoicePreferences {
-  engine: { available: boolean; defaultVoice?: string }
+  /** `model`: o modelo de voz do admin (a tela lista as vozes dele). */
+  engine: { available: boolean; model?: string; defaultVoice?: string }
 }
 
 /** Uma alteração parcial: `voice: null` volta à voz padrão. */
@@ -66,7 +67,7 @@ export class SpeechService {
 
   async view(userId: string): Promise<IVoiceView> {
     const engine = await this.deps.engine().catch(() => undefined)
-    return { ...this.preferences(userId), engine: { available: !!engine, ...(engine?.voice ? { defaultVoice: engine.voice } : {}) } }
+    return { ...this.preferences(userId), engine: { available: !!engine, ...(engine ? { model: engine.model } : {}), ...(engine?.voice ? { defaultVoice: engine.voice } : {}) } }
   }
 
   preferences(userId: string): IVoicePreferences {
