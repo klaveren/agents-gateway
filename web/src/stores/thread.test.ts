@@ -677,3 +677,38 @@ describe('a sugestão de próximo passo', () => {
     expect(thread.nextSuggestion).toBe('Gravada')
   })
 })
+
+describe('📱 conexão que cai (iPhone em segundo plano)', () => {
+  it('"Load failed" no meio do turno não vira erro nem turno interrompido: a tela volta a acompanhar', async () => {
+    routes({ '/conversations/A/todos': () => ({ items: [] }), '/sessions/A/watches': () => ({ watches: [] }) })
+    const thread = useThreadStore()
+    await thread.open('A')
+    await tick()
+    const inbox = useConversationsStore()
+    const refollow = vi.spyOn(inbox, 'refollow')
+
+    vi.mocked(openStream).mockImplementationOnce(async () => new ReadableStream())
+    vi.mocked(readSse).mockImplementationOnce(async function* () {
+      yield { data: { type: 'text.delta', payload: { text: 'Pensando…' } } }
+      throw new TypeError('Load failed')
+    })
+    const result = await thread.send('faça', [])
+    await tick()
+    expect(result.ok).toBe(true)
+    expect(thread.error).toBeUndefined()
+    expect(thread.turns).toHaveLength(0)
+    expect(refollow).toHaveBeenCalled()
+  })
+
+  it('sem o stream ter começado, a falha de rede aparece e o texto volta', async () => {
+    routes({ '/conversations/A/todos': () => ({ items: [] }), '/sessions/A/watches': () => ({ watches: [] }) })
+    const thread = useThreadStore()
+    await thread.open('A')
+    await tick()
+    vi.mocked(openStream).mockRejectedValueOnce(new TypeError('Load failed'))
+    const result = await thread.send('faça', [])
+    expect(result.ok).toBe(false)
+    expect(thread.error).toBeTruthy()
+  })
+})
+

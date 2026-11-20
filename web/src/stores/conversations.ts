@@ -399,6 +399,15 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   /**
+   * 📱 Pede de novo o acompanhamento, mesmo que nada tenha mudado: o servidor responde com o turno em curso (o que já saiu).
+   * É o que a tela usa quando o stream do envio cai (o celular cortou a conexão ao ir para segundo plano).
+   */
+  function refollow(): void {
+    sentFollow = { stream: undefined, target: null }
+    sendFollow()
+  }
+
+  /**
    * Em fila: dois pedidos seguidos (sair de uma conversa, abrir outra) chegam na ordem. ⚖️ O que vai é o `followed` da HORA
    * do envio, e só se mudou desde o último: sair e abrir no mesmo instante viram um pedido só (eram dois a cada troca).
    */
@@ -522,6 +531,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     running,
     activity,
     follow,
+    refollow,
     onTurn,
     live,
     selectedId,

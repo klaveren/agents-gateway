@@ -323,6 +323,8 @@ export const useThreadStore = defineStore('thread', () => {
     const controller = new AbortController()
     inFlight = controller
     let turn: IPendingTurn | undefined
+    /** O servidor aceitou a mensagem: o stream do turno abriu. */
+    let streaming = false
 
     try {
       if (!sessionId.value) {
@@ -348,6 +350,7 @@ export const useThreadStore = defineStore('thread', () => {
       pending.value = turn
 
       const body = await openStream(`/sessions/${encodeURIComponent(id)}/messages`, { method: 'POST', body: { message: text, files }, signal: controller.signal })
+      streaming = true
       for await (const frame of readSse(body)) {
         if (stale()) return { ok: false }
         applyEvent(turn, frame.data as IAgentEvent)
@@ -376,7 +379,13 @@ export const useThreadStore = defineStore('thread', () => {
       if (stale()) return { ok: false }
       const aborted = failure instanceof DOMException && failure.name === 'AbortError'
 
-      if (aborted && turn) {
+      // 📱 A conexão caiu (o iPhone corta o stream quando o app vai para segundo plano: "Load failed"). O turno segue no
+      // servidor: nada de erro nem de turno "interrompido" — a tela volta a acompanhar e recebe o que já saiu.
+      // Só depois de o stream abrir: antes, o servidor pode nem ter recebido a mensagem (ela volta para a caixa, com o erro).
+      if (!aborted && streaming && isConnectionDrop(failure)) {
+        ok = true
+        reattach()
+      } else if (aborted && turn) {
         turns.value = [...turns.value, settled(sessionId.value ?? '', { ...(pending.value ?? turn), aborted: true }, nextIndex(), session.value)]
         ok = true
       } else if (!aborted) {
@@ -523,6 +532,27 @@ export const useThreadStore = defineStore('thread', () => {
     if (updated.compaction === 'done') await refresh()
     return updated.compaction
   }
+
+  /** A falha de rede do `fetch` (sem resposta do servidor): Safari "Load failed", Chrome "Failed to fetch", Firefox "NetworkError". */
+  function isConnectionDrop(failure: unknown): boolean {
+    return failure instanceof TypeError && /load failed|failed to fetch|networkerror|network connection was lost/i.test(failure.message)
+  }
+
+  /**
+   * 📱 Volta a acompanhar a conversa aberta: relê o histórico e pede de novo o turno em curso pelo stream da caixa (que traz
+   * o que já saiu). Vale ao cair o stream do envio e ao voltar para a tela depois de o celular a deixar em segundo plano.
+   */
+  function reattach(): void {
+    const id = sessionId.value
+    if (!id) return
+    pending.value = undefined
+    inbox.refollow()
+    void refresh().catch(() => undefined)
+  }
+  if (typeof document !== 'undefined')
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && sessionId.value && !sending.value && !following.value) reattach()
+    })
 
   /** Logout: esquece tudo da conversa aberta e derruba o stream, para a próxima conta não herdar nada. */
   function reset(): void {
