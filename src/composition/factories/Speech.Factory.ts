@@ -5,6 +5,7 @@ import { SqliteUserPreferenceRepository } from '@infra/persistence/Sqlite.UserPr
 import { SpeechController } from '@infra/http/Speech.Controller'
 import { makeAuth } from './Auth.Factory'
 import { makePersonMessages } from './PersonMessages.Factory'
+import { makeProviderVoices } from './ProviderVoices.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
 
@@ -19,6 +20,7 @@ export function makeSpeech(): SpeechService {
     prefs: new SqliteUserPreferenceRepository(path),
     engine: async () => speechEngineOf(await makeSettings().read(), (providerId) => makeProviders().connection(providerId)),
     synthesize: (connection, model, text, options) => synthesizeSpeech(connection, model, text, options),
+    accountVoices: (providerId) => makeProviderVoices().get(providerId).voices,
   })
   return service
 }

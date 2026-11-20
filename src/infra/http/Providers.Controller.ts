@@ -1,10 +1,12 @@
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { ProvidersService } from '@application/Providers.Service'
-import { ICatalogModel, modelImage } from '@domain/models/ModelCatalog.Model'
+import { ICatalogModel, modelImage, modelSpeech } from '@domain/models/ModelCatalog.Model'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IProviderConfig } from '@domain/models/Provider.Model'
 import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { ICredentialStore } from '@domain/ports/CredentialStore.Port'
+import { IProviderVoiceStore } from '@domain/models/ProviderVoice.Model'
+import { listAccountVoices } from '@infra/speech/Voice.Listing'
 import { listModels } from '@infra/providers/Model.Listing'
 import { probeKey } from '@infra/providers/Provider.Probe'
 import { listSubscriptionModels, probeSubscription, SubscriptionLogins } from '@infra/providers/Subscription.Client'
@@ -37,6 +39,9 @@ export interface IProvidersControllerDeps {
   subscriptionProbe?: typeof probeSubscription
   subscriptionList?: typeof listSubscriptionModels
   logins?: SubscriptionLogins
+  /** 🎙️ As vozes da conta (DashScope), lidas na atualização dos modelos. Ausente = não busca nem guarda. */
+  voices?: IProviderVoiceStore
+  listVoices?: typeof listAccountVoices
 }
 
 /** Uma chave de API: texto sem espaço, com teto — ninguém cola um arquivo inteiro aqui. */
@@ -85,6 +90,7 @@ export class ProvidersController {
       'test',
       'listModels',
       'syncModels',
+      'providerVoices',
       'updateModel',
       'loginStatus',
       'loginStart',
@@ -259,11 +265,34 @@ export class ProvidersController {
         }
 
         const result = this.catalog.sync(provider.id, listed, admin)
+        await this.refreshVoices(provider.id, provider.baseUrl, key)
         await this.deps.retire?.(admin)
         return { ...result, models: this.catalog.list(provider.id).map(toModelDto) }
       },
       { message: 'Models synced' },
     )
+  }
+
+  /**
+   * 🎙️ As vozes da conta (só DashScope): buscadas na atualização dos modelos, guardadas por provider.
+   * ⚖️ Nunca falha a atualização: sem voz, ou erro, o que estava guardado fica como estava.
+   */
+  private async refreshVoices(providerId: string, baseUrl: string | undefined, key: string): Promise<void> {
+    if (!this.deps.voices) return
+    try {
+      const voices = await (this.deps.listVoices ?? listAccountVoices)({ baseUrl, key })
+      if (voices) this.deps.voices.set(providerId, voices, new Date())
+    } catch {
+      console.warn('[voices] a lista de vozes da conta falhou')
+    }
+  }
+
+  /** `GET /providers/:id/voices` — as vozes da conta guardadas na última atualização dos modelos. */
+  async providerVoices(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireProviderAdmin(req, 'providerVoices')
+      return this.deps.voices?.get(this.idOf(req)) ?? { voices: [] }
+    })
   }
 
   /** Acrescenta um modelo por id (provider sem listagem, ou modelo que a listagem não traz). Nasce desligado. */
@@ -454,6 +483,7 @@ function toModelDto(model: ICatalogModel) {
     priceSource: model.priceSource,
     reasoning: model.reasoning,
     image: modelImage(model),
+    speech: modelSpeech(model),
     syncedAt: model.syncedAt,
     updatedAt: model.updatedAt,
     updatedBy: model.updatedBy,

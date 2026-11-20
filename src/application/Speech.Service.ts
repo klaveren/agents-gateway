@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type { IProviderConnection } from '@domain/models/Provider.Model'
 import type { IAgentSettings } from '@domain/models/Settings.Model'
 import { DEFAULT_VOICE_PREFERENCES, IVoicePreferences, normalizeVoicePreferences, SPEECH_MAX_CHARS, SPEECH_SAMPLE_TEXT } from '@domain/models/Speech.Model'
+import { IProviderVoice, voicesForModel } from '@domain/models/ProviderVoice.Model'
 import type { IUserPreferenceRepository } from '@domain/ports/UserPreferenceRepository.Port'
 
 /** A voz não está configurada (sem motor nas Configurações). */
@@ -26,12 +27,14 @@ export interface ISpeechDeps {
   /** O motor de agora (as Configurações lidas a cada chamada); ausente = sem voz. */
   engine(): Promise<ISpeechEngine | undefined>
   synthesize(connection: ISpeechEngine['connection'], model: string, text: string, options: { voice?: string; rate: number; language?: string }): Promise<ISpeechAudio>
+  /** 🎙️ As vozes da conta do provider do motor (DashScope); ausente = nenhuma. */
+  accountVoices?(providerId: string): IProviderVoice[]
   now?: () => Date
 }
 
 export interface IVoiceView extends IVoicePreferences {
   /** `model`: o modelo de voz do admin (a tela lista as vozes dele). */
-  engine: { available: boolean; model?: string; defaultVoice?: string }
+  engine: { available: boolean; model?: string; defaultVoice?: string; voices?: string[] }
 }
 
 /** Uma alteração parcial: `voice: null` volta à voz padrão. */
@@ -67,7 +70,16 @@ export class SpeechService {
 
   async view(userId: string): Promise<IVoiceView> {
     const engine = await this.deps.engine().catch(() => undefined)
-    return { ...this.preferences(userId), engine: { available: !!engine, ...(engine ? { model: engine.model } : {}), ...(engine?.voice ? { defaultVoice: engine.voice } : {}) } }
+    const account = engine?.connection.providerId ? voicesForModel(this.deps.accountVoices?.(engine.connection.providerId) ?? [], engine.model) : []
+    return {
+      ...this.preferences(userId),
+      engine: {
+        available: !!engine,
+        ...(engine ? { model: engine.model } : {}),
+        ...(engine?.voice ? { defaultVoice: engine.voice } : {}),
+        ...(account.length ? { voices: account.map((voice) => voice.id) } : {}),
+      },
+    }
   }
 
   preferences(userId: string): IVoicePreferences {

@@ -5,8 +5,8 @@
   import SettingsTabs, { type TSettingsTab } from '@/components/SettingsTabs.vue'
   import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
-  import { ApiError } from '@/lib/api'
-  import { speechEngineOf, speechModelsFor } from '@/lib/speechCatalog'
+  import { api, ApiError } from '@/lib/api'
+  import { accountVoiceOptions, type IAccountVoice, speechEngineOf, speechModelsFor } from '@/lib/speechCatalog'
   import { lite } from '@/lib/edition'
   import type { IProviderStatus, TAudience, TLimitName } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
@@ -134,9 +134,22 @@
   const OTHER = '__other__'
   const speechEngine = computed(() => speechEngineOf(providers.list.find((provider) => provider.id === speechProvider.value)?.baseUrl))
   const speechModelOptions = computed(() =>
-    speechProvider.value ? speechModelsFor(speechEngine.value, (providers.catalogs.get(speechProvider.value) ?? []).filter((model) => model.enabled).map((model) => model.modelId)) : [],
+    speechProvider.value ? speechModelsFor(speechEngine.value, (providers.catalogs.get(speechProvider.value) ?? []).filter((model) => model.enabled)) : [],
   )
-  const speechVoiceOptions = computed(() => speechModelOptions.value.find((model) => model.id === speechModel.value)?.voices ?? [])
+  /** 🎙️ As vozes da conta do provider (DashScope), lidas de `GET /providers/:id/voices` ao escolher o provider; falha = nenhuma. */
+  const accountVoices = ref<IAccountVoice[]>([])
+  watch(
+    speechProvider,
+    async (id) => {
+      accountVoices.value = []
+      if (!id) return
+      const loaded = await api<{ voices?: IAccountVoice[] }>(`/providers/${encodeURIComponent(id)}/voices`).catch(() => undefined)
+      if (speechProvider.value === id) accountVoices.value = loaded?.voices ?? []
+    },
+    { immediate: true },
+  )
+  const knownVoices = computed(() => speechModelOptions.value.find((model) => model.id === speechModel.value)?.voices ?? [])
+  const speechVoiceOptions = computed(() => [...knownVoices.value, ...accountVoiceOptions(accountVoices.value, speechModel.value)])
   const typingModel = ref(false)
   const typingVoice = ref(false)
   const speechModelPick = computed({
@@ -145,7 +158,7 @@
       typingModel.value = value === OTHER
       if (value !== OTHER) speechModel.value = value
       // Trocou o modelo: a voz de outro modelo não serve; vale a primeira da lista (a recomendada).
-      if (value !== OTHER && !speechVoiceOptions.value.some((voice) => voice.id === speechVoice.value)) speechVoice.value = speechVoiceOptions.value[0]?.id ?? ''
+      if (value !== OTHER && !speechVoiceOptions.value.some((voice) => voice.id === speechVoice.value)) speechVoice.value = knownVoices.value[0]?.id ?? ''
     },
   })
   const speechVoicePick = computed({

@@ -506,7 +506,16 @@ const voiceSchema = {
     voice: { type: 'string', description: 'The person’s voice; absent = the engine default.' },
     rate: { type: 'number', minimum: 0.5, maximum: 2, description: 'Default 1.' },
     minLevel: { type: 'string', enum: ['info', 'attention', 'urgent'], description: 'Read from this level up. Default `info`.' },
-    engine: { type: 'object', properties: { available: { type: 'boolean' }, model: { type: 'string' }, defaultVoice: { type: 'string' } }, required: ['available'] },
+    engine: {
+      type: 'object',
+      properties: {
+        available: { type: 'boolean' },
+        model: { type: 'string' },
+        defaultVoice: { type: 'string' },
+        voices: { type: 'array', items: { type: 'string' }, description: 'The account (custom) voices of the engine provider that fit the engine model (Alibaba DashScope only).' },
+      },
+      required: ['available'],
+    },
   },
   required: ['enabled', 'rate', 'minLevel', 'engine'],
 }
@@ -1524,6 +1533,16 @@ const catalogModelSchema = {
       properties: { supported: { type: 'boolean' }, levels: { type: 'array', items: { type: 'string' } }, source: { type: 'string', enum: ['provider', 'heuristic'] } },
       description: 'Whether the model reasons, from the provider listing. Absent = unknown. `heuristic` = guessed from the id (official OpenAI lists nothing).',
     },
+    image: {
+      type: 'object',
+      properties: { output: { type: 'boolean' }, only: { type: 'boolean' }, source: { type: 'string', enum: ['provider', 'heuristic'] } },
+      description: 'Whether the model generates images (`only` = does not chat).',
+    },
+    speech: {
+      type: 'object',
+      properties: { output: { type: 'boolean' }, source: { type: 'string', enum: ['listing', 'heuristic'] } },
+      description: 'Whether the model generates voice (text to speech). Guessed from the id (`tts`/`speech`, not `asr`/`realtime`/`transcri`).',
+    },
     syncedAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
     updatedBy: { type: 'string' },
@@ -1947,6 +1966,30 @@ export const OPENAPI_DOCUMENT = {
         parameters: providerParam,
         requestBody: { required: true, ...json({ type: 'object', properties: { code: { type: 'string' } }, required: ['code'] }) },
         responses: { '200': { description: 'Sent', ...json(envelope(loginSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/providers/{id}/voices': {
+      get: {
+        summary:
+          'The account (custom) voices of an Alibaba DashScope provider, as of the last model sync (`voice-enrollment` / `list_voice`). Empty for other providers. Administrators only',
+        parameters: providerParam,
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  voices: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, model: { type: 'string' } }, required: ['id'] } },
+                  fetchedAt: { type: 'string', format: 'date-time' },
+                },
+                required: ['voices'],
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
       },
     },
     '/providers/{id}/models/sync': {

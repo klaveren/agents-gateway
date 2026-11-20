@@ -1,3 +1,4 @@
+import { makeProviderVoices } from './ProviderVoices.Factory'
 import { makePersonMessages } from './PersonMessages.Factory'
 import { conversationModelFilter } from '@domain/ModelAccess.Policy'
 import type { IProjectModels } from '@domain/models/Project.Model'
@@ -314,6 +315,7 @@ export function makeProvidersController(): ProvidersController {
     retire: (by) => makeModelGroupRetirement().retire(by),
     proof: makeAuth().proof,
     logins: new SubscriptionLogins(),
+    voices: makeProviderVoices(),
   })
 }
 

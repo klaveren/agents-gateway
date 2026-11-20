@@ -230,6 +230,14 @@
             >
               {{ model.image.only ? 'só imagem' : 'gera imagem' }}{{ model.image.source === 'heuristic' ? ' (estimado)' : '' }}
             </span>
+            <span
+              v-if="model.speech?.output"
+              class="shrink-0 rounded-full bg-violet-500/15 px-1.5 text-[10px] whitespace-nowrap text-violet-300"
+              data-test="model-speech"
+              title="Estimado pelo nome do modelo"
+            >
+              gera voz (estimado)
+            </span>
             <span v-if="!model.available" class="shrink-0 rounded-full bg-zinc-800 px-1.5 text-[10px] whitespace-nowrap text-zinc-400">sumiu da lista</span>
           </div>
         </div>

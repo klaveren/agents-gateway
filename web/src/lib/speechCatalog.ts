@@ -71,7 +71,20 @@ export const looksLikeSpeech = (modelId: string) => /tts|speech/i.test(modelId) 
  * ⚖️ Os modelos a oferecer são SÓ os ativados no provider que geram voz: nada inventado. O que se sabe de um modelo
  * (`KNOWN_SPEECH_MODELS`) só dá a etiqueta e as vozes dele.
  */
-export function speechModelsFor(engine: TSpeechEngine, catalog: readonly string[]): ISpeechModel[] {
+export function speechModelsFor(engine: TSpeechEngine, catalog: ReadonlyArray<string | { modelId: string; speech?: { output: boolean } }>): ISpeechModel[] {
   const known = KNOWN_SPEECH_MODELS[engine]
-  return catalog.filter(looksLikeSpeech).map((id) => known.find((model) => model.id === id) ?? { id, label: id, voices: [] })
+  // 🔊 A flag `speech.output` do catálogo manda; sem ela (servidor anterior, ou só o id), o palpite pelo nome.
+  const ids = catalog.filter((item) => (typeof item === 'string' ? looksLikeSpeech(item) : (item.speech?.output ?? looksLikeSpeech(item.modelId)))).map((item) => (typeof item === 'string' ? item : item.modelId))
+  return ids.map((id) => known.find((model) => model.id === id) ?? { id, label: id, voices: [] })
+}
+
+/** 🎙️ Uma voz da conta (DashScope): o `model` é o modelo de voz dela, quando se sabe. */
+export interface IAccountVoice {
+  id: string
+  model?: string
+}
+
+/** As vozes da conta que servem ao modelo (as sem modelo conhecido servem a todos), na lista de vozes. */
+export function accountVoiceOptions(voices: readonly IAccountVoice[], model: string | undefined): ISpeechVoice[] {
+  return voices.filter((voice) => !model || !voice.model || voice.model === model).map((voice) => ({ id: voice.id, label: `${voice.id} · voz da conta` }))
 }

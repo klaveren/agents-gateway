@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed } from 'vue'
 import { api } from '@/lib/api'
+import { looksLikeSpeech } from '@/lib/speechCatalog'
 import { keyedResource } from '@/lib/resource'
 import type { ICatalogModel, IModelPrice, IProbeResult, IProviderStatus, ISubscriptionLogin, TProvider } from '@/lib/types'
 import { useAgentsStore } from './agents'
@@ -173,9 +174,8 @@ export const useProvidersStore = defineStore('providers', () => {
 const IMAGE_ONLY = /^(gpt-image|chatgpt-image|dall-e)/i
 const IMAGE_OUTPUT = /^(gpt-image|chatgpt-image|dall-e)|(^|\/)gemini-[\w.-]*image/i
 export function withImage(models: ICatalogModel[]): ICatalogModel[] {
-  return models.map((model) =>
-    model.image
-      ? model
-      : { ...model, image: { output: IMAGE_OUTPUT.test(model.modelId), ...(IMAGE_ONLY.test(model.modelId) ? { only: true } : {}), source: 'heuristic' as const } },
-  )
+  return models.map((model) => {
+    const image = model.image ?? { output: IMAGE_OUTPUT.test(model.modelId), ...(IMAGE_ONLY.test(model.modelId) ? { only: true } : {}), source: 'heuristic' as const }
+    return model.speech ? { ...model, image } : { ...model, image, speech: { output: looksLikeSpeech(model.modelId), source: 'heuristic' as const } }
+  })
 }
