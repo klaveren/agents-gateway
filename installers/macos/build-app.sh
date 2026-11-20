@@ -37,6 +37,8 @@ echo "▶ dependências e build"
 echo "▶ app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app"
 cp -R "$STAGE/dist" "$STAGE/node_modules" "$STAGE/package.json" "$APP/Contents/Resources/app/"
+# O terminal local (node-pty): o pnpm não roda o script dele, e o `spawn-helper` pronto vem sem o bit de execução.
+find "$APP/Contents/Resources/app/node_modules" -path "*/node-pty/prebuilds/darwin-*/spawn-helper" -exec chmod +x {} + 2>/dev/null || true
 mkdir -p "$APP/Contents/Resources/app/web"
 cp -R "$STAGE/web/dist" "$APP/Contents/Resources/app/web/dist"
 # 🧰 O KIT DO SERVIDOR, o mesmo da imagem (o terminal dos agentes e a guia Pacotes não dependem do que a máquina tem): o

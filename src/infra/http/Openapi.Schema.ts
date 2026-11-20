@@ -6883,6 +6883,35 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/terminal': {
+      get: {
+        summary: "The local terminal (the person's own login shell, like opening Terminal on the Mac): whether it exists here and the open ones. Only the gateway admin, from the screen, on the same machine as the gateway",
+        responses: { '200': { description: 'OK; `available: false` elsewhere', ...json(envelope({ type: 'object', additionalProperties: true })) } },
+      },
+      post: {
+        summary: 'Open a login shell (`$SHELL -l`) with a clean environment (nothing from the gateway process). `conversation`: start in its repository folder',
+        requestBody: { required: false, ...json({ type: 'object', properties: { cols: { type: 'integer' }, rows: { type: 'integer' }, conversation: { type: 'string' } } }) },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+      },
+    },
+    '/terminal/{tid}/stream': {
+      get: {
+        summary: "The shell's output (SSE): `terminal.data` `{ data }` (what was already printed first) and `terminal.exit` `{ code }`",
+        parameters: [{ name: 'tid', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'An event stream', content: { 'text/event-stream': { schema: { type: 'string' } } } }, '404': failures['404'] },
+      },
+    },
+    '/terminal/{tid}/{action}': {
+      post: {
+        summary: '`input` (`data`), `resize` (`cols`, `rows`) or `close`',
+        parameters: [
+          { name: 'tid', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'action', in: 'path', required: true, schema: { type: 'string', enum: ['input', 'resize', 'close'] } },
+        ],
+        requestBody: { required: false, ...json({ type: 'object', additionalProperties: true }) },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { done: { type: 'boolean' } } })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+      },
+    },
     '/sessions/{id}/browser': {
       get: {
         summary: "The conversation's browser, live (SSE): what the agent sees in its Playwright MCP tab. The owner or an administrator; anyone else gets 404",

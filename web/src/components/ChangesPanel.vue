@@ -196,7 +196,7 @@
         @pointerup="stopDrag"
       />
       <header class="mk-tabs flex min-h-8 flex-wrap items-center gap-2 pl-3 text-xs">
-        <h2 class="mk-fg text-[11px] font-medium tracking-wide uppercase">Alterações</h2>
+        <h2 v-if="!embedded" class="mk-fg text-[11px] font-medium tracking-wide uppercase">Alterações</h2>
         <span v-if="changes" class="mk-muted">
           {{ changes.files.length }} arquivo(s) ·
           <span class="mk-added">+{{ totals.add }}</span>
@@ -209,7 +209,7 @@
           <button class="mk-muted mk-hover grid h-8 w-8 place-items-center" title="Atualizar" :disabled="loading" @click="load">
             <Icon name="refresh" class="h-4 w-4" :class="{ 'animate-spin': loading }" />
           </button>
-          <button class="mk-muted mk-hover grid h-8 w-8 place-items-center" title="Fechar" @click="emit('close')">
+          <button v-if="!embedded" class="mk-muted mk-hover grid h-8 w-8 place-items-center" title="Fechar" @click="emit('close')">
             <Icon name="x" class="h-4 w-4" />
           </button>
         </div>

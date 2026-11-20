@@ -110,7 +110,9 @@ import { normalizeTags } from '@domain/Tag.Policy'
 import { SseStream } from './Sse.Stream'
 import { NextFunction, Request, Response } from 'express'
 import { viaAccessToken } from './Auth.Controller'
-import { viaSessionCookie } from './Session.Cookie'
+import { cameViaSessionCookie, viaSessionCookie } from './Session.Cookie'
+import { localTerminalEnabled, localTerminals } from '@infra/terminal/Local.Terminal'
+import { fromThisMachine } from './Drain.State'
 import { PushError, type WebPushSender } from '@infra/push/WebPush.Sender'
 import { z } from 'zod'
 import type { IHostApprovals } from '@application/HostApprovals.Service'
@@ -275,6 +277,13 @@ function parseBrowserInput(body: unknown): TLiveBrowserInput | undefined {
     case 'forward':
     case 'reload':
       return { type: raw.type }
+    case 'tab-select':
+    case 'tab-close': {
+      const targetId = str(raw.targetId, 128)
+      return targetId ? { type: raw.type, targetId } : undefined
+    }
+    case 'tab-new':
+      return { type: 'tab-new' }
     case 'navigate': {
       // ⛔ Só http(s): nada de `javascript:`, `file:` ou `chrome:` pela barra.
       const url = str(raw.url, 4000)?.trim()
@@ -415,6 +424,10 @@ export class AgentController {
     this.sessionLive = this.sessionLive.bind(this)
     this.sessionBrowser = this.sessionBrowser.bind(this)
     this.files = this.files.bind(this)
+    this.terminalStatus = this.terminalStatus.bind(this)
+    this.terminalOpen = this.terminalOpen.bind(this)
+    this.terminalStream = this.terminalStream.bind(this)
+    this.terminalAction = this.terminalAction.bind(this)
     this.scm = this.scm.bind(this)
     this.scmDiff = this.scmDiff.bind(this)
     this.scmBlame = this.scmBlame.bind(this)
@@ -1824,7 +1837,11 @@ export class AgentController {
     stream.open()
     stream.comment('ready')
     const unwatch = liveBrowsers().watch(sessionId, (event) =>
-      event.type === 'frame' ? stream.emit('browser.frame', event.frame) : stream.emit('browser.state', { live: event.live }),
+      event.type === 'frame'
+        ? stream.emit('browser.frame', event.frame)
+        : event.type === 'tabs'
+          ? stream.emit('browser.tabs', { tabs: event.tabs, current: event.current })
+          : stream.emit('browser.state', { live: event.live }),
     )
 
     this.guardStream(
@@ -2933,6 +2950,104 @@ export class AgentController {
         if (error instanceof HttpError) throw error
         return this.fileFailure(error)
       }
+    })
+  }
+
+  /**
+   * ⌨️ O terminal local só abre para o ADMIN do gateway, pela TELA (cookie da sessão, nunca token de API, de turno ou de
+   * agente) e quando a tela está na MESMA máquina do gateway (o app do Mac). Pela rede, pela .4, por proxy: 404.
+   */
+  private async requireLocalTerminal(req: Request, res: Response): Promise<void> {
+    // Ler (GET) basta vir da tela; mexer (POST) pede a prova de navegador (origem e CSRF).
+    const screen = req.method === 'GET' ? cameViaSessionCookie(res) : viaSessionCookie(res)
+    if (!localTerminalEnabled() || !fromThisMachine(req) || !screen) throw new HttpError(404, 'not_found', 'Not found')
+    await this.requireAdmin('terminal')
+  }
+
+  /** `GET /terminal` — se o terminal local existe aqui e os que estão abertos. 200 com `available: false` fora do Mac local. */
+  async terminalStatus(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      try {
+        await this.requireLocalTerminal(req, res)
+      } catch {
+        return { available: false, sessions: [] }
+      }
+      const terminals = localTerminals()
+      return { available: terminals.available(), sessions: terminals.list() }
+    })
+  }
+
+  /** `POST /terminal` — abre um shell de login (`cols`, `rows`; `conversation`: começa na pasta do repositório dela). */
+  async terminalOpen(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireLocalTerminal(req, res)
+      const body = (req.body ?? {}) as { cols?: unknown; rows?: unknown; conversation?: unknown }
+      const cols = typeof body.cols === 'number' && body.cols > 0 ? body.cols : 100
+      const rows = typeof body.rows === 'number' && body.rows > 0 ? body.rows : 30
+      let cwd: string | undefined
+      if (typeof body.conversation === 'string' && body.conversation) {
+        try {
+          const { metadata } = await this.requireOwnedConversation(body.conversation)
+          cwd = this.conversationFolder(metadata).dir
+        } catch {
+          cwd = undefined
+        }
+      }
+      try {
+        const session = localTerminals().open({ cwd, cols, rows })
+        console.warn(`[terminal] aberto por ${currentCaller()?.email ?? currentCaller()?.id ?? '?'} em ${session.cwd}`)
+        return session
+      } catch (error: unknown) {
+        throw new HttpError(422, 'validation_error', error instanceof Error ? error.message : String(error))
+      }
+    })
+  }
+
+  /** `GET /terminal/:tid/stream` — a saída do shell (SSE): `terminal.data` `{ data }` e `terminal.exit` `{ code }`. */
+  async terminalStream(req: Request, res: Response) {
+    try {
+      await this.requireLocalTerminal(req, res)
+    } catch (error: unknown) {
+      return this.sendFailure(res, error, '[AgentController.terminalStream]')
+    }
+    if (gaveUp(res)) return
+    const stream = new SseStream(res)
+    let unwatch: (() => void) | undefined
+    unwatch = localTerminals().watch(req.params.tid as string, (event) => {
+      if (event.type === 'data') stream.emit('terminal.data', { data: event.data })
+      else {
+        stream.emit('terminal.exit', { code: event.code })
+        stream.close()
+      }
+    })
+    if (!unwatch) return this.sendFailure(res, new HttpError(404, 'not_found', 'Terminal not found'), '[AgentController.terminalStream]')
+    stream.open()
+    stream.comment('ready')
+    res.on('close', () => {
+      unwatch?.()
+      unwatch = undefined
+      stream.close()
+    })
+  }
+
+  /** `POST /terminal/:tid/:action` — `input` (`data`), `resize` (`cols`, `rows`) ou `close`. */
+  async terminalAction(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireLocalTerminal(req, res)
+      const id = req.params.tid as string
+      const body = (req.body ?? {}) as { data?: unknown; cols?: unknown; rows?: unknown }
+      const terminals = localTerminals()
+      let done: boolean
+      if (req.params.action === 'input') {
+        if (typeof body.data !== 'string' || body.data.length > 64_000) throw new HttpError(422, 'validation_error', 'data: the typed text')
+        done = terminals.write(id, body.data)
+      } else if (req.params.action === 'resize') {
+        if (typeof body.cols !== 'number' || typeof body.rows !== 'number') throw new HttpError(422, 'validation_error', 'cols and rows')
+        done = terminals.resize(id, body.cols, body.rows)
+      } else if (req.params.action === 'close') done = terminals.close(id)
+      else throw new HttpError(404, 'not_found', 'Not found')
+      if (!done) throw new HttpError(404, 'not_found', 'Terminal not found')
+      return { done }
     })
   }
 

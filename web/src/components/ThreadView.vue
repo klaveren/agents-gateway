@@ -2,7 +2,7 @@
   import { useListHidden } from '@/composables/useListHidden'
   import HostApprovals from './HostApprovals.vue'
   import MachineBadge from './MachineBadge.vue'
-  import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+  import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { api } from '@/lib/api'
   import { useStickToBottom } from '@/composables/useStickToBottom'
   import { useDrawerWidth } from '@/composables/useDrawerWidth'
@@ -89,15 +89,34 @@
   /** 👁️ O navegador da conversa ao vivo: aparece (e abre, no desktop) quando o agente usa uma ferramenta de navegador. */
   const { hidden: listHidden, toggle: toggleList } = useListHidden()
   const LiveBrowser = defineAsyncComponent(() => import('./LiveBrowser.vue'))
-  const browserOpen = ref(false)
+  /**
+   * 🧭 A COLUNA LATERAL da conversa é UMA: navegador, arquivos, alterações, board ou terminal, um de cada vez, com a
+   * barra de ícones em cima para trocar num clique. Cada `xxxOpen` é só uma vista dela.
+   */
+  type TSidePane = 'changes' | 'files' | 'board' | 'browser' | 'terminal'
+  const sidePane = ref<TSidePane>()
+  const sideFlag = (pane: TSidePane) =>
+    computed({
+      get: () => sidePane.value === pane,
+      set: (open: boolean) => {
+        if (open) sidePane.value = pane
+        else if (sidePane.value === pane) sidePane.value = undefined
+      },
+    })
+  /** O editor e o terminal ficam montados depois de abertos: trocar de recurso não perde abas nem o que saiu. */
+  const keepMounted = ref(new Set<TSidePane>())
+  watch(sidePane, (pane) => {
+    if (pane === 'files' || pane === 'terminal') keepMounted.value = new Set([...keepMounted.value, pane])
+  })
+  const browserOpen = sideFlag('browser')
   const browserSeen = ref(false)
   const browserDrawer = useDrawerWidth('gw.browser.width', 640)
   watch(
     () => header.value?.id,
     () => {
-      browserOpen.value = false
+      sidePane.value = undefined
+      keepMounted.value = new Set()
       browserSeen.value = false
-      filesOpen.value = false
     },
   )
   watch(
@@ -125,37 +144,95 @@
     panelOpen.value = false
     filesOpen.value = false
     changesOpen.value = false
+    terminalOpen.value = false
     browserOpen.value = true
   }
   /** 📁 Os arquivos do repositório da conversa (Monaco): a mesma coluna ao lado, no lugar do navegador. */
   const RepositoryFiles = defineAsyncComponent(() => import('./RepositoryFiles.vue'))
-  const filesOpen = ref(false)
-  // ⚖️ A mesma largura do navegador: alternar entre um e outro não muda o tamanho da coluna.
-  const filesDrawer = browserDrawer
+  const filesOpen = sideFlag('files')
   function openFiles() {
     panelOpen.value = false
     browserOpen.value = false
     changesOpen.value = false
+    terminalOpen.value = false
     filesOpen.value = true
   }
+  /**
+   * ⌨️ Os atalhos da coluna lateral, no padrão do VS Code: ⌘⇧B navegador, ⌘⇧E arquivos, ⌃⇧G alterações. De novo, fecha.
+   * Na captura: valem também dentro do editor e da caixa de mensagem (nenhum deles usa essas teclas).
+   */
+  function onShortcut(event: KeyboardEvent) {
+    if (!props.embedded && event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'Backquote' && terminalAvailable.value) {
+      event.preventDefault()
+      event.stopPropagation()
+      return terminalOpen.value ? void (terminalOpen.value = false) : openTerminal()
+    }
+    if (props.embedded || !event.shiftKey || event.altKey || !header.value) return
+    const key = event.key.toLowerCase()
+    const meta = event.metaKey && !event.ctrlKey
+    const ctrl = event.ctrlKey && !event.metaKey
+    let action: (() => void) | undefined
+    if (meta && key === 'b' && thread.sessionId) action = () => (browserOpen.value ? (browserOpen.value = false) : openBrowser())
+    else if (meta && key === 'e' && inRepository.value && thread.sessionId) action = () => (filesOpen.value ? (filesOpen.value = false) : openFiles())
+    else if (ctrl && key === 'g' && inRepository.value) action = () => (changesOpen.value ? (changesOpen.value = false) : openChanges())
+    if (!action) return
+    event.preventDefault()
+    event.stopPropagation()
+    action()
+  }
+  onMounted(() => window.addEventListener('keydown', onShortcut, true))
+  onBeforeUnmount(() => window.removeEventListener('keydown', onShortcut, true))
+
+  /** A barra da coluna: um ícone por recurso (em ordem alfabética, como no menu), o ativo aceso. */
+  const sideItems = computed(() =>
+    [
+      { id: 'changes' as const, label: 'Alterações', icon: 'git' as const, keys: '⌃⇧G', show: inRepository.value },
+      { id: 'files' as const, label: 'Arquivos', icon: 'folder' as const, keys: '⌘⇧E', show: inRepository.value && !!thread.sessionId },
+      { id: 'board' as const, label: 'Board', icon: 'panel' as const, keys: '', show: !!header.value },
+      { id: 'browser' as const, label: 'Navegador', icon: 'globe' as const, keys: '⌘⇧B', show: !!thread.sessionId },
+      { id: 'terminal' as const, label: 'Terminal', icon: 'slash' as const, keys: '⌃`', show: terminalAvailable.value },
+    ].filter((item) => item.show),
+  )
+  const sideLabel = computed(() => sideItems.value.find((item) => item.id === sidePane.value)?.label ?? '')
+
   /** As Alterações (o diff do que o agente mudou): a mesma coluna, a mesma largura. */
   function openChanges() {
     panelOpen.value = false
     browserOpen.value = false
     filesOpen.value = false
+    terminalOpen.value = false
     changesOpen.value = true
   }
+  /** ⌨️ O terminal local (o shell do seu computador): só existe no app do Mac, para o admin; a mesma coluna. */
+  const LocalTerminal = defineAsyncComponent(() => import('./LocalTerminal.vue'))
+  const terminalOpen = sideFlag('terminal')
+  const terminalAvailable = ref(false)
+  onMounted(() => {
+    if (props.embedded) return
+    void api<{ available: boolean }>('/terminal')
+      .then((status) => (terminalAvailable.value = status.available))
+      .catch(() => undefined)
+  })
+  function openTerminal() {
+    panelOpen.value = false
+    browserOpen.value = false
+    filesOpen.value = false
+    changesOpen.value = false
+    terminalOpen.value = true
+  }
   /** O Board da conversa: o selo do ícone (itens em aberto) vale com o painel fechado; o painel relê quando abre, quando o turno acaba e quando o agente mexe nele. */
-  const panelOpen = ref(false)
-  /** A largura do painel da conversa: arrastar a borda esquerda (lembrada no navegador, como a das Alterações). */
-  const panelDrawer = useDrawerWidth('gw.panel.width', 460)
+  const panelOpen = sideFlag('board')
   const panelCount = ref<number>()
+  /** Planos esperando a sua aprovação: o ponto amarelo no ícone do Board. */
+  const plansWaiting = ref(0)
   const panelRefresh = ref(0)
   async function loadPanelCount() {
     const id = header.value?.id
     if (!id) return void (panelCount.value = undefined)
     const result = await api<IConversationPanel>(`/conversations/${encodeURIComponent(id)}/panel`).catch(() => undefined)
-    if (id === header.value?.id) panelCount.value = result ? openCount(result) : undefined
+    if (id !== header.value?.id) return
+    panelCount.value = result ? openCount(result) : undefined
+    plansWaiting.value = (result?.plans ?? []).filter((plan) => plan.status === 'review').length
   }
   watch(
     () => header.value?.id,
@@ -175,7 +252,7 @@
       if (before && !running) refreshPanel()
     },
   )
-  const changesOpen = ref(false)
+  const changesOpen = sideFlag('changes')
   const changesCount = ref<number>()
   const changesRefresh = ref(0)
   const inRepository = computed(() => typeof header.value?.metadata?.repository === 'string' && !!thread.sessionId)
@@ -600,7 +677,7 @@
               <div
                 v-if="menuOpen"
                 role="menu"
-                class="absolute top-full right-0 z-50 mt-2 w-48 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
+                class="absolute top-full right-0 z-50 mt-2 w-56 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
                 data-test="thread-menu-items"
               >
                 <button
@@ -612,6 +689,7 @@
                   <Icon name="git" class="h-4 w-4 text-zinc-400" />
                   Alterações
                   <span v-if="changesCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ changesCount }}</span>
+                  <kbd class="pl-2 font-sans text-[10px] text-zinc-500" :class="{ 'ml-auto': !changesCount }">⌃⇧G</kbd>
                 </button>
                 <button
                   v-if="inRepository && thread.sessionId"
@@ -622,11 +700,12 @@
                 >
                   <Icon name="folder" class="h-4 w-4 text-zinc-400" />
                   Arquivos
+                  <kbd class="ml-auto pl-2 font-sans text-[10px] text-zinc-500">⌘⇧E</kbd>
                 </button>
                 <button
                   role="menuitem"
                   class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
-                  @click="fromMenu(() => ((panelOpen = !panelOpen), (browserOpen = false), (filesOpen = false), (changesOpen = false)))"
+                  @click="fromMenu(() => ((panelOpen = !panelOpen), (browserOpen = false), (filesOpen = false), (changesOpen = false), (terminalOpen = false)))"
                 >
                   <Icon name="panel" class="h-4 w-4 text-zinc-400" />
                   Board
@@ -641,7 +720,19 @@
                 >
                   <Icon name="globe" class="h-4 w-4 text-zinc-400" />
                   Navegador
+                  <kbd class="ml-auto pl-2 font-sans text-[10px] text-zinc-500">⌘⇧B</kbd>
                   <span v-if="browserSeen" class="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                </button>
+                <button
+                  v-if="terminalAvailable"
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                  data-test="terminal-item"
+                  @click="fromMenu(openTerminal)"
+                >
+                  <Icon name="slash" class="h-4 w-4 text-zinc-400" />
+                  Terminal
+                  <kbd class="ml-auto pl-2 font-sans text-[10px] text-zinc-500">⌃`</kbd>
                 </button>
                 <div role="separator" class="my-1 border-t border-zinc-800" />
                 <button
@@ -762,25 +853,6 @@
         @confirm="remove"
         @cancel="confirming = false"
       />
-      <!-- Celular: tela cheia; desktop: gaveta à direita, e a conversa ao lado segue usável (como as Alterações). -->
-      <div v-if="panelOpen && header" class="fixed inset-0 z-40 bg-black/40 md:pointer-events-none md:bg-transparent" @click.self="panelOpen = false">
-        <aside
-          class="pointer-events-auto absolute top-0 right-0 flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-950 p-4 shadow-2xl md:w-[var(--panel-width)]"
-          :style="{ '--panel-width': `min(${panelDrawer.width.value}px, calc(100vw - 360px))` }"
-          aria-label="Board da conversa"
-        >
-          <div
-            class="absolute top-0 left-0 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"
-            data-test="panel-resize"
-            @pointerdown="panelDrawer.startDrag"
-            @pointermove="panelDrawer.onDrag"
-            @pointerup="panelDrawer.stopDrag"
-          />
-          <div class="min-h-0 flex-1 overflow-y-auto">
-            <ConversationPanel :conversation-id="header.id" :refresh-key="panelRefresh" closable @close="panelOpen = false" @count="panelCount = $event" />
-          </div>
-        </aside>
-      </div>
       <TodoPanel v-if="thread.todos.length" :items="thread.todos" />
       <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
       <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
@@ -813,11 +885,11 @@
       />
     </section>
     <aside
-      v-if="browserOpen && thread.sessionId"
-      class="fixed inset-0 z-40 flex flex-col bg-zinc-950 md:relative md:inset-auto md:z-auto md:w-[var(--browser-width)] md:max-w-[calc(100%-22rem)] md:shrink-0 md:border-l md:border-zinc-800"
-      :style="{ '--browser-width': `${browserDrawer.width.value}px` }"
-      aria-label="Navegador da conversa"
-      data-test="browser-pane"
+      v-if="sidePane"
+      class="fixed inset-0 z-40 flex flex-col bg-zinc-950 md:relative md:inset-auto md:z-auto md:w-[var(--side-width)] md:max-w-[calc(100%-22rem)] md:shrink-0 md:border-l md:border-zinc-800"
+      :style="{ '--side-width': `${browserDrawer.width.value}px` }"
+      :aria-label="sideLabel"
+      data-test="side-pane"
     >
       <div
         class="absolute top-0 left-0 z-10 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"
@@ -825,42 +897,86 @@
         @pointermove="browserDrawer.onDrag"
         @pointerup="browserDrawer.stopDrag"
       />
-      <LiveBrowser :session-id="thread.sessionId" :interactive="!thread.readOnly" @close="browserOpen = false" @pick="pickElement" />
-    </aside>
-    <aside
-      v-if="filesOpen && thread.sessionId"
-      class="fixed inset-0 z-40 flex flex-col bg-zinc-950 md:relative md:inset-auto md:z-auto md:w-[var(--files-width)] md:max-w-[calc(100%-22rem)] md:shrink-0 md:border-l md:border-zinc-800"
-      :style="{ '--files-width': `${filesDrawer.width.value}px` }"
-      aria-label="Arquivos do repositório"
-      data-test="files-pane"
-    >
-      <div
-        class="absolute top-0 left-0 z-10 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"
-        @pointerdown="filesDrawer.startDrag"
-        @pointermove="filesDrawer.onDrag"
-        @pointerup="filesDrawer.stopDrag"
-      />
-      <RepositoryFiles :session-id="thread.sessionId" :running="!!thread.pending || !!thread.following" :read-only="thread.readOnly" @close="filesOpen = false" />
-    </aside>
-    <aside
-      v-if="changesOpen && thread.sessionId"
-      class="fixed inset-0 z-40 flex flex-col bg-zinc-950 md:relative md:inset-auto md:z-auto md:w-[var(--changes-width)] md:max-w-[calc(100%-22rem)] md:shrink-0 md:border-l md:border-zinc-800"
-      :style="{ '--changes-width': `${browserDrawer.width.value}px` }"
-      aria-label="Alterações da conversa"
-      data-test="changes-pane"
-    >
-      <div
-        class="absolute top-0 left-0 z-10 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"
-        @pointerdown="browserDrawer.startDrag"
-        @pointermove="browserDrawer.onDrag"
-        @pointerup="browserDrawer.stopDrag"
-      />
-      <ChangesPanel embedded :session-id="thread.sessionId" :refresh-key="changesRefresh" @close="changesOpen = false" @count="changesCount = $event" />
+      <div class="side-bar flex h-9 shrink-0 items-center gap-1 pr-1 pl-3" data-test="side-bar">
+        <span class="text-xs font-medium tracking-wide text-[#f8f8f2] uppercase">{{ sideLabel }}</span>
+        <div class="ml-auto flex items-center">
+          <button
+            v-for="item in sideItems"
+            :key="item.id"
+            type="button"
+            class="side-icon relative grid h-8 w-8 place-items-center rounded-md"
+            :class="{ on: sidePane === item.id }"
+            :title="item.id === 'board' && plansWaiting ? `Board — ${plansWaiting} plano(s) esperando a sua aprovação` : item.keys ? `${item.label} (${item.keys})` : item.label"
+            :data-test="`side-${item.id}`"
+            @click="sidePane = sidePane === item.id ? undefined : item.id"
+          >
+            <Icon :name="item.icon" class="h-4 w-4" />
+            <span
+              v-if="item.id === 'board' && plansWaiting"
+              class="absolute top-1 right-1 h-2 w-2 rounded-full bg-amber-400"
+              :title="`${plansWaiting} plano(s) esperando a sua aprovação`"
+              data-test="side-board-waiting"
+            />
+          </button>
+          <span class="mx-1 h-4 w-px bg-[#3b3a32]" />
+          <button type="button" class="side-icon grid h-8 w-8 place-items-center rounded-md" title="Fechar" data-test="side-close" @click="sidePane = undefined">
+            <Icon name="x" class="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div class="relative min-h-0 flex-1">
+        <LiveBrowser v-if="sidePane === 'browser' && thread.sessionId" :session-id="thread.sessionId" :interactive="!thread.readOnly" @pick="pickElement" />
+        <ChangesPanel
+          v-else-if="sidePane === 'changes' && thread.sessionId"
+          embedded
+          :session-id="thread.sessionId"
+          :refresh-key="changesRefresh"
+          @close="changesOpen = false"
+          @count="changesCount = $event"
+        />
+        <div v-else-if="sidePane === 'board' && header" class="h-full overflow-y-auto p-4" data-test="board-pane">
+          <!-- O Board ocupa a largura da coluna: um cartão por linha. -->
+          <div>
+            <ConversationPanel :conversation-id="header.id" :refresh-key="panelRefresh" @count="panelCount = $event" @waiting="plansWaiting = $event" />
+          </div>
+        </div>
+        <RepositoryFiles
+          v-if="keepMounted.has('files') && thread.sessionId"
+          v-show="sidePane === 'files'"
+          :session-id="thread.sessionId"
+          :running="!!thread.pending || !!thread.following"
+          :read-only="thread.readOnly"
+          class="absolute inset-0"
+          @close="filesOpen = false"
+        />
+        <LocalTerminal
+          v-if="keepMounted.has('terminal')"
+          v-show="sidePane === 'terminal'"
+          :conversation="inRepository ? thread.sessionId : undefined"
+          class="absolute inset-0"
+          @close="terminalOpen = false"
+        />
+      </div>
     </aside>
   </div>
 </template>
 
 <style scoped>
+  .side-bar {
+    background: #1e1f1c;
+    border-bottom: 1px solid #3b3a32;
+  }
+  .side-icon {
+    color: #75715e;
+  }
+  .side-icon:hover {
+    background: #3e3d32;
+    color: #f8f8f2;
+  }
+  .side-icon.on {
+    background: #49483e;
+    color: #a6e22e;
+  }
   .turn-focus {
     background: rgb(16 185 129 / 0.08);
     box-shadow: 0 0 0 1px rgb(16 185 129 / 0.35);

@@ -42,3 +42,18 @@ export function fromThisHostDirectly(req: Request): boolean {
   if (NOT_THE_HOST_HEADERS.some((name) => headers[name] !== undefined)) return false
   return !!remote && (remote === '127.0.0.1' || remote === '::1' || remote === local)
 }
+
+/** Cabeçalhos de proxy: com eles, o socket local não diz de onde veio o pedido. */
+const PROXY_HEADERS = ['x-forwarded-for', 'x-forwarded-host', 'x-real-ip', 'forwarded']
+
+/**
+ * ⛔ O pedido veio da MESMA máquina do gateway (a tela no próprio Mac): socket loopback (ou o endereço em que ele escuta)
+ * e sem proxy no meio. Diferente de `fromThisHostDirectly`, aceita o navegador (origem e `Sec-Fetch-*`).
+ */
+export function fromThisMachine(req: Request): boolean {
+  const remote = req.socket?.remoteAddress?.replace(/^::ffff:/, '')
+  const local = req.socket?.localAddress?.replace(/^::ffff:/, '')
+  const headers = req.headers ?? {}
+  if (PROXY_HEADERS.some((name) => headers[name] !== undefined)) return false
+  return !!remote && (remote === '127.0.0.1' || remote === '::1' || remote === local)
+}
