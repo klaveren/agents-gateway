@@ -134,7 +134,7 @@
   const OTHER = '__other__'
   const speechEngine = computed(() => speechEngineOf(providers.list.find((provider) => provider.id === speechProvider.value)?.baseUrl))
   const speechModelOptions = computed(() =>
-    speechProvider.value ? speechModelsFor(speechEngine.value, (providers.catalogs.get(speechProvider.value) ?? []).map((model) => model.modelId)) : [],
+    speechProvider.value ? speechModelsFor(speechEngine.value, (providers.catalogs.get(speechProvider.value) ?? []).filter((model) => model.enabled).map((model) => model.modelId)) : [],
   )
   const speechVoiceOptions = computed(() => speechModelOptions.value.find((model) => model.id === speechModel.value)?.voices ?? [])
   const typingModel = ref(false)
@@ -384,8 +384,8 @@
                   </div>
                 </div>
                 <small class="text-xs text-zinc-500">
-                  Para português: OpenAI gpt-4o-mini-tts (qualquer voz), ou Alibaba qwen-audio-3.1-tts-flash com a voz Aurora (cobrado à parte). O qwen-audio-3.0-tts-plus do Token
-                  Plan só fala chinês e inglês. A pessoa pode trocar a voz no Perfil.
+                  Aparecem os modelos de voz ativados no provider (Modelos → provider). As vozes do qwen-audio-3.0-tts-plus do Token
+                  Plan são de chinês e inglês: teste o português no Perfil (Testar). A pessoa pode trocar a voz no Perfil.
                 </small>
               </div>
               <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">
