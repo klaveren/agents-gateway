@@ -1,4 +1,5 @@
 <script setup lang="ts">
+  import { useListHidden } from '@/composables/useListHidden'
   import HostApprovals from './HostApprovals.vue'
   import MachineBadge from './MachineBadge.vue'
   import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -85,6 +86,44 @@
   /** As alterações (o painel tipo IDE): só numa conversa aberta num repositório. O diff (e o destaque) só carrega ao abrir. */
   const ChangesPanel = defineAsyncComponent(() => import('./ChangesPanel.vue'))
   const ConversationPanel = defineAsyncComponent(() => import('./ConversationPanel.vue'))
+  /** 👁️ O navegador da conversa ao vivo: aparece (e abre, no desktop) quando o agente usa uma ferramenta de navegador. */
+  const { hidden: listHidden, toggle: toggleList } = useListHidden()
+  const LiveBrowser = defineAsyncComponent(() => import('./LiveBrowser.vue'))
+  const browserOpen = ref(false)
+  const browserSeen = ref(false)
+  const browserDrawer = useDrawerWidth('gw.browser.width', 640)
+  watch(
+    () => header.value?.id,
+    () => {
+      browserOpen.value = false
+      browserSeen.value = false
+    },
+  )
+  watch(
+    () => thread.browserVersion,
+    () => {
+      if (browserSeen.value) return
+      browserSeen.value = true
+      if (window.matchMedia?.('(min-width: 768px)').matches) openBrowser()
+    },
+  )
+  /** 🎯 O elemento escolhido com a seta do navegador vai para o fim da caixa de mensagem. */
+  const composerAppend = ref<string>()
+  function pickElement(element: { tag: string; selector: string; text?: string; html: string; url?: string }) {
+    const fence = '```'
+    composerAppend.value = [
+      `Elemento no navegador${element.url ? ` (${element.url})` : ''}:`,
+      `- seletor: \`${element.selector}\``,
+      ...(element.text ? [`- texto: "${element.text}"`] : []),
+      `${fence}html`,
+      element.html,
+      fence,
+    ].join('\n')
+  }
+  function openBrowser() {
+    panelOpen.value = false
+    browserOpen.value = true
+  }
   /** O Board da conversa: o selo do ícone (itens em aberto) vale com o painel fechado; o painel relê quando abre, quando o turno acaba e quando o agente mexe nele. */
   const panelOpen = ref(false)
   /** A largura do painel da conversa: arrastar a borda esquerda (lembrada no navegador, como a das Alterações). */
@@ -404,60 +443,95 @@
 </script>
 
 <template>
-  <section class="flex h-full flex-col">
-    <header class="flex items-center gap-3 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2.5">
-      <RouterLink v-if="!embedded" to="/" class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 lg:hidden" title="Voltar">
-        <Icon name="back" class="h-5 w-5" />
-      </RouterLink>
-      <AgentAvatar :name="agentName ?? '?'" :provider="currentProvider || 'claude'" size="sm" />
-      <div class="min-w-0">
-        <input
-          v-if="renaming"
-          ref="renameInput"
-          v-model="renameDraft"
-          class="input h-7 w-full py-0 font-medium"
-          maxlength="120"
-          aria-label="Título da conversa"
-          data-test="thread-title-input"
-          @keydown.enter.prevent="saveTitle"
-          @keydown.esc.prevent="renaming = false"
-          @blur="saveTitle"
-        />
+  <!-- 👁️ O navegador ao vivo, no desktop, é uma coluna AO LADO da conversa (as duas dividem a largura); no celular, tela cheia. -->
+  <div class="flex h-full min-w-0">
+    <section class="flex h-full min-w-0 flex-1 flex-col">
+      <header class="flex items-center gap-3 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2.5">
         <button
-          v-else-if="canRename"
+          v-if="!embedded"
           type="button"
-          class="block max-w-full cursor-text truncate text-left font-medium hover:text-emerald-300"
-          title="Renomear"
-          data-test="thread-title"
-          @click="startRename"
+          class="hidden h-9 w-9 shrink-0 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 lg:grid"
+          :title="listHidden ? 'Mostrar as conversas' : 'Esconder as conversas'"
+          data-test="toggle-list"
+          @click="toggleList"
         >
-          {{ header?.title || agentName || 'Conversa' }}
+          <Icon name="panel" class="h-5 w-5 -scale-x-100" />
         </button>
-        <div v-else class="truncate font-medium">{{ header?.title || agentName || 'Conversa' }}</div>
-        <div v-if="renameError" class="truncate text-xs text-rose-300" data-test="thread-title-error">{{ renameError }}</div>
-        <div class="truncate text-xs text-zinc-400">
-          <MachineBadge :project-id="conversationProject" :agent-id="agent?.id ?? header?.agentId ?? thread.agentId" />
-          {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}
-          <template v-if="thread.session?.reasoning">· raciocínio {{ effortLabel(thread.session.reasoning).toLowerCase() }}</template>
-          <template v-if="typeof header?.metadata?.repository === 'string'">
-            · {{ header.metadata.repository }}
-            <template v-if="typeof header.metadata.worktree === 'string'">/ {{ header.metadata.worktree }}</template>
-          </template>
-          <template v-if="projects.manages && owner">· {{ owner.email ?? owner.id }}</template>
+        <RouterLink v-if="!embedded" to="/" class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 lg:hidden" title="Voltar">
+          <Icon name="back" class="h-5 w-5" />
+        </RouterLink>
+        <AgentAvatar :name="agentName ?? '?'" :provider="currentProvider || 'claude'" size="sm" />
+        <div class="min-w-0">
+          <input
+            v-if="renaming"
+            ref="renameInput"
+            v-model="renameDraft"
+            class="input h-7 w-full py-0 font-medium"
+            maxlength="120"
+            aria-label="Título da conversa"
+            data-test="thread-title-input"
+            @keydown.enter.prevent="saveTitle"
+            @keydown.esc.prevent="renaming = false"
+            @blur="saveTitle"
+          />
+          <button
+            v-else-if="canRename"
+            type="button"
+            class="block max-w-full cursor-text truncate text-left font-medium hover:text-emerald-300"
+            title="Renomear"
+            data-test="thread-title"
+            @click="startRename"
+          >
+            {{ header?.title || agentName || 'Conversa' }}
+          </button>
+          <div v-else class="truncate font-medium">{{ header?.title || agentName || 'Conversa' }}</div>
+          <div v-if="renameError" class="truncate text-xs text-rose-300" data-test="thread-title-error">{{ renameError }}</div>
+          <div class="truncate text-xs text-zinc-400">
+            <MachineBadge :project-id="conversationProject" :agent-id="agent?.id ?? header?.agentId ?? thread.agentId" />
+            {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}
+            <template v-if="thread.session?.reasoning">· raciocínio {{ effortLabel(thread.session.reasoning).toLowerCase() }}</template>
+            <template v-if="typeof header?.metadata?.repository === 'string'">
+              · {{ header.metadata.repository }}
+              <template v-if="typeof header.metadata.worktree === 'string'">/ {{ header.metadata.worktree }}</template>
+            </template>
+            <template v-if="projects.manages && owner">· {{ owner.email ?? owner.id }}</template>
+          </div>
         </div>
-      </div>
-      <div v-if="header || context" class="ml-auto flex items-center gap-1">
-        <!-- ⚖️ À vista ficam só o medidor de contexto (que abre o consumo) e o menu "⋯" com as ações, no desktop e no celular:
+        <div v-if="header || context" class="ml-auto flex items-center gap-1">
+          <!-- ⚖️ À vista ficam só o medidor de contexto (que abre o consumo) e o menu "⋯" com as ações, no desktop e no celular:
              o título ganha o espaço. -->
-        <TokensMenu
-          v-if="header?.usage.totalTokens"
-          :usage="header.usage"
-          :cost-usd="projects.manages ? header.costUsd : undefined"
-          :cost-is-floor="header.costIsFloor"
-          :turns="header.turns"
-          :context="context"
-        >
-          <span v-if="context" class="grid h-8 w-8 place-items-center" data-test="context-meter">
+          <TokensMenu
+            v-if="header?.usage.totalTokens"
+            :usage="header.usage"
+            :cost-usd="projects.manages ? header.costUsd : undefined"
+            :cost-is-floor="header.costIsFloor"
+            :turns="header.turns"
+            :context="context"
+          >
+            <span v-if="context" class="grid h-8 w-8 place-items-center" data-test="context-meter">
+              <svg v-if="context.percent !== undefined" viewBox="0 0 32 32" class="col-start-1 row-start-1 h-8 w-8 -rotate-90">
+                <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" class="stroke-zinc-800" />
+                <circle
+                  cx="16"
+                  cy="16"
+                  r="13"
+                  fill="none"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  pathLength="100"
+                  :stroke-dasharray="`${context.percent} 100`"
+                  :class="context.warn ? 'stroke-amber-400' : 'stroke-emerald-500'"
+                />
+              </svg>
+              <span class="col-start-1 row-start-1 text-[9px] tabular-nums" :class="context.warn ? 'text-amber-300' : 'text-zinc-400'">{{ context.short }}</span>
+            </span>
+          </TokensMenu>
+          <div
+            v-else-if="context"
+            class="grid h-8 w-8 place-items-center"
+            :title="`Contexto da conversa: ${context.label.replace(' / ', ' de ').replace(' usados', '')} tokens`"
+            data-test="context-meter"
+          >
             <svg v-if="context.percent !== undefined" viewBox="0 0 32 32" class="col-start-1 row-start-1 h-8 w-8 -rotate-90">
               <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" class="stroke-zinc-800" />
               <circle
@@ -473,237 +547,261 @@
               />
             </svg>
             <span class="col-start-1 row-start-1 text-[9px] tabular-nums" :class="context.warn ? 'text-amber-300' : 'text-zinc-400'">{{ context.short }}</span>
-          </span>
-        </TokensMenu>
-        <div
-          v-else-if="context"
-          class="grid h-8 w-8 place-items-center"
-          :title="`Contexto da conversa: ${context.label.replace(' / ', ' de ').replace(' usados', '')} tokens`"
-          data-test="context-meter"
-        >
-          <svg v-if="context.percent !== undefined" viewBox="0 0 32 32" class="col-start-1 row-start-1 h-8 w-8 -rotate-90">
-            <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" class="stroke-zinc-800" />
-            <circle
-              cx="16"
-              cy="16"
-              r="13"
-              fill="none"
-              stroke-width="3"
-              stroke-linecap="round"
-              pathLength="100"
-              :stroke-dasharray="`${context.percent} 100`"
-              :class="context.warn ? 'stroke-amber-400' : 'stroke-emerald-500'"
-            />
-          </svg>
-          <span class="col-start-1 row-start-1 text-[9px] tabular-nums" :class="context.warn ? 'text-amber-300' : 'text-zinc-400'">{{ context.short }}</span>
-        </div>
-        <template v-if="header">
-          <div ref="menuRoot" class="relative">
-            <button
-              type="button"
-              class="relative grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800"
-              title="Mais ações"
-              aria-haspopup="menu"
-              :aria-expanded="menuOpen"
-              data-test="thread-menu"
-              @click="menuOpen = !menuOpen"
-            >
-              <Icon name="more" class="h-5 w-5" />
-              <span v-if="panelCount" class="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-emerald-500/20 px-1 text-center text-[10px] leading-4 text-emerald-300">
-                {{ panelCount }}
-              </span>
-            </button>
-            <div
-              v-if="menuOpen"
-              role="menu"
-              class="absolute top-full right-0 z-50 mt-2 w-48 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
-              data-test="thread-menu-items"
-            >
-              <button
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
-                @click="fromMenu(() => (panelOpen = !panelOpen))"
-              >
-                <Icon name="panel" class="h-4 w-4 text-zinc-400" />
-                Board
-                <span v-if="panelCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ panelCount }}</span>
-              </button>
-              <button
-                v-if="inRepository"
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
-                @click="fromMenu(() => (changesOpen = true))"
-              >
-                <Icon name="git" class="h-4 w-4 text-zinc-400" />
-                Alterações
-                <span v-if="changesCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ changesCount }}</span>
-              </button>
-              <button
-                v-if="canCompact"
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-zinc-800 disabled:text-zinc-500"
-                :class="thread.session?.compactNext ? 'text-zinc-500' : 'text-amber-300'"
-                :disabled="thread.session?.compactNext || compacting"
-                :title="thread.session?.compactNext ? 'Compacta na próxima mensagem' : 'Compactar o contexto'"
-                @click="fromMenu(compactNow)"
-              >
-                <Icon name="compress" class="h-4 w-4" />
-                {{ thread.session?.compactNext ? 'Agendada' : 'Compactar' }}
-              </button>
-              <button
-                v-if="!embedded"
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
-                @click="fromMenu(toggleShare)"
-              >
-                <Icon name="share" class="h-4 w-4" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" />
-                {{ header.shared ? 'Descompartilhar' : 'Compartilhar' }}
-              </button>
-              <button
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
-                title="Copiar o id da conversa"
-                data-test="thread-menu-copy-id"
-                @click="copySessionId"
-              >
-                <Icon name="copy" class="h-4 w-4" :class="idCopied ? 'text-emerald-400' : 'text-zinc-400'" />
-                {{ idCopied ? 'Copiado' : 'Copiar ID' }}
-              </button>
-              <button
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
-                data-test="thread-menu-archive"
-                @click="fromMenu(archiveConversation)"
-              >
-                <Icon name="archive" class="h-4 w-4 text-zinc-400" />
-                Arquivar
-              </button>
-              <button
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 border-t border-zinc-800 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 hover:text-rose-300"
-                @click="fromMenu(() => (confirming = true))"
-              >
-                <Icon name="trash" class="h-4 w-4 text-zinc-400" />
-                Apagar
-              </button>
-            </div>
           </div>
-        </template>
+          <template v-if="header">
+            <button
+              v-if="browserSeen && thread.sessionId"
+              type="button"
+              class="relative grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800"
+              :class="browserOpen ? 'text-emerald-300' : 'text-zinc-400'"
+              title="Navegador ao vivo"
+              data-test="browser-toggle"
+              @click="browserOpen ? (browserOpen = false) : openBrowser()"
+            >
+              <Icon name="globe" class="h-5 w-5" />
+              <span class="absolute top-1.5 right-1.5 h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+            </button>
+            <div ref="menuRoot" class="relative">
+              <button
+                type="button"
+                class="relative grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800"
+                title="Mais ações"
+                aria-haspopup="menu"
+                :aria-expanded="menuOpen"
+                data-test="thread-menu"
+                @click="menuOpen = !menuOpen"
+              >
+                <Icon name="more" class="h-5 w-5" />
+                <span v-if="panelCount" class="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-emerald-500/20 px-1 text-center text-[10px] leading-4 text-emerald-300">
+                  {{ panelCount }}
+                </span>
+              </button>
+              <div
+                v-if="menuOpen"
+                role="menu"
+                class="absolute top-full right-0 z-50 mt-2 w-48 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
+                data-test="thread-menu-items"
+              >
+                <button
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                  @click="fromMenu(() => ((panelOpen = !panelOpen), (browserOpen = false)))"
+                >
+                  <Icon name="panel" class="h-4 w-4 text-zinc-400" />
+                  Board
+                  <span v-if="panelCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ panelCount }}</span>
+                </button>
+                <button
+                  v-if="thread.sessionId"
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                  data-test="browser-item"
+                  @click="fromMenu(openBrowser)"
+                >
+                  <Icon name="globe" class="h-4 w-4 text-zinc-400" />
+                  Navegador
+                  <span v-if="browserSeen" class="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                </button>
+                <button
+                  v-if="inRepository"
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                  @click="fromMenu(() => (changesOpen = true))"
+                >
+                  <Icon name="git" class="h-4 w-4 text-zinc-400" />
+                  Alterações
+                  <span v-if="changesCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ changesCount }}</span>
+                </button>
+                <button
+                  v-if="canCompact"
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-zinc-800 disabled:text-zinc-500"
+                  :class="thread.session?.compactNext ? 'text-zinc-500' : 'text-amber-300'"
+                  :disabled="thread.session?.compactNext || compacting"
+                  :title="thread.session?.compactNext ? 'Compacta na próxima mensagem' : 'Compactar o contexto'"
+                  @click="fromMenu(compactNow)"
+                >
+                  <Icon name="compress" class="h-4 w-4" />
+                  {{ thread.session?.compactNext ? 'Agendada' : 'Compactar' }}
+                </button>
+                <button
+                  v-if="!embedded"
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                  @click="fromMenu(toggleShare)"
+                >
+                  <Icon name="share" class="h-4 w-4" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" />
+                  {{ header.shared ? 'Descompartilhar' : 'Compartilhar' }}
+                </button>
+                <button
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                  title="Copiar o id da conversa"
+                  data-test="thread-menu-copy-id"
+                  @click="copySessionId"
+                >
+                  <Icon name="copy" class="h-4 w-4" :class="idCopied ? 'text-emerald-400' : 'text-zinc-400'" />
+                  {{ idCopied ? 'Copiado' : 'Copiar ID' }}
+                </button>
+                <button
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                  data-test="thread-menu-archive"
+                  @click="fromMenu(archiveConversation)"
+                >
+                  <Icon name="archive" class="h-4 w-4 text-zinc-400" />
+                  Arquivar
+                </button>
+                <button
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 border-t border-zinc-800 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 hover:text-rose-300"
+                  @click="fromMenu(() => (confirming = true))"
+                >
+                  <Icon name="trash" class="h-4 w-4 text-zinc-400" />
+                  Apagar
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </header>
+
+      <div v-if="parentId" class="flex items-center gap-2 border-b border-violet-500/20 bg-violet-500/10 px-4 py-2 text-xs text-violet-200">
+        Delegada por {{ parentAgent }}.
+        <RouterLink :to="`/c/${parentId}`" class="ml-auto hover:text-white">← Voltar à conversa original</RouterLink>
       </div>
-    </header>
+      <DelegationsPanel v-if="children.length" :items="children" :show-cost="projects.manages" />
+      <!-- Logo abaixo das delegações: o que a conversa espera fica no alto, junto do que ela pediu a outros. -->
+      <WatchesPanel v-if="thread.watches.length" :items="thread.watches" :stop="thread.stopWatch" />
 
-    <div v-if="parentId" class="flex items-center gap-2 border-b border-violet-500/20 bg-violet-500/10 px-4 py-2 text-xs text-violet-200">
-      Delegada por {{ parentAgent }}.
-      <RouterLink :to="`/c/${parentId}`" class="ml-auto hover:text-white">← Voltar à conversa original</RouterLink>
-    </div>
-    <DelegationsPanel v-if="children.length" :items="children" :show-cost="projects.manages" />
-    <!-- Logo abaixo das delegações: o que a conversa espera fica no alto, junto do que ela pediu a outros. -->
-    <WatchesPanel v-if="thread.watches.length" :items="thread.watches" :stop="thread.stopWatch" />
-
-    <div v-if="compactNotice && thread.session?.compactNext" class="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">
-      {{ compactNotice }}
-      <button class="ml-auto hover:text-white" title="Fechar" @click="compactNotice = undefined"><Icon name="x" class="h-4 w-4" /></button>
-    </div>
-    <div v-if="actionError" class="flex items-center gap-2 border-b border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
-      {{ actionError }}
-      <button class="ml-auto hover:text-white" title="Fechar" @click="actionError = undefined"><Icon name="x" class="h-4 w-4" /></button>
-    </div>
-
-    <div v-if="shareUrl" class="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-xs text-emerald-200">
-      Qualquer pessoa com o link pode ler esta conversa.
-      <code class="truncate text-emerald-300">{{ shareUrl }}</code>
-      <button class="btn btn-sm btn-ghost ml-auto" @click="copyShare">
-        <Icon :name="copied ? 'check' : 'copy'" class="h-4 w-4" />
-        {{ copied ? 'Copiado' : 'Copiar' }}
-      </button>
-    </div>
-
-    <div
-      ref="scroller"
-      data-test="thread-scroller"
-      @scroll.passive="scrolled"
-      class="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgb(39_39_42/0.6)_1px,transparent_0)] [background-size:22px_22px] px-4 py-5"
-    >
-      <div ref="content" class="mx-auto flex max-w-3xl flex-col gap-5">
-        <p v-if="thread.loading" class="text-center text-sm text-zinc-500">Carregando conversa…</p>
-        <!-- Os turnos anteriores vêm ao rolar até aqui; o botão é o caminho para quem não rola (teclado, leitor de tela). -->
-        <p v-if="thread.hasOlder" class="text-center text-xs text-zinc-500" data-test="thread-older">
-          <span v-if="thread.loadingOlder">Carregando mensagens anteriores…</span>
-          <button v-else type="button" class="btn btn-sm btn-ghost" @click="loadOlder">Ver mensagens anteriores</button>
-        </p>
-        <p v-else-if="header" class="mx-auto rounded-full bg-zinc-900/80 px-3 py-1 text-xs text-zinc-400">Começou em {{ fullTime(header.createdAt) }}</p>
-        <template v-for="(turn, index) in thread.turns" :key="`${turn.sessionId}-${turn.index}`">
-          <p v-if="switchBefore(index)" class="mx-auto rounded-full border border-zinc-800 px-3 py-0.5 font-mono text-[11px] text-zinc-500">{{ switchBefore(index) }}</p>
-          <div :data-turn="turn.index" class="flex flex-col gap-5 rounded-2xl transition-colors"><TurnBubbles :turn="turn" :show-cost="projects.manages" /></div>
-        </template>
-        <TurnBubbles v-if="thread.pending" :pending="thread.pending" :show-cost="projects.manages" />
-        <p v-if="thread.error" class="mx-auto text-sm text-rose-300">{{ thread.error }}</p>
+      <div v-if="compactNotice && thread.session?.compactNext" class="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">
+        {{ compactNotice }}
+        <button class="ml-auto hover:text-white" title="Fechar" @click="compactNotice = undefined"><Icon name="x" class="h-4 w-4" /></button>
       </div>
-      <!-- A pessoa subiu para ler e chegou coisa nova embaixo: o atalho de volta ao fim (e a rolagem volta a seguir). -->
-      <div v-if="!pinned" class="pointer-events-none sticky bottom-2 flex justify-center">
-        <button type="button" class="btn btn-sm btn-secondary pointer-events-auto shadow-lg shadow-black/40" data-test="thread-to-bottom" @click="toBottom">
-          ↓ {{ unseen ? 'Novas mensagens' : 'Ir para o fim' }}
+      <div v-if="actionError" class="flex items-center gap-2 border-b border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
+        {{ actionError }}
+        <button class="ml-auto hover:text-white" title="Fechar" @click="actionError = undefined"><Icon name="x" class="h-4 w-4" /></button>
+      </div>
+
+      <div v-if="shareUrl" class="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-xs text-emerald-200">
+        Qualquer pessoa com o link pode ler esta conversa.
+        <code class="truncate text-emerald-300">{{ shareUrl }}</code>
+        <button class="btn btn-sm btn-ghost ml-auto" @click="copyShare">
+          <Icon :name="copied ? 'check' : 'copy'" class="h-4 w-4" />
+          {{ copied ? 'Copiado' : 'Copiar' }}
         </button>
       </div>
-    </div>
 
-    <ConfirmDialog
-      :open="confirming"
-      title="Apagar o histórico desta conversa?"
-      :message="deleteError ?? 'Some da lista para todo mundo e não dá para desfazer.'"
-      :busy="deleting"
-      @confirm="remove"
-      @cancel="confirming = false"
-    />
-    <!-- Celular: tela cheia; desktop: gaveta à direita, e a conversa ao lado segue usável (como as Alterações). -->
-    <div v-if="panelOpen && header" class="fixed inset-0 z-40 bg-black/40 md:pointer-events-none md:bg-transparent" @click.self="panelOpen = false">
-      <aside
-        class="pointer-events-auto absolute top-0 right-0 flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-950 p-4 shadow-2xl md:w-[var(--panel-width)]"
-        :style="{ '--panel-width': `min(${panelDrawer.width.value}px, calc(100vw - 360px))` }"
-        aria-label="Board da conversa"
+      <div
+        ref="scroller"
+        data-test="thread-scroller"
+        @scroll.passive="scrolled"
+        class="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgb(39_39_42/0.6)_1px,transparent_0)] [background-size:22px_22px] px-4 py-5"
       >
-        <div
-          class="absolute top-0 left-0 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"
-          data-test="panel-resize"
-          @pointerdown="panelDrawer.startDrag"
-          @pointermove="panelDrawer.onDrag"
-          @pointerup="panelDrawer.stopDrag"
-        />
-        <div class="min-h-0 flex-1 overflow-y-auto">
-          <ConversationPanel :conversation-id="header.id" :refresh-key="panelRefresh" closable @close="panelOpen = false" @count="panelCount = $event" />
+        <div ref="content" class="mx-auto flex max-w-3xl flex-col gap-5">
+          <p v-if="thread.loading" class="text-center text-sm text-zinc-500">Carregando conversa…</p>
+          <!-- Os turnos anteriores vêm ao rolar até aqui; o botão é o caminho para quem não rola (teclado, leitor de tela). -->
+          <p v-if="thread.hasOlder" class="text-center text-xs text-zinc-500" data-test="thread-older">
+            <span v-if="thread.loadingOlder">Carregando mensagens anteriores…</span>
+            <button v-else type="button" class="btn btn-sm btn-ghost" @click="loadOlder">Ver mensagens anteriores</button>
+          </p>
+          <p v-else-if="header" class="mx-auto rounded-full bg-zinc-900/80 px-3 py-1 text-xs text-zinc-400">Começou em {{ fullTime(header.createdAt) }}</p>
+          <template v-for="(turn, index) in thread.turns" :key="`${turn.sessionId}-${turn.index}`">
+            <p v-if="switchBefore(index)" class="mx-auto rounded-full border border-zinc-800 px-3 py-0.5 font-mono text-[11px] text-zinc-500">{{ switchBefore(index) }}</p>
+            <div :data-turn="turn.index" class="flex flex-col gap-5 rounded-2xl transition-colors"><TurnBubbles :turn="turn" :show-cost="projects.manages" /></div>
+          </template>
+          <TurnBubbles v-if="thread.pending" :pending="thread.pending" :show-cost="projects.manages" />
+          <p v-if="thread.error" class="mx-auto text-sm text-rose-300">{{ thread.error }}</p>
         </div>
-      </aside>
-    </div>
-    <TodoPanel v-if="thread.todos.length" :items="thread.todos" />
-    <ChangesPanel v-if="changesOpen && thread.sessionId" :session-id="thread.sessionId" :refresh-key="changesRefresh" @close="changesOpen = false" @count="changesCount = $event" />
-    <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
-    <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
-      <span class="min-w-0 truncate">A conversa foi encerrada. Ao enviar, ela continua de onde parou.</span>
-      <button v-if="!embedded" class="btn btn-sm btn-ghost ml-auto" @click="continueFresh">
-        <Icon name="refresh" class="h-3.5 w-3.5" />
-        Começar uma nova
-      </button>
-    </div>
-    <!-- ⚖️ Conversa de outra pessoa (o admin abriu): só leitura. Mandar mensagem nela o gateway recusa. -->
-    <p v-if="thread.readOnly" class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3 text-center text-xs text-zinc-400" data-test="thread-read-only">
-      Conversa de {{ owner?.email ?? owner?.id ?? 'outra pessoa' }} — só leitura.
-    </p>
-    <HostApprovals v-if="!thread.readOnly" :session-id="thread.sessionId" :running="!!thread.pending || !!thread.following" />
-    <SessionTuner v-if="thread.liveSession && agent && !thread.readOnly" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
-    <Composer
-      v-if="!thread.readOnly"
-      :sending="thread.sending || thread.following"
-      :disabled="thread.liveSession === undefined"
-      :commands="commands"
-      :queued="thread.queued"
-      :restore="thread.leftover"
-      :draft-key="thread.sessionId"
-      :suggestion="thread.nextSuggestion"
-      @send="send"
-      @stop="thread.stop"
-      @restored="thread.leftover = undefined"
-    />
-  </section>
+        <!-- A pessoa subiu para ler e chegou coisa nova embaixo: o atalho de volta ao fim (e a rolagem volta a seguir). -->
+        <div v-if="!pinned" class="pointer-events-none sticky bottom-2 flex justify-center">
+          <button type="button" class="btn btn-sm btn-secondary pointer-events-auto shadow-lg shadow-black/40" data-test="thread-to-bottom" @click="toBottom">
+            ↓ {{ unseen ? 'Novas mensagens' : 'Ir para o fim' }}
+          </button>
+        </div>
+      </div>
+
+      <ConfirmDialog
+        :open="confirming"
+        title="Apagar o histórico desta conversa?"
+        :message="deleteError ?? 'Some da lista para todo mundo e não dá para desfazer.'"
+        :busy="deleting"
+        @confirm="remove"
+        @cancel="confirming = false"
+      />
+      <!-- Celular: tela cheia; desktop: gaveta à direita, e a conversa ao lado segue usável (como as Alterações). -->
+      <div v-if="panelOpen && header" class="fixed inset-0 z-40 bg-black/40 md:pointer-events-none md:bg-transparent" @click.self="panelOpen = false">
+        <aside
+          class="pointer-events-auto absolute top-0 right-0 flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-950 p-4 shadow-2xl md:w-[var(--panel-width)]"
+          :style="{ '--panel-width': `min(${panelDrawer.width.value}px, calc(100vw - 360px))` }"
+          aria-label="Board da conversa"
+        >
+          <div
+            class="absolute top-0 left-0 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"
+            data-test="panel-resize"
+            @pointerdown="panelDrawer.startDrag"
+            @pointermove="panelDrawer.onDrag"
+            @pointerup="panelDrawer.stopDrag"
+          />
+          <div class="min-h-0 flex-1 overflow-y-auto">
+            <ConversationPanel :conversation-id="header.id" :refresh-key="panelRefresh" closable @close="panelOpen = false" @count="panelCount = $event" />
+          </div>
+        </aside>
+      </div>
+      <TodoPanel v-if="thread.todos.length" :items="thread.todos" />
+      <ChangesPanel
+        v-if="changesOpen && thread.sessionId"
+        :session-id="thread.sessionId"
+        :refresh-key="changesRefresh"
+        @close="changesOpen = false"
+        @count="changesCount = $event"
+      />
+      <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
+      <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
+        <span class="min-w-0 truncate">A conversa foi encerrada. Ao enviar, ela continua de onde parou.</span>
+        <button v-if="!embedded" class="btn btn-sm btn-ghost ml-auto" @click="continueFresh">
+          <Icon name="refresh" class="h-3.5 w-3.5" />
+          Começar uma nova
+        </button>
+      </div>
+      <!-- ⚖️ Conversa de outra pessoa (o admin abriu): só leitura. Mandar mensagem nela o gateway recusa. -->
+      <p v-if="thread.readOnly" class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3 text-center text-xs text-zinc-400" data-test="thread-read-only">
+        Conversa de {{ owner?.email ?? owner?.id ?? 'outra pessoa' }} — só leitura.
+      </p>
+      <HostApprovals v-if="!thread.readOnly" :session-id="thread.sessionId" :running="!!thread.pending || !!thread.following" />
+      <SessionTuner v-if="thread.liveSession && agent && !thread.readOnly" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
+      <Composer
+        v-if="!thread.readOnly"
+        :sending="thread.sending || thread.following"
+        :disabled="thread.liveSession === undefined"
+        :commands="commands"
+        :queued="thread.queued"
+        :restore="thread.leftover"
+        :append="composerAppend"
+        @appended="composerAppend = undefined"
+        :draft-key="thread.sessionId"
+        :suggestion="thread.nextSuggestion"
+        @send="send"
+        @stop="thread.stop"
+        @restored="thread.leftover = undefined"
+      />
+    </section>
+    <aside
+      v-if="browserOpen && thread.sessionId"
+      class="fixed inset-0 z-40 flex flex-col bg-zinc-950 md:relative md:inset-auto md:z-auto md:w-[var(--browser-width)] md:max-w-[calc(100%-22rem)] md:shrink-0 md:border-l md:border-zinc-800"
+      :style="{ '--browser-width': `${browserDrawer.width.value}px` }"
+      aria-label="Navegador da conversa"
+      data-test="browser-pane"
+    >
+      <div
+        class="absolute top-0 left-0 z-10 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"
+        @pointerdown="browserDrawer.startDrag"
+        @pointermove="browserDrawer.onDrag"
+        @pointerup="browserDrawer.stopDrag"
+      />
+      <LiveBrowser :session-id="thread.sessionId" :interactive="!thread.readOnly" @close="browserOpen = false" @pick="pickElement" />
+    </aside>
+  </div>
 </template>
 
 <style scoped>

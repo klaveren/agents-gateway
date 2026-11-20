@@ -152,6 +152,8 @@ export const useThreadStore = defineStore('thread', () => {
   const watches = ref<IWatchItem[]>([])
   /** Sobe a cada resultado das ferramentas do board (`board`, `plan` e o alias obsoleto `conversation_panel`): o board aberto se relê. */
   const panelVersion = ref(0)
+  /** 👁️ Sobe a cada ferramenta de navegador (Playwright: `browser_*`): a tela oferece (e abre) o navegador ao vivo. */
+  const browserVersion = ref(0)
   /** As mensagens mandadas com o turno rodando que ainda não entraram nele (`whileBusy: 'queue'`). */
   const queued = ref<string[]>([])
   /** O que estava na fila quando o turno parou: volta para a caixa de texto (o servidor descartou). */
@@ -578,6 +580,7 @@ export const useThreadStore = defineStore('thread', () => {
   }
 
   /** A ferramenta das tarefas, com ou sem o prefixo do servidor MCP local (`mcp__local__update_todos`). */
+  const isBrowserTool = (name: unknown) => typeof name === 'string' && /(^|__)browser_[a-z_]+$/.test(name)
   const isPanelTool = (name: unknown) => typeof name === 'string' && ['board', 'plan', 'conversation_panel'].some((tool) => name === tool || name.endsWith(`__${tool}`))
   const isTodoTool = (name: unknown) => typeof name === 'string' && (name === 'update_todos' || name.endsWith('__update_todos'))
   const isWatchTool = (name: unknown) => typeof name === 'string' && WATCH_TOOLS.has(name.split('__').pop() ?? '')
@@ -593,6 +596,7 @@ export const useThreadStore = defineStore('thread', () => {
         break
       case 'tool.started':
         turn.tools.push({ tool: String(payload.tool), status: 'running' })
+        if (isBrowserTool(payload.tool)) browserVersion.value += 1
         break
       case 'tool.result':
       case 'tool.error': {
@@ -649,6 +653,7 @@ export const useThreadStore = defineStore('thread', () => {
     watches,
     stopWatch,
     panelVersion,
+    browserVersion,
     loading,
     error,
     liveSession,

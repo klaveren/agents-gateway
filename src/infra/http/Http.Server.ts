@@ -670,6 +670,10 @@ function buildRoutes(
     { method: 'post', path: '/sessions/:id/host-approvals/:approvalId', handler: controller.answerHostApproval },
     { method: 'delete', path: '/sessions/:id/watches/:watchId', handler: controller.stopWatch },
     { method: 'get', path: '/sessions/:id/live', handler: controller.sessionLive },
+    { method: 'get', path: '/sessions/:id/browser', handler: controller.sessionBrowser },
+    { method: 'post', path: '/sessions/:id/browser/viewport', handler: controller.browserViewport },
+    { method: 'post', path: '/sessions/:id/browser/input', handler: controller.browserInput },
+    { method: 'post', path: '/sessions/:id/browser/inspect', handler: controller.browserInspect },
     { method: 'post', path: '/sessions/:id/cancel', handler: controller.cancelSession },
   ]
 }

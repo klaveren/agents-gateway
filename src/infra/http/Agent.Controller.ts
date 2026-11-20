@@ -1,3 +1,4 @@
+import { LiveBrowser, liveBrowsers, TLiveBrowserInput } from '@infra/mcp/LiveBrowser.Adapter'
 import { NOTIFY_TOOL } from '@domain/models/PersonMessage.Model'
 import type { PersonMessagesService } from '@application/PersonMessages.Service'
 import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
@@ -241,6 +242,51 @@ export const STREAM_RECHECK_MS = 30_000
  * passou e não dispara de novo: abrir o stream agora prenderia a vaga da conta, as inscrições e o relógio do
  * heartbeat até o processo reiniciar.
  */
+/** O evento de entrada do navegador, conferido campo a campo (nada além do que o CDP precisa). */
+function parseBrowserInput(body: unknown): TLiveBrowserInput | undefined {
+  const raw = (body ?? {}) as Record<string, unknown>
+  const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+  const str = (value: unknown, max = 64) => (typeof value === 'string' && value.length <= max ? value : undefined)
+  const x = num(raw.x)
+  const y = num(raw.y)
+  const modifiers = num(raw.modifiers)
+  switch (raw.type) {
+    case 'move':
+      return x === undefined || y === undefined ? undefined : { type: 'move', x, y }
+    case 'click': {
+      const button = raw.button === 'right' || raw.button === 'middle' ? raw.button : 'left'
+      const clickCount = Math.min(3, Math.max(1, num(raw.clickCount) ?? 1))
+      return x === undefined || y === undefined ? undefined : { type: 'click', x, y, button, clickCount, modifiers }
+    }
+    case 'wheel': {
+      const deltaX = num(raw.deltaX) ?? 0
+      const deltaY = num(raw.deltaY) ?? 0
+      return x === undefined || y === undefined ? undefined : { type: 'wheel', x, y, deltaX, deltaY }
+    }
+    case 'text': {
+      const text = str(raw.text, 10_000)
+      return text ? { type: 'text', text } : undefined
+    }
+    case 'back':
+    case 'forward':
+    case 'reload':
+      return { type: raw.type }
+    case 'navigate': {
+      // ⛔ Só http(s): nada de `javascript:`, `file:` ou `chrome:` pela barra.
+      const url = str(raw.url, 4000)?.trim()
+      if (!url) return undefined
+      const full = /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : `https://${url}`
+      return /^https?:\/\//i.test(full) ? { type: 'navigate', url: full } : undefined
+    }
+    case 'key': {
+      const key = str(raw.key)
+      return key ? { type: 'key', key, code: str(raw.code), keyCode: num(raw.keyCode), text: str(raw.text, 4), modifiers } : undefined
+    }
+    default:
+      return undefined
+  }
+}
+
 function gaveUp(res: Response): boolean {
   return res.destroyed === true
 }
@@ -363,6 +409,10 @@ export class AgentController {
     this.getSharedConversation = this.getSharedConversation.bind(this)
     this.conversationEvents = this.conversationEvents.bind(this)
     this.sessionLive = this.sessionLive.bind(this)
+    this.sessionBrowser = this.sessionBrowser.bind(this)
+    this.browserViewport = this.browserViewport.bind(this)
+    this.browserInput = this.browserInput.bind(this)
+    this.browserInspect = this.browserInspect.bind(this)
     this.followTurn = this.followTurn.bind(this)
     this.getAgent = this.getAgent.bind(this)
     this.createAgent = this.createAgent.bind(this)
@@ -1741,6 +1791,100 @@ export class AgentController {
         this.releaseStream(key)
       },
     )
+  }
+
+  /**
+   * `GET /sessions/:id/browser` — 👁️ a tela do navegador da conversa AO VIVO (SSE): `browser.state` (`live`: aberto ou
+   * não) e `browser.frame` (JPEG em base64, com o endereço). Abre antes do navegador e espera ele aparecer.
+   *
+   * ⛔ Dono ou administrador (404 aos demais), como o `/live`, e o mesmo teto de streams por conta.
+   */
+  async sessionBrowser(req: Request, res: Response) {
+    const sessionId = req.params.id as string
+    let key: string
+    try {
+      key = ownerOf(await this.requireLiveAccess(sessionId))?.id ?? ''
+    } catch (error: unknown) {
+      return this.sendFailure(res, error, '[AgentController.sessionBrowser]')
+    }
+    if (gaveUp(res)) return
+    if (!this.holdStream(key)) return this.sendFailure(res, new HttpError(429, 'rate_limited', 'Too many open event streams'), '[AgentController.sessionBrowser]')
+
+    const stream = new SseStream(res)
+    stream.open()
+    stream.comment('ready')
+    const unwatch = liveBrowsers().watch(sessionId, (event) =>
+      event.type === 'frame' ? stream.emit('browser.frame', event.frame) : stream.emit('browser.state', { live: event.live }),
+    )
+
+    this.guardStream(
+      res,
+      stream,
+      async () => void (await this.requireLiveAccess(sessionId)),
+      () => {
+        unwatch()
+        this.releaseStream(key)
+      },
+    )
+  }
+
+  /** ⛔ Mexer no navegador é só do DONO da conversa (o admin que abre a conversa de outro só olha). 404 aos demais. */
+  private async requireOwnBrowser(sessionId: string): Promise<LiveBrowser> {
+    const resolved = await this.requireCaller()
+    let metadata: Record<string, unknown> | undefined
+    try {
+      metadata = (await this.usecases.getSession.execute(sessionId)).metadata
+    } catch {
+      metadata = (await this.usecases.conversations.findSession(sessionId).catch(() => undefined))?.metadata
+    }
+    if (!metadata || !this.ownsConversation(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    const browser = liveBrowsers().get(sessionId)
+    if (!browser) throw new HttpError(409, 'browser_closed', 'The browser of this conversation is not open')
+    return browser
+  }
+
+  /** `POST /sessions/:id/browser/viewport` — o tamanho da gaveta (`width`, `height`, `scale`): a aba renderiza nele enquanto alguém olha. */
+  async browserViewport(req: Request, res: Response) {
+    try {
+      const body = (req.body ?? {}) as { width?: unknown; height?: unknown; scale?: unknown }
+      const int = (value: unknown, min: number, max: number) => (typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : undefined)
+      const width = int(body.width, 240, 2560)
+      const height = int(body.height, 240, 2560)
+      const scale = typeof body.scale === 'number' && Number.isFinite(body.scale) ? Math.min(3, Math.max(1, body.scale)) : 1
+      if (!width || !height) throw new HttpError(422, 'validation_error', 'width and height are required numbers')
+      const browser = await this.requireOwnBrowser(req.params.id as string)
+      await browser.setViewport({ width, height, scale })
+      res.json(ok({ width, height, scale }))
+    } catch (error: unknown) {
+      this.sendFailure(res, error, '[AgentController.browserViewport]')
+    }
+  }
+
+  /** `POST /sessions/:id/browser/input` — 🖱️ clique, rolagem, tecla ou texto da pessoa na aba (ver `TLiveBrowserInput`). */
+  async browserInput(req: Request, res: Response) {
+    try {
+      const event = parseBrowserInput(req.body)
+      if (!event) throw new HttpError(422, 'validation_error', 'Invalid browser input')
+      const browser = await this.requireOwnBrowser(req.params.id as string)
+      await browser.input(event)
+      res.json(ok({ done: true }))
+    } catch (error: unknown) {
+      this.sendFailure(res, error, '[AgentController.browserInput]')
+    }
+  }
+
+  /** `POST /sessions/:id/browser/inspect` — 🎯 o elemento em `x`, `y` (a seta da barra do navegador). */
+  async browserInspect(req: Request, res: Response) {
+    try {
+      const body = (req.body ?? {}) as { x?: unknown; y?: unknown }
+      if (typeof body.x !== 'number' || typeof body.y !== 'number' || !Number.isFinite(body.x) || !Number.isFinite(body.y)) {
+        throw new HttpError(422, 'validation_error', 'x and y are required numbers')
+      }
+      const browser = await this.requireOwnBrowser(req.params.id as string)
+      res.json(ok({ element: (await browser.inspect(body.x, body.y)) ?? null }))
+    } catch (error: unknown) {
+      this.sendFailure(res, error, '[AgentController.browserInspect]')
+    }
   }
 
   /** Para de acompanhar o turno ao vivo no stream da caixa de entrada. */
