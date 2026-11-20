@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { DELIVERED_FILE_MAX_BYTES, DELIVERED_FILES_PER_CONVERSATION, deliveredNote, fileName, IConversationFile } from '@domain/models/ConversationFile.Model'
 import type { IProviderConnection } from '@domain/models/Provider.Model'
 import { GENERATE_IMAGE_TOOL } from '@domain/models/Image.Model'
-import { generateImage, IMAGE_SIZES, type TImageSize } from '@infra/images/Image.Generator'
+import { generateImage, IMAGE_SIZES, type IImageTokens, type TImageSize } from '@infra/images/Image.Generator'
 import type { IFileDeliveries } from './File.Tools'
 import type { ILocalTool, IToolResult } from './Tool.Types'
 
@@ -14,6 +14,11 @@ export interface IImageSetup {
   current(): Promise<{ connection: IProviderConnection; model: string } | string | undefined>
   /** 🔐 O projeto da conversa pode usar este modelo (ver `ModelAccess.Policy`)? */
   allows?(projectId: string | undefined, provider: string, model: string): boolean
+  /**
+   * 📊 Anota o uso de uma imagem gerada (ver `ImageUsage.Model`): quem é o dono da conversa a fábrica descobre pela sessão.
+   * Chamada UMA vez por imagem entregue; uma falha aqui nunca quebra a ferramenta.
+   */
+  record?(sessionId: string, entry: { agentId?: string; projectId?: string; provider: string; model: string; usage?: IImageTokens }): void | Promise<void>
 }
 
 const fail = (result: string): IToolResult => ({ status: 'error', result })
@@ -71,6 +76,17 @@ export function generateImageTool(deliveries: IFileDeliveries, setup: IImageSetu
           createdAt: new Date(),
         }
         await deliveries.saveFile(file, image.data)
+        try {
+          await setup.record?.(sessionId, {
+            ...(context?.agentId ? { agentId: context.agentId } : {}),
+            ...(project ? { projectId: project } : {}),
+            provider: configured.connection.providerId,
+            model: configured.model,
+            ...(image.usage ? { usage: image.usage } : {}),
+          })
+        } catch (error: unknown) {
+          console.warn('[generate_image] could not record the image usage:', error instanceof Error ? error.message : error)
+        }
         return { status: 'success', result: deliveredNote(file) }
       } catch (error: unknown) {
         return fail(`Could not generate the image: ${error instanceof Error ? error.message : String(error)}`)

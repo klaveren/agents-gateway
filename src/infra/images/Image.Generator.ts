@@ -12,6 +12,31 @@ import type { IProviderConnection } from '@domain/models/Provider.Model'
 export interface IGeneratedImage {
   data: Buffer
   mime: string
+  /** Os tokens que o provider informou (cada protocolo os chama de um jeito); ausente = não informou. */
+  usage?: IImageTokens
+}
+
+export interface IImageTokens {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+}
+
+/** Os tokens do provider, em qualquer dos nomes (OpenAI `input_tokens`, OpenRouter `prompt_tokens`, Gemini `promptTokenCount`). */
+function tokensOf(usage: Record<string, unknown> | undefined): IImageTokens | undefined {
+  if (!usage || typeof usage !== 'object') return undefined
+  const count = (...names: string[]) => {
+    for (const name of names) {
+      const value = usage[name]
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return Math.round(value)
+    }
+    return undefined
+  }
+  const inputTokens = count('input_tokens', 'prompt_tokens', 'promptTokenCount')
+  const outputTokens = count('output_tokens', 'completion_tokens', 'candidatesTokenCount')
+  const totalTokens = count('total_tokens', 'totalTokenCount')
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) return undefined
+  return { inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0, totalTokens: totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0) }
 }
 
 export const IMAGE_SIZES = ['1024x1024', '1536x1024', '1024x1536'] as const
@@ -42,11 +67,12 @@ async function openai(base: string, key: string, model: string, prompt: string, 
     signal: AbortSignal.timeout(TIMEOUT_MS),
     redirect: 'error',
   })
-  const body = (await response.json().catch(() => undefined)) as { data?: Array<{ b64_json?: string }>; error?: { message?: string } } | undefined
+  const body = (await response.json().catch(() => undefined)) as { data?: Array<{ b64_json?: string }>; usage?: Record<string, unknown>; error?: { message?: string } } | undefined
   if (!response.ok) throw new Error(clean(body?.error?.message ?? `HTTP ${response.status}`, key))
   const encoded = body?.data?.[0]?.b64_json
   if (!encoded) throw new Error('the provider answered without an image')
-  return { data: Buffer.from(encoded, 'base64'), mime: 'image/png' }
+  const usage = tokensOf(body?.usage)
+  return { data: Buffer.from(encoded, 'base64'), mime: 'image/png', ...(usage ? { usage } : {}) }
 }
 
 /** Compatível (OpenRouter): a imagem vem em `message.images[].image_url.url`, como data URL. Só data URL: nada se baixa de fora. */
@@ -59,12 +85,13 @@ async function chat(base: string, key: string, model: string, prompt: string, fe
     redirect: 'error',
   })
   type TImage = { image_url?: { url?: string } }
-  const body = (await response.json().catch(() => undefined)) as { choices?: Array<{ message?: { images?: TImage[] } }>; error?: { message?: string } } | undefined
+  const body = (await response.json().catch(() => undefined)) as { choices?: Array<{ message?: { images?: TImage[] } }>; usage?: Record<string, unknown>; error?: { message?: string } } | undefined
   if (!response.ok) throw new Error(clean(body?.error?.message ?? `HTTP ${response.status}`, key))
   const url = body?.choices?.[0]?.message?.images?.find((item) => item.image_url?.url)?.image_url?.url ?? ''
   const match = /^data:(image\/[\w.+-]+);base64,(.+)$/s.exec(url)
   if (!match) throw new Error('the model answered without an image (is it an image model?)')
-  return { data: Buffer.from(match[2], 'base64'), mime: match[1] }
+  const usage = tokensOf(body?.usage)
+  return { data: Buffer.from(match[2], 'base64'), mime: match[1], ...(usage ? { usage } : {}) }
 }
 
 async function google(key: string, model: string, prompt: string, fetcher: typeof fetch): Promise<IGeneratedImage> {
@@ -76,11 +103,12 @@ async function google(key: string, model: string, prompt: string, fetcher: typeo
     redirect: 'error',
   })
   type TPart = { inlineData?: { data?: string; mimeType?: string } }
-  const body = (await response.json().catch(() => undefined)) as { candidates?: Array<{ content?: { parts?: TPart[] } }>; error?: { message?: string } } | undefined
+  const body = (await response.json().catch(() => undefined)) as { candidates?: Array<{ content?: { parts?: TPart[] } }>; usageMetadata?: Record<string, unknown>; error?: { message?: string } } | undefined
   if (!response.ok) throw new Error(clean(body?.error?.message ?? `HTTP ${response.status}`, key))
   const part = body?.candidates?.[0]?.content?.parts?.find((item) => item.inlineData?.data)
   if (!part?.inlineData?.data) throw new Error('the model answered without an image (is it an image model?)')
-  return { data: Buffer.from(part.inlineData.data, 'base64'), mime: part.inlineData.mimeType || 'image/png' }
+  const usage = tokensOf(body?.usageMetadata)
+  return { data: Buffer.from(part.inlineData.data, 'base64'), mime: part.inlineData.mimeType || 'image/png', ...(usage ? { usage } : {}) }
 }
 
 /** A mensagem do provider sem a chave (alguns a repetem no erro). */

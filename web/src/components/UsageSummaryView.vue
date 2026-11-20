@@ -22,9 +22,12 @@
     const max = Math.max(1, ...list.map((other) => other.usage.totalTokens))
     return `${Math.max(2, (item.usage.totalTokens / max) * 100)}%`
   }
-  // A voz das mensagens entra no uso como um "agente" (ver `SpeechUsage.Model`); a "conversa" dela não abre.
+  // A voz das mensagens entra no uso como um "agente" (ver `SpeechUsage.Model`); a imagem, sob o agente que a pediu (ou "Imagens",
+  // sem agente: `ImageUsage.Model`). A "conversa" dessas linhas (id `speech:`/`image:`) não abre.
   const VOICE_AGENT = 'voice-messages'
-  const agentName = (id: string) => (id === VOICE_AGENT ? 'Voz (mensagens)' : (agents.byId.get(id)?.name ?? coreAgentName(id) ?? id))
+  const IMAGE_AGENT = 'image-generation'
+  const isMediaRow = (id: string) => id.startsWith('speech:') || id.startsWith('image:')
+  const agentName = (id: string) => (id === VOICE_AGENT ? 'Voz (mensagens)' : id === IMAGE_AGENT ? 'Imagens' : (agents.byId.get(id)?.name ?? coreAgentName(id) ?? id))
   const tools = computed(() => props.summary.byTool ?? [])
   const toolMax = computed(() => Math.max(1, ...tools.value.map((item) => item.directTokens + item.contextTokens)))
   const toolWidth = (value: number) => `${(value / toolMax.value) * 100}%`
@@ -171,7 +174,7 @@
         <h2 class="card-title">Conversas que mais usaram</h2>
         <ul class="divide-y divide-zinc-800">
           <li v-for="item in topPage.items.value" :key="item.id" class="flex items-center gap-3 py-2 text-sm">
-            <span v-if="item.agentId === VOICE_AGENT" class="min-w-0 flex-1 truncate text-zinc-200">{{ item.title }}</span>
+            <span v-if="isMediaRow(item.id)" class="min-w-0 flex-1 truncate text-zinc-200">{{ item.title }}</span>
             <RouterLink v-else :to="`/c/${item.id}`" class="min-w-0 flex-1 truncate text-zinc-200 hover:text-emerald-300">{{ item.title || 'Conversa sem título' }}</RouterLink>
             <span class="shrink-0 text-xs text-zinc-500">{{ agentName(item.agentId) }}</span>
             <span class="w-24 shrink-0 text-right text-xs text-zinc-400">

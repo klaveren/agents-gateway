@@ -13,6 +13,7 @@ import { GetSessionUseCase } from '@application/GetSession.Usecase'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { UsageCapService } from '@application/UsageCap.Service'
+import { mediaUsageRowsOf } from './MediaUsage.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
 import { InMemoryConversationEvents } from '@infra/events/InMemory.ConversationEvents'
 import { TurnLive } from '@infra/events/Turn.Live'
@@ -52,7 +53,8 @@ export function makeUsecases() {
   const createSession = new CreateSessionUseCase(agentProvider)
   // O teto de uso do mês: as linhas da tela Uso, precificadas pelo catálogo na hora (o catálogo lê os agentes ao nascer).
   const usageCap = new UsageCapService(
-    (query) => conversations.usage(query),
+    // 🎞️ O teto conta também a voz e as imagens (as mesmas linhas da tela Uso), não só as conversas.
+    async (query) => [...(await conversations.usage(query)), ...mediaUsageRowsOf(query)],
     (provider) => makeModelCatalog().pricing(provider),
     undefined,
     undefined,
