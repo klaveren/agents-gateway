@@ -1,4 +1,5 @@
 import { LiveBrowser, liveBrowsers, TLiveBrowserInput } from '@infra/mcp/LiveBrowser.Adapter'
+import { PersonBrowsers } from '@infra/mcp/PersonBrowsers.Service'
 import { NOTIFY_TOOL } from '@domain/models/PersonMessage.Model'
 import type { PersonMessagesService } from '@application/PersonMessages.Service'
 import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
@@ -149,6 +150,8 @@ const STARTED_AT = Date.now()
 const hostApprovalSchema = z.object({ approve: z.boolean(), password: z.string().min(1).max(512).optional() })
 
 export interface IAgentControllerDeps {
+  /** O navegador que a pessoa abre pela tela; sem ele, o padrão (o Chromium do Playwright MCP ou do sistema). */
+  personBrowsers?: PersonBrowsers
   /** Injetado, e não buscado no singleton da composição: é o que torna o controller testável sem rede. */
   catalog: ToolCatalog
   createSession: CreateSessionUseCase
@@ -463,6 +466,8 @@ export class AgentController {
     this.browserViewport = this.browserViewport.bind(this)
     this.browserInput = this.browserInput.bind(this)
     this.browserInspect = this.browserInspect.bind(this)
+    this.browserOpen = this.browserOpen.bind(this)
+    this.browserClose = this.browserClose.bind(this)
     this.followTurn = this.followTurn.bind(this)
     this.getAgent = this.getAgent.bind(this)
     this.createAgent = this.createAgent.bind(this)
@@ -1896,6 +1901,51 @@ export class AgentController {
     )
   }
 
+  private personBrowsersOwn?: PersonBrowsers
+
+  private personBrowsers(): PersonBrowsers {
+    return (this.personBrowsersOwn ??= this.usecases.personBrowsers ?? new PersonBrowsers({ resolve: () => this.usecases.catalog.mcp.browserLaunch() }))
+  }
+
+  /** ⛔ Só o DONO da conversa mexe no navegador dela (404 aos demais), com ou sem navegador aberto. */
+  private async requireBrowserOwner(sessionId: string): Promise<void> {
+    const resolved = await this.requireCaller()
+    let metadata: Record<string, unknown> | undefined
+    try {
+      metadata = (await this.usecases.getSession.execute(sessionId)).metadata
+    } catch {
+      metadata = (await this.usecases.conversations.findSession(sessionId).catch(() => undefined))?.metadata
+    }
+    if (!metadata || !this.ownsConversation(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+  }
+
+  /**
+   * `POST /sessions/:id/browser/open` — 🙋 a PESSOA abre o navegador da conversa (para entrar num site), sem esperar o
+   * agente usar o Playwright; o agente usa depois este mesmo navegador. Com navegador já aberto, só leva ao `url`.
+   */
+  async browserOpen(req: Request, res: Response) {
+    try {
+      const id = req.params.id as string
+      await this.requireBrowserOwner(id)
+      await this.personBrowsers().open(id, ((req.body ?? {}) as { url?: unknown }).url)
+      res.json(ok({ live: true }))
+    } catch (error: unknown) {
+      this.sendFailure(res, error, '[AgentController.browserOpen]')
+    }
+  }
+
+  /** `POST /sessions/:id/browser/close` — fecha o navegador que a pessoa abriu (409 se o agente está usando). */
+  async browserClose(req: Request, res: Response) {
+    try {
+      const id = req.params.id as string
+      await this.requireBrowserOwner(id)
+      await this.personBrowsers().close(id)
+      res.json(ok({ live: false }))
+    } catch (error: unknown) {
+      this.sendFailure(res, error, '[AgentController.browserClose]')
+    }
+  }
+
   /** ⛔ Mexer no navegador é só do DONO da conversa (o admin que abre a conversa de outro só olha). 404 aos demais. */
   private async requireOwnBrowser(sessionId: string): Promise<LiveBrowser> {
     const resolved = await this.requireCaller()
@@ -2625,6 +2675,7 @@ export class AgentController {
         const { resolved } = await this.requireConversationAccess(id)
 
         await this.usecases.conversations.deleteSession(id, resolved.identity?.email ?? resolved.identity?.id)
+        void this.personBrowsers().closeFor(id)
         return null
       },
       { message: 'Conversation deleted' },
@@ -2662,6 +2713,7 @@ export class AgentController {
         await this.usecases.deleteSession.execute(id)
         // Os processos em segundo plano da conversa vão junto.
         this.usecases.sessionEnded?.(id)
+        void this.personBrowsers().closeFor(id)
         return null
       },
       { message: 'Session deleted successfully' },

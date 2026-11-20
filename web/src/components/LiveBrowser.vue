@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import Icon from './Icon.vue'
-  import { api, openStream } from '@/lib/api'
+  import { api, ApiError, openStream } from '@/lib/api'
   import { isControlKey, keyCodeOf } from '@/lib/keyCodes'
   import { readSse } from '@/lib/sse'
   import '@/styles/monokai.css'
@@ -130,10 +130,41 @@
       if (!editing.value) address.value = url ?? ''
     },
   )
+  /** Sem esquema, https (o gateway confere de novo). */
+  const normalize = (raw: string) => (/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`)
+
+  // 🙋 Sem navegador aberto, a PESSOA abre o dela (para entrar num site); o agente usa este mesmo depois.
+  const opening = ref(false)
+  const openError = ref<string>()
+  async function openBrowser(url?: string) {
+    if (!props.interactive || opening.value) return
+    opening.value = true
+    openError.value = undefined
+    try {
+      await api(`${base()}/open`, { method: 'POST', body: url ? { url } : {} })
+    } catch (failure) {
+      const code = failure instanceof ApiError ? failure.code : undefined
+      openError.value =
+        code === 'browser_unavailable'
+          ? 'Este servidor não tem um navegador instalado.'
+          : code === 'browser_disabled'
+            ? 'O navegador está desligado neste servidor.'
+            : code === 'url_blocked'
+              ? 'Este endereço não abre no navegador.'
+              : failure instanceof Error
+                ? failure.message
+                : 'Não foi possível abrir o navegador.'
+    } finally {
+      opening.value = false
+    }
+  }
+
   function go() {
     const url = address.value.trim()
     editing.value = false
-    if (url) send({ type: 'navigate', url })
+    if (!url) return
+    if (live.value) send({ type: 'navigate', url })
+    else void openBrowser(normalize(url))
   }
 
   // 🎯 A seta: passar o mouse destaca o elemento; o clique o manda para a conversa.
@@ -315,8 +346,8 @@
         spellcheck="false"
         autocomplete="off"
         class="h-8 min-w-0 flex-1 rounded-full bg-zinc-900 px-3 text-center font-mono text-xs text-zinc-300 outline-none focus:bg-zinc-800 focus:text-left"
-        :readonly="!interactive || !live"
-        placeholder="endereço"
+        :readonly="!interactive"
+        :placeholder="interactive && !live ? 'Digite um endereço para abrir o navegador' : 'endereço'"
         data-test="live-browser-url"
         @focus="((editing = true), ($event.target as HTMLInputElement).select())"
         @blur="((editing = false), (address = frame?.url ?? ''))"
@@ -371,9 +402,29 @@
       <span v-if="frame && live === false" class="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-zinc-900/90 px-3 py-1 text-xs text-zinc-400">
         O navegador fechou: esta é a última tela.
       </span>
+      <span
+        v-if="openError && frame"
+        class="absolute top-2 left-1/2 -translate-x-1/2 rounded-full bg-red-500/90 px-3 py-1 text-xs text-zinc-950"
+        data-test="live-browser-open-error"
+      >
+        {{ openError }}
+      </span>
       <span v-if="picking" class="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-emerald-500/90 px-3 py-1 text-xs text-zinc-950">
         Clique num elemento · Esc cancela
       </span>
+      <div v-else-if="!frame && interactive && !live" class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center" data-test="live-browser-empty">
+        <button
+          type="button"
+          class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
+          :disabled="opening"
+          data-test="live-browser-open"
+          @click="openBrowser()"
+        >
+          Abrir navegador
+        </button>
+        <p class="max-w-xs text-sm text-zinc-500">Você pode entrar nos sites aqui; o agente usa este mesmo navegador, já logado.</p>
+        <p v-if="openError" class="max-w-xs text-xs text-red-400" data-test="live-browser-open-error">{{ openError }}</p>
+      </div>
       <p v-else-if="!frame" class="p-6 text-center text-sm text-zinc-500">
         {{ error ?? (live ? 'Esperando a primeira imagem…' : 'O navegador aparece aqui quando o agente abrir uma página.') }}
       </p>

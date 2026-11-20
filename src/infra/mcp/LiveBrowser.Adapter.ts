@@ -2,7 +2,7 @@ import { ChildProcess, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 
 /** Um quadro da tela: JPEG em base64, com a página que ele mostra. */
 export interface ILiveBrowserFrame {
@@ -147,6 +147,22 @@ export function chromiumExecutable(installDir: string, env: NodeJS.ProcessEnv): 
 }
 
 /**
+ * Um Chromium do sistema, para quando o Playwright MCP não está instalado (a imagem Docker traz o `chromium` do apt; no
+ * Mac, o Chrome). `undefined`: nenhum.
+ */
+export function systemChromium(env: NodeJS.ProcessEnv = process.env, exists: (path: string) => boolean = existsSync): string | undefined {
+  const names = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable']
+  for (const dir of (env.PATH ?? '').split(delimiter).filter(Boolean)) for (const name of names) if (exists(join(dir, name))) return join(dir, name)
+  const fixed = [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  ]
+  return fixed.find((path) => exists(path))
+}
+
+/**
  * 👁️ O NAVEGADOR DE UMA CONVERSA, QUE A TELA PODE VER: o gateway abre o Chromium (headless, CDP numa porta local), o
  * Playwright MCP se liga nele por `--cdp-endpoint`, e a tela recebe os quadros (`Page.startScreencast`) da aba em uso.
  *
@@ -164,13 +180,20 @@ export class LiveBrowser {
   private last?: ILiveBrowserFrame
   private viewport?: ILiveBrowserViewport
   private closed = false
+  private readonly closeHooks: Array<() => void> = []
+  /** 🙋 Aberto pela PESSOA (a tela), não pelo MCP: só ele fecha por ociosidade e pelo botão. */
+  person = false
+  /** Quantos MCPs usam este navegador agora (o que o gateway abriu para o agente conta um). */
+  leases = 0
+  /** Quando alguém (tela ou MCP) largou ou usou o navegador pela última vez: a conta da ociosidade. */
+  touchedAt = Date.now()
 
   private constructor(
     private readonly child: ChildProcess,
     readonly endpoint: string,
   ) {}
 
-  static async launch(options: { executable: string; userDataDir: string; noSandbox?: boolean; env?: NodeJS.ProcessEnv }): Promise<LiveBrowser> {
+  static async launch(options: { executable: string; userDataDir: string; noSandbox?: boolean; env?: NodeJS.ProcessEnv; url?: string }): Promise<LiveBrowser> {
     mkdirSync(options.userDataDir, { recursive: true, mode: 0o700 })
     const args = [
       '--headless=new',
@@ -182,7 +205,7 @@ export class LiveBrowser {
       '--disable-features=Translate,MediaRouter',
       '--window-size=1280,900',
       ...(options.noSandbox ? ['--no-sandbox'] : []),
-      'about:blank',
+      options.url ?? 'about:blank',
     ]
     const child = spawn(options.executable, args, { env: options.env, stdio: 'ignore' })
     const portFile = join(options.userDataDir, 'DevToolsActivePort')
@@ -331,6 +354,7 @@ export class LiveBrowser {
 
   /** 🖱️ O clique, a rolagem e o teclado da pessoa, na aba que a tela mostra. */
   async input(event: TLiveBrowserInput): Promise<void> {
+    this.touchedAt = Date.now()
     // As abas não dependem da aba à mostra.
     if (event.type === 'tab-select') {
       if (!this.pages.has(event.targetId)) throw new Error('tab not found')
@@ -407,11 +431,13 @@ export class LiveBrowser {
 
   watch(listener: TLiveBrowserListener): () => void {
     this.listeners.add(listener)
+    this.touchedAt = Date.now()
     listener({ type: 'tabs', ...this.tabs() })
     if (this.last) listener({ type: 'frame', frame: this.last })
     void this.restream()
     return () => {
       this.listeners.delete(listener)
+      this.touchedAt = Date.now()
       if (!this.listeners.size) this.viewport = undefined
       void this.restream()
     }
@@ -421,12 +447,51 @@ export class LiveBrowser {
     return !this.closed
   }
 
+  /** Quantas telas olham agora. */
+  get watchers(): number {
+    return this.listeners.size
+  }
+
+  /** O MCP passa a usar este navegador (adoção) ou larga. */
+  lease(): void {
+    this.leases += 1
+    this.touchedAt = Date.now()
+  }
+
+  release(): void {
+    this.leases = Math.max(0, this.leases - 1)
+    this.touchedAt = Date.now()
+  }
+
+  /** Roda quando o navegador fecha (qualquer motivo). */
+  onClosed(hook: () => void): void {
+    if (this.closed) hook()
+    else this.closeHooks.push(hook)
+  }
+
+  /**
+   * Leva a aba ao endereço. ⚖️ Com a tela ligada, na aba à mostra; sem ela não há sessão na aba, então abre uma aba
+   * nova (que vira a em uso).
+   */
+  async navigate(url: string): Promise<void> {
+    this.touchedAt = Date.now()
+    if (this.attached) return this.input({ type: 'navigate', url })
+    await this.send('Target.createTarget', { url })
+  }
+
   private dispose(): void {
     if (this.closed) return
     this.closed = true
     for (const call of this.calls.values()) call.reject(new Error('browser closed'))
     this.calls.clear()
     for (const listener of this.listeners) listener({ type: 'state', live: false })
+    for (const hook of this.closeHooks.splice(0)) {
+      try {
+        hook()
+      } catch {
+        // o gancho de limpeza não derruba o fechamento
+      }
+    }
   }
 
   async close(): Promise<void> {
