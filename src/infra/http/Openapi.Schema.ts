@@ -445,6 +445,9 @@ const settingsSchema = {
       description:
         'Model of the next-step suggestion — an enabled model of `suggestProvider`. At the end of a turn the person sent from the screen, one short sentence with the message they would probably send next (`suggestion` on the turn, `turn.suggestion` on the live streams).',
     },
+    speechProvider: { type: 'string', description: 'Provider of the voice (text to speech): enabled, OpenAI protocol, with an API key. Together with `speechModel`; absent = no voice.' },
+    speechModel: { type: 'string', description: 'Voice model, free text (they are rarely in the catalog), e.g. `qwen-audio-3.0-tts-plus` (Alibaba) or `gpt-4o-mini-tts` (OpenAI).' },
+    speechVoice: { type: 'string', description: 'Default voice of the engine, used when the person picked none. Required by Alibaba models; OpenAI falls back to `alloy`.' },
     classifierProvider: { type: 'string', description: 'Provider of the classifier model. Absent: inferred from the model id (official providers only).' },
     builderProvider: { type: 'string', description: 'Provider of the builder (the core agent that drafts skills and commands). Absent: the one of Atlas.' },
     builderModel: { type: 'string', description: 'Model of the builder — an enabled model of `builderProvider`. Absent: the one of Atlas.' },
@@ -494,6 +497,18 @@ const settingsResult = {
       },
     },
   ],
+}
+
+const voiceSchema = {
+  type: 'object',
+  properties: {
+    enabled: { type: 'boolean', description: 'Read the messages aloud. Default false.' },
+    voice: { type: 'string', description: 'The person’s voice; absent = the engine default.' },
+    rate: { type: 'number', minimum: 0.5, maximum: 2, description: 'Default 1.' },
+    minLevel: { type: 'string', enum: ['info', 'attention', 'urgent'], description: 'Read from this level up. Default `info`.' },
+    engine: { type: 'object', properties: { available: { type: 'boolean' }, defaultVoice: { type: 'string' } }, required: ['available'] },
+  },
+  required: ['enabled', 'rate', 'minLevel', 'engine'],
 }
 
 const nullableText = { type: ['string', 'null'], description: 'Absent leaves it untouched. `null` (or an empty string) deletes it and reverts to the default.' }
@@ -6005,6 +6020,56 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/messages/{conversationId}/{messageId}/speech': {
+      get: {
+        summary:
+          'The audio of one message of the signed-in person (title and body as speech), with their voice and rate. `Content-Type: audio/mpeg`, `Cache-Control: private, max-age=86400`. 404 when the message is not in their thread; 409 `speech_unavailable` without a voice engine (Settings); 502 `speech_failed` when the engine fails',
+        parameters: [
+          { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'messageId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'The audio bytes', content: { 'audio/mpeg': { schema: { type: 'string', format: 'binary' } } } },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'Code `speech_unavailable`', content: { 'application/json': { schema: failureEnvelope } } },
+          '502': { description: 'Code `speech_failed`', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/me/voice': {
+      get: {
+        summary: 'The voice preferences of the signed-in person and whether the engine is configured',
+        responses: { '200': { description: 'OK', ...json(envelope(voiceSchema)) }, '401': failures['401'] },
+      },
+      put: {
+        summary: 'Partial update of the voice preferences (`voice: null` returns to the default voice); answers like GET',
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: {
+              enabled: { type: 'boolean' },
+              voice: { type: ['string', 'null'], maxLength: 80 },
+              rate: { type: 'number', minimum: 0.5, maximum: 2 },
+              minLevel: { type: 'string', enum: ['info', 'attention', 'urgent'] },
+            },
+          }),
+        },
+        responses: { '200': { description: 'OK', ...json(envelope(voiceSchema)) }, '401': failures['401'], '422': failures['422'] },
+      },
+    },
+    '/me/voice/sample': {
+      get: {
+        summary: 'A short fixed Portuguese phrase spoken with the caller’s voice and rate, to test them. Same 409 / 502 rules as the message audio',
+        responses: {
+          '200': { description: 'The audio bytes', content: { 'audio/mpeg': { schema: { type: 'string', format: 'binary' } } } },
+          '401': failures['401'],
+          '409': { description: 'Code `speech_unavailable`', content: { 'application/json': { schema: failureEnvelope } } },
+          '502': { description: 'Code `speech_failed`', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
     '/messages/{conversationId}/read': {
       post: {
         summary: 'Marks a thread of the signed-in person as read; returns the unread count',
@@ -6352,6 +6417,9 @@ export const OPENAPI_DOCUMENT = {
                   classifierProvider: nullableText,
                   suggestProvider: nullableText,
                   suggestModel: nullableText,
+                  speechProvider: nullableText,
+                  speechModel: nullableText,
+                  speechVoice: nullableText,
                   builderProvider: nullableText,
                   builderModel: nullableText,
                   classifyTurns: { type: ['boolean', 'null'] },

@@ -1,11 +1,46 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import AccessTokens from '@/components/AccessTokens.vue'
 import { ApiError } from '@/lib/api'
+import type { TVoiceLevel } from '@/lib/speech'
 import { useAuthStore } from '@/stores/auth'
+import { useSpeechStore } from '@/stores/speech'
 
 /** O perfil: o que é da PESSOA (conta, senha, tokens de acesso). O que é do sistema mora em Configuração. */
 const auth = useAuthStore()
+
+const speech = useSpeechStore()
+const voiceError = ref<string>()
+const voiceDraft = ref('')
+const LEVEL_OPTIONS: Array<{ value: TVoiceLevel; label: string }> = [
+  { value: 'info', label: 'Todas' },
+  { value: 'attention', label: 'Atenção e urgentes' },
+  { value: 'urgent', label: 'Só urgentes' },
+]
+
+onMounted(async () => {
+  if (!auth.user) return
+  try {
+    await speech.load()
+    voiceDraft.value = speech.voice?.voice ?? ''
+  } catch {
+    // Sem a voz a seção só não aparece com valores; o resto do perfil segue.
+  }
+})
+
+async function saveVoice(patch: Parameters<typeof speech.save>[0]) {
+  voiceError.value = undefined
+  try {
+    await speech.save(patch)
+  } catch (error) {
+    voiceError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+function testVoice() {
+  voiceError.value = undefined
+  speech.sample()
+}
 
 const currentPassword = ref('')
 const nextPassword = ref('')
@@ -45,6 +80,63 @@ async function changePassword() {
             <div class="min-w-0"><dt class="text-xs text-zinc-500">E-mail</dt><dd class="truncate text-zinc-200">{{ auth.user.email }}</dd></div>
             <div class="min-w-0"><dt class="text-xs text-zinc-500">Papel</dt><dd class="text-zinc-200">{{ auth.user.role === 'admin' ? 'administrador' : 'membro' }}</dd></div>
           </dl>
+        </section>
+
+        <section v-if="speech.voice" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5" data-test="voice-section">
+          <h2 class="font-medium">Voz</h2>
+          <p v-if="!speech.voice.engine.available" class="text-sm text-zinc-500" data-test="voice-unavailable">A voz ainda não foi configurada pelo administrador (Ajustes → Voz).</p>
+          <label class="flex items-center gap-2 text-sm text-zinc-300">
+            <input
+              type="checkbox"
+              class="accent-emerald-500"
+              data-test="voice-enabled"
+              :checked="speech.voice.enabled"
+              :disabled="!speech.voice.engine.available"
+              @change="saveVoice({ enabled: ($event.target as HTMLInputElement).checked })"
+            />
+            Ler minhas mensagens em voz alta
+          </label>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
+              Ler
+              <select
+                class="rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm"
+                data-test="voice-level"
+                :value="speech.voice.minLevel"
+                @change="saveVoice({ minLevel: ($event.target as HTMLSelectElement).value as TVoiceLevel })"
+              >
+                <option v-for="option in LEVEL_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </label>
+            <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
+              Voz
+              <input
+                v-model="voiceDraft"
+                type="text"
+                class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm"
+                data-test="voice-name"
+                :placeholder="speech.voice.engine.defaultVoice ?? 'Voz padrão'"
+                @change="saveVoice({ voice: voiceDraft.trim() || null })"
+              />
+            </label>
+            <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">
+              Velocidade: {{ speech.voice.rate.toFixed(1) }}x
+              <input
+                type="range"
+                min="0.5"
+                max="2"
+                step="0.1"
+                class="accent-emerald-500"
+                data-test="voice-rate"
+                :value="speech.voice.rate"
+                @change="saveVoice({ rate: Number(($event.target as HTMLInputElement).value) })"
+              />
+            </label>
+          </div>
+          <div class="flex items-center gap-3">
+            <button type="button" class="btn btn-secondary" data-test="voice-test" :disabled="!speech.voice.engine.available" @click="testVoice">Testar</button>
+            <span v-if="voiceError" class="text-sm text-rose-300">{{ voiceError }}</span>
+          </div>
         </section>
 
         <section class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
