@@ -107,6 +107,8 @@ const CONTENT_ROUTES: readonly RegExp[] = [
   // Os arquivos de recurso: o conteúdo (base64, até 1 MB) e a lista de um recurso ou agente.
   /^\/v1\/files\/?$/,
   /^\/v1\/(?:resources|agents)\/[^/]+\/files\/?$/,
+  // O editor de arquivos da conversa (até 1 MB de texto).
+  /^\/v1\/sessions\/[^/]+\/files\/?$/,
 ]
 const HOOK_ROUTE = /^\/v1\/hook\/[^/]+\/[^/]+\/?$/
 /** O import do catálogo: o pacote inteiro, em JSON ou `.tar.gz`, com o limite próprio (`CATALOG_IMPORT_LIMIT`). */
@@ -665,6 +667,12 @@ function buildRoutes(
     { method: 'post', path: '/sessions/:id/turns', handler: controller.startTurn },
     { method: 'get', path: '/sessions/:id/turns/:turn', handler: controller.turnStatus },
     { method: 'get', path: '/sessions/:id/changes', handler: controller.changes },
+    { method: 'get', path: '/sessions/:id/files', handler: controller.files },
+    { method: 'put', path: '/sessions/:id/files', handler: controller.saveFile },
+    { method: 'get', path: '/sessions/:id/scm', handler: controller.scm },
+    { method: 'get', path: '/sessions/:id/scm/diff', handler: controller.scmDiff },
+    { method: 'get', path: '/sessions/:id/scm/blame', handler: controller.scmBlame },
+    { method: 'post', path: '/sessions/:id/scm/:action', handler: controller.scmAction },
     { method: 'get', path: '/sessions/:id/watches', handler: controller.listWatches },
     { method: 'get', path: '/sessions/:id/host-approvals', handler: controller.listHostApprovals },
     { method: 'post', path: '/sessions/:id/host-approvals/:approvalId', handler: controller.answerHostApproval },

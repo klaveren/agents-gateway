@@ -97,6 +97,7 @@
     () => {
       browserOpen.value = false
       browserSeen.value = false
+      filesOpen.value = false
     },
   )
   watch(
@@ -122,7 +123,27 @@
   }
   function openBrowser() {
     panelOpen.value = false
+    filesOpen.value = false
+    changesOpen.value = false
     browserOpen.value = true
+  }
+  /** 📁 Os arquivos do repositório da conversa (Monaco): a mesma coluna ao lado, no lugar do navegador. */
+  const RepositoryFiles = defineAsyncComponent(() => import('./RepositoryFiles.vue'))
+  const filesOpen = ref(false)
+  // ⚖️ A mesma largura do navegador: alternar entre um e outro não muda o tamanho da coluna.
+  const filesDrawer = browserDrawer
+  function openFiles() {
+    panelOpen.value = false
+    browserOpen.value = false
+    changesOpen.value = false
+    filesOpen.value = true
+  }
+  /** As Alterações (o diff do que o agente mudou): a mesma coluna, a mesma largura. */
+  function openChanges() {
+    panelOpen.value = false
+    browserOpen.value = false
+    filesOpen.value = false
+    changesOpen.value = true
   }
   /** O Board da conversa: o selo do ícone (itens em aberto) vale com o painel fechado; o painel relê quando abre, quando o turno acaba e quando o agente mexe nele. */
   const panelOpen = ref(false)
@@ -583,9 +604,29 @@
                 data-test="thread-menu-items"
               >
                 <button
+                  v-if="inRepository"
                   role="menuitem"
                   class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
-                  @click="fromMenu(() => ((panelOpen = !panelOpen), (browserOpen = false)))"
+                  @click="fromMenu(openChanges)"
+                >
+                  <Icon name="git" class="h-4 w-4 text-zinc-400" />
+                  Alterações
+                  <span v-if="changesCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ changesCount }}</span>
+                </button>
+                <button
+                  v-if="inRepository && thread.sessionId"
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                  data-test="files-item"
+                  @click="fromMenu(openFiles)"
+                >
+                  <Icon name="folder" class="h-4 w-4 text-zinc-400" />
+                  Arquivos
+                </button>
+                <button
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                  @click="fromMenu(() => ((panelOpen = !panelOpen), (browserOpen = false), (filesOpen = false), (changesOpen = false)))"
                 >
                   <Icon name="panel" class="h-4 w-4 text-zinc-400" />
                   Board
@@ -602,16 +643,7 @@
                   Navegador
                   <span v-if="browserSeen" class="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400" />
                 </button>
-                <button
-                  v-if="inRepository"
-                  role="menuitem"
-                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
-                  @click="fromMenu(() => (changesOpen = true))"
-                >
-                  <Icon name="git" class="h-4 w-4 text-zinc-400" />
-                  Alterações
-                  <span v-if="changesCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ changesCount }}</span>
-                </button>
+                <div role="separator" class="my-1 border-t border-zinc-800" />
                 <button
                   v-if="canCompact"
                   role="menuitem"
@@ -643,6 +675,15 @@
                   <Icon name="copy" class="h-4 w-4" :class="idCopied ? 'text-emerald-400' : 'text-zinc-400'" />
                   {{ idCopied ? 'Copiado' : 'Copiar ID' }}
                 </button>
+                <div role="separator" class="my-1 border-t border-zinc-800" />
+                <button
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 hover:text-rose-300"
+                  @click="fromMenu(() => (confirming = true))"
+                >
+                  <Icon name="trash" class="h-4 w-4 text-zinc-400" />
+                  Apagar
+                </button>
                 <button
                   role="menuitem"
                   class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
@@ -651,14 +692,6 @@
                 >
                   <Icon name="archive" class="h-4 w-4 text-zinc-400" />
                   Arquivar
-                </button>
-                <button
-                  role="menuitem"
-                  class="flex w-full items-center gap-2.5 border-t border-zinc-800 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 hover:text-rose-300"
-                  @click="fromMenu(() => (confirming = true))"
-                >
-                  <Icon name="trash" class="h-4 w-4 text-zinc-400" />
-                  Apagar
                 </button>
               </div>
             </div>
@@ -749,13 +782,6 @@
         </aside>
       </div>
       <TodoPanel v-if="thread.todos.length" :items="thread.todos" />
-      <ChangesPanel
-        v-if="changesOpen && thread.sessionId"
-        :session-id="thread.sessionId"
-        :refresh-key="changesRefresh"
-        @close="changesOpen = false"
-        @count="changesCount = $event"
-      />
       <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
       <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
         <span class="min-w-0 truncate">A conversa foi encerrada. Ao enviar, ela continua de onde parou.</span>
@@ -800,6 +826,36 @@
         @pointerup="browserDrawer.stopDrag"
       />
       <LiveBrowser :session-id="thread.sessionId" :interactive="!thread.readOnly" @close="browserOpen = false" @pick="pickElement" />
+    </aside>
+    <aside
+      v-if="filesOpen && thread.sessionId"
+      class="fixed inset-0 z-40 flex flex-col bg-zinc-950 md:relative md:inset-auto md:z-auto md:w-[var(--files-width)] md:max-w-[calc(100%-22rem)] md:shrink-0 md:border-l md:border-zinc-800"
+      :style="{ '--files-width': `${filesDrawer.width.value}px` }"
+      aria-label="Arquivos do repositório"
+      data-test="files-pane"
+    >
+      <div
+        class="absolute top-0 left-0 z-10 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"
+        @pointerdown="filesDrawer.startDrag"
+        @pointermove="filesDrawer.onDrag"
+        @pointerup="filesDrawer.stopDrag"
+      />
+      <RepositoryFiles :session-id="thread.sessionId" :running="!!thread.pending || !!thread.following" :read-only="thread.readOnly" @close="filesOpen = false" />
+    </aside>
+    <aside
+      v-if="changesOpen && thread.sessionId"
+      class="fixed inset-0 z-40 flex flex-col bg-zinc-950 md:relative md:inset-auto md:z-auto md:w-[var(--changes-width)] md:max-w-[calc(100%-22rem)] md:shrink-0 md:border-l md:border-zinc-800"
+      :style="{ '--changes-width': `${browserDrawer.width.value}px` }"
+      aria-label="Alterações da conversa"
+      data-test="changes-pane"
+    >
+      <div
+        class="absolute top-0 left-0 z-10 hidden h-full w-1.5 cursor-col-resize hover:bg-emerald-500/30 md:block"
+        @pointerdown="browserDrawer.startDrag"
+        @pointermove="browserDrawer.onDrag"
+        @pointerup="browserDrawer.stopDrag"
+      />
+      <ChangesPanel embedded :session-id="thread.sessionId" :refresh-key="changesRefresh" @close="changesOpen = false" @count="changesCount = $event" />
     </aside>
   </div>
 </template>
