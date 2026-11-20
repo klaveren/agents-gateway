@@ -74,6 +74,8 @@ export const useConnectionsStore = defineStore('connections', () => {
 
   /** 🔄 O que atualizou sozinho e a pessoa ainda não viu. */
   const updated = computed(() => list.value.filter((connection) => connection.lastUpdate && !connection.lastUpdate.seen))
+  /** ⚠️ O que a origem mandou e NÃO entrou aqui (a validação local recusou): o aviso conta e diz o motivo. */
+  const withSkipped = computed(() => list.value.filter((connection) => connection.skipped?.length))
 
   /** 🔌 A origem do projeto conectado (o que a faixa mostra), ou nada: o item desse projeto é só leitura aqui. */
   function originOf(projectId: string | undefined): string | undefined {
@@ -175,6 +177,7 @@ export const useConnectionsStore = defineStore('connections', () => {
   }
 
   return {
+    withSkipped,
     list,
     byProject,
     attention,
