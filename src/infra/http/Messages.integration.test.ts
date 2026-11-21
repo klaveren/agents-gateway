@@ -70,8 +70,15 @@ describe('Mensagens (integração)', () => {
       (await call('/messages/gw_da_ana', { token: member })).body.result.messages.map((message: { body: string; from: string }) => [message.from, message.body]),
       [['agent', 'Posso seguir?']],
     )
-    assert.strictEqual((await call('/messages/gw_da_ana/read', { method: 'POST', token: member })).body.result.unread, 0)
-    await call('/messages/gw_da_ana/archive', { method: 'PUT', token: member, body: { archived: true } })
+    // O pedido é o próprio item: ler e arquivar vão pelo id dele.
+    const item = listed.threads[0].id as string
+    assert.strictEqual(listed.threads[0].requestId, item)
+    assert.deepStrictEqual(
+      (await call(`/messages/${item}`, { token: member })).body.result.messages.map((message: { body: string }) => message.body),
+      ['Posso seguir?'],
+    )
+    assert.strictEqual((await call(`/messages/${item}/read`, { method: 'POST', token: member })).body.result.unread, 0)
+    await call(`/messages/${item}/archive`, { method: 'PUT', token: member, body: { archived: true } })
     assert.deepStrictEqual(
       [(await call('/messages', { token: member })).body.result.threads.length, (await call('/messages?archived=1', { token: member })).body.result.threads.length],
       [0, 1],
@@ -95,7 +102,7 @@ describe('Mensagens (integração)', () => {
     await service.send({ sessionId: 'gw_da_ana', agentId: 'zeus', to: 'owner', body: 'Só um aviso' })
     const listed = (await call('/messages?archived=1', { token: member })).body.result
     const all = (await call('/messages', { token: member })).body.result
-    assert.ok(all.pending >= 1 && all.threads[0].pending >= 1 && typeof listed.pending === 'number')
+    assert.ok(all.pending >= 1 && all.threads.some((thread: { pending: number }) => thread.pending >= 1) && typeof listed.pending === 'number')
     const messages = (await call('/messages/gw_da_ana', { token: member })).body.result.messages as Array<{ id: string; status?: string; title?: string; level: string }>
     const asked = messages.find((message) => message.title === 'Pedido novo')!
     const info = messages.find((message) => message.level === 'info' && !message.status)!

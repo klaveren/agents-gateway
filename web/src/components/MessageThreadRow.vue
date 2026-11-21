@@ -18,7 +18,7 @@
     name: string
     provider: string
   }>()
-  const emit = defineEmits<{ archive: [conversationId: string] }>()
+  const emit = defineEmits<{ archive: [key: string] }>()
 
   /** A largura da ação revelada. */
   const ACTIONS_WIDTH = 72
@@ -32,7 +32,7 @@
   const RETURN_MS = 600
 
   const archiveLabel = computed(() => (props.archived ? 'Voltar à caixa' : 'Arquivar'))
-  const id = computed(() => props.thread.conversationId)
+  const id = computed(() => props.thread.id)
   const snippet = (text: string) => text.replace(/\s+/g, ' ').slice(0, 140)
 
   // ── Deslizar para revelar ────────────────────────────────────────────────────────────────────────
@@ -217,7 +217,7 @@
         <Icon name="archive" class="h-3.5 w-3.5" />
       </button>
       <RouterLink
-        :to="`/messages/${thread.conversationId}`"
+        :to="`/messages/${thread.id}`"
         class="flex items-start gap-3 rounded-xl px-2 py-2.5 hover:bg-zinc-900"
         :class="active ? 'bg-zinc-900' : ''"
         draggable="false"

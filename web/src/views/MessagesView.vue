@@ -59,7 +59,6 @@
   /** O nome do pedido: o título ou o começo do texto. */
   const requestLabel = (message: IPersonMessage) => (message.title || message.body.replace(/\s+/g, ' ').trim()).slice(0, 60)
   const replyTarget = ref<string>()
-  const onlyPending = ref(false)
   const composer = ref<HTMLTextAreaElement>()
 
   onMounted(() => {
@@ -72,36 +71,29 @@
 
   const agentName = (id: string) => agents.byId.get(id)?.name ?? id
   const agentProvider = (id: string) => agents.byId.get(id)?.providers?.[0]?.id ?? ''
-  /** As duas guias: o que tem pedido pendente e o que já foi resolvido (nada pendente). */
-  const chosenTab = ref<'pending' | 'resolved'>()
-  const tabOf = (thread: IPersonThread): 'pending' | 'resolved' => (thread.pending > 0 ? 'pending' : 'resolved')
-  const tabCount = computed(() => ({
-    pending: messages.threads.filter((thread) => tabOf(thread) === 'pending').length,
-    resolved: messages.threads.filter((thread) => tabOf(thread) === 'resolved').length,
-  }))
-  /** Sem escolha da pessoa: abre em Pendentes se houver alguma; senão, em Resolvidas. */
-  const tab = computed<'pending' | 'resolved'>({
-    get: () => chosenTab.value ?? (tabCount.value.pending ? 'pending' : 'resolved'),
-    set: (value) => (chosenTab.value = value),
-  })
   const shown = computed(() => {
     const term = search.value.trim().toLowerCase()
-    const inTab = messages.threads.filter((thread) => tabOf(thread) === tab.value)
-    return term ? inTab.filter((thread) => `${agentName(thread.agentId)} ${thread.title ?? ''} ${thread.last.body}`.toLowerCase().includes(term)) : inTab
+    return term ? messages.threads.filter((thread) => `${agentName(thread.agentId)} ${thread.title ?? ''} ${thread.last.body}`.toLowerCase().includes(term)) : messages.threads
   })
-  const current = computed<IPersonThread | undefined>(() => messages.threads.find((thread) => thread.conversationId === props.id))
-  // Abriu um fio pelo aviso ou pelo link: a guia vai para onde ele está (só na troca de fio, não quando o status muda).
+  /** O item aberto (`id` da rota): um pedido ou os avisos de uma conversa. */
+  const current = computed<IPersonThread | undefined>(() => messages.threads.find((thread) => thread.id === props.id))
+  /** A conversa de origem do item aberto (o contexto e o link). */
+  const conversationId = computed(() => current.value?.conversationId ?? (messages.open?.key === props.id ? messages.open?.conversationId : undefined))
+  const fio = computed(() => (messages.open?.key === props.id ? (messages.open?.messages ?? []) : []))
+  // O link antigo (o app do Mac, um aviso de antes) traz o id da CONVERSA: sem item de avisos dela, vai para o pedido mais
+  // recente dela.
   watch(
-    () => current.value?.conversationId,
-    (id) => {
-      if (id && current.value) tab.value = tabOf(current.value)
+    () => [props.id, messages.loaded, messages.threads] as const,
+    ([id, loaded, threads]) => {
+      if (!id || !loaded || threads.some((thread) => thread.id === id)) return
+      const latest = threads.find((thread) => thread.conversationId === id)
+      if (latest) void router.replace(`/messages/${encodeURIComponent(latest.id)}`)
     },
     { immediate: true },
   )
-  const fio = computed(() => (messages.open?.conversationId === props.id ? (messages.open?.messages ?? []) : []))
   /** O turno do contexto: o da última mensagem do agente (é ali que ele precisou da pessoa). */
   const targetMessage = computed(() => fio.value.find((message) => message.id === replyTarget.value))
-  const shownFio = computed(() => (onlyPending.value ? fio.value.filter((message) => message.status === 'pending') : fio.value))
+  const shownFio = fio
   const requestOf = (message: IPersonMessage) => (message.replyTo ? fio.value.find((candidate) => candidate.id === message.replyTo) : undefined)
 
   function replyTo(message: IPersonMessage) {
@@ -130,9 +122,9 @@
   async function loadContext() {
     context.value = undefined
     contextError.value = undefined
-    if (!props.id || turn.value === undefined) return
+    if (!conversationId.value || turn.value === undefined) return
     try {
-      const history = await api<{ turns: ITurn[] }>(`/conversations/${encodeURIComponent(props.id)}/turns`, { query: { limit: contextLimit.value, before: turn.value + 1 } })
+      const history = await api<{ turns: ITurn[] }>(`/conversations/${encodeURIComponent(conversationId.value)}/turns`, { query: { limit: contextLimit.value, before: turn.value + 1 } })
       context.value = history.turns
     } catch {
       contextError.value = 'Sem acesso ao histórico desta conversa.'
@@ -145,7 +137,6 @@
       sentNote.value = undefined
       draft.value = ''
       replyTarget.value = undefined
-      onlyPending.value = false
       contextLimit.value = 2
       if (!id) return
       try {
@@ -201,9 +192,9 @@
   }
 
   /** 🗂️ Arquiva (ou devolve à caixa) direto da lista, sem abrir o fio; o aberto fecha junto. */
-  async function archiveThread(conversationId: string) {
-    await messages.archive(conversationId, !messages.archived)
-    if (conversationId === props.id) await router.push('/messages')
+  async function archiveThread(key: string) {
+    await messages.archive(key, !messages.archived)
+    if (key === props.id) await router.push('/messages')
   }
 
   /** As lidas da caixa, de uma vez: o que ainda precisa de você (não lida) fica. */
@@ -212,8 +203,8 @@
   async function archiveRead() {
     archivingRead.value = true
     try {
-      for (const thread of readThreads.value) await messages.archive(thread.conversationId, true)
-      if (props.id && !messages.threads.some((thread) => thread.conversationId === props.id)) await router.push('/messages')
+      for (const thread of readThreads.value) await messages.archive(thread.id, true)
+      if (props.id && !messages.threads.some((thread) => thread.id === props.id)) await router.push('/messages')
     } finally {
       archivingRead.value = false
     }
@@ -267,39 +258,14 @@
             placeholder="Buscar por agente ou assunto…"
           />
         </div>
-        <nav class="mx-4 mb-2 flex gap-1 rounded-xl bg-zinc-900/60 p-1 text-sm" role="tablist" data-test="message-tabs">
-          <button
-            v-for="option in [
-              { key: 'pending', label: 'Pendentes' },
-              { key: 'resolved', label: 'Resolvidas' },
-            ] as const"
-            :key="option.key"
-            type="button"
-            role="tab"
-            class="flex-1 rounded-lg px-3 py-1.5 font-medium transition-colors"
-            :class="tab === option.key ? 'bg-zinc-800 text-zinc-50' : 'text-zinc-400 hover:text-zinc-200'"
-            :aria-selected="tab === option.key"
-            :data-test="`tab-${option.key}`"
-            @click="tab = option.key"
-          >
-            {{ option.label }}
-            <span v-if="tabCount[option.key]" class="ml-1 text-xs" :class="option.key === 'pending' ? 'text-amber-300' : 'text-zinc-500'">{{ tabCount[option.key] }}</span>
-          </button>
-        </nav>
         <p v-if="messages.loaded && !shown.length" class="px-4 py-8 text-center text-sm text-zinc-500">
-          {{
-            messages.archived
-              ? 'Nenhuma mensagem arquivada aqui.'
-              : tab === 'pending'
-                ? 'Nada pendente. Quando um agente precisar de você, aparece aqui.'
-                : 'Nenhuma mensagem resolvida.'
-          }}
+          {{ messages.archived ? 'Nenhuma mensagem arquivada.' : 'Nenhuma mensagem. Quando um agente precisar de você, ela aparece aqui.' }}
         </p>
         <ul class="min-h-0 flex-1 overflow-y-auto px-2">
-          <li v-for="thread in shown" :key="thread.conversationId">
+          <li v-for="thread in shown" :key="thread.id">
             <MessageThreadRow
               :thread="thread"
-              :active="thread.conversationId === id"
+              :active="thread.id === id"
               :archived="messages.archived"
               :name="agentName(thread.agentId)"
               :provider="agentProvider(thread.agentId)"
@@ -327,17 +293,6 @@
           <span v-if="current?.pending" class="shrink-0 rounded-full bg-amber-500/20 px-2 text-xs font-semibold text-amber-300" data-test="thread-pending-count">
             {{ current.pending }} {{ current.pending === 1 ? 'pendente' : 'pendentes' }}
           </span>
-          <button
-            v-if="current?.pending || onlyPending"
-            type="button"
-            class="btn btn-sm btn-ghost"
-            :class="onlyPending ? 'text-amber-300' : ''"
-            :aria-pressed="onlyPending"
-            data-test="only-pending"
-            @click="onlyPending = !onlyPending"
-          >
-            Só pendentes
-          </button>
           <button type="button" class="btn btn-sm btn-ghost" :title="messages.archived ? 'Voltar à caixa' : 'Arquivar'" @click="archive">
             <Icon name="archive" class="h-4 w-4" />
           </button>
@@ -348,7 +303,7 @@
             <section v-if="turn !== undefined" class="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3" data-test="message-context">
               <div class="mb-2 flex items-center gap-2 text-xs text-zinc-500">
                 <span>Na conversa, até o momento em que {{ current ? agentName(current.agentId) : 'o agente' }} escreveu</span>
-                <RouterLink :to="{ path: `/c/${id}`, query: { turn: String(turn) } }" class="ml-auto text-emerald-300 hover:underline" data-test="message-open-turn">
+                <RouterLink :to="{ path: `/c/${conversationId}`, query: { turn: String(turn) } }" class="ml-auto text-emerald-300 hover:underline" data-test="message-open-turn">
                   Abrir na conversa →
                 </RouterLink>
               </div>

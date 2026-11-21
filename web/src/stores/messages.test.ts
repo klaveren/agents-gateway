@@ -12,7 +12,7 @@ function serve(unreadMessage: boolean) {
   vi.mocked(api).mockImplementation((async (path: string, init?: { method?: string }) => {
     calls.push(`${init?.method ?? 'GET'} ${path}`)
     if (path === '/messages') return { threads: [], unread: unreadMessage ? 1 : 0 }
-    if (path === '/messages/s1') return { messages: [{ id: 'm1', from: 'agent', body: 'oi', ...(unreadMessage ? {} : { readAt: '2026-11-20T10:00:00Z' }) }] }
+    if (path === '/messages/s1') return { messages: [{ id: 'm1', conversationId: 's1', from: 'agent', body: 'oi', ...(unreadMessage ? {} : { readAt: '2026-11-20T10:00:00Z' }) }] }
     if (path === '/messages/s1/read') return { unread: 0 }
     return {}
   }) as never)

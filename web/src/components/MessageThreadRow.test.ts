@@ -7,6 +7,7 @@ import type { IPersonThread } from '@/stores/messages'
 import MessageThreadRow from './MessageThreadRow.vue'
 
 const thread = (id: string, over: Partial<IPersonThread> = {}): IPersonThread => ({
+  id,
   conversationId: id,
   agentId: 'agente-a',
   title: `Fio ${id}`,

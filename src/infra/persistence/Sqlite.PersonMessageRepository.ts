@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { IPersonMessage, IPersonThread, TPersonMessageLevel, TPersonMessageStatus } from '@domain/models/PersonMessage.Model'
+import { IPersonMessage, IPersonThread, isRequestKey, messageKeyOf, TPersonMessageLevel, TPersonMessageStatus } from '@domain/models/PersonMessage.Model'
 import { IPersonMessageRepository } from '@domain/ports/PersonMessageRepository.Port'
 
 const SCHEMA = `
@@ -45,12 +45,18 @@ export class SqlitePersonMessageRepository implements IPersonMessageRepository {
    */
   private migrate(): void {
     const columns = new Set((this.db.prepare('PRAGMA table_info(person_messages)').all() as TRow[]).map((column) => String(column.name)))
-    for (const [name, type] of [['status', 'TEXT'], ['answered_at', 'TEXT'], ['reply_to', 'TEXT']] as const) {
+    for (const [name, type] of [
+      ['status', 'TEXT'],
+      ['answered_at', 'TEXT'],
+      ['reply_to', 'TEXT'],
+    ] as const) {
       if (!columns.has(name)) this.db.exec(`ALTER TABLE person_messages ADD COLUMN ${name} ${type}`)
     }
     if (columns.has('status')) return
     const answered = `EXISTS (SELECT 1 FROM person_messages later WHERE later.recipient_id = person_messages.recipient_id AND later.conversation_id = person_messages.conversation_id AND later.sender = 'person' AND later.created_at > person_messages.created_at)`
-    this.db.exec(`UPDATE person_messages SET status = 'answered', answered_at = (SELECT MIN(later.created_at) FROM person_messages later WHERE later.recipient_id = person_messages.recipient_id AND later.conversation_id = person_messages.conversation_id AND later.sender = 'person' AND later.created_at > person_messages.created_at) WHERE sender = 'agent' AND level IN ('attention', 'urgent') AND ${answered}`)
+    this.db.exec(
+      `UPDATE person_messages SET status = 'answered', answered_at = (SELECT MIN(later.created_at) FROM person_messages later WHERE later.recipient_id = person_messages.recipient_id AND later.conversation_id = person_messages.conversation_id AND later.sender = 'person' AND later.created_at > person_messages.created_at) WHERE sender = 'agent' AND level IN ('attention', 'urgent') AND ${answered}`,
+    )
     this.db.exec("UPDATE person_messages SET status = 'pending' WHERE sender = 'agent' AND level IN ('attention', 'urgent') AND status IS NULL")
   }
 
@@ -77,8 +83,8 @@ export class SqlitePersonMessageRepository implements IPersonMessageRepository {
         message.answeredAt?.toISOString() ?? null,
         message.replyTo ?? null,
       )
-    // Mensagem nova reabre o fio arquivado: quem arquivou volta a vê-lo.
-    this.db.prepare('UPDATE person_messages SET archived_at = NULL WHERE recipient_id = ? AND conversation_id = ?').run(message.recipientId, message.conversationId)
+    // Mensagem nova reabre o item arquivado: quem arquivou volta a vê-lo.
+    this.update(message.recipientId, messageKeyOf(message), 'archived_at = NULL', [])
   }
 
   threads(recipientId: string, options: { archived?: boolean } = {}): IPersonThread[] {
@@ -86,9 +92,12 @@ export class SqlitePersonMessageRepository implements IPersonMessageRepository {
     const threads = new Map<string, IPersonThread>()
     for (const row of rows) {
       const message = toMessage(row)
-      const current = threads.get(message.conversationId)
+      const key = messageKeyOf(message)
+      const current = threads.get(key)
       if (!current) {
-        threads.set(message.conversationId, {
+        threads.set(key, {
+          id: key,
+          ...(isRequestKey(key) ? { requestId: key } : {}),
           conversationId: message.conversationId,
           agentId: message.agentId,
           ...(message.projectId ? { projectId: message.projectId } : {}),
@@ -101,8 +110,8 @@ export class SqlitePersonMessageRepository implements IPersonMessageRepository {
         if (message.from === 'agent' && !message.readAt) current.unread += 1
         if (message.status === 'pending') current.pending += 1
       }
-      const thread = threads.get(message.conversationId)!
-      // O assunto do fio: o título mais recente que o agente deu.
+      const thread = threads.get(key)!
+      // O assunto do item: o título mais recente que o agente deu (no pedido, o dele).
       if (!thread.title && message.title) thread.title = message.title
     }
     return [...threads.values()].filter((thread) => thread.archived === !!options.archived)
@@ -114,19 +123,30 @@ export class SqlitePersonMessageRepository implements IPersonMessageRepository {
     ).map(toMessage)
   }
 
-  markRead(recipientId: string, conversationId: string, at: Date): number {
-    return Number(
-      this.db
-        .prepare('UPDATE person_messages SET read_at = ? WHERE recipient_id = ? AND conversation_id = ? AND read_at IS NULL')
-        .run(at.toISOString(), recipientId, conversationId).changes,
-    )
+  item(recipientId: string, key: string): IPersonMessage[] {
+    const conversationId = isRequestKey(key)
+      ? (this.db.prepare('SELECT conversation_id FROM person_messages WHERE recipient_id = ? AND id = ?').get(recipientId, key) as TRow | undefined)?.conversation_id
+      : key
+    if (typeof conversationId !== 'string') return []
+    return this.thread(recipientId, conversationId).filter((message) => messageKeyOf(message) === key)
   }
 
-  setArchived(recipientId: string, conversationId: string, archived: boolean, at: Date): number {
+  markRead(recipientId: string, key: string, at: Date): number {
+    return this.update(recipientId, key, 'read_at = ?', [at.toISOString()], 'read_at IS NULL')
+  }
+
+  setArchived(recipientId: string, key: string, archived: boolean, at: Date): number {
+    return this.update(recipientId, key, 'archived_at = ?', [archived ? at.toISOString() : null])
+  }
+
+  /** Aplica `set` às mensagens de um item da pessoa; devolve quantas mudaram. */
+  private update(recipientId: string, key: string, set: string, params: Array<string | null>, where?: string): number {
+    const ids = this.item(recipientId, key).map((message) => message.id)
+    if (!ids.length) return 0
     return Number(
       this.db
-        .prepare('UPDATE person_messages SET archived_at = ? WHERE recipient_id = ? AND conversation_id = ?')
-        .run(archived ? at.toISOString() : null, recipientId, conversationId).changes,
+        .prepare(`UPDATE person_messages SET ${set} WHERE recipient_id = ? AND id IN (${ids.map(() => '?').join(', ')})${where ? ` AND ${where}` : ''}`)
+        .run(...params, recipientId, ...ids).changes,
     )
   }
 

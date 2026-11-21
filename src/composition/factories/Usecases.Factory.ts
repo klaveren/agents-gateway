@@ -10,6 +10,7 @@ import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Useca
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
 import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
 import { GetSessionUseCase } from '@application/GetSession.Usecase'
+import { messageKeyOf } from '@domain/models/PersonMessage.Model'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { UsageCapService } from '@application/UsageCap.Service'
@@ -42,8 +43,8 @@ export function makeUsecases() {
     void makePush().notify(recipientId, {
       title: message.title ? `${agent}: ${message.title}` : agent,
       body: message.body,
-      url: `/messages/${encodeURIComponent(message.conversationId)}`,
-      tag: `message:${message.conversationId}`,
+      url: `/messages/${encodeURIComponent(messageKeyOf(message))}`,
+      tag: `message:${messageKeyOf(message)}`,
     })
   })
 
