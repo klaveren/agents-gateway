@@ -6045,7 +6045,7 @@ export const OPENAPI_DOCUMENT = {
     '/messages': {
       get: {
         summary:
-          'The Messages inbox of the signed-in person: one thread per conversation whose agent wrote to them (`notify`), the latest first, with the unread count and the number of pending requests (`pending`); each thread also has its own `pending`; `?archived=1` lists the archived ones. Only the recipient sees a thread (no administrator reads someone else’s)',
+          'The Messages inbox of the signed-in person: one item per request (an `attention`/`urgent` agent message, with the replies to it; `id` = `requestId` = the request id) and one item per conversation for the plain (`info`) messages (`id` = the conversation id), the latest first, with the unread count and the number of pending requests (`pending`); each thread also has its own `pending`; `?archived=1` lists the archived ones. Only the recipient sees a thread (no administrator reads someone else’s)',
         parameters: [{ name: 'archived', in: 'query', required: false, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'OK: `{ threads, unread, pending }`', ...json(envelope({ type: 'object' })) },
@@ -6055,7 +6055,7 @@ export const OPENAPI_DOCUMENT = {
     },
     '/messages/{conversationId}': {
       get: {
-        summary: 'The messages of one thread of the signed-in person, in order (`from`: agent or person; `turn`: the turn of the conversation when it was sent). Agent messages of level `attention`/`urgent` are requests with `status` (`pending` | `answered` | `resolved`) and `answeredAt`; a person message that answered one has `replyTo` (the request id)',
+        summary: 'The messages of one item of the signed-in person, in order. The path id is an item id: a request id gives the request and the replies to it; a conversation id gives the whole conversation (every item of it) (`from`: agent or person; `turn`: the turn of the conversation when it was sent). Agent messages of level `attention`/`urgent` are requests with `status` (`pending` | `answered` | `resolved`) and `answeredAt`; a person message that answered one has `replyTo` (the request id)',
         parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'OK: `{ messages }`', ...json(envelope({ type: 'object' })) },
@@ -6115,7 +6115,7 @@ export const OPENAPI_DOCUMENT = {
     },
     '/messages/{conversationId}/read': {
       post: {
-        summary: 'Marks a thread of the signed-in person as read; returns the unread count',
+        summary: 'Marks an item of the signed-in person as read (a request id: the request and its replies; a conversation id: its plain messages); returns the unread count',
         parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'OK: `{ unread }`', ...json(envelope({ type: 'object' })) } },
       },
@@ -6150,7 +6150,7 @@ export const OPENAPI_DOCUMENT = {
     },
     '/messages/{conversationId}/archive': {
       put: {
-        summary: 'Archives (`{ archived: true }`) or restores a thread of the signed-in person; a new message reopens it',
+        summary: 'Archives (`{ archived: true }`) or restores an item of the signed-in person (a request, or the plain messages of a conversation); a new message in it reopens it',
         parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: false, ...json({ type: 'object', properties: { archived: { type: 'boolean' } } }) },
         responses: { '200': { description: 'OK: `{ unread }`', ...json(envelope({ type: 'object' })) } },

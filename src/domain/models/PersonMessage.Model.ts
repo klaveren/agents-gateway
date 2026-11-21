@@ -3,7 +3,9 @@
  * de quem ele chamou — os admins do projeto, o dono da conversa ou uma pessoa do projeto. A pessoa responde ali mesmo, e a
  * resposta entra na conversa de origem como mensagem dela.
  *
- * ⚖️ UM FIO POR PESSOA E CONVERSA (`conversationId` é o fio): cada destinatário tem a sua cópia (ler e arquivar são dele).
+ * ⚖️ UM ITEM POR PEDIDO: cada pedido do agente (`attention`/`urgent`) é um item da caixa, com as respostas a ele; os avisos
+ * comuns (`info`) da mesma conversa ficam juntos num item da conversa. A conversa é o contexto, não a chave (ver
+ * `messageKeyOf`). Cada destinatário tem a sua cópia (ler e arquivar são dele).
  * `turn` é o turno da conversa em que a mensagem saiu — a tela mostra o contexto até ali e abre a conversa naquele ponto.
  */
 export const NOTIFY_TOOL = 'notify'
@@ -52,15 +54,31 @@ export interface IPersonMessage {
   replyTo?: string
 }
 
-/** Um fio na lista: a conversa, a última mensagem e quantas não lidas. */
+/**
+ * 🔑 O ITEM a que a mensagem pertence: o pedido é o próprio item (o id dele); a resposta a um pedido (da pessoa ou o
+ * retorno do agente a ela) vai para o item do pedido; o resto, para o item da conversa (o id dela).
+ */
+export function messageKeyOf(message: Pick<IPersonMessage, 'id' | 'from' | 'status' | 'replyTo' | 'conversationId'>): string {
+  if (message.from === 'agent' && message.status) return message.id
+  return message.replyTo ?? message.conversationId
+}
+
+/** O id de item que é de um pedido (os ids de mensagem começam com `m_`; os de conversa, não). */
+export const isRequestKey = (key: string): boolean => key.startsWith('m_')
+
+/** Um item na lista: um pedido (com as respostas) ou os avisos de uma conversa; a última mensagem e quantas não lidas. */
 export interface IPersonThread {
+  /** O id do item (ver `messageKeyOf`): o do pedido ou o da conversa. */
+  id: string
+  /** No item de pedido: o id do pedido. */
+  requestId?: string
   conversationId: string
   agentId: string
   projectId?: string
   title?: string
   last: IPersonMessage
   unread: number
-  /** Quantos pedidos do fio ainda estão pendentes. */
+  /** Quantos pedidos do item ainda estão pendentes (0 ou 1 no item de pedido). */
   pending: number
   archived: boolean
 }

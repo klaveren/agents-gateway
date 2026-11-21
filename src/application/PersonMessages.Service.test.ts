@@ -49,7 +49,8 @@ describe('PersonMessagesService', () => {
       [thread.conversationId, thread.agentId, thread.title, thread.unread, thread.last.turn, thread.last.level],
       ['gw_alfa', 'zeus', 'Preciso de um OK', 1, 7, 'attention'],
     )
-    service.markRead('u_ana', 'gw_alfa')
+    assert.strictEqual(thread.id, thread.requestId, 'o pedido é o próprio item')
+    service.markRead('u_ana', thread.id)
     assert.strictEqual(service.unread('u_ana'), 0)
     assert.strictEqual(service.unread('u_bia'), 1, 'ler é de cada um')
   })
@@ -92,7 +93,7 @@ describe('PersonMessagesService', () => {
     const { service } = build()
     await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', title: 'Preciso de um OK', body: 'Posso subir?' })
     const reply = service.reply('u_ana', 'gw_alfa', 'Pode, sim', 'Ana')
-    assert.deepStrictEqual(reply, { input: '[Resposta de Ana pela caixa de Mensagens (sobre "Preciso de um OK")]\n\nPode, sim', agentId: 'zeus' })
+    assert.deepStrictEqual(reply, { input: '[Resposta de Ana pela caixa de Mensagens (sobre "Preciso de um OK")]\n\nPode, sim', agentId: 'zeus', conversationId: 'gw_alfa' })
     assert.deepStrictEqual(
       service.thread('u_bia', 'gw_alfa').map((message) => [message.from, message.body, message.authorId]),
       [
@@ -146,7 +147,16 @@ describe('Mensagens: um pedido por vez', () => {
       messages.map((message) => message.status),
       ['pending', 'pending', undefined],
     )
-    assert.deepStrictEqual([service.threads('u_ana')[0].pending, service.pending('u_ana')], [2, 2])
+    // Cada pedido é um item; o aviso comum fica no item da conversa.
+    assert.deepStrictEqual(
+      service.threads('u_ana').map((thread) => [thread.id === 'gw_alfa' ? 'conversa' : 'pedido', thread.pending]),
+      [
+        ['conversa', 0],
+        ['pedido', 1],
+        ['pedido', 1],
+      ],
+    )
+    assert.strictEqual(service.pending('u_ana'), 2)
   })
 
   it('responder com replyTo: o pedido vira answered (só para quem respondeu), a resposta leva replyTo e o texto nomeia o pedido', async () => {
@@ -159,7 +169,13 @@ describe('Mensagens: um pedido por vez', () => {
     const mine = service.thread('u_ana', 'gw_alfa')
     assert.deepStrictEqual([mine[0].status, mine[1].status, mine[0].answeredAt instanceof Date], ['answered', 'pending', true])
     assert.strictEqual(mine.at(-1)?.replyTo, first.id)
-    assert.strictEqual(service.threads('u_ana')[0].pending, 1)
+    const items = new Map(service.threads('u_ana').map((thread) => [thread.id, thread]))
+    assert.deepStrictEqual([items.get(first.id)?.pending, items.get(mine[1].id)?.pending], [0, 1])
+    assert.deepStrictEqual(
+      service.thread('u_ana', first.id).map((message) => message.from),
+      ['agent', 'person'],
+      'o item do pedido traz a resposta a ele',
+    )
     const bia = service.thread('u_bia', 'gw_alfa')
     assert.strictEqual(bia[0].status, 'pending', 'o pedido do outro destinatário segue pendente')
     assert.strictEqual(bia.at(-1)?.replyTo, bia[0].id, 'a cópia dele aponta para o pedido dele')
@@ -209,5 +225,62 @@ describe('Mensagens: um pedido por vez', () => {
     )
     assert.throws(() => service.setStatus('u_bia', 'gw_alfa', asked.id, 'resolved'), /no such message/, 'o id é da cópia da Ana')
     assert.throws(() => service.setStatus('u_ana', 'gw_alfa', asked.id, 'answered' as never), /status must be/)
+  })
+})
+
+describe('Mensagens: um item por pedido', () => {
+  const request = (service: PersonMessagesService, title: string) => service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', title, body: title, level: 'attention' })
+
+  it('responder pelo item do pedido responde a ele; o retorno do agente volta para o mesmo item', async () => {
+    const { service } = build()
+    await request(service, 'Subir?')
+    await request(service, 'Apagar?')
+    const [first] = service.thread('u_ana', 'gw_alfa')
+    const reply = service.reply('u_ana', first.id, 'Pode', 'Ana')
+    assert.strictEqual(reply.conversationId, 'gw_alfa')
+    assert.strictEqual(service.thread('u_ana', first.id)[0].status, 'answered')
+    service.mirror('gw_alfa', 'zeus', 'Subi.')
+    assert.deepStrictEqual(
+      service.thread('u_ana', first.id).map((message) => [message.from, message.body]),
+      [
+        ['agent', 'Subir?'],
+        ['person', 'Pode'],
+        ['agent', 'Subi.'],
+      ],
+    )
+    const item = service.threads('u_ana').find((thread) => thread.id === first.id)
+    assert.deepStrictEqual([item?.unread, item?.last.body], [2, 'Subi.'], 'o pedido e o retorno, não lidos')
+  })
+
+  it('arquivar um pedido não leva os outros; mensagem nova no pedido o reabre', async () => {
+    const { service } = build()
+    await request(service, 'Subir?')
+    await request(service, 'Apagar?')
+    const [first, second] = service.thread('u_ana', 'gw_alfa')
+    service.setArchived('u_ana', first.id, true)
+    assert.deepStrictEqual(
+      service.threads('u_ana').map((thread) => thread.id),
+      [second.id],
+    )
+    assert.deepStrictEqual(
+      service.threads('u_ana', true).map((thread) => thread.id),
+      [first.id],
+    )
+    service.reply('u_bia', 'gw_alfa', 'Pode', 'Bia', service.thread('u_bia', 'gw_alfa')[0].id)
+    assert.ok(
+      service.threads('u_ana').some((thread) => thread.id === first.id),
+      'a resposta de outra pessoa ao pedido reabre o item',
+    )
+  })
+
+  it('o id da conversa segue valendo: a conversa inteira (voz e app do Mac) e o status pelo pedido', async () => {
+    const { service } = build()
+    await request(service, 'Subir?')
+    const [first] = service.thread('u_ana', 'gw_alfa')
+    assert.deepStrictEqual(service.resolve('u_ana', first.id), { conversationId: 'gw_alfa', requestId: first.id })
+    assert.deepStrictEqual(service.resolve('u_ana', 'gw_alfa'), { conversationId: 'gw_alfa' })
+    assert.strictEqual(service.resolve('u_ana', 'm_nada'), undefined)
+    service.setStatus('u_ana', first.id, first.id, 'resolved')
+    assert.strictEqual(service.thread('u_ana', 'gw_alfa')[0].status, 'resolved')
   })
 })

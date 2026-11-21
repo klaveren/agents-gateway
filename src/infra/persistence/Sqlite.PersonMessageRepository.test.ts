@@ -31,7 +31,7 @@ describe('Sqlite.PersonMessageRepository: migração do estado dos pedidos', () 
     const [a1, p1, a2, i1] = repository.thread('u', 'c1')
     assert.deepStrictEqual([a1.status, a1.answeredAt?.toISOString(), p1.status, a2.status, i1.status], ['answered', '2026-01-01T11:00:00.000Z', undefined, 'pending', undefined])
     assert.strictEqual(repository.thread('u', 'c2')[0].status, 'pending')
-    assert.deepStrictEqual([repository.pending('u'), repository.threads('u').map((thread) => thread.pending).sort()], [2, [1, 1]])
+    assert.deepStrictEqual([repository.pending('u'), repository.threads('u').map((thread) => thread.pending).sort()], [2, [0, 0, 1, 1]])
 
     // Reabrir o banco não refaz a migração nem a regra: o que a pessoa mudou depois fica.
     assert.strictEqual(repository.setStatus('u', 'c1', 'a2', 'resolved', new Date()), 1)

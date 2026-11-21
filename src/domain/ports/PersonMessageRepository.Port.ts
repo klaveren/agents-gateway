@@ -3,12 +3,14 @@ import { IPersonMessage, IPersonThread, TPersonMessageStatus } from '@domain/mod
 /** Onde as mensagens das pessoas ficam (ver `PersonMessage.Model`). */
 export interface IPersonMessageRepository {
   insert(message: IPersonMessage): void
-  /** Os fios da pessoa, o mais recente primeiro. */
+  /** Os itens da pessoa (ver `messageKeyOf`), o mais recente primeiro. */
   threads(recipientId: string, options?: { archived?: boolean }): IPersonThread[]
-  /** As mensagens de um fio da pessoa, em ordem. */
+  /** Todas as mensagens da pessoa numa conversa, em ordem. */
   thread(recipientId: string, conversationId: string): IPersonMessage[]
-  markRead(recipientId: string, conversationId: string, at: Date): number
-  setArchived(recipientId: string, conversationId: string, archived: boolean, at: Date): number
+  /** As mensagens de um item da pessoa (o id de um pedido ou de uma conversa), em ordem. */
+  item(recipientId: string, key: string): IPersonMessage[]
+  markRead(recipientId: string, key: string, at: Date): number
+  setArchived(recipientId: string, key: string, archived: boolean, at: Date): number
   /** Quantas não lidas a pessoa tem (o sino). */
   unread(recipientId: string): number
   /** Quantos pedidos pendentes a pessoa tem (os fios arquivados não contam). */

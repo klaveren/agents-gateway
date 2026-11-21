@@ -2496,6 +2496,7 @@ export class AgentController {
       res,
       async () => {
         const { service, recipientId } = await this.messagesOf()
+        // O id do item: o de um pedido (a resposta é a ele) ou o da conversa.
         const conversationId = req.params.conversationId as string
         const text = String((req.body as { message?: unknown } | undefined)?.message ?? '')
         const replyToRaw = (req.body as { replyTo?: unknown } | undefined)?.replyTo
@@ -2514,8 +2515,8 @@ export class AgentController {
           if (error instanceof PersonMessageError && error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
           throw error
         }
-        const session = await this.usecases.getSession.execute(conversationId)
-        let reply: { input: string; agentId: string }
+        const session = await this.usecases.getSession.execute(service.resolve(recipientId, conversationId)?.conversationId ?? conversationId)
+        let reply: { input: string; agentId: string; conversationId: string }
         try {
           reply = service.reply(recipientId, conversationId, text, name, replyTo)
         } catch (error: unknown) {
@@ -2528,13 +2529,13 @@ export class AgentController {
         }
         const input: IMessageInput = { text: reply.input }
         // Conversa rodando: entra na fila do turno; quando ela parar, o último turno volta para o fio.
-        if (session.status === 'running' || this.liveTurns.has(conversationId)) {
-          this.usecases.sendMessage.enqueue(conversationId, reply.input)
-          void this.mirrorWhenIdle(conversationId, reply.agentId)
+        if (session.status === 'running' || this.liveTurns.has(reply.conversationId)) {
+          this.usecases.sendMessage.enqueue(reply.conversationId, reply.input)
+          void this.mirrorWhenIdle(reply.conversationId, reply.agentId)
           return { queued: true }
         }
-        const { done } = this.launch(conversationId, session, input, undefined)
-        void done.then(() => this.mirrorFinished(conversationId, reply.agentId)).catch(() => undefined)
+        const { done } = this.launch(reply.conversationId, session, input, undefined)
+        void done.then(() => this.mirrorFinished(reply.conversationId, reply.agentId)).catch(() => undefined)
         return { queued: false }
       },
       { status: 202, message: 'Reply sent to the conversation' },
@@ -2546,7 +2547,8 @@ export class AgentController {
     await this.respond(res, async () => {
       const { service, recipientId } = await this.messagesOf()
       const status = (req.body as { status?: unknown } | undefined)?.status
-      if (status !== 'resolved' && status !== 'pending') throw new HttpError(422, 'validation_error', 'status must be resolved or pending', [{ field: 'status', message: 'resolved or pending' }])
+      if (status !== 'resolved' && status !== 'pending')
+        throw new HttpError(422, 'validation_error', 'status must be resolved or pending', [{ field: 'status', message: 'resolved or pending' }])
       try {
         service.setStatus(recipientId, req.params.conversationId as string, req.params.messageId as string, status)
       } catch (error: unknown) {

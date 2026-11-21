@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import {
   IPersonMessage,
   IPersonThread,
+  isRequestKey,
   isRequestLevel,
   PERSON_MESSAGE_LEVELS,
   PERSON_MESSAGE_LIMITS,
@@ -104,9 +105,22 @@ export class PersonMessagesService {
     return target
   }
 
+  /**
+   * 🔑 O item da pessoa: a conversa dele e, se for de pedido, o pedido. Ausente = a pessoa não tem esse item. O id de
+   * conversa vale mesmo sem item de avisos (só pedidos): é a conversa inteira (o app do Mac e a voz leem assim).
+   */
+  resolve(recipientId: string, key: string): { conversationId: string; requestId?: string } | undefined {
+    if (isRequestKey(key)) {
+      const conversationId = this.deps.repository.item(recipientId, key)[0]?.conversationId
+      return conversationId ? { conversationId, requestId: key } : undefined
+    }
+    return this.deps.repository.thread(recipientId, key).length ? { conversationId: key } : undefined
+  }
+
   /** Confere o `replyTo` antes de qualquer efeito (a conversa ainda nem foi aberta). */
-  checkReplyTo(recipientId: string, conversationId: string, replyTo?: string): void {
-    this.requestOf(this.deps.repository.thread(recipientId, conversationId), replyTo)
+  checkReplyTo(recipientId: string, key: string, replyTo?: string): void {
+    const found = this.resolve(recipientId, key)
+    if (found) this.requestOf(this.deps.repository.thread(recipientId, found.conversationId), replyTo ?? found.requestId)
   }
 
   /**
@@ -114,13 +128,16 @@ export class PersonMessagesService {
    * quem respondeu e o quê) — lida para quem escreveu. Devolve o texto que entra na conversa, com quem respondeu e sobre o
    * quê, para o agente saber de onde veio. ⛔ Só quem tem o fio responde.
    */
-  reply(recipientId: string, conversationId: string, text: string, authorName: string, replyTo?: string): { input: string; agentId: string } {
+  reply(recipientId: string, key: string, text: string, authorName: string, replyTo?: string): { input: string; agentId: string; conversationId: string } {
     const body = text?.trim() ?? ''
     if (!body) throw new PersonMessageError('message is required')
     if (body.length > PERSON_MESSAGE_LIMITS.body) throw new PersonMessageError(`message is longer than ${PERSON_MESSAGE_LIMITS.body} characters`)
+    const found = this.resolve(recipientId, key)
+    if (!found) throw new PersonMessageError('no such thread')
+    const conversationId = found.conversationId
     const mine = this.deps.repository.thread(recipientId, conversationId)
-    if (!mine.length) throw new PersonMessageError('no such thread')
-    const target = this.requestOf(mine, replyTo)
+    // No item de um pedido, a resposta é a ele.
+    const target = this.requestOf(mine, replyTo ?? found.requestId)
     const asked = target ?? [...mine].reverse().find((message) => message.from === 'agent')
     const at = this.now()
     for (const recipient of this.deps.repository.recipientsOf(conversationId)) {
@@ -145,7 +162,7 @@ export class PersonMessagesService {
       this.announce(recipientId, conversationId)
     }
     const label = target ? ` a "${(target.title || target.body.replace(/\s+/g, ' ').trim()).slice(0, 60)}" (pedido ${target.id})` : asked?.title ? ` (sobre "${asked.title}")` : ''
-    return { input: `[Resposta de ${authorName} pela caixa de Mensagens${label}]\n\n${body}`, agentId: mine[0].agentId }
+    return { input: `[Resposta de ${authorName} pela caixa de Mensagens${label}]\n\n${body}`, agentId: mine[0].agentId, conversationId }
   }
 
   /** O `replyTo` na cópia de cada destinatário: cada um tem o seu id do mesmo pedido (mesma hora e mesmo texto). */
@@ -163,7 +180,10 @@ export class PersonMessagesService {
     if (!body) return
     const at = this.now()
     for (const recipient of this.deps.repository.recipientsOf(conversationId)) {
-      const projectId = this.deps.repository.thread(recipient, conversationId)[0]?.projectId
+      const mine = this.deps.repository.thread(recipient, conversationId)
+      const projectId = mine[0]?.projectId
+      // O retorno do agente vai para o item do pedido que a pessoa respondeu por último (o aviso comum, para o da conversa).
+      const answered = isRequestLevel(level) ? undefined : [...mine].reverse().find((message) => message.from === 'person')?.replyTo
       const message: IPersonMessage = {
         id: `m_${randomBytes(9).toString('hex')}`,
         recipientId: recipient,
@@ -174,6 +194,7 @@ export class PersonMessagesService {
         body,
         level,
         ...(isRequestLevel(level) ? { status: 'pending' as const } : {}),
+        ...(answered ? { replyTo: answered } : {}),
         createdAt: at,
       }
       this.deps.repository.insert(message)
@@ -186,8 +207,9 @@ export class PersonMessagesService {
     return this.deps.repository.threads(recipientId, { archived })
   }
 
-  thread(recipientId: string, conversationId: string): IPersonMessage[] {
-    return this.deps.repository.thread(recipientId, conversationId)
+  /** As mensagens de um item: o pedido com as respostas; com o id de uma conversa, a conversa inteira. */
+  thread(recipientId: string, key: string): IPersonMessage[] {
+    return isRequestKey(key) ? this.deps.repository.item(recipientId, key) : this.deps.repository.thread(recipientId, key)
   }
 
   unread(recipientId: string): number {
@@ -200,8 +222,9 @@ export class PersonMessagesService {
   }
 
   /** 📌 A pessoa dá o pedido por tratado (`resolved`) ou o reabre (`pending`). Só pedido do fio dela. */
-  setStatus(recipientId: string, conversationId: string, messageId: string, status: TPersonMessageStatus): void {
+  setStatus(recipientId: string, key: string, messageId: string, status: TPersonMessageStatus): void {
     if (status !== 'resolved' && status !== 'pending') throw new PersonMessageError('status must be resolved or pending', 'status')
+    const conversationId = this.resolve(recipientId, key)?.conversationId ?? key
     const message = this.deps.repository.thread(recipientId, conversationId).find((candidate) => candidate.id === messageId)
     if (!message) throw new PersonMessageError('no such message')
     if (message.from !== 'agent' || !message.status) throw new PersonMessageError('only requests (attention or urgent messages) have a status', 'status')
@@ -209,12 +232,15 @@ export class PersonMessagesService {
     this.announce(recipientId, conversationId)
   }
 
-  markRead(recipientId: string, conversationId: string): void {
-    if (this.deps.repository.markRead(recipientId, conversationId, this.now())) this.announce(recipientId, conversationId)
+  /** Lê um item (o id de um pedido ou de uma conversa: aí, os avisos dela). */
+  markRead(recipientId: string, key: string): void {
+    const conversationId = this.resolve(recipientId, key)?.conversationId ?? key
+    if (this.deps.repository.markRead(recipientId, key, this.now())) this.announce(recipientId, conversationId)
   }
 
-  setArchived(recipientId: string, conversationId: string, archived: boolean): void {
-    this.deps.repository.setArchived(recipientId, conversationId, archived, this.now())
+  setArchived(recipientId: string, key: string, archived: boolean): void {
+    const conversationId = this.resolve(recipientId, key)?.conversationId ?? key
+    this.deps.repository.setArchived(recipientId, key, archived, this.now())
     this.announce(recipientId, conversationId)
   }
 
