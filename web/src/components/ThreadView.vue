@@ -886,7 +886,7 @@
     </section>
     <aside
       v-if="sidePane"
-      class="fixed inset-0 z-40 flex flex-col bg-zinc-950 md:relative md:inset-auto md:z-auto md:w-[var(--side-width)] md:max-w-[calc(100%-22rem)] md:shrink-0 md:border-l md:border-zinc-800"
+      class="fixed inset-0 z-40 flex flex-col bg-zinc-950 pt-[env(safe-area-inset-top)] pb-[var(--safe-bottom)] md:relative md:pt-0 md:pb-0 md:inset-auto md:z-auto md:w-[var(--side-width)] md:max-w-[calc(100%-22rem)] md:shrink-0 md:border-l md:border-zinc-800"
       :style="{ '--side-width': `${browserDrawer.width.value}px` }"
       :aria-label="sideLabel"
       data-test="side-pane"
