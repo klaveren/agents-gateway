@@ -72,11 +72,32 @@
 
   const agentName = (id: string) => agents.byId.get(id)?.name ?? id
   const agentProvider = (id: string) => agents.byId.get(id)?.providers?.[0]?.id ?? ''
+  /** As duas guias: o que tem pedido pendente e o que já foi resolvido (nada pendente). */
+  const chosenTab = ref<'pending' | 'resolved'>()
+  const tabOf = (thread: IPersonThread): 'pending' | 'resolved' => (thread.pending > 0 ? 'pending' : 'resolved')
+  const tabCount = computed(() => ({
+    pending: messages.threads.filter((thread) => tabOf(thread) === 'pending').length,
+    resolved: messages.threads.filter((thread) => tabOf(thread) === 'resolved').length,
+  }))
+  /** Sem escolha da pessoa: abre em Pendentes se houver alguma; senão, em Resolvidas. */
+  const tab = computed<'pending' | 'resolved'>({
+    get: () => chosenTab.value ?? (tabCount.value.pending ? 'pending' : 'resolved'),
+    set: (value) => (chosenTab.value = value),
+  })
   const shown = computed(() => {
     const term = search.value.trim().toLowerCase()
-    return term ? messages.threads.filter((thread) => `${agentName(thread.agentId)} ${thread.title ?? ''} ${thread.last.body}`.toLowerCase().includes(term)) : messages.threads
+    const inTab = messages.threads.filter((thread) => tabOf(thread) === tab.value)
+    return term ? inTab.filter((thread) => `${agentName(thread.agentId)} ${thread.title ?? ''} ${thread.last.body}`.toLowerCase().includes(term)) : inTab
   })
   const current = computed<IPersonThread | undefined>(() => messages.threads.find((thread) => thread.conversationId === props.id))
+  // Abriu um fio pelo aviso ou pelo link: a guia vai para onde ele está (só na troca de fio, não quando o status muda).
+  watch(
+    () => current.value?.conversationId,
+    (id) => {
+      if (id && current.value) tab.value = tabOf(current.value)
+    },
+    { immediate: true },
+  )
   const fio = computed(() => (messages.open?.conversationId === props.id ? (messages.open?.messages ?? []) : []))
   /** O turno do contexto: o da última mensagem do agente (é ali que ele precisou da pessoa). */
   const targetMessage = computed(() => fio.value.find((message) => message.id === replyTarget.value))
@@ -246,8 +267,33 @@
             placeholder="Buscar por agente ou assunto…"
           />
         </div>
+        <nav class="mx-4 mb-2 flex gap-1 rounded-xl bg-zinc-900/60 p-1 text-sm" role="tablist" data-test="message-tabs">
+          <button
+            v-for="option in [
+              { key: 'pending', label: 'Pendentes' },
+              { key: 'resolved', label: 'Resolvidas' },
+            ] as const"
+            :key="option.key"
+            type="button"
+            role="tab"
+            class="flex-1 rounded-lg px-3 py-1.5 font-medium transition-colors"
+            :class="tab === option.key ? 'bg-zinc-800 text-zinc-50' : 'text-zinc-400 hover:text-zinc-200'"
+            :aria-selected="tab === option.key"
+            :data-test="`tab-${option.key}`"
+            @click="tab = option.key"
+          >
+            {{ option.label }}
+            <span v-if="tabCount[option.key]" class="ml-1 text-xs" :class="option.key === 'pending' ? 'text-amber-300' : 'text-zinc-500'">{{ tabCount[option.key] }}</span>
+          </button>
+        </nav>
         <p v-if="messages.loaded && !shown.length" class="px-4 py-8 text-center text-sm text-zinc-500">
-          {{ messages.archived ? 'Nenhuma mensagem arquivada.' : 'Nenhuma mensagem. Quando um agente precisar de você, ela aparece aqui.' }}
+          {{
+            messages.archived
+              ? 'Nenhuma mensagem arquivada aqui.'
+              : tab === 'pending'
+                ? 'Nada pendente. Quando um agente precisar de você, aparece aqui.'
+                : 'Nenhuma mensagem resolvida.'
+          }}
         </p>
         <ul class="min-h-0 flex-1 overflow-y-auto px-2">
           <li v-for="thread in shown" :key="thread.conversationId">
