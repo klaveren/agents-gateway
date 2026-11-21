@@ -91,6 +91,18 @@ describe('Mensagens', () => {
     expect(host.textContent).toContain('A resposta do agente aparece aqui')
   })
 
+  it('guias Pendentes e Resolvidas: abre em Pendentes quando há alguma, e a outra guia mostra o resto', async () => {
+    const done = { ...thread, conversationId: 's2', title: 'Já resolvido', pending: 0 }
+    const { host } = await mount(undefined, [{ ...thread, pending: 1 }, done])
+    const titles = () => [...host.querySelectorAll('[data-test="message-thread"]')].map((item) => item.textContent)
+    expect(titles()).toHaveLength(1)
+    expect(titles()[0]).toContain('Preciso do acesso')
+    host.querySelector<HTMLButtonElement>('[data-test="tab-resolved"]')!.click()
+    await nextTick()
+    expect(titles()).toHaveLength(1)
+    expect(titles()[0]).toContain('Já resolvido')
+  })
+
   it('🗂️ arquiva direto da lista, sem abrir o fio', async () => {
     const { host, calls } = await mount()
     host.querySelector<HTMLButtonElement>('[data-test="message-thread-archive"]')!.click()
