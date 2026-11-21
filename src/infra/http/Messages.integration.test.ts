@@ -14,6 +14,7 @@ describe('Mensagens (integração)', () => {
   let admin = ''
   let member = ''
   let memberId = ''
+  let controller: ReturnType<typeof makeController>
 
   const call = async (path: string, init: { method?: string; body?: unknown; token?: string } = {}) => {
     const res = await fetch(`${base}${path}`, {
@@ -26,7 +27,7 @@ describe('Mensagens (integração)', () => {
 
   before(async () => {
     process.env.MCP_SERVER_URL = 'http://127.0.0.1:1/mcp'
-    const controller = makeController()
+    controller = makeController()
     const server = new HttpServer(controller, makeAuthController(), makeProvidersController(), makeUsageController(controller.conversations)).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
@@ -94,6 +95,37 @@ describe('Mensagens (integração)', () => {
     // Conversa que não roda mais (aqui: só gravada, sem o agente): 404, e a resposta não entra no fio.
     if (sent.status === 404) assert.notStrictEqual(thread.at(-1)?.body, 'Sexta')
     else assert.deepStrictEqual([sent.status, thread.at(-1)?.from, thread.at(-1)?.body], [202, 'person', 'Sexta'])
+  })
+
+  it('💬 responder depois de um reinício: a conversa só gravada é retomada (antes, "Session not found")', async () => {
+    await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'claude-sonnet-5' } })
+    await call('/providers/claude/models', { method: 'PUT', token: admin, body: { modelId: 'claude-sonnet-5', enabled: true } })
+    const agent = {
+      id: 'atlas',
+      name: 'Atlas',
+      providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }],
+      systemPrompt: 'Você responde.',
+      modes: ['chat'],
+      allowedTools: [],
+    }
+    assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: agent })).status, 201)
+    const now = new Date()
+    await controller.conversations.saveSession({
+      id: 'gw_do_atlas',
+      agentId: 'atlas',
+      provider: 'claude',
+      mode: 'chat',
+      model: 'claude-sonnet-5',
+      createdAt: now,
+      updatedAt: now,
+      turns: 1,
+      usage: {},
+      metadata: { owner: { id: memberId, email: 'ana@x.test' } },
+    })
+    await makePersonMessages().send({ sessionId: 'gw_do_atlas', agentId: 'atlas', to: 'owner', title: 'Aprovar?', body: 'Aprova o plano?', level: 'attention' })
+    const item = (await call('/messages', { token: member })).body.result.threads.find((thread: { requestId?: string; title?: string }) => thread.title === 'Aprovar?')
+    const sent = await call(`/messages/${item.id}/reply`, { method: 'POST', token: member, body: { message: 'Aprovado' } })
+    assert.strictEqual(sent.status, 202, JSON.stringify(sent.body))
   })
 
   it('📌 pedido por pedido: pendentes no fio e no total; replyTo inválido é 422; status resolved/pending; info e alheio recusados', async () => {
