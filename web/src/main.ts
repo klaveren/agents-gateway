@@ -34,5 +34,10 @@ function markShortViewport(): void {
 }
 markShortViewport()
 window.addEventListener('resize', markShortViewport)
+// 📱 Ao voltar para o app (tela de início), o iOS pode ter mudado a altura sem disparar `resize`: mede de novo.
+window.addEventListener('pageshow', markShortViewport)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') requestAnimationFrame(markShortViewport)
+})
 
 createApp(App).use(createPinia()).use(router).mount('#app')

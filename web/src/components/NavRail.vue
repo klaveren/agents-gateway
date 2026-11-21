@@ -62,7 +62,7 @@
 
 <template>
   <nav
-    class="fixed inset-x-0 bottom-0 z-30 flex shrink-0 items-stretch border-t border-zinc-800/80 bg-zinc-900/95 pb-[var(--safe-bottom)] backdrop-blur md:static md:w-[52px] md:flex-col md:items-center md:gap-1 md:border-t-0 md:border-r md:bg-zinc-900/60 md:py-2.5 md:pb-2.5 md:backdrop-blur-none"
+    class="fixed inset-x-0 bottom-0 z-30 flex shrink-0 items-stretch border-t border-zinc-800/80 bg-zinc-900/95 pb-[max(var(--safe-bottom),0.5rem)] backdrop-blur md:static md:w-[52px] md:flex-col md:items-center md:gap-1 md:border-t-0 md:border-r md:bg-zinc-900/60 md:py-2.5 md:pb-2.5 md:backdrop-blur-none"
   >
     <!-- 📱 No celular os itens não se espremem: cada um tem largura mínima e a barra rola de lado. No computador, `md:contents` some com esta camada. -->
     <div class="flex min-w-0 flex-1 items-stretch overflow-x-auto overscroll-x-contain [scrollbar-width:none] md:contents [&::-webkit-scrollbar]:hidden">
@@ -81,7 +81,7 @@
         :key="link.key"
         :to="link.to"
         :title="link.label"
-        class="relative flex min-w-[64px] flex-1 shrink-0 flex-col items-center md:min-w-0 gap-0.5 py-1.5 text-[10px] font-medium transition-colors md:h-9 md:w-9 md:flex-none md:justify-center md:gap-0 md:rounded-lg md:py-0"
+        class="relative flex min-w-[64px] flex-1 shrink-0 flex-col items-center md:min-w-0 gap-1 py-2.5 text-[11px] font-medium transition-colors md:h-9 md:w-9 md:flex-none md:justify-center md:gap-0 md:rounded-lg md:py-0"
         :class="section === link.key ? 'bg-zinc-800 text-emerald-300 md:text-zinc-50' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'"
       >
         <Icon :name="link.icon" class="h-[22px] w-[22px] md:h-[18px] md:w-[18px]" />
@@ -106,7 +106,7 @@
       <RouterLink
         v-else-if="auth.localAccounts"
         to="/login"
-        class="flex min-w-[64px] flex-1 shrink-0 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden"
+        class="flex min-w-[64px] flex-1 shrink-0 flex-col items-center justify-center py-2.5 text-[11px] font-medium text-zinc-300 md:hidden"
       >
         Entrar
       </RouterLink>
