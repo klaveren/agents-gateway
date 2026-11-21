@@ -53,7 +53,7 @@ import { useSpeechStore } from '@/stores/speech'
     <button
       type="button"
       class="flex flex-col items-center gap-0.5 text-[10px] font-medium"
-      :class="placement === 'up' ? 'w-full py-1.5 text-zinc-400' : ''"
+      :class="placement === 'up' ? 'w-full py-2.5 text-zinc-400' : ''"
       :aria-expanded="open"
       aria-haspopup="menu"
       :title="`${auth.user.name} (${auth.user.email})`"
