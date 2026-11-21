@@ -2515,7 +2515,7 @@ export class AgentController {
           if (error instanceof PersonMessageError && error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
           throw error
         }
-        const session = await this.usecases.getSession.execute(service.resolve(recipientId, conversationId)?.conversationId ?? conversationId)
+        const session = await this.sessionForReply(service.resolve(recipientId, conversationId)?.conversationId ?? conversationId)
         let reply: { input: string; agentId: string; conversationId: string }
         try {
           reply = service.reply(recipientId, conversationId, text, name, replyTo)
@@ -2540,6 +2540,23 @@ export class AgentController {
       },
       { status: 202, message: 'Reply sent to the conversation' },
     )
+  }
+
+  /**
+   * 💬 A conversa que a resposta continua. Fora da memória (expirou, ou o gateway reiniciou), ela é RETOMADA da gravada,
+   * como no envio normal: antes, responder depois de um deploy dava "Session not found". Quem pode responder já foi
+   * conferido pelo item (a mensagem é da pessoa).
+   */
+  private async sessionForReply(conversationId: string): Promise<{ status: string; turns: number }> {
+    try {
+      return await this.usecases.getSession.execute(conversationId)
+    } catch (error: unknown) {
+      const stored = this.usecases.resumeSession ? await this.usecases.conversations.findSession(conversationId).catch(() => undefined) : undefined
+      if (!stored) throw error
+      const view = await adminView(this.usecases.proof)
+      await this.usecases.resumeSession!.execute(stored, !!view && administers(view, this.agents.get(stored.agentId)?.projectId))
+      return this.usecases.getSession.execute(conversationId)
+    }
   }
 
   /** `PUT /messages/:conversationId/:messageId/status { status }` — 📌 a pessoa dá o pedido por tratado (`resolved`) ou o reabre (`pending`). */
