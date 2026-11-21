@@ -81,7 +81,7 @@
         :key="link.key"
         :to="link.to"
         :title="link.label"
-        class="relative flex min-w-[64px] flex-1 shrink-0 flex-col items-center md:min-w-0 gap-0.5 py-1.5 text-[10px] font-medium transition-colors md:h-9 md:w-9 md:flex-none md:justify-center md:gap-0 md:rounded-lg md:py-0"
+        class="relative flex min-w-[64px] flex-1 shrink-0 flex-col items-center md:min-w-0 gap-1 py-2.5 text-[11px] font-medium transition-colors md:h-9 md:w-9 md:flex-none md:justify-center md:gap-0 md:rounded-lg md:py-0"
         :class="section === link.key ? 'bg-zinc-800 text-emerald-300 md:text-zinc-50' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'"
       >
         <Icon :name="link.icon" class="h-[22px] w-[22px] md:h-[18px] md:w-[18px]" />
@@ -106,7 +106,7 @@
       <RouterLink
         v-else-if="auth.localAccounts"
         to="/login"
-        class="flex min-w-[64px] flex-1 shrink-0 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden"
+        class="flex min-w-[64px] flex-1 shrink-0 flex-col items-center justify-center py-2.5 text-[11px] font-medium text-zinc-300 md:hidden"
       >
         Entrar
       </RouterLink>
