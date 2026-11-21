@@ -62,7 +62,7 @@
 
 <template>
   <nav
-    class="fixed inset-x-0 bottom-0 z-30 flex shrink-0 items-stretch border-t border-zinc-800/80 bg-zinc-900/95 pb-[var(--safe-bottom)] backdrop-blur md:static md:w-[52px] md:flex-col md:items-center md:gap-1 md:border-t-0 md:border-r md:bg-zinc-900/60 md:py-2.5 md:pb-2.5 md:backdrop-blur-none"
+    class="fixed inset-x-0 bottom-0 z-30 flex shrink-0 items-stretch border-t border-zinc-800/80 bg-zinc-900/95 pb-[max(var(--safe-bottom),0.5rem)] backdrop-blur md:static md:w-[52px] md:flex-col md:items-center md:gap-1 md:border-t-0 md:border-r md:bg-zinc-900/60 md:py-2.5 md:pb-2.5 md:backdrop-blur-none"
   >
     <!-- 📱 No celular os itens não se espremem: cada um tem largura mínima e a barra rola de lado. No computador, `md:contents` some com esta camada. -->
     <div class="flex min-w-0 flex-1 items-stretch overflow-x-auto overscroll-x-contain [scrollbar-width:none] md:contents [&::-webkit-scrollbar]:hidden">
