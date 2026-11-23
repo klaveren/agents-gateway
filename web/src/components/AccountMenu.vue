@@ -131,8 +131,12 @@ import { useSpeechStore } from '@/stores/speech'
         data-test="speech-stop-item"
         @click="speech.stop()"
       >
-        <Icon name="stop" class="h-4 w-4 text-zinc-400" />
-        Parar leitura
+        <Icon name="stop" class="h-4 w-4 shrink-0 text-zinc-400" />
+        <span v-if="speech.current" class="min-w-0 flex-1" data-test="speech-current">
+          <span class="block truncate">Lendo: {{ speech.current.label }}</span>
+          <span class="block text-xs text-zinc-500">Toque para parar{{ speech.waiting ? ` · na fila: ${speech.waiting}` : '' }}</span>
+        </span>
+        <template v-else>Parar leitura</template>
       </button>
       <RouterLink
         v-if="serverList?.manage"

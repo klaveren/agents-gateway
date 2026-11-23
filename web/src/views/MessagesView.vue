@@ -12,6 +12,7 @@
   import type { ITurn } from '@/lib/types'
   import { readDraft, writeDraft } from '@/lib/draftStorage'
   import { useAgentsStore } from '@/stores/agents'
+  import { useSpeechStore } from '@/stores/speech'
   import { useMessagesStore, type IPersonMessage, type IPersonThread } from '@/stores/messages'
 
   /**
@@ -25,6 +26,7 @@
   const router = useRouter()
   const messages = useMessagesStore()
   const agents = useAgentsStore()
+  const speech = useSpeechStore()
 
   const error = ref<string>()
   const draft = ref('')
@@ -290,6 +292,7 @@
               :archived="messages.archived"
               :name="agentName(thread.agentId)"
               :provider="agentProvider(thread.agentId)"
+              :speaking="speech.current?.thread === thread.id"
               @archive="archiveThread"
             />
           </li>
