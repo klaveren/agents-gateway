@@ -61,7 +61,7 @@ import { SqliteRemoteUsageRepository } from '@infra/persistence/Sqlite.RemoteUsa
 import { remoteUsageRows } from '@domain/models/RemoteUsage.Model'
 import { mediaUsageRowsOf } from './MediaUsage.Factory'
 import { ProjectConnectionService } from '@application/ProjectConnection.Service'
-import { PermissionDecisionNoticeService } from '@application/PermissionDecisionNotice.Service'
+import { type INoticeVia, PermissionDecisionNoticeService } from '@application/PermissionDecisionNotice.Service'
 import { catalogItemKey } from '@application/CatalogHistory.Service'
 import { RemoteClient } from '@infra/connect/Remote.Client'
 import { SqliteProjectConnectionRepository } from '@infra/persistence/Sqlite.ProjectConnectionRepository'
@@ -235,7 +235,7 @@ export function makeController(): AgentController {
   // ⛔ A decisão de um pedido volta à conversa que pediu, amarrada a quem decidiu (a identidade da requisição): o aviso sai
   // depois, e entra com as regras do `POST …/turns` — na fila do turno rodando, ou num turno novo.
   const notices = new PermissionDecisionNoticeService({
-    delivery: () => AsyncResource.bind((conversationId: string, text: string) => controller.serverNotice(conversationId, text)),
+    delivery: () => AsyncResource.bind((conversationId: string, render: (via?: INoticeVia) => string) => controller.permissionNotice(conversationId, render)),
   })
   makePermissionRequests().useDecisionListener((request, decider) => notices.decided(request, decider))
   // ⛔ O aviso de uma vigia entra na conversa em nome da conta DONA (a sessão sem senha dela), fora de qualquer requisição:

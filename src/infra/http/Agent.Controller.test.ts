@@ -852,6 +852,33 @@ describe('AgentController', () => {
         assert.deepStrictEqual(queued, [])
       })
 
+      it('🔐 decisão de pedido de subconversa: rodando, só na fila dela; parada, só na mãe, dizendo qual subconversa continuar', async () => {
+        const alice = { id: 'alice', email: 'a@x.test', account: 'acc-1' }
+        const child = owned('s-filha', alice)
+        child.metadata = { ...child.metadata, delegatedBy: 's-alice' }
+        const sessions: Record<string, typeof child> = { 's-filha': child, 's-alice': aliceSession }
+        const describe = (id: string) => {
+          if (!sessions[id]) throw new SessionNotFoundError(id)
+          return sessions[id]
+        }
+        const render = (via?: { conversationId: string; agentId: string }) => (via ? `via ${via.conversationId} de ${via.agentId}` : 'direto')
+        const running: Array<[string, string]> = []
+        const busy = controllerWith({ describe, enqueue: (id, text) => running.push([id, text]) }, fakeCatalog(), proof)
+        assert.strictEqual(await withCaller(ALICE, () => busy.permissionNotice('s-filha', render)), 'queued')
+        assert.deepStrictEqual(running, [['s-filha', 'direto']])
+
+        const queued: Array<[string, string]> = []
+        const stopped = controllerWith({ describe, enqueue: (id, text) => (id === 's-alice' ? queued.push([id, text]) : undefined) }, fakeCatalog(), proof, {
+          conversations: Object.assign(new NullConversationRepository(), { findSession: async (id: string) => ({ ...sessions[id], agentId: 'maya' }) }) as never,
+        })
+        assert.strictEqual(await withCaller(ALICE, () => stopped.permissionNotice('s-filha', render)), 'queued')
+        assert.deepStrictEqual(queued, [['s-alice', 'via s-filha de maya']])
+        await assert.rejects(
+          withCaller(BOB, () => stopped.permissionNotice('s-filha', render)),
+          SessionNotFoundError,
+        )
+      })
+
       it('a arquivada fica como está: nem fila, nem turno, nem volta à memória', async () => {
         const calls: string[] = []
         const gone = () => {
