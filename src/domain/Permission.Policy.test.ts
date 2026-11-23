@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { commandMatches, decide, globToRegex, hostMatches, IPermissionRule, pathGlobMatches, pathMatches, permissionIssues } from './Permission.Policy'
+import { commandMatches, decide, globToRegex, hostMatches, IPermissionRule, isSecretPath, pathGlobMatches, pathMatches, permissionIssues } from './Permission.Policy'
 
 const rule = (category: IPermissionRule['category'], pattern: string, decision: IPermissionRule['decision'] = 'allow'): IPermissionRule => ({ category, pattern, decision })
 const cmd = (text: string) => ({ category: 'terminal' as const, value: text, argv: text.split(' ') })
@@ -270,5 +270,29 @@ describe('Permission.Policy — o casador de glob sem regex', () => {
   it('o `**` casa pasta com quebra de linha no nome: a negação `**/.env` não é contornada por ela', () => {
     assert.strictEqual(pathMatches('**/.env', 'a\nb/.env'), true)
     assert.strictEqual(globToRegex('**/.env').test('a\nb/.env'), true)
+  })
+})
+
+describe('pathGlobMatches — o corte pelos trechos literais', () => {
+  it('não muda o resultado: casa e recusa como a conta inteira', () => {
+    const cases: Array<[string, string, boolean]> = [
+      ['**/.env', 'apps/api/.env', true],
+      ['**/.env', '.env', true],
+      ['a/**/b.ts', 'a/b.ts', true],
+      ['**/.env', 'apps/api/.env.example', false],
+      ['**/*.pem', 'certs/server.pem', true],
+      ['**/*.pem', 'certs/server.pe', false],
+      ['src/**/x?.ts', 'src/a/b/x1.ts', true],
+      ['src/**/x?.ts', 'lib/a/x1.ts', false],
+      ['**/.credentials/**', 'a/.credentials/k.json', true],
+      ['**/.credentials/**', 'a/credentials/k.json', false],
+    ]
+    for (const [pattern, text, expected] of cases) assert.strictEqual(pathGlobMatches(pattern, text), expected, `${pattern} × ${text}`)
+  })
+
+  it('dez mil caminhos contra os padrões de segredo em menos de meio segundo', () => {
+    const started = Date.now()
+    for (let index = 0; index < 10_000; index += 1) isSecretPath(`packages/app${index % 50}/src/module${index}/File${index}.UseCase.ts`)
+    assert.ok(Date.now() - started < 500, `${Date.now() - started} ms`)
   })
 })

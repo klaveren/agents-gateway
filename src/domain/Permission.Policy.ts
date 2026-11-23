@@ -400,6 +400,9 @@ export function pathMatches(pattern: string, path: string): boolean {
  */
 export function pathGlobMatches(pattern: string, text: string): boolean {
   if (!/[*?]/.test(pattern)) return pattern === text
+  // ⚡ Corte barato antes da conta: cada trecho literal do padrão tem de estar no texto (a lista de arquivos confere milhares
+  // de caminhos contra os padrões de segredo, e a conta inteira para cada um travava o servidor por segundos).
+  if (literalChunks(pattern).some((chunk) => !text.includes(chunk))) return false
   // As peças, lidas como no `globToRegex`: '**/' (pastas), '**' (tudo), '*', '?' ou o caractere.
   const pieces: string[] = []
   for (let i = 0; i < pattern.length; i += 1) {
@@ -436,6 +439,29 @@ export function pathGlobMatches(pattern: string, text: string): boolean {
     ;[next, row] = [row, next]
   }
   return next[0] === 1
+}
+
+const CHUNKS = new Map<string, string[]>()
+
+/** Os trechos literais do padrão (o que fica entre `*` e `?`), guardados por padrão. */
+function literalChunks(pattern: string): string[] {
+  let chunks = CHUNKS.get(pattern)
+  if (!chunks) {
+    // Lido como o casador: `**/` (que pode não casar nada) inteiro, `**`, `*` e `?` separam; o resto é literal.
+    chunks = []
+    let literal = ''
+    for (let i = 0; i < pattern.length; i += 1) {
+      if (pattern[i] === '*' || pattern[i] === '?') {
+        if (literal) chunks.push(literal)
+        literal = ''
+        if (pattern[i] === '*' && pattern[i + 1] === '*') i += pattern[i + 2] === '/' ? 2 : 1
+      } else literal += pattern[i]
+    }
+    if (literal) chunks.push(literal)
+    if (CHUNKS.size > 5000) CHUNKS.clear()
+    CHUNKS.set(pattern, chunks)
+  }
+  return chunks
 }
 
 export function globToRegex(pattern: string): RegExp {
