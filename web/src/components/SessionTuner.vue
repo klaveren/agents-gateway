@@ -115,6 +115,5 @@
     <span v-if="saving" class="text-zinc-500">trocando…</span>
     <span v-else-if="failure" class="text-rose-300">{{ failure }}</span>
     <span v-else-if="switched" class="text-amber-300/90">agora em {{ switched }}; vale a partir da próxima mensagem</span>
-    <span v-else class="hidden text-zinc-600 sm:inline">vale a partir da próxima mensagem</span>
   </div>
 </template>
