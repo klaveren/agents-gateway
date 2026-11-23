@@ -130,7 +130,12 @@ describe('stores do catálogo', () => {
     expect(a!.value.map((item) => item.id)).toEqual(['resumir'])
     expect(b!.value).toEqual(a!.value)
 
+    // Regra ou tamanho mudou: o `/` não muda, e nada é relido.
     useAgentCatalogStore().invalidate()
+    await flush()
+    expect(api).toHaveBeenCalledTimes(1)
+
+    useAgentCatalogStore().commandsChanged()
     await flush()
     expect(api).toHaveBeenCalledTimes(2)
     expect(a!.value.map((item) => item.id)).toEqual(['resumir'])
