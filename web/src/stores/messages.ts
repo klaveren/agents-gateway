@@ -47,6 +47,8 @@ export interface IPersonThread {
   /** Quantos pedidos do fio ainda estão pendentes. */
   pending: number
   archived: boolean
+  /** 🔌 Só nos itens de um projeto conectado: a conversa mora na origem (`stale`: a origem não respondeu, é a última lista). */
+  origin?: { projectId: string; url: string; stale?: boolean }
 }
 
 /**
@@ -131,7 +133,8 @@ export const useMessagesStore = defineStore('messages', () => {
   function changed(event: { conversationId: string; unread: number }): void {
     unread.value = event.unread
     void load().catch(() => undefined)
-    if (open.value?.conversationId === event.conversationId) void openThread(open.value.key, looking()).catch(() => undefined)
+    // Sem id de conversa (aviso de projeto conectado): o fio aberto, que pode ser da origem, também se relê.
+    if (open.value && (!event.conversationId || open.value.conversationId === event.conversationId)) void openThread(open.value.key, looking()).catch(() => undefined)
   }
 
   /** A pessoa voltou à janela com o fio aberto: o que chegou enquanto ela estava fora vira lido agora. */

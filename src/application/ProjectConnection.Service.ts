@@ -8,11 +8,12 @@ import { projectEnvIssues, projectMcpEnvIssues } from './Projects.Service'
 import { IProjectMcpVar, PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
 import { hasUpdate, IConnectionChange, IConnectionSkipped, IConnectionUpdate, IProjectConnection } from '@domain/models/ProjectConnection.Model'
 import type { IProjectConnectionRepository, TConnectionPatch } from '@domain/ports/ProjectConnectionRepository.Port'
-import { IRemoteCatalog, IRemoteChanges, RemoteRequestError, RemoteUnauthorizedError, RemoteUnavailableError } from '@domain/ports/RemoteCatalog.Port'
+import { IRemoteCatalog, IRemoteChanges, IRemoteMessageNew, RemoteRequestError, RemoteUnauthorizedError, RemoteUnavailableError } from '@domain/ports/RemoteCatalog.Port'
 import type { ILedgerWrite } from '@domain/models/Ledger.Model'
 import type { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
 import { REMOTE_USAGE_MAX_ROWS } from '@domain/models/RemoteUsage.Model'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
+import type { IPersonMessage, IPersonThread } from '@domain/models/PersonMessage.Model'
 
 /** De quanto em quanto tempo o vigia confere a versão quando o aviso ao vivo caiu (e, de todo modo, de vez em quando). */
 export const CONNECTION_POLL_MS = 5 * 60_000
@@ -53,8 +54,24 @@ export interface IProjectConnectionDeps {
   /** Os modelos desta instalação (sem o mapa, que é da conexão). */
   /** O que roda aqui, para o projeto conectado (`projectId`): também o que ele pode usar (ver `ModelAccess.Policy`). */
   models(projectId?: string): Promise<Omit<ILocalModels, 'map'>>
+  /** 💬 O aviso ao vivo da origem sobre as mensagens do projeto: a caixa mudou, ou chegou uma mensagem nova de agente. */
+  onMessages?: (projectId: string, event: TRemoteMessagesEvent) => void
   now?: () => Date
 }
+
+/** 💬 O que a origem avisa das mensagens (ver `IProjectConnectionDeps.onMessages`). */
+export type TRemoteMessagesEvent = { type: 'changed'; unread: number } | { type: 'new'; message: IRemoteMessageNew }
+
+/** 💬 A caixa de um projeto conectado: `stale` = a origem não respondeu, é a última lista que ela deu. */
+export interface IRemoteInbox {
+  threads: IPersonThread[]
+  unread: number
+  pending: number
+  stale?: boolean
+}
+
+/** A chave da última lista guardada de um projeto (a caixa ou as arquivadas). */
+const MESSAGES_KEY = (projectId: string, archived: boolean) => `${projectId}:${archived ? 'archived' : 'inbox'}`
 
 /** O que a sincronização fez. */
 export interface ISyncResult {
@@ -84,6 +101,8 @@ export class ProjectConnectionService {
   /** A seção do ledger no system prompt de cada agente conectado (a última que a origem deu). */
   private readonly prompts = new Map<string, string | null>()
   private readonly flushing = new Set<string>()
+  /** 💬 A última lista de mensagens que cada origem deu (a que a tela mostra, marcada `stale`, quando ela cai). */
+  private readonly inboxes = new Map<string, Omit<IRemoteInbox, 'stale'>>()
 
   constructor(private readonly deps: IProjectConnectionDeps) {
     this.now = deps.now ?? (() => new Date())
@@ -495,11 +514,18 @@ export class ProjectConnectionService {
     while (!signal.aborted && this.deps.repository.get(projectId)) {
       const client = this.clientOf(projectId)
       try {
-        await client?.events((version) => {
-          wait = RETRY_MIN_MS
-          const current = this.deps.repository.get(projectId)
-          if (current && version > current.latestVersion) void this.check(projectId).catch(() => undefined)
-        }, signal)
+        await client?.events(
+          {
+            onVersion: (version) => {
+              wait = RETRY_MIN_MS
+              const current = this.deps.repository.get(projectId)
+              if (current && version > current.latestVersion) void this.check(projectId).catch(() => undefined)
+            },
+            onMessagesChanged: ({ unread }) => this.tell(projectId, { type: 'changed', unread }),
+            onMessageNew: (message) => this.tell(projectId, { type: 'new', message }),
+          },
+          signal,
+        )
       } catch (error) {
         if (error instanceof RemoteUnauthorizedError) {
           this.deps.repository.update(projectId, { state: 'unauthorized', lastError: error.message })
@@ -509,6 +535,109 @@ export class ProjectConnectionService {
       if (signal.aborted) return
       await new Promise((resolve) => setTimeout(resolve, wait).unref?.())
       wait = Math.min(wait * 2, RETRY_MAX_MS)
+    }
+  }
+
+  /** 💬 Repassa o aviso das mensagens; quem escuta falhar não derruba o vigia. */
+  private tell(projectId: string, event: TRemoteMessagesEvent): void {
+    try {
+      this.deps.onMessages?.(projectId, event)
+    } catch {
+      // O aviso local é extra.
+    }
+  }
+
+  /** As conexões que esta conta fez: só ela vê as mensagens delas aqui (a origem entrega as da conta da conexão). */
+  connectionsOf(email: string | undefined): IProjectConnection[] {
+    const wanted = email?.trim().toLowerCase()
+    return wanted ? this.list().filter((connection) => connection.createdBy.trim().toLowerCase() === wanted) : []
+  }
+
+  /**
+   * 💬 A caixa do projeto conectado, com espera CURTA: origem fora do ar devolve a última lista (`stale`), nunca prende a tela.
+   * Sem lista guardada, vazia e `stale`.
+   */
+  async remoteMessages(projectId: string, archived = false): Promise<IRemoteInbox> {
+    this.require(projectId)
+    const cacheKey = MESSAGES_KEY(projectId, archived)
+    try {
+      const client = this.clientOf(projectId)
+      if (!client) throw new RemoteUnavailableError('o token guardado não abriu')
+      const inbox = await client.messages(archived)
+      const fresh = { threads: inbox.threads, unread: inbox.unread, pending: inbox.pending }
+      this.inboxes.set(cacheKey, fresh)
+      return fresh
+    } catch (error) {
+      if (error instanceof RemoteRequestError) throw error
+      return { ...(this.inboxes.get(cacheKey) ?? { threads: [], unread: 0, pending: 0 }), stale: true }
+    }
+  }
+
+  /**
+   * 💬 A caixa de TODAS as conexões da conta, cada item com a sua `origin`. Uma origem que cai não derruba as outras.
+   * Os totais são os da origem (o que ela contou para este projeto).
+   */
+  async remoteInbox(email: string | undefined, archived = false): Promise<{ threads: IPersonThread[]; unread: number; pending: number }> {
+    const merged = { threads: [] as IPersonThread[], unread: 0, pending: 0 }
+    for (const connection of this.connectionsOf(email)) {
+      const inbox = await this.remoteMessages(connection.projectId, archived).catch(() => undefined)
+      if (!inbox) continue
+      const origin = { projectId: connection.projectId, url: connection.url, ...(inbox.stale ? { stale: true } : {}) }
+      merged.threads.push(...inbox.threads.map((thread) => ({ ...thread, origin })))
+      merged.unread += inbox.unread
+      merged.pending += inbox.pending
+    }
+    return merged
+  }
+
+  /** 💬 Em qual conexão da conta está o item (a primeira que o tem); nenhuma = não é de origem nenhuma. */
+  async findMessage(email: string | undefined, key: string): Promise<{ projectId: string; messages: IPersonMessage[] } | undefined> {
+    let down: ProjectConnectionError | undefined
+    for (const connection of this.connectionsOf(email)) {
+      try {
+        const found = await this.remoteCall(connection.projectId, (client) => client.message(key))
+        if (found.messages.length) return { projectId: connection.projectId, messages: found.messages }
+      } catch (error) {
+        // Não é dela (404): tenta a próxima. A origem que caiu também, mas o erro fica se nenhuma outra tiver o item.
+        if (error instanceof ProjectConnectionError) down = error
+        else if (!(error instanceof RemoteRequestError)) throw error
+      }
+    }
+    if (down) throw down
+    return undefined
+  }
+
+  remoteMessage(projectId: string, key: string): Promise<{ messages: IPersonMessage[] }> {
+    return this.remoteCall(projectId, (client) => client.message(key))
+  }
+
+  readRemoteMessage(projectId: string, key: string): Promise<{ unread: number }> {
+    return this.remoteCall(projectId, (client) => client.readMessage(key))
+  }
+
+  archiveRemoteMessage(projectId: string, key: string, archived: boolean): Promise<{ unread: number }> {
+    return this.remoteCall(projectId, (client) => client.archiveMessage(key, archived))
+  }
+
+  setRemoteMessageStatus(projectId: string, key: string, messageId: string, status: 'resolved' | 'pending'): Promise<{ status: string; pending: number }> {
+    return this.remoteCall(projectId, (client) => client.setMessageStatus(key, messageId, status))
+  }
+
+  replyRemoteMessage(projectId: string, key: string, message: string, replyTo?: string): Promise<{ queued: boolean }> {
+    return this.remoteCall(projectId, (client) => client.replyMessage(key, message, replyTo))
+  }
+
+  /** Uma ação nas mensagens da origem: fora do ar ou token que não vale vira erro claro; a recusa dela (404, 422) passa como é. */
+  private async remoteCall<T>(projectId: string, work: (client: IRemoteCatalog) => Promise<T>): Promise<T> {
+    this.require(projectId)
+    const client = this.clientOf(projectId)
+    if (!client) throw new ProjectConnectionError('unauthorized', 'o token guardado não abriu: troque o token do projeto')
+    try {
+      return await work(client)
+    } catch (error) {
+      if (error instanceof RemoteUnauthorizedError) throw new ProjectConnectionError('unauthorized', error.message)
+      if (error instanceof RemoteUnavailableError) throw new ProjectConnectionError('unavailable', `a origem de ${projectId} não respondeu: ${error.message}`)
+      throw error
     }
   }
 

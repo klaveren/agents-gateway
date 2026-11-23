@@ -168,3 +168,33 @@ describe('Mensagens', () => {
     })
   })
 })
+
+describe('Mensagens: item de projeto conectado', () => {
+  const remote = { ...thread, id: 'm_r1', conversationId: 'c_origem', origin: { projectId: 'logiccus', url: 'http://servidor:3000/v1' } }
+  const remoteMessage = { ...agentMessage, id: 'm_r1', conversationId: 'c_origem', status: 'pending' }
+
+  it('não pede o contexto à conversa local e o link abre a conversa na origem, em outra aba', async () => {
+    const { host, calls } = await mount('m_r1', [remote], [remoteMessage], {
+      '/messages/m_r1': { messages: [remoteMessage] },
+      '/messages/m_r1/read': { unread: 0 },
+    })
+    expect(calls.some((call) => call.path.endsWith('/turns'))).toBe(false)
+    expect(host.querySelector('[data-test="message-context"]')).toBeNull()
+    const link = host.querySelector('[data-test="message-open-origin"]')
+    expect(link?.getAttribute('href')).toBe('http://servidor:3000/c/c_origem?turn=4')
+    expect(link?.getAttribute('target')).toBe('_blank')
+    expect(host.querySelector('[data-test="message-open-turn"]')).toBeNull()
+  })
+
+  it('resolver e responder usam as mesmas rotas daqui', async () => {
+    const { calls } = await mount('m_r1', [remote], [remoteMessage], {
+      '/messages/m_r1': { messages: [remoteMessage] },
+      '/messages/m_r1/read': { unread: 0 },
+      '/messages/m_r1/reply': { queued: false },
+    })
+    const store = (await import('@/stores/messages')).useMessagesStore()
+    await store.reply('m_r1', 'Pode seguir')
+    await store.setStatus('m_r1', 'm_r1', 'resolved')
+    expect(calls.map((call) => call.path)).toEqual(expect.arrayContaining(['/messages/m_r1/reply', '/messages/m_r1/m_r1/status']))
+  })
+})

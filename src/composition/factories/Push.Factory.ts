@@ -1,6 +1,7 @@
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqlitePushSubscriptionRepository } from '@infra/persistence/Sqlite.PushSubscriptionRepository'
 import { WebPushSender } from '@infra/push/WebPush.Sender'
+import { makeAgents } from './Agents.Factory'
 import { makeSecretBox } from './Credentials.Factory'
 
 let instance: WebPushSender | undefined
@@ -19,4 +20,15 @@ export function makePush(): WebPushSender {
     subject && /^(mailto:|https:)/.test(subject) ? subject : 'mailto:push@agents-gateway.invalid',
   )
   return instance
+}
+
+/** 📱 O aviso de uma mensagem de agente no aparelho da pessoa: o nome do agente e o assunto; o toque abre o item (`key`). */
+export function pushMessage(recipientId: string, message: { agentId: string; title?: string; body: string; key: string }): void {
+  const agent = makeAgents().get(message.agentId)?.name ?? message.agentId
+  void makePush().notify(recipientId, {
+    title: message.title ? `${agent}: ${message.title}` : agent,
+    body: message.body,
+    url: `/messages/${encodeURIComponent(message.key)}`,
+    tag: `message:${message.key}`,
+  })
 }

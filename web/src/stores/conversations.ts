@@ -359,7 +359,8 @@ export const useConversationsStore = defineStore('conversations', () => {
               const created = event as unknown as { conversationId: string; unread: number }
               useMessagesStore().changed(created)
               // 🔊 Lê em voz alta, se a pessoa ligou (no app do Mac, quem fala é o ícone da barra de menus).
-              void useSpeechStore().onMessageCreated(created.conversationId)
+              // (Sem id de conversa = aviso de projeto conectado: a voz das mensagens da origem fica de fora.)
+              if (created.conversationId) void useSpeechStore().onMessageCreated(created.conversationId)
             }
             else if (event.type === 'conversation.running' || event.type === 'conversation.idle')
               markRunning(event.sessionId, event.type === 'conversation.running', event.type === 'conversation.running' ? event.at : undefined)

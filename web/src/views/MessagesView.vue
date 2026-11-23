@@ -79,6 +79,14 @@
   const current = computed<IPersonThread | undefined>(() => messages.threads.find((thread) => thread.id === props.id))
   /** A conversa de origem do item aberto (o contexto e o link). */
   const conversationId = computed(() => current.value?.conversationId ?? (messages.open?.key === props.id ? messages.open?.conversationId : undefined))
+  /** 🔌 O item é de um projeto conectado: a conversa mora na origem (sem o contexto daqui; o link abre lá). */
+  const origin = computed(() => current.value?.origin)
+  /** O endereço da conversa na origem (o endereço da conexão pode vir com `/v1`). */
+  const originLink = computed(() => {
+    if (!origin.value || !conversationId.value) return undefined
+    const base = origin.value.url.trim().replace(/\/+$/, '').replace(/\/v1$/, '')
+    return `${base}/c/${encodeURIComponent(conversationId.value)}${turn.value === undefined ? '' : `?turn=${turn.value}`}`
+  })
   const fio = computed(() => (messages.open?.key === props.id ? (messages.open?.messages ?? []) : []))
   // O link antigo (o app do Mac, um aviso de antes) traz o id da CONVERSA: sem item de avisos dela, vai para o pedido mais
   // recente dela.
@@ -122,7 +130,9 @@
   async function loadContext() {
     context.value = undefined
     contextError.value = undefined
-    if (!conversationId.value || turn.value === undefined) return
+    // A conversa de um item da origem não existe aqui: nada de `/conversations/:id/turns`.
+    // E só depois de a lista chegar: é nela que se sabe se o item é da origem (a rota aberta direto não sabe antes).
+    if (!messages.loaded || origin.value || !conversationId.value || turn.value === undefined) return
     try {
       const history = await api<{ turns: ITurn[] }>(`/conversations/${encodeURIComponent(conversationId.value)}/turns`, { query: { limit: contextLimit.value, before: turn.value + 1 } })
       context.value = history.turns
@@ -153,6 +163,12 @@
   watch(turn, (next, previous) => {
     if (next !== previous) void loadContext()
   })
+  watch(
+    () => messages.loaded,
+    (loaded) => {
+      if (loaded) void loadContext()
+    },
+  )
 
   async function more() {
     contextLimit.value += 3
@@ -300,7 +316,22 @@
         <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           <div class="mx-auto flex max-w-3xl flex-col gap-3">
             <!-- O contexto: o que estava acontecendo na conversa quando o agente escreveu. -->
-            <section v-if="turn !== undefined" class="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3" data-test="message-context">
+            <section v-if="origin" class="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 text-xs text-zinc-500" data-test="message-origin">
+              <span>
+                Esta conversa está no servidor ({{ origin.projectId }}).<template v-if="origin.stale"> A origem não respondeu: esta é a última lista que ela deu.</template>
+              </span>
+              <a
+                v-if="originLink"
+                :href="originLink"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="ml-auto shrink-0 text-emerald-300 hover:underline"
+                data-test="message-open-origin"
+              >
+                Abrir na conversa →
+              </a>
+            </section>
+            <section v-else-if="turn !== undefined" class="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3" data-test="message-context">
               <div class="mb-2 flex items-center gap-2 text-xs text-zinc-500">
                 <span>Na conversa, até o momento em que {{ current ? agentName(current.agentId) : 'o agente' }} escreveu</span>
                 <RouterLink :to="{ path: `/c/${conversationId}`, query: { turn: String(turn) } }" class="ml-auto text-emerald-300 hover:underline" data-test="message-open-turn">

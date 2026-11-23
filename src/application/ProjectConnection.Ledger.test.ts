@@ -17,6 +17,12 @@ function origin() {
     },
     file: async () => Buffer.from(''),
     events: async () => undefined,
+    messages: async () => ({ threads: [], unread: 0, pending: 0 }),
+    message: async () => ({ messages: [] }),
+    readMessage: async () => ({ unread: 0 }),
+    archiveMessage: async () => ({ unread: 0 }),
+    setMessageStatus: async () => ({ status: 'resolved', pending: 0 }),
+    replyMessage: async () => ({ queued: false }),
     usage: async (rows) => {
       if (state.down) throw new RemoteUnavailableError('down')
       state.usage.push(...rows)

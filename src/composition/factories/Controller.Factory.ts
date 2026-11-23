@@ -89,7 +89,7 @@ import { ModelGroupRetirement } from '@application/ModelGroupRetirement.Service'
 import { ProvidersController } from '@infra/http/Providers.Controller'
 import { UsageController } from '@infra/http/Usage.Controller'
 import { makeCredentials, makeSecretBox } from './Credentials.Factory'
-import { makePush } from './Push.Factory'
+import { makePush, pushMessage } from './Push.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
 import { makeSessionStore, providerBench } from './Orchestrator.Factory'
@@ -168,6 +168,7 @@ export function makeController(): AgentController {
     agentRemoved,
     projects: makeProjects(),
     personMessages: makePersonMessages(),
+    connections: makeProjectConnections(),
     push: makePush(),
     sandbox: projectSandbox(),
     docker: () => dockerStatus(),
@@ -606,7 +607,7 @@ export function makeAuditController(): AuditController {
 }
 
 /** 🔌 A origem dos projetos conectados: o export, o histórico e os arquivos de sempre; o token de conexão do `makeAuth`. */
-export function makeConnectController(): ConnectController {
+export function makeConnectController(agent?: Pick<AgentController, 'replyAs'>): ConnectController {
   const { repository, reader } = catalogHistoryParts()
   const connect = new ConnectService({
     history: repository,
@@ -628,6 +629,16 @@ export function makeConnectController(): ConnectController {
     ...(tokens ? { connection: (raw: string) => tokens.connection(raw) } : {}),
     projectRole: (projectId, userId) => makeProjects().roleOf(projectId, userId),
     events: makeCatalogEvents(),
+    // 💬 As mensagens da conta da conexão (só as do projeto) e a resposta, a mesma da rota normal.
+    messages: makePersonMessages(),
+    ...(agent ? { reply: (input) => agent.replyAs(input) } : {}),
+    accountName: (userId) => {
+      try {
+        return makeAuth().accounts?.me(userId)?.name || undefined
+      } catch {
+        return undefined
+      }
+    },
   })
 }
 
@@ -666,6 +677,19 @@ export function makeProjectConnections(): ProjectConnectionService {
       const prepared = await writer.prepare(undefined, current)
       history.within(catalogItemKey(current), { by, source: 'import', note: 'removido na origem (projeto conectado)' }, () => prepared.commit(by))
       await prepared.after?.()
+    },
+    // 💬 A origem avisou das mensagens do projeto: o sino e a lista daqui acompanham, e o aparelho de quem conectou recebe o push.
+    onMessages: (projectId, event) => {
+      const by = connections?.get(projectId)?.createdBy.trim().toLowerCase()
+      const account = by
+        ? makeAuth()
+            .accounts?.list()
+            .find((candidate) => !candidate.disabled && candidate.email.trim().toLowerCase() === by)
+        : undefined
+      if (!account) return
+      // A origem manda `messages.changed` (o sino e a lista) um instante ANTES de `message.new` (o aparelho).
+      if (event.type === 'changed') return makePersonMessages().announceRemote(account.id, '', event.unread)
+      pushMessage(account.id, { agentId: event.message.agentId, title: event.message.title, body: event.message.body, key: event.message.key })
     },
     models: async (projectId) => {
       const catalog = makeModelCatalog()

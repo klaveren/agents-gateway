@@ -3,11 +3,13 @@ import type { ConnectService } from '@application/Connect.Service'
 import type { ICatalogEvents } from '@domain/ports/CatalogEvents.Port'
 import type { ILedgerWrite } from '@domain/models/Ledger.Model'
 import { REMOTE_USAGE_MAX_ROWS } from '@domain/models/RemoteUsage.Model'
+import { messageKeyOf, type IPersonMessage, type IPersonThread } from '@domain/models/PersonMessage.Model'
+import { PersonMessageError, type PersonMessagesService } from '@application/PersonMessages.Service'
 import { CALLER_HEADER } from './Security.Middleware'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { SseStream } from './Sse.Stream'
-import { parseBody } from './Request.Parser'
+import { parseBody, replyToOf } from './Request.Parser'
 import { z } from 'zod'
 
 /** Quem está conectado: a conta dona do token e o projeto dele. */
@@ -26,6 +28,12 @@ export interface IConnectControllerDeps {
   /** O papel da conta no projeto: sem papel, a conta saiu do projeto e o token deixa de valer. */
   projectRole?: (projectId: string, userId: string) => string | undefined
   events?: ICatalogEvents
+  /** 💬 As mensagens da conta da conexão, só as do projeto dela (ausente: as rotas de mensagens respondem 404). */
+  messages?: PersonMessagesService
+  /** A resposta pela caixa, a mesma da rota normal (`AgentController.replyAs`). */
+  reply?: (input: { recipientId: string; key: string; text: string; replyTo?: string; authorName: string }) => Promise<{ queued: boolean }>
+  /** O nome da conta (para assinar a resposta); sem ele, o e-mail. */
+  accountName?: (userId: string) => string | undefined
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -71,7 +79,24 @@ export class ConnectController {
   private readonly streams = new Map<string, number>()
 
   constructor(private readonly deps: IConnectControllerDeps) {
-    for (const name of ['version', 'changes', 'events', 'catalogPackage', 'file', 'ledgerIndex', 'ledgerContext', 'ledgerSearch', 'ledgerWrite', 'usage'] as const)
+    for (const name of [
+      'version',
+      'changes',
+      'events',
+      'catalogPackage',
+      'file',
+      'ledgerIndex',
+      'ledgerContext',
+      'ledgerSearch',
+      'ledgerWrite',
+      'usage',
+      'listMessages',
+      'messageItem',
+      'readMessage',
+      'archiveMessage',
+      'setMessageStatus',
+      'replyMessage',
+    ] as const)
       this[name] = this[name].bind(this)
   }
 
@@ -137,9 +162,30 @@ export class ConnectController {
         last = version
         stream.emit('catalog.version', { version })
       }) ?? (() => undefined)
+    // 💬 Só o PING (quantas não lidas) e a mensagem NOVA do agente deste projeto para esta conta — nada de outra conta nem projeto.
+    const unwatch = this.deps.messages?.watch({
+      changed: (recipientId) => {
+        if (recipientId !== connection.userId) return
+        if (!this.deps.projectRole?.(connection.projectId, connection.userId)) return stream.close()
+        stream.emit('messages.changed', { unread: this.scoped(connection).unread })
+      },
+      sent: (message) => {
+        if (message.recipientId !== connection.userId || message.from !== 'agent' || message.projectId !== connection.projectId) return
+        stream.emit('message.new', {
+          id: message.id,
+          key: messageKeyOf(message),
+          ...(message.title ? { title: message.title } : {}),
+          body: message.body,
+          level: message.level,
+          agentId: message.agentId,
+          conversationId: message.conversationId,
+        })
+      },
+    })
     // Em `res`, não em `req` (ver `AgentController.sendMessageAsStream`).
     res.on('close', () => {
       unsubscribe()
+      unwatch?.()
       stream.close()
       const count = (this.streams.get(connection.tokenId) ?? 1) - 1
       if (count > 0) this.streams.set(connection.tokenId, count)
@@ -180,6 +226,106 @@ export class ConnectController {
     })
   }
 
+  /** `GET /connect/:projectId/messages?archived=1` — 💬 os itens da conta neste projeto e os totais (só deste projeto). */
+  async listMessages(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { connection } = this.gate(req)
+      const archived = (req.query as Record<string, unknown>).archived === '1' || (req.query as Record<string, unknown>).archived === 'true'
+      return this.scoped(connection, archived)
+    })
+  }
+
+  /** `GET /connect/:projectId/messages/:key` — 💬 as mensagens de um item da conta (404 se for de outro projeto). */
+  async messageItem(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { connection } = this.gate(req)
+      return { messages: this.itemOf(connection, req) }
+    })
+  }
+
+  /** `POST /connect/:projectId/messages/:key/read` — 💬 a conta abriu o item. */
+  async readMessage(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { connection } = this.gate(req)
+      this.itemOf(connection, req)
+      this.messagesOf().markRead(connection.userId, String(req.params.key))
+      return { unread: this.scoped(connection).unread }
+    })
+  }
+
+  /** `PUT /connect/:projectId/messages/:key/archive { archived }` — 💬 arquiva (ou desarquiva) o item. */
+  async archiveMessage(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { connection } = this.gate(req)
+      this.itemOf(connection, req)
+      this.messagesOf().setArchived(connection.userId, String(req.params.key), (req.body as { archived?: unknown } | undefined)?.archived !== false)
+      return { unread: this.scoped(connection).unread }
+    })
+  }
+
+  /** `PUT /connect/:projectId/messages/:key/:messageId/status { status }` — 📌 dá o pedido por tratado ou o reabre. */
+  async setMessageStatus(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { connection } = this.gate(req)
+      this.itemOf(connection, req)
+      const status = (req.body as { status?: unknown } | undefined)?.status
+      if (status !== 'resolved' && status !== 'pending')
+        throw new HttpError(422, 'validation_error', 'status must be resolved or pending', [{ field: 'status', message: 'resolved or pending' }])
+      try {
+        this.messagesOf().setStatus(connection.userId, String(req.params.key), String(req.params.messageId), status)
+      } catch (error: unknown) {
+        if (!(error instanceof PersonMessageError)) throw error
+        if (error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
+        throw new HttpError(404, 'not_found', 'Not found')
+      }
+      return { status, pending: this.scoped(connection).pending }
+    })
+  }
+
+  /** `POST /connect/:projectId/messages/:key/reply { message, replyTo? }` — 💬 a resposta entra na conversa daqui, como na rota normal. */
+  async replyMessage(req: Request, res: Response): Promise<void> {
+    await this.respond(
+      res,
+      async () => {
+        const { connection } = this.gate(req)
+        this.itemOf(connection, req)
+        if (!this.deps.reply) throw new HttpError(404, 'not_found', 'Not found')
+        return this.deps.reply({
+          recipientId: connection.userId,
+          key: String(req.params.key),
+          text: String((req.body as { message?: unknown } | undefined)?.message ?? ''),
+          replyTo: replyToOf(req.body),
+          authorName: this.deps.accountName?.(connection.userId) || connection.email,
+        })
+      },
+      202,
+    )
+  }
+
+  private messagesOf(): PersonMessagesService {
+    if (!this.deps.messages) throw new HttpError(404, 'not_found', 'Not found')
+    return this.deps.messages
+  }
+
+  /** ⛔ O ESCOPO: só mensagens da conta da conexão E deste projeto; qualquer outra coisa é 404 (não diz se existe). */
+  private itemOf(connection: IConnection, req: Request): IPersonMessage[] {
+    const messages = this.messagesOf().thread(connection.userId, String(req.params.key ?? ''))
+    if (!messages.length || messages.some((message) => message.projectId !== connection.projectId)) throw new HttpError(404, 'not_found', 'Not found')
+    return messages
+  }
+
+  /** Os itens da conta DESTE projeto, e o que há de não lido e pendente neles (as não arquivadas). */
+  private scoped(connection: IConnection, archived = false): { threads: IPersonThread[]; unread: number; pending: number } {
+    const service = this.messagesOf()
+    const threads = service.threads(connection.userId, archived).filter((thread) => thread.projectId === connection.projectId)
+    const open = archived ? service.threads(connection.userId, false).filter((thread) => thread.projectId === connection.projectId) : threads
+    return {
+      threads,
+      unread: open.reduce((total, thread) => total + thread.unread, 0),
+      pending: open.reduce((total, thread) => total + thread.pending, 0),
+    }
+  }
+
   private ledgerOf(req: Request) {
     const { connect, connection } = this.gate(req)
     return connect.ledger(connection.projectId, String(req.params.agentId ?? ''), this.deps.projectRole?.(connection.projectId, connection.userId))
@@ -200,9 +346,9 @@ export class ConnectController {
     return { connect, connection }
   }
 
-  private async respond<T>(res: Response, work: () => Promise<T>) {
+  private async respond<T>(res: Response, work: () => Promise<T>, status = 200) {
     try {
-      res.status(200).json(ok(await work()))
+      res.status(status).json(ok(await work()))
     } catch (error: unknown) {
       this.failed(res, error)
     }
