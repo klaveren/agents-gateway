@@ -4,6 +4,7 @@ import {
   IPersonThread,
   isRequestKey,
   isRequestLevel,
+  messageKeyOf,
   PERSON_MESSAGE_LEVELS,
   PERSON_MESSAGE_LIMITS,
   TPersonMessageLevel,
@@ -172,7 +173,9 @@ export class PersonMessagesService {
     const mine = this.deps.repository.thread(recipientId, conversationId)
     // No item de um pedido, a resposta é a ele.
     const target = this.requestOf(mine, replyTo ?? found.requestId)
-    const asked = target ?? [...mine].reverse().find((message) => message.from === 'agent')
+    // ⚖️ Sem pedido, a resposta é ao que a pessoa VIA: a última do agente NESTE item (o da conversa), nunca a última da
+    // conversa inteira — essa podia ser um pedido de outro item, e o agente respondia sobre outro assunto.
+    const asked = target ?? [...mine].reverse().find((message) => message.from === 'agent' && messageKeyOf(message) === key)
     const at = this.now()
     for (const recipient of this.deps.repository.recipientsOf(conversationId)) {
       this.deps.repository.insert({
@@ -195,7 +198,8 @@ export class PersonMessagesService {
       this.deps.repository.setStatus(recipientId, conversationId, target.id, 'answered', at)
       this.announce(recipientId, conversationId)
     }
-    const label = target ? ` a "${(target.title || target.body.replace(/\s+/g, ' ').trim()).slice(0, 60)}" (pedido ${target.id})` : asked?.title ? ` (sobre "${asked.title}")` : ''
+    const about = (message: IPersonMessage) => (message.title || message.body.replace(/\s+/g, ' ').trim()).slice(0, 60)
+    const label = target ? ` a "${about(target)}" (pedido ${target.id})` : asked ? ` à sua mensagem "${about(asked)}" (${asked.id})` : ''
     return { input: `[Resposta de ${authorName} pela caixa de Mensagens${label}]\n\n${body}`, agentId: mine[0].agentId, conversationId }
   }
 

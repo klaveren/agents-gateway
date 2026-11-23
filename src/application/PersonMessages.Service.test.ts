@@ -103,11 +103,25 @@ describe('PersonMessagesService', () => {
     )
   })
 
+  it('🎯 sem pedido, a resposta é à última mensagem do ITEM que a pessoa via, não ao pedido mais novo da conversa', async () => {
+    const { service } = build()
+    await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'owner', title: 'Apagar a tabela', body: 'Apague a tabela X.' })
+    await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'owner', title: 'Trocar o token', body: 'Gere um token.', level: 'attention' })
+    const reply = service.reply('u_caio', 'gw_alfa', 'Conseguiu?', 'Caio')
+    assert.match(reply.input, /à sua mensagem "Apagar a tabela"/)
+    assert.doesNotMatch(reply.input, /Trocar o token/)
+  })
+
   it('💬 a resposta da pessoa vai para o fio de todos (lida para quem escreveu) e vira o texto da conversa, com quem e sobre o quê', async () => {
     const { service } = build()
     await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', title: 'Preciso de um OK', body: 'Posso subir?' })
     const reply = service.reply('u_ana', 'gw_alfa', 'Pode, sim', 'Ana')
-    assert.deepStrictEqual(reply, { input: '[Resposta de Ana pela caixa de Mensagens (sobre "Preciso de um OK")]\n\nPode, sim', agentId: 'zeus', conversationId: 'gw_alfa' })
+    const sent = service.thread('u_ana', 'gw_alfa')[0]
+    assert.deepStrictEqual(reply, {
+      input: `[Resposta de Ana pela caixa de Mensagens à sua mensagem "Preciso de um OK" (${sent.id})]\n\nPode, sim`,
+      agentId: 'zeus',
+      conversationId: 'gw_alfa',
+    })
     assert.deepStrictEqual(
       service.thread('u_bia', 'gw_alfa').map((message) => [message.from, message.body, message.authorId]),
       [
