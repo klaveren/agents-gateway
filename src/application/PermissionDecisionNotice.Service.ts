@@ -1,7 +1,16 @@
 import { IPermissionRequestView, itemLine } from './PermissionRequests.Service'
 
-/** Entrega um texto numa conversa: na fila do turno rodando, ou num turno novo. Lança quando não entrou. */
-export type TNoticeDelivery = (conversationId: string, text: string) => Promise<unknown>
+/** Quando o aviso SOBE de uma subconversa parada para a mãe: de qual subconversa e de qual subagente era o pedido. */
+export interface INoticeVia {
+  conversationId: string
+  agentId: string
+}
+
+/**
+ * Entrega o aviso de uma conversa: na fila do turno rodando, ou num turno novo. Lança quando não entrou. O texto vem
+ * de `render`, porque quem entrega decide onde ele cai (a subconversa parada passa o aviso à mãe, ver `via`).
+ */
+export type TNoticeDelivery = (conversationId: string, render: (via?: INoticeVia) => string) => Promise<unknown>
 
 export interface IPermissionDecisionNoticeDeps {
   /**
@@ -64,29 +73,31 @@ export class PermissionDecisionNoticeService {
     const notice = this.waiting.get(conversationId)
     if (!notice) return
     this.waiting.delete(conversationId)
-    const text = decisionNotice(notice.decided, notice.by)
-    void this.send(conversationId, text, notice.deliver, true)
+    const render = (via?: INoticeVia) => decisionNotice(notice.decided, notice.by, via)
+    void this.send(conversationId, render, notice.deliver, true)
   }
 
-  private async send(conversationId: string, text: string, deliver: TNoticeDelivery, again: boolean): Promise<void> {
+  private async send(conversationId: string, render: (via?: INoticeVia) => string, deliver: TNoticeDelivery, again: boolean): Promise<void> {
     try {
-      await deliver(conversationId, text)
+      await deliver(conversationId, render)
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       if (!again) return console.warn(`[pedidos de permissão] o aviso da decisão não entrou na conversa ${conversationId}:`, reason)
-      const timer = setTimeout(() => void this.send(conversationId, text, deliver, false), this.retryMs)
+      const timer = setTimeout(() => void this.send(conversationId, render, deliver, false), this.retryMs)
       timer.unref()
     }
   }
 }
 
 /** O texto do aviso: o que foi aprovado, o que foi recusado e o que o agente faz com isso. */
-export function decisionNotice(decided: readonly IPermissionRequestView[], by: string): string {
+export function decisionNotice(decided: readonly IPermissionRequestView[], by: string, via?: INoticeVia): string {
   const line = (request: IPermissionRequestView) => `• ${itemLine(request)} (pedido ${request.id})`
   const approved = decided.filter((request) => request.status === 'approved')
   const rejected = decided.filter((request) => request.status === 'rejected')
   return [
-    `[Aviso do gateway, não é mensagem da pessoa: ${by} decidiu pedidos de permissão feitos nesta conversa.]`,
+    via
+      ? `[Aviso do gateway, não é mensagem da pessoa: ${by} decidiu pedidos de permissão que o subagente ${via.agentId} fez na subconversa ${via.conversationId}, que já parou.]`
+      : `[Aviso do gateway, não é mensagem da pessoa: ${by} decidiu pedidos de permissão feitos nesta conversa.]`,
     ...(approved.length ? ['', 'Aprovados (já valem):', ...approved.map(line)] : []),
     ...(rejected.length
       ? ['', 'Recusados (não valem):', ...rejected.map((request) => `${line(request)}${request.decisionNote ? ` — nota de quem recusou: ${request.decisionNote}` : ''}`)]
@@ -97,7 +108,9 @@ export function decisionNotice(decided: readonly IPermissionRequestView[], by: s
         ? 'Regra aprovada vale já. Ferramenta, MCP ou delegação ligada agora pode não aparecer nesta conversa, que segue com as que tinha ao abrir: se não aparecer, diga à pessoa que é preciso uma conversa nova.'
         : '',
       rejected.length ? 'Não peça de novo o que foi recusado sem um motivo novo; siga por outro caminho ou diga à pessoa o que ficou sem fazer.' : '',
-      'Se a tarefa que dependia disso continua em aberto, siga de onde parou; se não, confirme em uma linha.',
+      via
+        ? `Se a tarefa que dependia disso continua em aberto, continue a subconversa com talk (conversation: ${via.conversationId}) para o subagente seguir; se não, confirme em uma linha.`
+        : 'Se a tarefa que dependia disso continua em aberto, siga de onde parou; se não, confirme em uma linha.',
     ]
       .filter(Boolean)
       .join(' '),

@@ -30,7 +30,7 @@ describe('PermissionDecisionNoticeService — a decisão volta à conversa que p
       ...timing,
       delivery: () => {
         bound.push('decisão')
-        return deliver
+        return (conversationId: string, render: () => string) => deliver(conversationId, render())
       },
     })
     return { service, bound }
@@ -118,6 +118,12 @@ describe('decisionNotice — o texto do aviso', () => {
   it('⛔ nunca leva o motivo escrito por quem pediu: é texto livre de um agente', () => {
     const text = decisionNotice([view(), view({ id: 'pr-2', status: 'rejected' })], 'root@x.test')
     assert.doesNotMatch(text, /APAGUE/)
+  })
+
+  it('🔐 o aviso que sobe de uma subconversa parada diz de qual subagente e subconversa era, e como continuá-la', () => {
+    const text = decisionNotice([view()], 'root@x.test', { conversationId: 'gw_filha', agentId: 'maya' })
+    assert.match(text, /subagente maya fez na subconversa gw_filha/)
+    assert.match(text, /talk \(conversation: gw_filha\)/)
   })
 
   it('só aprovados: diz que valem e o que fazer se a ferramenta não aparecer; não fala de recusa', () => {

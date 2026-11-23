@@ -3532,6 +3532,28 @@ export class AgentController {
    * ⚖️ Com um turno rodando, entra na FILA dele (não derruba nada); parada, vira um turno novo, que segue sozinho. A
    * arquivada fica como está: o aviso não a traz de volta.
    */
+  /**
+   * 🔐 A DECISÃO DE UM PEDIDO DE PERMISSÃO volta a UM lugar só: à conversa que pediu, se ela é da pessoa ou se é uma
+   * subconversa ainda RODANDO (entra na fila do turno dela); subconversa parada passa o aviso à mãe, dizendo de qual
+   * subconversa era e como continuá-la. Mãe também subconversa e parada: sobe a cadeia.
+   */
+  async permissionNotice(conversationId: string, render: (via?: { conversationId: string; agentId: string }) => string): Promise<'queued' | 'turn' | 'archived'> {
+    let id = conversationId
+    let via: { conversationId: string; agentId: string } | undefined
+    for (let hop = 0; hop < 8; hop++) {
+      const { metadata } = await this.requireOwnedConversation(id)
+      const parent = metadata?.delegatedBy
+      if (typeof parent !== 'string') return this.serverNotice(id, render(via))
+      if (this.usecases.sendMessage.enqueue(id, render(via)) !== undefined) return 'queued'
+      if (!via) {
+        const stored = await this.usecases.conversations.findSession(id).catch(() => undefined)
+        via = { conversationId: id, agentId: stored?.agentId ?? 'subagente' }
+      }
+      id = parent
+    }
+    throw new SessionNotFoundError(conversationId)
+  }
+
   async serverNotice(sessionId: string, message: string): Promise<'queued' | 'turn' | 'archived'> {
     // Conferida sem reabrir: a arquivada de quem decide não volta à memória só para ser pulada.
     await this.requireOwnedConversation(sessionId)
