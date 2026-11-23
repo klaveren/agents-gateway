@@ -3,7 +3,9 @@ import { synthesizeSpeech } from '@infra/speech/Speech.Synthesizer'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteUserPreferenceRepository } from '@infra/persistence/Sqlite.UserPreferenceRepository'
 import { SpeechController } from '@infra/http/Speech.Controller'
+import { makeAgents } from './Agents.Factory'
 import { makeAuth } from './Auth.Factory'
+import { makeConversationRepository } from './Conversations.Factory'
 import { makePersonMessages } from './PersonMessages.Factory'
 import { makeProviderVoices } from './ProviderVoices.Factory'
 import { makeProviders } from './Providers.Factory'
@@ -28,5 +30,14 @@ export function makeSpeech(): SpeechService {
 }
 
 export function makeSpeechController(): SpeechController {
-  return new SpeechController({ speech: makeSpeech(), messages: makePersonMessages(), proof: makeAuth().proof })
+  const conversations = makeConversationRepository()
+  return new SpeechController({
+    speech: makeSpeech(),
+    messages: makePersonMessages(),
+    proof: makeAuth().proof,
+    origin: async ({ agentId, conversationId }) => {
+      const session = await conversations.findSession(conversationId)
+      return { agent: makeAgents().get(agentId)?.name ?? agentId, conversation: session?.title }
+    },
+  })
 }

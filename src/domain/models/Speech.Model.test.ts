@@ -23,6 +23,15 @@ describe('speechText', () => {
     assert.match(text, /Frase número \d+\. — o restante/)
   })
 
+  it('🔊 abre com quem mandou e de qual conversa veio', () => {
+    assert.strictEqual(
+      speechText({ title: 'Preciso do acesso', body: 'Libera o banco?' }, { agent: 'Zeus', conversation: 'Migração do banco.' }),
+      'Mensagem de Zeus, da conversa Migração do banco. Preciso do acesso. Libera o banco?',
+    )
+    assert.strictEqual(speechText({ body: 'oi' }, { agent: 'Zeus' }), 'Mensagem de Zeus. oi')
+    assert.strictEqual(speechText({ body: 'oi' }, {}), 'oi')
+  })
+
   it('texto curto não ganha aviso', () => {
     assert.ok(!speechText({ body: 'oi' }).includes('restante'))
   })
