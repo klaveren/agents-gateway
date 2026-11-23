@@ -16,6 +16,8 @@ import type { IPersonMessageRepository } from '@domain/ports/PersonMessageReposi
 export interface IMessageConversation {
   ownerId?: string
   projectId?: string
+  /** A conversa é de uma DELEGAÇÃO (a de um subagente). */
+  delegated?: boolean
 }
 
 export interface IPersonMessagesDeps {
@@ -98,6 +100,12 @@ export class PersonMessagesService {
     const level: TPersonMessageLevel = (PERSON_MESSAGE_LEVELS as readonly string[]).includes(input.level ?? '') ? (input.level as TPersonMessageLevel) : 'info'
     const conversation = await this.deps.conversation(input.sessionId)
     if (!conversation) throw new PersonMessageError('this conversation was not found')
+    // ⛔ SÓ A CONVERSA-MÃE FALA COM A PESSOA: o subagente reporta (pedido ou andamento) a quem delegou, na resposta dele.
+    // Respondida direto, a pessoa deixaria a mãe sem saber de nada.
+    if (conversation.delegated)
+      throw new PersonMessageError(
+        'you are in a delegated conversation: do not message people from here. Put what you need or what happened in your reply to the agent that delegated to you; it talks to the person.',
+      )
     const recipients = this.recipients(input.to, conversation)
     const at = this.now()
     for (const recipient of recipients) {

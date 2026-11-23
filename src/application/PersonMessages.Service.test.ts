@@ -23,7 +23,14 @@ function build() {
   const service = new PersonMessagesService({
     repository: new SqlitePersonMessageRepository(':memory:'),
     events: { publish: (event) => void events.push(event), subscribe: () => () => undefined },
-    conversation: async (sessionId) => (sessionId === 'gw_alfa' ? { ownerId: 'u_caio', projectId: 'alfa' } : sessionId === 'gw_solta' ? { ownerId: 'u_ana' } : undefined),
+    conversation: async (sessionId) =>
+      sessionId === 'gw_alfa'
+        ? { ownerId: 'u_caio', projectId: 'alfa' }
+        : sessionId === 'gw_solta'
+          ? { ownerId: 'u_ana' }
+          : sessionId === 'gw_filha'
+            ? { ownerId: 'u_caio', projectId: 'alfa', delegated: true }
+            : undefined,
     members: (projectId) => MEMBERS[projectId] ?? [],
     accounts: () => ACCOUNTS,
   })
@@ -53,6 +60,13 @@ describe('PersonMessagesService', () => {
     service.markRead('u_ana', thread.id)
     assert.strictEqual(service.unread('u_ana'), 0)
     assert.strictEqual(service.unread('u_bia'), 1, 'ler é de cada um')
+  })
+
+  it('⛔ subconversa (delegação) não manda mensagem à pessoa, nem aviso: reporta a quem delegou', async () => {
+    const { service, events } = build()
+    for (const level of ['info', 'attention'])
+      await assert.rejects(service.send({ sessionId: 'gw_filha', agentId: 'zeus', to: 'owner', body: 'Terminei', level }), /delegated conversation/)
+    assert.deepStrictEqual([events.length, service.unread('u_caio')], [0, 0])
   })
 
   it('owner: a dona da conversa; uma pessoa só se for do projeto (pelo nome ou e-mail)', async () => {
