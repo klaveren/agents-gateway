@@ -10,6 +10,7 @@
   import { shortTime, fullTime } from '@/lib/format'
   import { renderMarkdown } from '@/lib/markdown'
   import type { ITurn } from '@/lib/types'
+  import { readDraft, writeDraft } from '@/lib/draftStorage'
   import { useAgentsStore } from '@/stores/agents'
   import { useMessagesStore, type IPersonMessage, type IPersonThread } from '@/stores/messages'
 
@@ -145,7 +146,8 @@
     () => props.id,
     async (id) => {
       sentNote.value = undefined
-      draft.value = ''
+      // ⚖️ A resposta em escrita fica guardada por mensagem: trocou de tela e voltou, ela está ali.
+      draft.value = id ? readDraft(`message:${id}`) : ''
       replyTarget.value = undefined
       contextLimit.value = 2
       if (!id) return
@@ -160,6 +162,9 @@
     },
     { immediate: true },
   )
+  watch(draft, (value) => {
+    if (props.id) writeDraft(`message:${props.id}`, value)
+  })
   watch(turn, (next, previous) => {
     if (next !== previous) void loadContext()
   })

@@ -92,6 +92,22 @@ describe('Mensagens', () => {
     expect(host.textContent).toContain('A resposta do agente aparece aqui')
   })
 
+  it('✍️ a resposta em escrita sobrevive à troca de tela; enviar limpa', async () => {
+    localStorage.clear()
+    let { host } = await mount('s1')
+    let box = host.querySelector<HTMLTextAreaElement>('[data-test="message-reply"]')!
+    box.value = 'Metade da respo'
+    box.dispatchEvent(new Event('input'))
+    await flush()
+    app?.unmount()
+    ;({ host } = await mount('s1'))
+    box = host.querySelector<HTMLTextAreaElement>('[data-test="message-reply"]')!
+    expect(box.value).toBe('Metade da respo')
+    host.querySelector('form')!.dispatchEvent(new Event('submit'))
+    await flush()
+    expect(localStorage.getItem('gw-draft:message:s1')).toBeNull()
+  })
+
   it('🗂️ arquiva direto da lista, sem abrir o fio', async () => {
     const { host, calls } = await mount()
     host.querySelector<HTMLButtonElement>('[data-test="message-thread-archive"]')!.click()
