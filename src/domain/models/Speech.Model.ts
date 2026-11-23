@@ -79,15 +79,25 @@ export function stripMarkdown(markdown: string): string {
   )
 }
 
+/** De onde a mensagem vem, para a abertura da leitura: o nome do agente e o título da conversa. */
+export interface ISpeechOrigin {
+  agent?: string
+  conversation?: string
+}
+
 /**
- * O texto que se fala de uma mensagem: o título (se houver) e o corpo sem Markdown, espaços colapsados, cortado numa
- * fronteira de frase perto de `SPEECH_MAX_CHARS` com o aviso de que o resto está na tela.
+ * O texto que se fala de uma mensagem: a abertura ("Mensagem de Zeus, da conversa X."), o título (se houver) e o corpo
+ * sem Markdown, espaços colapsados, cortado numa fronteira de frase perto de `SPEECH_MAX_CHARS` com o aviso de que o
+ * resto está na tela.
  */
-export function speechText(message: { title?: string; body: string }): string {
+export function speechText(message: { title?: string; body: string }, origin: ISpeechOrigin = {}): string {
   const clean = (text: string) => stripMarkdown(text).replace(/\s+/g, ' ').trim()
   const title = message.title ? clean(message.title) : ''
   const body = clean(message.body)
-  const joined = title && body ? `${title.replace(/[.!?:]+$/, '')}. ${body}` : title || body
+  const agent = origin.agent ? clean(origin.agent) : ''
+  const conversation = origin.conversation ? clean(origin.conversation).replace(/[.!?:]+$/, '') : ''
+  const intro = agent || conversation ? `Mensagem${agent ? ` de ${agent}` : ''}${conversation ? `, da conversa ${conversation}` : ''}. ` : ''
+  const joined = intro + (title && body ? `${title.replace(/[.!?:]+$/, '')}. ${body}` : title || body)
   if (joined.length <= SPEECH_MAX_CHARS) return joined
   const room = SPEECH_MAX_CHARS - SPEECH_TAIL.length
   const head = joined.slice(0, room)

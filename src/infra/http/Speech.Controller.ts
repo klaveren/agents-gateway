@@ -1,7 +1,7 @@
 import { SpeechFailedError, SpeechService, SpeechUnavailableError } from '@application/Speech.Service'
 import type { PersonMessagesService } from '@application/PersonMessages.Service'
 import { PERSON_MESSAGE_LEVELS } from '@domain/models/PersonMessage.Model'
-import { speechText, VOICE_RATE, VOICE_VOICE_MAX } from '@domain/models/Speech.Model'
+import { speechText, type ISpeechOrigin, VOICE_RATE, VOICE_VOICE_MAX } from '@domain/models/Speech.Model'
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { ownerOf, resolveCaller } from './Caller.Access'
@@ -14,6 +14,8 @@ export interface ISpeechControllerDeps {
   speech: SpeechService
   messages?: PersonMessagesService
   proof?: ICallerProof
+  /** O nome do agente e o título da conversa, para a abertura da leitura. Falhou ou faltou: lê sem ela. */
+  origin?: (message: { agentId: string; conversationId: string }) => Promise<ISpeechOrigin>
 }
 
 /** `PUT /me/voice`: alteração parcial das preferências; `voice: null` volta à voz padrão. */
@@ -39,7 +41,8 @@ export class SpeechController {
       const userId = await this.userId()
       const message = this.deps.messages?.thread(userId, req.params.conversationId as string).find((item) => item.id === req.params.messageId)
       if (!message) throw new HttpError(404, 'not_found', 'Not found')
-      this.audio(res, await this.run(() => this.deps.speech.speak(userId, speechText(message), { ...(message.projectId ? { projectId: message.projectId } : {}) })))
+      const origin = (await this.deps.origin?.(message).catch(() => undefined)) ?? {}
+      this.audio(res, await this.run(() => this.deps.speech.speak(userId, speechText(message, origin), { ...(message.projectId ? { projectId: message.projectId } : {}) })))
     } catch (error: unknown) {
       this.failure(res, error)
     }
