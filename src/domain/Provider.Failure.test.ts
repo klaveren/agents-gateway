@@ -10,8 +10,15 @@ describe('Provider.Failure — por que o provedor falhou', () => {
       "You've hit your usage limit. Upgrade to Pro or try again in 3 hours.",
       'Claude AI usage limit reached|1793330000',
       'Your credit balance is too low to access the Anthropic API.',
+      'Individual quota reached. Please upgrade your subscription to increase',
+      "You've hit your weekly limit · resets 4am (America/Sao_Paulo)",
     ])
       assert.strictEqual(failureKind(new Error(message)), 'quota', message)
+  })
+
+  it('limite de taxa por dia de modelo gratuito é limite; 400 genérico não é cota', () => {
+    assert.strictEqual(failureKind('429 Rate limit exceeded: free-models-per-day-high-balance.'), 'rate_limit')
+    assert.strictEqual(failureKind('400 Provider returned error'), 'other')
   })
 
   it('limite de taxa pelo status ou pelo texto; sobrecarga; modelo fora; credencial; o resto', () => {
