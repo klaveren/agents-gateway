@@ -225,3 +225,26 @@ describe('AgentForm — projeto conectado: pedido aprovado na camada local', () 
     expect(saved.permissions).toEqual([{ category: 'terminal', pattern: 'ls', decision: 'allow' }])
   })
 })
+
+describe('AgentForm — regra de rede "sem efeito"', () => {
+  it('a regra para a porta do próprio gateway mostra o selo e o motivo; a outra não', async () => {
+    const message = 'localhost:3210 é a porta do próprio gateway: sem efeito enquanto "Agentes alcançam a API deste gateway" estiver desligado'
+    const { host, calls } = await mount(
+      {
+        ...AGENT,
+        permissions: [
+          { category: 'network', pattern: 'localhost:3210', decision: 'allow' },
+          { category: 'network', pattern: 'localhost:27017', decision: 'allow' },
+        ],
+      },
+      (path) => (path === '/permissions/warnings' ? { warnings: [{ category: 'network', pattern: 'localhost:3210', code: 'gateway_port_off', message }] } : undefined),
+    )
+    await click([...host.querySelectorAll<HTMLElement>('[role="tab"]')].find((tab) => tab.textContent?.includes('Permissões')))
+    await click([...host.querySelectorAll<HTMLElement>('[role="tab"]')].find((tab) => tab.textContent?.trim().startsWith('Rede')))
+    expect(calls.some((call) => call.path === '/permissions/warnings' && call.init?.method === 'POST')).toBe(true)
+    const marks = [...host.querySelectorAll('[data-test="rule-no-effect"]')]
+    expect(marks).toHaveLength(1)
+    expect(marks[0].textContent).toContain('sem efeito')
+    expect(marks[0].textContent).toContain('porta do próprio gateway')
+  })
+})

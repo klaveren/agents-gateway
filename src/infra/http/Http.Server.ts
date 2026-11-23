@@ -463,6 +463,7 @@ function buildRoutes(
     { method: 'put', path: '/projects/:projectId/accounts/:accountId', handler: accounts.save },
     { method: 'delete', path: '/projects/:projectId/accounts/:accountId', handler: accounts.remove },
     { method: 'post', path: '/projects/:projectId/accounts/:accountId/test', handler: accounts.test },
+    { method: 'post', path: '/permissions/warnings', handler: permissions.warnings },
     { method: 'get', path: '/projects/:projectId/permissions', handler: permissions.get },
     { method: 'put', path: '/projects/:projectId/permissions', handler: permissions.save },
     { method: 'post', path: '/projects/:projectId/permissions/test', handler: permissions.test },

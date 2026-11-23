@@ -37,7 +37,7 @@ describe('Permissões do projeto: o admin do projeto, só o projeto dele', () =>
 
   const permissions = new PermissionsService(new SqlitePermissionRepository(), () => undefined)
   const controller = new PermissionsController({ permissions, projectExists: (id) => id in members, agentExists: () => true, installationRules: () => [], proof })
-  type THandler = 'get' | 'save' | 'decisions'
+  type THandler = 'get' | 'save' | 'decisions' | 'warnings'
 
   const call = (as: string, handler: THandler, input: { params?: Record<string, string>; body?: unknown; query?: Record<string, string> } = {}) =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
@@ -93,6 +93,31 @@ describe('Permissões do projeto: o admin do projeto, só o projeto dele', () =>
       setGatewayReach(() => false)
       await call(ANA, 'save', { params: { projectId: 'alfa' }, body: rules })
     }
+  })
+
+  it('🔌 os avisos de regras ainda não salvas (o formulário do agente): qualquer pessoa autenticada, sem gravar', async () => {
+    const port = gatewayHttpPort()
+    const body = {
+      rules: [
+        { category: 'network', pattern: `localhost:${port}`, decision: 'allow' },
+        { category: 'network', pattern: 'localhost:27017', decision: 'allow' },
+      ],
+    }
+    setGatewayReach(() => false)
+    const answer = await call(CAIO, 'warnings', { body })
+    assert.strictEqual(answer.status, 200)
+    assert.deepStrictEqual(
+      answer.body?.result.warnings.map((warning: { pattern: string }) => warning.pattern),
+      [`localhost:${port}`],
+    )
+    assert.match(answer.body?.result.warnings[0].message, /sem efeito/)
+    setGatewayReach(() => true)
+    try {
+      assert.deepStrictEqual((await call(CAIO, 'warnings', { body })).body?.result.warnings, [])
+    } finally {
+      setGatewayReach(() => false)
+    }
+    assert.strictEqual((await call(CAIO, 'warnings', { body: { rules: 'x' } })).status, 422)
   })
 
   it('as decisões saem pela categoria pedida; a categoria que não existe é 422', async () => {

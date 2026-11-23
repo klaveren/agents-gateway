@@ -27,6 +27,7 @@ const ruleSchema = z.object({
   note: z.string().max(200).optional(),
 })
 const saveSchema = z.object({ rules: z.array(ruleSchema).max(300) })
+const warningsSchema = z.object({ rules: z.array(ruleSchema.pick({ category: true, pattern: true, decision: true })).max(300) })
 const testSchema = z.object({
   agentId: z.string().max(64).optional(),
   category: z.enum(PERMISSION_CATEGORIES as [TPermissionCategory, ...TPermissionCategory[]]),
@@ -50,7 +51,7 @@ export function ruleWarnings(
  */
 export class PermissionsController {
   constructor(private readonly deps: IPermissionsControllerDeps) {
-    for (const name of ['get', 'save', 'test', 'decisions'] as const) this[name] = this[name].bind(this)
+    for (const name of ['get', 'save', 'test', 'decisions', 'warnings'] as const) this[name] = this[name].bind(this)
   }
 
   async get(req: Request, res: Response): Promise<void> {
@@ -59,6 +60,11 @@ export class PermissionsController {
       const stored = this.deps.permissions.projectRules(projectId)
       return { projectId, ...stored, warnings: ruleWarnings(stored.rules), system: [...SYSTEM_RULES, ...this.deps.installationRules()] }
     })
+  }
+
+  /** Os avisos de uma lista de regras ainda não salva (o formulário do agente), sem gravar nada. */
+  async warnings(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => ({ warnings: ruleWarnings(parseBody(warningsSchema, req.body).rules) }))
   }
 
   async save(req: Request, res: Response): Promise<void> {

@@ -13,7 +13,17 @@ import { IToolDefinition } from '@infra/tools/Tool.Types'
 import { INSTALL_PASSTHROUGH, isWritable, projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 import { installDir, resolveCommand } from './Mcp.Install'
 import { IMcpClientOptions, McpServerClient, TURN_WAKE_MS } from './McpServer.Client'
-import { argsForEndpoint, argsForOutputDir, chromiumExecutable, isPlaywrightMcp, LiveBrowser, liveBrowserEnabled, liveBrowsers, systemChromium, takesExternalBrowser } from './LiveBrowser.Adapter'
+import {
+  argsForEndpoint,
+  argsForOutputDir,
+  chromiumExecutable,
+  isPlaywrightMcp,
+  LiveBrowser,
+  liveBrowserEnabled,
+  liveBrowsers,
+  systemChromium,
+  takesExternalBrowser,
+} from './LiveBrowser.Adapter'
 import type { IBrowserLaunch } from './PersonBrowsers.Service'
 
 export interface IMcpServerStatus {

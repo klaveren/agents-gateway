@@ -77,7 +77,10 @@ describe('processes — a ferramenta', () => {
     const tool = processesTool(
       () => ROOT,
       (text) => text.split(token).join('[segredo:token de rede]'),
-      async () => [p(210, 200, `socat TCP-LISTEN:1 PROXY:x,proxyauth=${token}:x`, ROOT)].concat(p(100, 1, 'node gateway', ROOT)).map((info) => (info.pid === 100 ? { ...info, pid: process.pid } : info)),
+      async () =>
+        [p(210, 200, `socat TCP-LISTEN:1 PROXY:x,proxyauth=${token}:x`, ROOT)]
+          .concat(p(100, 1, 'node gateway', ROOT))
+          .map((info) => (info.pid === 100 ? { ...info, pid: process.pid } : info)),
     )
     const result = await tool.execute({}, context)
     assert.ok(!result.result.includes(token))

@@ -53,5 +53,11 @@ export const usePermissionsStore = defineStore('permissions', () => {
     })
   }
 
-  return { projects, save, addMissing, decisions }
+  /** Os avisos de regras ainda não salvas (o formulário do agente): "sem efeito", com o motivo. */
+  async function warnings(rules: IPermissionRule[]): Promise<IRuleWarning[]> {
+    const answer = await api<{ warnings: IRuleWarning[] }>('/permissions/warnings', { method: 'POST', body: { rules } })
+    return answer.warnings
+  }
+
+  return { projects, save, addMissing, decisions, warnings }
 })
