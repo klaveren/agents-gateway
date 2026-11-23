@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { argsForEndpoint, isPlaywrightMcp, LiveBrowsers, liveBrowserEnabled, takesExternalBrowser, TLiveBrowserListener } from './LiveBrowser.Adapter'
+import { argsForEndpoint, argsForOutputDir, isPlaywrightMcp, LiveBrowsers, liveBrowserEnabled, takesExternalBrowser, TLiveBrowserListener } from './LiveBrowser.Adapter'
 
 describe('LiveBrowser — o navegador da conversa que a tela vê', () => {
   it('reconhece o Playwright MCP, com ou sem versão', () => {
@@ -42,5 +42,13 @@ describe('LiveBrowser — o navegador da conversa que a tela vê', () => {
     assert.equal(browsers.has('s1'), false)
     assert.equal(browsers.get('s1'), undefined)
     stop()
+  })
+})
+
+describe('argsForOutputDir — capturas na pasta de rascunho do projeto', () => {
+  it('acrescenta --output-dir; quem já definiu fica como está', () => {
+    assert.deepEqual(argsForOutputDir(['--caps', 'vision'], '/p/.tmp'), ['--caps', 'vision', '--output-dir', '/p/.tmp'])
+    assert.deepEqual(argsForOutputDir(['--output-dir=/x'], '/p/.tmp'), ['--output-dir=/x'])
+    assert.deepEqual(argsForOutputDir(['--output-dir', '/x'], '/p/.tmp'), ['--output-dir', '/x'])
   })
 })
