@@ -2689,7 +2689,8 @@ export class AgentController {
       const stored = this.usecases.resumeSession ? await this.usecases.conversations.findSession(conversationId).catch(() => undefined) : undefined
       if (!stored) throw error
       const view = await adminView(this.usecases.proof)
-      await this.usecases.resumeSession!.execute(stored, !!view && administers(view, this.agents.get(stored.agentId)?.projectId))
+      // 🧵 A mensagem pode ter vindo de um subagente: a conversa dele volta como filha da mãe (a pessoa responde a ele).
+      await this.usecases.resumeSession!.execute(stored, !!view && administers(view, this.agents.get(stored.agentId)?.projectId), { asChild: true })
       return this.usecases.getSession.execute(conversationId)
     }
   }

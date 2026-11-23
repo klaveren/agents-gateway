@@ -128,6 +128,21 @@ describe('Mensagens (integração)', () => {
     assert.strictEqual(sent.status, 202, JSON.stringify(sent.body))
   })
 
+  it('🧵 responder ao SUBAGENTE depois de um reinício: a conversa de delegação volta como filha da mãe', async () => {
+    const now = new Date()
+    const base = { agentId: 'atlas', provider: 'claude', mode: 'chat', model: 'claude-sonnet-5', createdAt: now, updatedAt: now, turns: 1, usage: {} }
+    await controller.conversations.saveSession({ ...base, id: 'gw_mae_atlas', metadata: { owner: { id: memberId, email: 'ana@x.test' } } })
+    await controller.conversations.saveSession({
+      ...base,
+      id: 'gw_filha_atlas',
+      metadata: { owner: { id: memberId, email: 'ana@x.test' }, delegatedBy: 'gw_mae_atlas', delegationDepth: 1 },
+    })
+    await makePersonMessages().send({ sessionId: 'gw_filha_atlas', agentId: 'atlas', to: 'owner', title: 'Da filha?', body: 'Posso seguir?', level: 'attention' })
+    const item = (await call('/messages', { token: member })).body.result.threads.find((thread: { title?: string }) => thread.title === 'Da filha?')
+    const sent = await call(`/messages/${item.id}/reply`, { method: 'POST', token: member, body: { message: 'Pode' } })
+    assert.strictEqual(sent.status, 202, JSON.stringify(sent.body))
+  })
+
   it('📌 pedido por pedido: pendentes no fio e no total; replyTo inválido é 422; status resolved/pending; info e alheio recusados', async () => {
     const service = makePersonMessages()
     await service.send({ sessionId: 'gw_da_ana', agentId: 'zeus', to: 'owner', title: 'Pedido novo', body: 'Posso?', level: 'urgent' })

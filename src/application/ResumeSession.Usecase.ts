@@ -12,9 +12,15 @@ export class ResumeSessionUseCase {
     private readonly conversations: Pick<IConversationRepository, 'listTurns' | 'findNative'>,
   ) {}
 
-  async execute(session: IConversationSession, adminAccess: boolean): Promise<void> {
+  /**
+   * `asChild`: a conversa de DELEGAÇÃO volta como filha da mãe gravada (as mesmas travas da delegação). Só a resposta da
+   * pessoa a uma mensagem do subagente (tela Mensagens) pede isso; a tela da conversa segue sem retomar filha.
+   */
+  async execute(session: IConversationSession, adminAccess: boolean, options: { asChild?: boolean } = {}): Promise<void> {
     if (!this.agentProvider.resume) return
     const [turns, native] = await Promise.all([this.conversations.listTurns(session.id), this.conversations.findNative?.(session.id)])
-    await this.agentProvider.resume({ session, turns, adminAccess, ...(native ? { native } : {}) })
+    const parent = session.metadata?.delegatedBy
+    const delegatedBy = options.asChild && typeof parent === 'string' ? parent : undefined
+    await this.agentProvider.resume({ session, turns, adminAccess, ...(delegatedBy ? { delegatedBy } : {}), ...(native ? { native } : {}) })
   }
 }
