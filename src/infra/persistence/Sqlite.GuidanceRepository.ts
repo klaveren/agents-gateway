@@ -8,7 +8,7 @@ import { DOC_STATUSES, IProjectDoc, TDocKind, TDocStatus } from '@domain/models/
 import { IProtocolAddendum, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IAgentResources, IResource, NO_RESOURCES, TResourceKind } from '@domain/models/Resource.Model'
 import { IRule } from '@domain/models/Rule.Model'
-import { IDocHit, IGuidanceRepository, TDocPatch, TGuidanceScope, TRulePatch } from '@domain/ports/GuidanceRepository.Port'
+import { IDocHit, IGuidanceRepository, TDocHint, TDocPatch, TGuidanceScope, TResourceHint, TRulePatch } from '@domain/ports/GuidanceRepository.Port'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS rules (
@@ -260,6 +260,20 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     return (this.db.prepare(`SELECT * FROM project_docs WHERE ${where} ORDER BY kind, title COLLATE NOCASE`).all(...params) as TRow[]).map(toDoc)
   }
 
+  docHints(scope: TGuidanceScope, kind?: TDocKind): TDocHint[] {
+    const where = [scope === null ? 'project_id IS NULL' : 'project_id = ?', ...(kind ? ['kind = ?'] : [])].join(' AND ')
+    const params = [...(scope === null ? [] : [scope]), ...(kind ? [kind] : [])]
+    // ⚖️ Sem o corpo (pode ter centenas de KB): só o que a listagem mostra.
+    const rows = this.db.prepare(`SELECT id, kind, project_id, title, summary FROM project_docs WHERE ${where} ORDER BY kind, title COLLATE NOCASE`).all(...params) as TRow[]
+    return rows.map((row) => ({
+      id: row.id as string,
+      kind: row.kind as TDocKind,
+      ...(row.project_id ? { projectId: row.project_id as string } : {}),
+      title: row.title as string,
+      summary: row.summary as string,
+    }))
+  }
+
   docsSharedWith(projectId: string, kind?: TDocKind): IProjectDoc[] {
     const params = [projectId, ...(kind ? [kind] : [])]
     return (this.db.prepare(`SELECT * FROM project_docs WHERE ${SHARED_WITH}${kind ? ' AND kind = ?' : ''} ORDER BY kind, title COLLATE NOCASE`).all(...params) as TRow[]).map(
@@ -363,6 +377,21 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     const where = [scope === null ? 'project_id IS NULL' : 'project_id = ?', ...(kind ? ['kind = ?'] : [])].join(' AND ')
     const params = [...(scope === null ? [] : [scope]), ...(kind ? [kind] : [])]
     return (this.db.prepare(`SELECT * FROM resources WHERE ${where} ORDER BY id`).all(...params) as TRow[]).map(toResource)
+  }
+
+  resourceHints(scope: TGuidanceScope, kind?: TResourceKind): TResourceHint[] {
+    const where = [scope === null ? 'project_id IS NULL' : 'project_id = ?', ...(kind ? ['kind = ?'] : [])].join(' AND ')
+    const params = [...(scope === null ? [] : [scope]), ...(kind ? [kind] : [])]
+    return (this.db.prepare(`SELECT id, kind, project_id, description, shared_with FROM resources WHERE ${where} ORDER BY id`).all(...params) as TRow[]).map(toResourceHint)
+  }
+
+  resourceHintsSharedWith(projectId: string, kind?: TResourceKind): TResourceHint[] {
+    const params = [projectId, ...(kind ? [kind] : [])]
+    return (
+      this.db
+        .prepare(`SELECT id, kind, project_id, description, shared_with FROM resources WHERE ${SHARED_WITH}${kind ? ' AND kind = ?' : ''} ORDER BY id`)
+        .all(...params) as TRow[]
+    ).map(toResourceHint)
   }
 
   resourcesSharedWith(projectId: string, kind?: TResourceKind): IResource[] {
@@ -554,6 +583,17 @@ function toDoc(row: TRow): IProjectDoc {
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
+  }
+}
+
+function toResourceHint(row: TRow): TResourceHint {
+  const sharedWith = idList(row.shared_with)
+  return {
+    id: row.id as string,
+    kind: row.kind as TResourceKind,
+    ...(row.project_id ? { projectId: row.project_id as string } : {}),
+    description: row.description as string,
+    ...(sharedWith.length ? { sharedWith } : {}),
   }
 }
 
