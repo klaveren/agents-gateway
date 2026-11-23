@@ -257,6 +257,9 @@ function finish(panel: IConversationPanel, changed: string, context: { by: strin
   return { panel, changed }
 }
 
+/** O teto de itens por grupo (e de perguntas abertas) na nota do começo do turno. */
+const TURN_NOTE_CAP = 15
+
 const itemLine = (item: IPanelItem) =>
   `- ${item.id} ${item.title}${item.plan ? ` [${item.plan.id}·${item.plan.step}]` : ''}${item.delegatedTo ? ` (com ${item.delegatedTo.agentId}${item.delegatedTo.sessionId ? `, ${item.delegatedTo.sessionId}` : ''})` : ''}${item.note ? ` — ${item.note}` : ''}`
 
@@ -290,15 +293,18 @@ export function panelTurnNote(panel: IConversationPanel | undefined, skippedLast
     ['queued', 'Na fila'],
   ] as const) {
     const items = open(wanted)
-    if (items.length) lines.push(`${label}:`, ...items.map(itemLine))
+    if (!items.length) continue
+    lines.push(`${label}:`, ...items.slice(0, TURN_NOTE_CAP).map(itemLine))
+    if (items.length > TURN_NOTE_CAP) lines.push(`+${items.length - TURN_NOTE_CAP}: ${BOARD_TOOL} read status=${wanted} limit=${TURN_NOTE_CAP} page=2`)
   }
   if (fresh.length) lines.push('A pessoa respondeu no board (considere agora):', ...fresh.map((question) => `- ${question.id} ${question.text} → ${question.answer}`))
   const asked = panel.questions.filter((question) => !question.answer)
   if (asked.length)
     lines.push(
       `Perguntas para a pessoa (a que o chat ou o trabalho já respondeu: feche com ${BOARD_TOOL} answer):`,
-      ...asked.map((question) => `- ${question.id} ${question.text}`),
+      ...asked.slice(0, TURN_NOTE_CAP).map((question) => `- ${question.id} ${question.text}`),
     )
+  if (asked.length > TURN_NOTE_CAP) lines.push(`+${asked.length - TURN_NOTE_CAP}: ${BOARD_TOOL} read section=questions limit=${TURN_NOTE_CAP} page=2`)
   const done = open('done').length
   if (done) lines.push(`(${done} entregue${done > 1 ? 's' : ''}; decisões e histórico: ${BOARD_TOOL} read; planos: ${PLAN_TOOL} read)`)
   lines.push(
