@@ -1256,6 +1256,11 @@ const permissionRuleSchema = {
   required: ['category', 'pattern', 'decision'],
 }
 
+const connectMessageParameters = [
+  { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+  { name: 'key', in: 'path', required: true, schema: { type: 'string' }, description: 'A request id (m_…) or a conversation id' },
+]
+
 const localLayerParameters = [
   { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
   { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
@@ -5724,6 +5729,61 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/connect/{projectId}/messages': {
+      get: {
+        summary:
+          'Connected projects: the Messages inbox of the token account, ONLY the items of this project (same shape as `/messages`: `{ threads, unread, pending }`, totals of this project). `?archived=1` lists the archived ones',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'archived', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/connect/{projectId}/messages/{key}': {
+      get: {
+        summary: 'Connected projects: the messages of one inbox item of the token account (a request id or a conversation id). An item of another account or project answers 404',
+        parameters: connectMessageParameters,
+        responses: { '200': { description: 'OK: `{ messages }`', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/connect/{projectId}/messages/{key}/read': {
+      post: {
+        summary: 'Connected projects: marks an inbox item as read; returns the unread count of this project',
+        parameters: connectMessageParameters,
+        responses: { '200': { description: 'OK: `{ unread }`', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/connect/{projectId}/messages/{key}/archive': {
+      put: {
+        summary: 'Connected projects: archives (`{ archived: true }`) or restores an inbox item',
+        parameters: connectMessageParameters,
+        requestBody: { required: false, ...json({ type: 'object', properties: { archived: { type: 'boolean' } } }) },
+        responses: { '200': { description: 'OK: `{ unread }`', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/connect/{projectId}/messages/{key}/reply': {
+      post: {
+        summary:
+          'Connected projects: replies to an inbox item, exactly like `POST /messages/{conversationId}/reply` (the reply enters the conversation here, resuming it if needed, and the agent answer comes back to the thread). 202',
+        parameters: connectMessageParameters,
+        requestBody: { required: true, ...json({ type: 'object', properties: { message: { type: 'string' }, replyTo: { type: 'string' } }, required: ['message'] }) },
+        responses: {
+          '202': { description: 'Sent: `{ queued }`', ...json(envelope({ type: 'object' })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/connect/{projectId}/messages/{key}/{messageId}/status': {
+      put: {
+        summary: 'Connected projects: marks a request of an inbox item as `resolved` or reopens it as `pending`; returns `{ status, pending }`',
+        parameters: [...connectMessageParameters, { name: 'messageId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { status: { type: 'string', enum: ['resolved', 'pending'] } }, required: ['status'] }) },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/connect/{projectId}/version': {
       get: {
         summary:
@@ -5759,7 +5819,8 @@ export const OPENAPI_DOCUMENT = {
     },
     '/connect/{projectId}/events': {
       get: {
-        summary: 'Connected projects: SSE stream with `catalog.version` ({ version }) on open and whenever the project catalog changes. At most 3 open streams per token',
+        summary:
+          'Connected projects: SSE stream with `catalog.version` ({ version }) on open and whenever the project catalog changes; `messages.changed` ({ unread }) when the inbox of the token account changes; `message.new` ({ id, key, title?, body, level, agentId, conversationId }) for a new agent message of THIS project to that account. At most 3 open streams per token',
         parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'text/event-stream' },
@@ -6045,7 +6106,7 @@ export const OPENAPI_DOCUMENT = {
     '/messages': {
       get: {
         summary:
-          'The Messages inbox of the signed-in person: one item per request (an `attention`/`urgent` agent message, with the replies to it; `id` = `requestId` = the request id) and one item per conversation for the plain (`info`) messages (`id` = the conversation id), the latest first, with the unread count and the number of pending requests (`pending`); each thread also has its own `pending`; `?archived=1` lists the archived ones. Only the recipient sees a thread (no administrator reads someone else’s)',
+          'The Messages inbox of the signed-in person: one item per request (an `attention`/`urgent` agent message, with the replies to it; `id` = `requestId` = the request id) and one item per conversation for the plain (`info`) messages (`id` = the conversation id), the latest first, with the unread count and the number of pending requests (`pending`); each thread also has its own `pending`; `?archived=1` lists the archived ones. On a gateway with a connected project, the items the origin sent to the account that connected come together, each with `origin` (`{ projectId, url, stale? }`) and the same actions go to the origin. Only the recipient sees a thread (no administrator reads someone else’s)',
         parameters: [{ name: 'archived', in: 'query', required: false, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'OK: `{ threads, unread, pending }`', ...json(envelope({ type: 'object' })) },

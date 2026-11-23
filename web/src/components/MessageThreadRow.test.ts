@@ -207,3 +207,14 @@ describe('MessageThreadRow: clique e ação', () => {
     expect(archived).toEqual(['a', 'a'])
   })
 })
+
+describe('MessageThreadRow: item de projeto conectado', () => {
+  it('mostra a etiqueta com o projeto e o servidor só no item da origem', async () => {
+    const remote = await mount({ thread: thread('r', { origin: { projectId: 'logiccus', url: 'http://servidor:3000' } }) })
+    expect(remote.querySelector('[data-test="thread-origin"]')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('logiccus · servidor')
+    app?.unmount()
+    document.body.innerHTML = ''
+    const local = await mount()
+    expect(local.querySelector('[data-test="thread-origin"]')).toBeNull()
+  })
+})

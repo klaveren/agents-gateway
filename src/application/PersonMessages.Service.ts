@@ -31,6 +31,12 @@ export interface IPersonMessagesDeps {
   now?: () => Date
 }
 
+/** O que o serviço conta a quem acompanha (o `/connect` da origem): a caixa mudou, ou o agente escreveu uma mensagem nova. */
+export interface IPersonMessagesWatcher {
+  changed?(recipientId: string, conversationId: string): void
+  sent?(message: IPersonMessage): void
+}
+
 export class PersonMessageError extends Error {
   constructor(
     message: string,
@@ -64,6 +70,25 @@ export class PersonMessagesService {
     this.deps.push = push
   }
 
+  private readonly watchers = new Set<IPersonMessagesWatcher>()
+
+  /**
+   * 🔌 Quem acompanha a caixa de todos (a rota SSE do `/connect`): `changed` a cada `message.created` do barramento e `sent` a
+   * cada mensagem NOVA do agente (com o conteúdo). Devolve quem cancela. O barramento só vale depois do `useEvents`.
+   */
+  watch(watcher: IPersonMessagesWatcher): () => void {
+    this.watchers.add(watcher)
+    const unsubscribe = watcher.changed
+      ? this.deps.events?.subscribe((event) => {
+          if (event.type === 'message.created') watcher.changed?.(event.recipientId, event.conversationId)
+        })
+      : undefined
+    return () => {
+      this.watchers.delete(watcher)
+      unsubscribe?.()
+    }
+  }
+
   /** O agente escreve. Devolve os nomes de quem recebeu. */
   async send(input: { sessionId: string; agentId: string; to: string; title?: string; body: string; level?: string; turn?: number }): Promise<string[]> {
     const body = input.body?.trim() ?? ''
@@ -93,6 +118,7 @@ export class PersonMessagesService {
       this.deps.repository.insert(message)
       this.announce(recipient.id, input.sessionId)
       this.pushTo(message)
+      this.told(message)
     }
     return recipients.map((recipient) => recipient.name)
   }
@@ -200,7 +226,16 @@ export class PersonMessagesService {
       this.deps.repository.insert(message)
       this.announce(recipient, conversationId)
       this.pushTo(message)
+      this.told(message)
     }
+  }
+
+  /**
+   * 🔌 Uma mensagem de um projeto conectado mudou na origem: avisa a caixa DAQUI (o sino e a lista ao vivo), com o total não
+   * lido da pessoa (as daqui e as da origem). `conversationId` vazio = só a lista se relê.
+   */
+  announceRemote(recipientId: string, conversationId: string, remoteUnread: number): void {
+    this.deps.events?.publish({ type: 'message.created', recipientId, conversationId, unread: this.deps.repository.unread(recipientId) + remoteUnread })
   }
 
   threads(recipientId: string, archived = false): IPersonThread[] {
@@ -278,6 +313,16 @@ export class PersonMessagesService {
     const names = pool.map((account) => account.name || account.email).join(', ')
     if (match.length > 1) throw new PersonMessageError(`more than one person is called "${target}": use the e-mail (${names})`)
     throw new PersonMessageError(`"${target}" is not in this project. Use admins, owner or one of: ${names || 'nobody'}`)
+  }
+
+  private told(message: IPersonMessage): void {
+    for (const watcher of this.watchers) {
+      try {
+        watcher.sent?.(message)
+      } catch {
+        // Quem acompanha é extra: falhar nele não desfaz a mensagem.
+      }
+    }
   }
 
   private pushTo(message: IPersonMessage): void {

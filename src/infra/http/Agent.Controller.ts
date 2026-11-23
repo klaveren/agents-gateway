@@ -2,6 +2,8 @@ import { LiveBrowser, liveBrowsers, TLiveBrowserInput } from '@infra/mcp/LiveBro
 import { PersonBrowsers } from '@infra/mcp/PersonBrowsers.Service'
 import { NOTIFY_TOOL } from '@domain/models/PersonMessage.Model'
 import { PersonMessageError, type PersonMessagesService } from '@application/PersonMessages.Service'
+import type { ProjectConnectionService } from '@application/ProjectConnection.Service'
+import { RemoteRequestError } from '@domain/ports/RemoteCatalog.Port'
 import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
 import { AUDIT_ERROR_LOCAL, AUDIT_STATUS_LOCAL } from './Audit.Controller'
 import type { UsageCapService } from '@application/UsageCap.Service'
@@ -103,7 +105,7 @@ import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { administers, adminView, IAdminView, requireAnyAdmin, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
 import { normalizeShares, sharedInto } from '@domain/Share.Policy'
-import { parseBody } from './Request.Parser'
+import { parseBody, replyToOf } from './Request.Parser'
 import {
   agentBodySchema,
   createSessionSchema,
@@ -198,6 +200,8 @@ export interface IAgentControllerDeps {
   projects?: ProjectsService
   /** 💬 As mensagens dos agentes para as pessoas (a tela Mensagens). Ausente = sem a tela. */
   personMessages?: PersonMessagesService
+  /** 🔌 Os projetos conectados: as mensagens que a origem mandou à conta que conectou entram na tela Mensagens (ver `ProjectConnectionService`). */
+  connections?: Pick<ProjectConnectionService, 'remoteInbox' | 'findMessage' | 'readRemoteMessage' | 'archiveRemoteMessage' | 'setRemoteMessageStatus' | 'replyRemoteMessage'>
   /** 📱 O Web Push (o aviso de mensagem nova no aparelho). */
   push?: WebPushSender
   /** O cerco dos agentes de projeto, para a tela mostrar se funciona neste servidor. */
@@ -435,6 +439,7 @@ export class AgentController {
     this.updatePushConfig = this.updatePushConfig.bind(this)
     this.rotatePushKeys = this.rotatePushKeys.bind(this)
     this.replyMessage = this.replyMessage.bind(this)
+    this.replyAs = this.replyAs.bind(this)
     this.setMessageStatus = this.setMessageStatus.bind(this)
     this.conversationActivity = this.conversationActivity.bind(this)
     this.renameConversation = this.renameConversation.bind(this)
@@ -2357,12 +2362,34 @@ export class AgentController {
   }
 
   /** 💬 As mensagens são da PESSOA que as recebeu: sem conta, nada (nem o admin vê a caixa dos outros). */
-  private async messagesOf(): Promise<{ service: PersonMessagesService; recipientId: string }> {
+  private async messagesOf(): Promise<{ service: PersonMessagesService; recipientId: string; email?: string }> {
     const service = this.usecases.personMessages
     if (!service) throw new HttpError(404, 'not_found', 'Not found')
-    const recipientId = ownerOf(await this.requireCaller())?.id
+    const owner = ownerOf(await this.requireCaller())
+    const recipientId = owner?.id
     if (!recipientId) throw new HttpError(401, 'unauthorized', 'Sign in to see your messages')
-    return { service, recipientId }
+    return { service, recipientId, email: owner.email }
+  }
+
+  /**
+   * 🔌 O item é de um projeto conectado? Só quando NÃO é um item daqui (o daqui vale sempre, como antes) e a origem de uma das
+   * conexões DA CONTA o tem. Devolve o projeto e, de graça, as mensagens dele.
+   */
+  private async remoteItemOf(service: PersonMessagesService, recipientId: string, email: string | undefined, key: string) {
+    const connections = this.usecases.connections
+    if (!connections || service.resolve(recipientId, key)) return undefined
+    return connections.findMessage(email, key)
+  }
+
+  /** A recusa da origem (404, 422…) na língua daqui; a queda dela já vem como `ProjectConnectionError`. */
+  private async remote<T>(work: () => Promise<T>): Promise<T> {
+    try {
+      return await work()
+    } catch (error: unknown) {
+      if (!(error instanceof RemoteRequestError)) throw error
+      const details = Array.isArray(error.details) ? error.details : undefined
+      throw new HttpError(error.status, error.status === 404 ? 'not_found' : 'validation_error', error.message, details)
+    }
   }
 
   /** 📱 O aviso no aparelho é da pessoa, ligado pela tela dela (nunca por um token de integração). */
@@ -2452,18 +2479,30 @@ export class AgentController {
   /** `GET /messages?archived=1` — 💬 os fios da pessoa (um por conversa que lhe escreveu), o mais recente primeiro, e o total não lido. */
   async listMessages(req: Request, res: Response) {
     await this.respond(res, async () => {
-      const { service, recipientId } = await this.messagesOf()
+      const { service, recipientId, email } = await this.messagesOf()
       const archived = req.query?.archived === '1' || req.query?.archived === 'true'
-      return { threads: service.threads(recipientId, archived), unread: service.unread(recipientId), pending: service.pending(recipientId) }
+      const local = service.threads(recipientId, archived)
+      // 🔌 As da origem (só da conta que conectou) entram juntas, cada uma com a sua `origin`; o mais recente primeiro.
+      const remote = this.usecases.connections ? await this.usecases.connections.remoteInbox(email, archived) : undefined
+      const unread = service.unread(recipientId)
+      const pending = service.pending(recipientId)
+      if (!remote?.threads.length) return { threads: local, unread: unread + (remote?.unread ?? 0), pending: pending + (remote?.pending ?? 0) }
+      const threads = [...local, ...remote.threads].sort((a, b) => new Date(b.last.createdAt).getTime() - new Date(a.last.createdAt).getTime())
+      return { threads, unread: unread + remote.unread, pending: pending + remote.pending }
     })
   }
 
   /** `GET /messages/:conversationId` — 💬 as mensagens de um fio da pessoa, em ordem. */
   async messageThread(req: Request, res: Response) {
     await this.respond(res, async () => {
-      const { service, recipientId } = await this.messagesOf()
-      const messages = service.thread(recipientId, req.params.conversationId as string)
-      if (!messages.length) throw new HttpError(404, 'not_found', 'Not found')
+      const { service, recipientId, email } = await this.messagesOf()
+      const key = req.params.conversationId as string
+      const messages = service.thread(recipientId, key)
+      if (!messages.length) {
+        const remote = await this.remoteItemOf(service, recipientId, email, key)
+        if (remote) return { messages: remote.messages }
+        throw new HttpError(404, 'not_found', 'Not found')
+      }
       return { messages }
     })
   }
@@ -2471,8 +2510,11 @@ export class AgentController {
   /** `POST /messages/:conversationId/read` — 💬 a pessoa abriu o fio. */
   async readMessages(req: Request, res: Response) {
     await this.respond(res, async () => {
-      const { service, recipientId } = await this.messagesOf()
-      service.markRead(recipientId, req.params.conversationId as string)
+      const { service, recipientId, email } = await this.messagesOf()
+      const key = req.params.conversationId as string
+      const remote = await this.remoteItemOf(service, recipientId, email, key)
+      if (remote) return { unread: service.unread(recipientId) + (await this.remote(() => this.usecases.connections!.readRemoteMessage(remote.projectId, key))).unread }
+      service.markRead(recipientId, key)
       return { unread: service.unread(recipientId) }
     })
   }
@@ -2480,8 +2522,13 @@ export class AgentController {
   /** `PUT /messages/:conversationId/archive { archived }` — 💬 arquiva (ou desarquiva) o fio; mensagem nova o reabre. */
   async archiveMessages(req: Request, res: Response) {
     await this.respond(res, async () => {
-      const { service, recipientId } = await this.messagesOf()
-      service.setArchived(recipientId, req.params.conversationId as string, (req.body as { archived?: unknown } | undefined)?.archived !== false)
+      const { service, recipientId, email } = await this.messagesOf()
+      const key = req.params.conversationId as string
+      const archived = (req.body as { archived?: unknown } | undefined)?.archived !== false
+      const remote = await this.remoteItemOf(service, recipientId, email, key)
+      if (remote)
+        return { unread: service.unread(recipientId) + (await this.remote(() => this.usecases.connections!.archiveRemoteMessage(remote.projectId, key, archived))).unread }
+      service.setArchived(recipientId, key, archived)
       return { unread: service.unread(recipientId) }
     })
   }
@@ -2495,51 +2542,64 @@ export class AgentController {
     await this.respond(
       res,
       async () => {
-        const { service, recipientId } = await this.messagesOf()
+        const { service, recipientId, email } = await this.messagesOf()
         // O id do item: o de um pedido (a resposta é a ele) ou o da conversa.
-        const conversationId = req.params.conversationId as string
+        const key = req.params.conversationId as string
         const text = String((req.body as { message?: unknown } | undefined)?.message ?? '')
-        const replyToRaw = (req.body as { replyTo?: unknown } | undefined)?.replyTo
-        if (replyToRaw !== undefined && replyToRaw !== null && typeof replyToRaw !== 'string') {
-          throw new HttpError(422, 'validation_error', 'replyTo must be a message id', [{ field: 'replyTo', message: 'must be a message id' }])
+        const replyTo = replyToOf(req.body)
+        // 🔌 Item da origem: a resposta vai para lá, e é lá que ela entra na conversa.
+        const remote = await this.remoteItemOf(service, recipientId, email, key)
+        if (remote) {
+          if (!text.trim()) throw new HttpError(422, 'validation_error', 'message is required')
+          return this.remote(() => this.usecases.connections!.replyRemoteMessage(remote.projectId, key, text, replyTo))
         }
-        const replyTo = typeof replyToRaw === 'string' && replyToRaw ? replyToRaw : undefined
         const resolved = await this.requireCaller()
-        const name = (resolved.identity as { name?: string } | undefined)?.name || resolved.identity?.email || 'a pessoa'
-        // A conversa primeiro: se ela não roda mais, a resposta nem entra no fio (não fica "respondido" sem ter ido).
-        if (!service.thread(recipientId, conversationId).length) throw new HttpError(404, 'not_found', 'Not found')
-        if (!text.trim()) throw new HttpError(422, 'validation_error', 'message is required')
-        try {
-          service.checkReplyTo(recipientId, conversationId, replyTo)
-        } catch (error: unknown) {
-          if (error instanceof PersonMessageError && error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
-          throw error
-        }
-        const session = await this.sessionForReply(service.resolve(recipientId, conversationId)?.conversationId ?? conversationId)
-        let reply: { input: string; agentId: string; conversationId: string }
-        try {
-          reply = service.reply(recipientId, conversationId, text, name, replyTo)
-        } catch (error: unknown) {
-          if (error instanceof PersonMessageError && error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
-          throw new HttpError(
-            error instanceof Error && /no such thread/.test(error.message) ? 404 : 422,
-            error instanceof Error && /no such thread/.test(error.message) ? 'not_found' : 'validation_error',
-            error instanceof Error ? error.message : String(error),
-          )
-        }
-        const input: IMessageInput = { text: reply.input }
-        // Conversa rodando: entra na fila do turno; quando ela parar, o último turno volta para o fio.
-        if (session.status === 'running' || this.liveTurns.has(reply.conversationId)) {
-          this.usecases.sendMessage.enqueue(reply.conversationId, reply.input)
-          void this.mirrorWhenIdle(reply.conversationId, reply.agentId)
-          return { queued: true }
-        }
-        const { done } = this.launch(reply.conversationId, session, input, undefined)
-        void done.then(() => this.mirrorFinished(reply.conversationId, reply.agentId)).catch(() => undefined)
-        return { queued: false }
+        const authorName = (resolved.identity as { name?: string } | undefined)?.name || resolved.identity?.email || 'a pessoa'
+        return this.replyAs({ recipientId, key, text, replyTo, authorName })
       },
       { status: 202, message: 'Reply sent to the conversation' },
     )
+  }
+
+  /**
+   * 💬 O núcleo da resposta pela caixa (a rota daqui e a `/connect/:projectId/messages/:key/reply` da origem): confere o item da
+   * pessoa, grava a resposta no fio, RETOMA a conversa se ela saiu da memória e roda o turno (ou entra na fila dele).
+   */
+  async replyAs(input: { recipientId: string; key: string; text: string; replyTo?: string; authorName: string }): Promise<{ queued: boolean }> {
+    const service = this.usecases.personMessages
+    if (!service) throw new HttpError(404, 'not_found', 'Not found')
+    const { recipientId, key: conversationId, text, replyTo } = input
+    // A conversa primeiro: se ela não roda mais, a resposta nem entra no fio (não fica "respondido" sem ter ido).
+    if (!service.thread(recipientId, conversationId).length) throw new HttpError(404, 'not_found', 'Not found')
+    if (!text.trim()) throw new HttpError(422, 'validation_error', 'message is required')
+    try {
+      service.checkReplyTo(recipientId, conversationId, replyTo)
+    } catch (error: unknown) {
+      if (error instanceof PersonMessageError && error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
+      throw error
+    }
+    const session = await this.sessionForReply(service.resolve(recipientId, conversationId)?.conversationId ?? conversationId)
+    let reply: { input: string; agentId: string; conversationId: string }
+    try {
+      reply = service.reply(recipientId, conversationId, text, input.authorName, replyTo)
+    } catch (error: unknown) {
+      if (error instanceof PersonMessageError && error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
+      throw new HttpError(
+        error instanceof Error && /no such thread/.test(error.message) ? 404 : 422,
+        error instanceof Error && /no such thread/.test(error.message) ? 'not_found' : 'validation_error',
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+    const message: IMessageInput = { text: reply.input }
+    // Conversa rodando: entra na fila do turno; quando ela parar, o último turno volta para o fio.
+    if (session.status === 'running' || this.liveTurns.has(reply.conversationId)) {
+      this.usecases.sendMessage.enqueue(reply.conversationId, reply.input)
+      void this.mirrorWhenIdle(reply.conversationId, reply.agentId)
+      return { queued: true }
+    }
+    const { done } = this.launch(reply.conversationId, session, message, undefined)
+    void done.then(() => this.mirrorFinished(reply.conversationId, reply.agentId)).catch(() => undefined)
+    return { queued: false }
   }
 
   /**
@@ -2562,10 +2622,17 @@ export class AgentController {
   /** `PUT /messages/:conversationId/:messageId/status { status }` — 📌 a pessoa dá o pedido por tratado (`resolved`) ou o reabre (`pending`). */
   async setMessageStatus(req: Request, res: Response) {
     await this.respond(res, async () => {
-      const { service, recipientId } = await this.messagesOf()
+      const { service, recipientId, email } = await this.messagesOf()
       const status = (req.body as { status?: unknown } | undefined)?.status
       if (status !== 'resolved' && status !== 'pending')
         throw new HttpError(422, 'validation_error', 'status must be resolved or pending', [{ field: 'status', message: 'resolved or pending' }])
+      const remote = await this.remoteItemOf(service, recipientId, email, req.params.conversationId as string)
+      if (remote) {
+        const done = await this.remote(() =>
+          this.usecases.connections!.setRemoteMessageStatus(remote.projectId, req.params.conversationId as string, req.params.messageId as string, status),
+        )
+        return { status, pending: service.pending(recipientId) + done.pending }
+      }
       try {
         service.setStatus(recipientId, req.params.conversationId as string, req.params.messageId as string, status)
       } catch (error: unknown) {

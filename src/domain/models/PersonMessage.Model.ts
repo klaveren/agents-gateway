@@ -81,4 +81,6 @@ export interface IPersonThread {
   /** Quantos pedidos do item ainda estão pendentes (0 ou 1 no item de pedido). */
   pending: number
   archived: boolean
+  /** 🔌 Só na lista local: o item é de um projeto conectado e mora na origem (`stale`: a origem não respondeu, é a última lista). */
+  origin?: { projectId: string; url: string; stale?: boolean }
 }

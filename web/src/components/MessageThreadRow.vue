@@ -228,6 +228,9 @@
         <span class="min-w-0 flex-1">
           <span class="flex items-baseline gap-2">
             <span class="truncate text-sm" :class="thread.unread ? 'font-semibold text-zinc-50' : 'text-zinc-200'">{{ thread.title || name }}</span>
+            <span v-if="thread.origin" class="shrink-0 rounded bg-sky-500/15 px-1.5 text-[10px] font-medium text-sky-300" :title="thread.origin.url" data-test="thread-origin">
+              {{ thread.origin.projectId }} · servidor
+            </span>
             <span class="ml-auto shrink-0 text-xs text-zinc-500">{{ shortTime(thread.last.createdAt) }}</span>
           </span>
           <span class="flex items-center gap-2">

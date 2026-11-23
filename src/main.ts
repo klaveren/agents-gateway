@@ -137,7 +137,7 @@ async function bootstrap() {
     makePermissionRequestsController(),
     makeLedgerController(),
     makeAuditController(),
-    makeConnectController(),
+    makeConnectController(controller),
     makeProjectConnectionsController(),
     makeProjectVariablesController(),
     makeAgentProjectLayerController(),

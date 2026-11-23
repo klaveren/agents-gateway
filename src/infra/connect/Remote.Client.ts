@@ -1,8 +1,11 @@
 import type { ILedgerWrite } from '@domain/models/Ledger.Model'
 import type { TRemoteUsageInput } from '@domain/models/RemoteUsage.Model'
+import type { IPersonMessage, IPersonThread } from '@domain/models/PersonMessage.Model'
 import {
   IRemoteCatalog,
   IRemoteChanges,
+  IRemoteEventHandlers,
+  IRemoteMessageNew,
   IRemoteLedger,
   IRemotePackage,
   RemoteRequestError,
@@ -12,9 +15,11 @@ import {
 
 const TIMEOUT_MS = 30_000
 /** Os campos de data das respostas do ledger: chegam como texto e voltam a ser `Date` (as ferramentas formatam). */
-const DATE_KEYS = new Set(['createdAt', 'updatedAt', 'at'])
+const DATE_KEYS = new Set(['createdAt', 'updatedAt', 'at', 'readAt', 'archivedAt', 'answeredAt'])
 const PACKAGE_TIMEOUT_MS = 120_000
 const MAX_EVENT_FRAME = 1_000_000
+/** A caixa de mensagens é lida pela tela: a origem que demora não pode prender a lista. */
+const MESSAGES_TIMEOUT_MS = 3_000
 
 /**
  * 🔌 O CLIENTE DA ORIGEM (as rotas `/connect/<projeto>/*` do outro gateway), com o token de conexão no
@@ -65,7 +70,32 @@ export class RemoteClient implements IRemoteCatalog {
     return this.get('/usage', TIMEOUT_MS, { rows })
   }
 
-  async events(onVersion: (version: number) => void, signal: AbortSignal): Promise<void> {
+  messages(archived = false): Promise<{ threads: IPersonThread[]; unread: number; pending: number }> {
+    return this.call('GET', `/messages${archived ? '?archived=1' : ''}`, MESSAGES_TIMEOUT_MS)
+  }
+
+  message(key: string): Promise<{ messages: IPersonMessage[] }> {
+    return this.call('GET', `/messages/${encodeURIComponent(key)}`, MESSAGES_TIMEOUT_MS)
+  }
+
+  readMessage(key: string): Promise<{ unread: number }> {
+    return this.call('POST', `/messages/${encodeURIComponent(key)}/read`, MESSAGES_TIMEOUT_MS, {})
+  }
+
+  archiveMessage(key: string, archived: boolean): Promise<{ unread: number }> {
+    return this.call('PUT', `/messages/${encodeURIComponent(key)}/archive`, MESSAGES_TIMEOUT_MS, { archived })
+  }
+
+  setMessageStatus(key: string, messageId: string, status: 'resolved' | 'pending'): Promise<{ status: string; pending: number }> {
+    return this.call('PUT', `/messages/${encodeURIComponent(key)}/${encodeURIComponent(messageId)}/status`, MESSAGES_TIMEOUT_MS, { status })
+  }
+
+  replyMessage(key: string, message: string, replyTo?: string): Promise<{ queued: boolean }> {
+    return this.call('POST', `/messages/${encodeURIComponent(key)}/reply`, TIMEOUT_MS, { message, ...(replyTo ? { replyTo } : {}) })
+  }
+
+  async events(handlers: ((version: number) => void) | IRemoteEventHandlers, signal: AbortSignal): Promise<void> {
+    const on: IRemoteEventHandlers = typeof handlers === 'function' ? { onVersion: handlers } : handlers
     const res = await this.request('/events', signal)
     if (!res.body) throw new RemoteUnavailableError('a origem fechou o aviso ao vivo')
     const reader = res.body.getReader()
@@ -80,10 +110,7 @@ export class RemoteClient implements IRemoteCatalog {
         const frame = buffer.slice(0, end)
         buffer = buffer.slice(end + 2)
         const data = /^data: (.*)$/m.exec(frame)?.[1]
-        if (/^event: catalog\.version$/m.test(frame) && data) {
-          const version = Number((JSON.parse(data) as { version?: unknown }).version)
-          if (Number.isInteger(version)) onVersion(version)
-        }
+        if (data) dispatch(frame, data, on)
         end = buffer.indexOf('\n\n')
       }
       // ⛔ Um aviso tem dezenas de bytes: o fluxo que nunca fecha um quadro não cresce na memória daqui.
@@ -94,8 +121,12 @@ export class RemoteClient implements IRemoteCatalog {
     }
   }
 
-  private async get<T>(path: string, timeoutMs = TIMEOUT_MS, body?: unknown): Promise<T> {
-    const res = await this.request(path, AbortSignal.timeout(timeoutMs), body)
+  private get<T>(path: string, timeoutMs = TIMEOUT_MS, body?: unknown): Promise<T> {
+    return this.call(body === undefined ? 'GET' : 'POST', path, timeoutMs, body)
+  }
+
+  private async call<T>(method: 'GET' | 'POST' | 'PUT', path: string, timeoutMs: number, body?: unknown): Promise<T> {
+    const res = await this.request(path, AbortSignal.timeout(timeoutMs), body, method)
     const text = await res.text().catch(() => '')
     let envelope: { ok?: boolean; result?: T; message?: string; code?: string; details?: unknown } | undefined
     try {
@@ -111,11 +142,11 @@ export class RemoteClient implements IRemoteCatalog {
     throw new RemoteRequestError(res.status, envelope.message ?? `a origem respondeu ${res.status}`, envelope.details)
   }
 
-  private async request(path: string, signal: AbortSignal, body?: unknown): Promise<Response> {
+  private async request(path: string, signal: AbortSignal, body?: unknown, method: 'GET' | 'POST' | 'PUT' = body === undefined ? 'GET' : 'POST'): Promise<Response> {
     let res: Response
     try {
       res = await this.fetchImpl(`${this.base}${path}`, {
-        method: body === undefined ? 'GET' : 'POST',
+        method,
         headers: {
           'X-Tool-Authorization': `Bearer ${this.token}`,
           Accept: path === '/events' ? 'text/event-stream' : 'application/json',
@@ -143,6 +174,26 @@ export class RemoteClient implements IRemoteCatalog {
       throw new RemoteUnavailableError(`a origem respondeu ${res.status}`)
     }
     return res
+  }
+}
+
+/** Um quadro do aviso ao vivo → o ouvinte do tipo dele (o que não é conhecido, ou veio torto, é ignorado). */
+function dispatch(frame: string, data: string, on: IRemoteEventHandlers): void {
+  const type = /^event: (.+)$/m.exec(frame)?.[1]
+  let payload: Record<string, unknown>
+  try {
+    payload = JSON.parse(data) as Record<string, unknown>
+  } catch {
+    return
+  }
+  if (type === 'catalog.version') {
+    const version = Number(payload.version)
+    if (Number.isInteger(version)) on.onVersion?.(version)
+  } else if (type === 'messages.changed') {
+    const unread = Number(payload.unread)
+    if (Number.isInteger(unread)) on.onMessagesChanged?.({ unread })
+  } else if (type === 'message.new' && typeof payload.id === 'string' && typeof payload.key === 'string' && typeof payload.body === 'string') {
+    on.onMessageNew?.(payload as unknown as IRemoteMessageNew)
   }
 }
 
