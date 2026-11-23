@@ -37,5 +37,9 @@ export async function conversationOf(repository: Pick<ReturnType<typeof makeConv
   if (!session) return undefined
   const owner = (session.metadata?.owner as { id?: unknown } | undefined)?.id
   const project = session.metadata?.project
-  return { ...(typeof owner === 'string' ? { ownerId: owner } : {}), ...(typeof project === 'string' ? { projectId: project } : {}) }
+  return {
+    ...(typeof owner === 'string' ? { ownerId: owner } : {}),
+    ...(typeof project === 'string' ? { projectId: project } : {}),
+    ...(session.metadata?.delegatedBy ? { delegated: true } : {}),
+  }
 }

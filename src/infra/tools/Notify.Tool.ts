@@ -19,7 +19,8 @@ export function notifyTool(desk: INotifyDesk): ILocalTool {
     description:
       'Sends a message to a person, in their Messages inbox (and phone, when they enabled it): use it when you need someone (a decision, an access, a confirmation) or to report what finished when nobody is watching (a schedule, a hook). ' +
       'They can reply right there: the reply comes back into this conversation as a message from them. to: "admins" (the administrators of this project), "owner" (the person who owns this conversation) or the name or e-mail of a person of the project. ' +
-      'Write a short title and a self-contained message: say what you need and why, so they can answer without opening the conversation.',
+      'Write a short title and a self-contained message: say what you need and why, so they can answer without opening the conversation. ' +
+      'Not for delegated conversations: when another agent delegated to you, report to it in your reply instead.',
     inputSchema: {
       type: 'object',
       properties: {
