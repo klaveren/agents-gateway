@@ -1,4 +1,14 @@
-import { applyPanelOp, BOARD_TOOL, IConversationPanel, LEGACY_BOARD_TOOL, panelMarkdown, plansMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
+import { BOARD_SECTIONS, boardEntryMarkdown, boardListMarkdown, planListMarkdown, touchedLine } from '@domain/models/BoardRead.Model'
+import {
+  applyPanelOp,
+  BOARD_TOOL,
+  IConversationPanel,
+  LEGACY_BOARD_TOOL,
+  PANEL_ITEM_STATUSES,
+  plansMarkdown,
+  TPanelItemStatus,
+  TPanelOp,
+} from '@domain/models/ConversationPanel.Model'
 import { PLAN_TOOL } from '@domain/models/ConversationPlan.Model'
 import { aliasWarning, deprecatedTool } from '@domain/Tool.Deprecations'
 import { printsSecret } from '@domain/models/ResourceSecret.Model'
@@ -1029,8 +1039,8 @@ function updateTodosTool(store: ITodoStore): ILocalTool {
 
 /**
  * `board`: o BOARD DA CONVERSA (ver `ConversationPanel.Model`) — o agente registra o que a pessoa pede, o andamento, o que
- * entregou (com os links), as decisões e as perguntas. Cada chamada é UMA operação, e a resposta traz o board inteiro
- * (para o agente se orientar). Quem grava é o agente do turno.
+ * entregou (com os links), as decisões e as perguntas. Cada chamada é UMA operação: `read` lista (uma linha por entrada, filtrada e
+ * paginada), `get` traz uma entrada inteira, e a gravação devolve só a linha do que mudou. Quem grava é o agente do turno.
  *
  * ⚠️ Com `name = conversation_panel`, o ALIAS OBSOLETO (ver `Tool.Deprecations`): os mesmos argumentos, e a resposta avisa.
  */
@@ -1042,16 +1052,26 @@ function boardTool(panels: NonNullable<ILocalToolDeps['panels']>, name: string =
     name,
     description: deprecated
       ? `DEPRECATED alias of \`${BOARD_TOOL}\` (removed in ${deprecated.removeIn}): same arguments — call \`${BOARD_TOOL}\` instead.`
-      : 'The BOARD of this conversation, which the person sees next to the chat: the goal, what is being done, the queue, what was delivered (with links), decisions and questions for the person. Keep it up to date WITHOUT being asked: split the person message into its distinct requests and `add` ONE item per request (a short title of what was asked; never one generic item bundling several) — except a request that becomes a plan or a plan step (`plan`): the step is already the item; the steps of an item go in update_todos, not here; when you start it → `update` status doing; when it is delivered → `update` status done with `note` (what was delivered) and `links` (PR, file, conversation); blocked → status blocked with the reason; the person changed course → `set_goal`; something was agreed → `decide`; you need the person → `ask`. Delegated to another agent → `delegatedTo`. Items of an approved plan (`plan`) show their plan step; run them like any item. `read` returns the whole board. Its summary comes at the start of every turn — follow it, do not drift.',
+      : 'The BOARD of this conversation, which the person sees next to the chat: the goal, what is being done, the queue, what was delivered (with links), decisions and questions for the person. Keep it up to date WITHOUT being asked: split the person message into its distinct requests and `add` ONE item per request (a short title of what was asked; never one generic item bundling several) — except a request that becomes a plan or a plan step (`plan`): the step is already the item; the steps of an item go in update_todos, not here; when you start it → `update` status doing; when it is delivered → `update` status done with `note` (what was delivered) and `links` (PR, file, conversation); blocked → status blocked with the reason; the person changed course → `set_goal`; something was agreed → `decide`; you need the person → `ask`. Delegated to another agent → `delegatedTo`. Items of an approved plan (`plan`) show their plan step; run them like any item. `read` lists the board, one line per entry (id, status, title; no detail, note or links), with totals per status; filter by `status` (one or several) or `q` (part of the title), page with `limit` (default 30, max 100) and `page`, and `section` switches to decisions or questions. `get` with `id` returns ONE entry in full (item, decision or question). Writes answer with the changed entry only. Its summary comes at the start of every turn — follow it, do not drift.',
     inputSchema: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['read', 'set_goal', 'add', 'update', 'move', 'decide', 'ask', 'answer'] },
-        id: { type: 'string', description: 'update/move: the item (p1, p2…); answer: the question (q1…).' },
+        op: { type: 'string', enum: ['read', 'get', 'set_goal', 'add', 'update', 'move', 'decide', 'ask', 'answer'] },
+        id: { type: 'string', description: 'get: any entry (p1…, d1…, q1…); update/move: the item (p1, p2…); answer: the question (q1…).' },
+        section: { type: 'string', enum: [...BOARD_SECTIONS], description: 'read: what to list (default items); open questions come first.' },
+        q: { type: 'string', description: 'read: only entries whose title (item) or text (decision, question) contains this, case-insensitive.' },
+        limit: { type: 'number', description: 'read: entries per page (default 30, max 100).' },
+        page: { type: 'number', description: 'read: the page, from 1.' },
         goal: { type: 'string', description: 'set_goal: what this conversation wants to achieve, in one or two sentences.' },
         title: { type: 'string', description: 'add/update: the request, short.' },
         detail: { type: 'string', description: 'add/update: more of what was asked.' },
-        status: { type: 'string', enum: ['queued', 'doing', 'blocked', 'done', 'dropped'] },
+        status: {
+          oneOf: [
+            { type: 'string', enum: [...PANEL_ITEM_STATUSES] },
+            { type: 'array', items: { type: 'string', enum: [...PANEL_ITEM_STATUSES] } },
+          ],
+          description: 'add/update: the status. read: filter by one status or an array of statuses.',
+        },
         note: { type: 'string', description: 'update: what was delivered, or why it is blocked or dropped.' },
         links: {
           type: 'array',
@@ -1077,10 +1097,33 @@ function boardTool(panels: NonNullable<ILocalToolDeps['panels']>, name: string =
       if (!context?.sessionId) return { status: 'error', result: `${name} only works inside a conversation.` }
       // ⛔ As operações de plano são do `plan`: aqui, só as do board.
       if (typeof args.op === 'string' && args.op.startsWith('plan_')) return { status: 'error', result: `Plans are kept with \`${PLAN_TOOL}\`.` }
-      const result = await runPanelOp(panels, context, args.op === 'read' ? undefined : (args as unknown as TPanelOp), (panel) => panelMarkdown(panel, { plans: false }))
+      const result = await runBoardOp(panels, context, args)
       return { ...result, result: warn(result.result) }
     },
   }
+}
+
+/** O `board`: `read` e `get` só leem (compactos); o resto grava e devolve a linha do que mudou. */
+async function runBoardOp(panels: NonNullable<ILocalToolDeps['panels']>, context: { sessionId?: string; agentId?: string }, args: Record<string, unknown>) {
+  if (args.op === 'read') {
+    const raw = args.status
+    const status = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]) as TPanelItemStatus[]
+    return runPanelOp(panels, context, undefined, (panel) =>
+      boardListMarkdown(panel, {
+        ...(typeof args.section === 'string' ? { section: args.section as (typeof BOARD_SECTIONS)[number] } : {}),
+        status,
+        ...(typeof args.q === 'string' ? { q: args.q } : {}),
+        ...(typeof args.limit === 'number' ? { limit: args.limit } : {}),
+        ...(typeof args.page === 'number' ? { page: args.page } : {}),
+      }),
+    )
+  }
+  if (args.op === 'get') {
+    if (typeof args.id !== 'string' || !args.id.trim()) return { status: 'error' as const, result: 'id: required (p…, d…, q…)' }
+    const id = args.id.trim()
+    return runPanelOp(panels, context, undefined, (panel) => boardEntryMarkdown(panel, id))
+  }
+  return runPanelOp(panels, context, args as unknown as TPanelOp)
 }
 
 /**
@@ -1097,12 +1140,14 @@ function planTool(panels: NonNullable<ILocalToolDeps['panels']>): ILocalTool {
     origin: 'local',
     name: PLAN_TOOL,
     description:
-      'The PLANS of this conversation, which the person sees in the board next to the chat. When the person asks for a plan, a strategy or a design to approve: `create` it (title; body in Markdown — context, approach, risks, what is out of scope; steps), then `submit` it for approval. The person approves or asks for changes in the board; the decision comes at the start of the next turn. Changes asked → `update` and `submit` again. Approved → each step is a board item (p…): run them with `board`; the plan follows its items (in progress, done). The person asks for more that belongs to an approved plan → `add_steps` (each new step becomes a board item at once, linked to the plan; say why in `note`); a new subject → a new plan. Do NOT also `board add` an item for the planning request itself ("draft the plan", "add X to the plan"): the plan and its steps are the record. The person approved in the chat instead → `approve` with `note` quoting her. Work finished or abandoned outside the items → `close`. `read` (with or without `id`) returns the plans. Several plans per conversation are fine: one per planning request.',
+      'The PLANS of this conversation, which the person sees in the board next to the chat. When the person asks for a plan, a strategy or a design to approve: `create` it (title; body in Markdown — context, approach, risks, what is out of scope; steps), then `submit` it for approval. The person approves or asks for changes in the board; the decision comes at the start of the next turn. Changes asked → `update` and `submit` again. Approved → each step is a board item (p…): run them with `board`; the plan follows its items (in progress, done). The person asks for more that belongs to an approved plan → `add_steps` (each new step becomes a board item at once, linked to the plan; say why in `note`); a new subject → a new plan. Do NOT also `board add` an item for the planning request itself ("draft the plan", "add X to the plan"): the plan and its steps are the record. The person approved in the chat instead → `approve` with `note` quoting her. Work finished or abandoned outside the items → `close`. `read` without `id` lists the plans, one line each (id, title, status, steps done), paged with `limit` and `page`; `read` with `id` returns that whole plan. Writes answer with the line of the plan touched. Several plans per conversation are fine: one per planning request.',
     inputSchema: {
       type: 'object',
       properties: {
         op: { type: 'string', enum: ['read', 'create', 'update', 'add_steps', 'submit', 'approve', 'close'] },
-        id: { type: 'string', description: 'The plan (pl1, pl2…). read: absent = all plans.' },
+        id: { type: 'string', description: 'The plan (pl1, pl2…). read: absent = list of all plans (one line each).' },
+        limit: { type: 'number', description: 'read without id: plans per page (default 30, max 100).' },
+        page: { type: 'number', description: 'read without id: the page, from 1.' },
         title: { type: 'string', description: 'create/update: the plan title, short.' },
         body: { type: 'string', description: 'create/update: the plan itself, in Markdown.' },
         steps,
@@ -1115,21 +1160,25 @@ function planTool(panels: NonNullable<ILocalToolDeps['panels']>): ILocalTool {
     execute: async (args, context) => {
       if (!context?.sessionId) return { status: 'error', result: `${PLAN_TOOL} only works inside a conversation.` }
       const id = typeof args.id === 'string' ? args.id : undefined
-      const show = (panel: IConversationPanel) => plansMarkdown(panel, args.op === 'read' ? id : undefined)
-      if (args.op === 'read') return runPanelOp(panels, context, undefined, show)
+      if (args.op === 'read')
+        return runPanelOp(panels, context, undefined, (panel) =>
+          id
+            ? plansMarkdown(panel, id)
+            : planListMarkdown(panel, { ...(typeof args.limit === 'number' ? { limit: args.limit } : {}), ...(typeof args.page === 'number' ? { page: args.page } : {}) }),
+        )
       const op = typeof args.op === 'string' && ['create', 'update', 'add_steps', 'submit', 'approve', 'close'].includes(args.op) ? `plan_${args.op}` : undefined
       if (!op) return { status: 'error', result: 'op: one of read, create, update, add_steps, submit, approve, close' }
-      return runPanelOp(panels, context, { ...args, op } as unknown as TPanelOp, (panel) => (id ? plansMarkdown(panel, id) : plansMarkdown(panel)))
+      return runPanelOp(panels, context, { ...args, op } as unknown as TPanelOp)
     },
   }
 }
 
-/** Lê o board, aplica a operação (ausente = só leitura), grava e devolve o texto que o agente recebe. */
+/** Lê o board, aplica a operação (ausente = só leitura, com `show`), grava e devolve o texto: só a linha do que mudou. */
 async function runPanelOp(
   panels: NonNullable<ILocalToolDeps['panels']>,
   context: { sessionId?: string; agentId?: string },
   op: TPanelOp | undefined,
-  show: (panel: IConversationPanel) => string,
+  show?: (panel: IConversationPanel) => string,
 ): Promise<{ status: 'success' | 'error'; result: string }> {
   const sessionId = context.sessionId!
   let current: IConversationPanel
@@ -1140,7 +1189,7 @@ async function runPanelOp(
   }
   if (!op) {
     try {
-      return { status: 'success', result: show(current) }
+      return { status: 'success', result: show ? show(current) : '' }
     } catch (error: unknown) {
       return { status: 'error', result: toMessage(error) }
     }
@@ -1149,7 +1198,7 @@ async function runPanelOp(
   try {
     const { panel, changed } = applyPanelOp(current, op, { ...(turn !== undefined ? { turn } : {}), by: context.agentId ?? 'agent', now: new Date() })
     await panels.save(sessionId, panel)
-    return { status: 'success', result: `Saved: ${changed}\n\n${show(panel)}` }
+    return { status: 'success', result: `Saved: ${changed}\n${touchedLine(panel, op)}` }
   } catch (error: unknown) {
     return { status: 'error', result: `Not saved — fix and call again: ${toMessage(error)}` }
   }
