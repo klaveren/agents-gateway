@@ -71,6 +71,12 @@ describe('Ambient.Policy', () => {
     assert.doesNotMatch(ambientSection({ agentId: 'maya' }), /TMPDIR/)
   })
 
+  it('🔌 a porta do próprio gateway: o agente com terminal sabe que é negada, salvo a Configuração do admin; ligada, a linha some', () => {
+    assert.match(ambientSection({ agentId: 'maya', terminal: true }), /portas do próprio gateway.*sempre negadas.*Agentes alcançam a API deste gateway/)
+    assert.doesNotMatch(ambientSection({ agentId: 'maya', terminal: true, gatewayReach: true }), /portas do próprio gateway/)
+    assert.doesNotMatch(ambientSection({ agentId: 'maya' }), /portas do próprio gateway/)
+  })
+
   it('⛔ a promessa vazia: sem vigia, o agente não promete avisar; com vigia, espera no turno ou arma uma', () => {
     assert.match(NO_WATCH, /^- Você não volta sozinho a esta conversa: só fala quando recebe mensagem\. Não prometa avisar depois/)
     assert.match(NO_WATCH, /é preciso perguntar de novo\.$/)

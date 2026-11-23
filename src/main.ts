@@ -40,6 +40,7 @@ import { projectSandbox, sweepCommandLogs, sweepProjectMountPoints } from '@infr
 import { bootIssues, bootWarnings } from '@infra/http/Boot.Checks'
 import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
 import { makeTools } from '@composition/factories/Tools.Factory'
+import { agentsReachGatewayApiOn } from '@composition/factories/Installation.Settings'
 import { makeScheduleRunner } from '@composition/factories/Schedules.Factory'
 import { makeWatchRunner } from '@composition/factories/Watches.Factory'
 import { warnIfProofDisabled } from '@infra/http/Caller.Proof'
@@ -146,6 +147,8 @@ async function bootstrap() {
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
   listening = true
   // O relógio dos agendamentos: depois de o servidor subir — ele executa pela API deste processo.
+  // Aquece a cópia viva das Configurações (a do alcance à API do gateway vale já no primeiro comando).
+  agentsReachGatewayApiOn()
   makeScheduleRunner().start()
   makeWatchRunner().start()
   // 🔌 O vigia dos projetos conectados: o aviso de atualização (a conexão sai daqui; a origem não nos alcança).

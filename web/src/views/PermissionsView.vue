@@ -93,7 +93,8 @@ async function save() {
   notice.value = undefined
   try {
     await permissions.save(project.value.id, rules.value.filter((rule) => rule.pattern.trim()))
-    notice.value = 'Salvo. Vale na hora, para todos os agentes do projeto.'
+    const noEffect = stored.data.value?.warnings?.length ?? 0
+    notice.value = `Salvo. Vale na hora, para todos os agentes do projeto.${noEffect ? ` ${noEffect === 1 ? 'Uma regra está' : `${noEffect} regras estão`} sem efeito: veja o aviso na regra.` : ''}`
   } catch (failure) {
     actionError.value = failure instanceof ApiError && failure.status === 422 ? 'Alguma regra está inválida: confira os padrões.' : failure instanceof Error ? failure.message : String(failure)
   } finally {
@@ -198,7 +199,7 @@ watch([decisionAgent, section], () => {
 
           <PermissionRequests v-if="!connectedOrigin" :project-id="project.id" @approved="requestApproved" />
           <fieldset :disabled="!!connectedOrigin" class="contents">
-            <PermissionRules v-model="rules" :only="section" />
+            <PermissionRules v-model="rules" :only="section" :ineffective="stored.data.value?.warnings" />
           </fieldset>
           <p v-if="notice" class="text-xs text-success-300">{{ notice }}</p>
           <p v-else-if="meta.updatedBy" class="text-xs text-zinc-500">Alterado por {{ meta.updatedBy }} em {{ fullTime(meta.updatedAt) }}</p>

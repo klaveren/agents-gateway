@@ -65,6 +65,7 @@ import { READ_DOC_TOOL, SEARCH_DOCS_TOOL } from '@domain/models/ProjectDoc.Model
 import { LEDGER_TOOLS } from '@domain/models/Ledger.Model'
 import { SEARCH_RESOURCES_TOOL, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
 import { PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
+import { gatewayReachOn } from '@infra/permissions/Gateway.Reach'
 import { projectWorkspace, projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 import { currentBranch, resolveWorkFolder } from '@infra/workspace/Work.Folder'
 import { IContextWorkFolder, IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -764,6 +765,7 @@ export class AgentProvider implements IAgentProvider {
       ...(this.secrets?.ambientFor(agent, projectOf(metadata)) ? { secrets: this.secrets.ambientFor(agent, projectOf(metadata))! } : {}),
       ...(this.panels ? { panel: true } : {}),
       ...(projectId && this.machineOf?.(projectId, agent.id) ? { machine: true } : {}),
+      ...(gatewayReachOn() ? { gatewayReach: true } : {}),
     }
   }
 

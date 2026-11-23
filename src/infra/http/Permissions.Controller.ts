@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { PermissionsService } from '@application/Permissions.Service'
 import { IPermissionSubject, PERMISSION_CATEGORIES, SYSTEM_RULES, TPermissionCategory } from '@domain/Permission.Policy'
 import { PERMISSION_DECISIONS_KEPT } from '@domain/ports/PermissionRepository.Port'
+import { gatewayReachOn, gatewayRuleReason } from '@infra/permissions/Gateway.Reach'
 import { analyzeShell, opaqueRefusal } from '@infra/permissions/Shell.Parse'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
@@ -32,6 +33,17 @@ const testSchema = z.object({
   value: z.string().min(1).max(4000),
 })
 
+/** Os avisos das regras que não valem: as de rede que miram a porta HTTP do gateway com o alcance desligado. */
+export function ruleWarnings(
+  rules: ReadonlyArray<{ category: string; pattern: string; decision: string }>,
+): Array<{ category: string; pattern: string; code: string; message: string }> {
+  if (gatewayReachOn()) return []
+  return rules.flatMap((rule) => {
+    const reason = rule.category === 'network' && rule.decision === 'allow' ? gatewayRuleReason(rule.pattern) : undefined
+    return reason ? [{ category: rule.category, pattern: rule.pattern, code: 'gateway_port_off', message: reason }] : []
+  })
+}
+
 /**
  * As permissões de um projeto (só o admin do projeto; 404 para os demais): as regras, o testador e as últimas decisões. As do agente
  * vêm no cadastro dele (`permissions`).
@@ -45,7 +57,7 @@ export class PermissionsController {
     await this.respond(res, async () => {
       const projectId = await this.project(req, 'getPermissions')
       const stored = this.deps.permissions.projectRules(projectId)
-      return { projectId, ...stored, system: [...SYSTEM_RULES, ...this.deps.installationRules()] }
+      return { projectId, ...stored, warnings: ruleWarnings(stored.rules), system: [...SYSTEM_RULES, ...this.deps.installationRules()] }
     })
   }
 
@@ -54,7 +66,8 @@ export class PermissionsController {
       const { projectId, by } = await this.admin(req, 'savePermissions')
       const { rules } = parseBody(saveSchema, req.body)
       const saved = this.deps.permissions.saveProjectRules(projectId, rules, by)
-      return { projectId, rules: saved }
+      // ⚠️ Aviso, não recusa: a regra que mira a porta do próprio gateway é aceita, mas não vale com a Configuração desligada.
+      return { projectId, rules: saved, warnings: ruleWarnings(saved) }
     })
   }
 

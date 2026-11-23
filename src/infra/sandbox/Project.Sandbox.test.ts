@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { cercoPlan } from '@domain/Cerco.Plan'
 import { commandDirOf } from '@infra/accounts/Ssh.Kit'
+import { deniedGatewayPorts, gatewayHttpPort, setGatewayReach } from '@infra/permissions/Gateway.Reach'
 import {
   DEV_HMR_PORTS,
   ensureEmptyAttributes,
@@ -493,6 +494,22 @@ describe('ProjectSandbox', () => {
       assert.strictEqual(run(gateway, '127.0.0.1'), 'EPERM')
     } finally {
       servers.kill()
+    }
+  })
+
+  it('🔌 withMacOpenNetwork: com o alcance ligado a porta HTTP do gateway sai das negações; a do portão fica', () => {
+    const base = `(version 1)\n(deny network*)\n(allow network-outbound (remote ip "localhost:3999"))`
+    const denies = (profile: string) => profile.split('\n').filter((line) => line.startsWith('(deny network-outbound'))
+    setGatewayReach(() => false)
+    try {
+      assert.deepStrictEqual(denies(withMacOpenNetwork(base, 3999, deniedGatewayPorts())), [
+        '(deny network-outbound (remote ip "localhost:3999"))',
+        `(deny network-outbound (remote ip "localhost:${gatewayHttpPort()}"))`,
+      ])
+      setGatewayReach(() => true)
+      assert.deepStrictEqual(denies(withMacOpenNetwork(base, 3999, deniedGatewayPorts())), ['(deny network-outbound (remote ip "localhost:3999"))'])
+    } finally {
+      setGatewayReach(() => false)
     }
   })
 

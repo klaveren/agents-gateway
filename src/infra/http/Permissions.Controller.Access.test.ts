@@ -6,6 +6,7 @@ import { HmacTokenIssuer } from '@infra/auth/Hmac.TokenIssuer'
 import { identityFromToken, withCaller } from '@infra/mcp/Caller.Identity'
 import { PermissionsService } from '@application/Permissions.Service'
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
+import { gatewayHttpPort, setGatewayReach } from '@infra/permissions/Gateway.Reach'
 import { PermissionsController } from './Permissions.Controller'
 import { useProjectAccess } from './Project.Access'
 
@@ -64,6 +65,34 @@ describe('Permissões do projeto: o admin do projeto, só o projeto dele', () =>
     assert.strictEqual((await call(CAIO, 'decisions', { params: { projectId: 'alfa' } })).status, 404)
     assert.strictEqual((await call(BIA, 'save', { params: { projectId: 'alfa' }, body: { rules: [] } })).status, 404)
     assert.strictEqual(permissions.projectRules('alfa').rules.length, 1, 'a Bia não apagou nada')
+  })
+
+  it('🔌 regra de rede para a porta do próprio gateway: aceita, mas avisa "sem efeito" com o alcance desligado; ligado, sem aviso', async () => {
+    const port = gatewayHttpPort()
+    const body = {
+      rules: [
+        { category: 'network', pattern: `localhost:${port}`, decision: 'allow' },
+        { category: 'network', pattern: 'localhost:27017', decision: 'allow' },
+        { category: 'network', pattern: `127.0.0.1:${port}`, decision: 'deny' },
+      ],
+    }
+    setGatewayReach(() => false)
+    try {
+      const saved = await call(ANA, 'save', { params: { projectId: 'alfa' }, body })
+      assert.strictEqual(saved.status, 200)
+      assert.deepStrictEqual(
+        saved.body?.result.warnings.map((warning: { pattern: string; code: string }) => [warning.pattern, warning.code]),
+        [[`localhost:${port}`, 'gateway_port_off']],
+      )
+      assert.match(saved.body?.result.warnings[0].message, /sem efeito/)
+      assert.strictEqual(saved.body?.result.rules.length, 3, 'a regra foi aceita')
+      assert.strictEqual((await call(ANA, 'get', { params: { projectId: 'alfa' } })).body?.result.warnings.length, 1, 'a leitura repete o aviso')
+      setGatewayReach(() => true)
+      assert.deepStrictEqual((await call(ANA, 'save', { params: { projectId: 'alfa' }, body })).body?.result.warnings, [])
+    } finally {
+      setGatewayReach(() => false)
+      await call(ANA, 'save', { params: { projectId: 'alfa' }, body: rules })
+    }
   })
 
   it('as decisões saem pela categoria pedida; a categoria que não existe é 422', async () => {

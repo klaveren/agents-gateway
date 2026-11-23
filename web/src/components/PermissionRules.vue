@@ -10,7 +10,10 @@
    */
   const rules = defineModel<IPermissionRule[]>({ required: true })
   /** `only`: uma categoria só (a guia escolhida na tela de Permissões). */
-  const props = defineProps<{ readonly?: boolean; only?: TPermissionCategory }>()
+  const props = defineProps<{ readonly?: boolean; only?: TPermissionCategory; ineffective?: ReadonlyArray<{ category: string; pattern: string; message: string }> }>()
+
+  /** O motivo de a regra não valer ("sem efeito"), se o servidor avisou. */
+  const noEffect = (rule: IPermissionRule) => props.ineffective?.find((item) => item.category === rule.category && item.pattern === rule.pattern.trim())?.message
 
   const byCategory = computed(() =>
     PERMISSION_SECTIONS.filter((section) => !props.only || section.category === props.only).map((section) => ({ ...section, rules: rules.value.map((rule, index) => ({ rule, index })).filter(({ rule }) => rule.category === section.category) })),
@@ -78,6 +81,10 @@
             @keydown.enter.prevent
           />
           <button v-if="!readonly" type="button" class="btn btn-sm btn-danger" title="Remover a regra" @click="remove(index)">Remover</button>
+          <p v-if="noEffect(rule)" class="flex w-full flex-wrap items-center gap-2 text-xs text-amber-300" data-test="rule-no-effect">
+            <span class="rounded-full bg-amber-500/20 px-2 py-0.5 text-amber-200">sem efeito</span>
+            {{ noEffect(rule) }}
+          </p>
           <p v-if="patternWarning(rule)" class="flex w-full flex-wrap items-center gap-2 text-xs text-amber-300">
             ⚠ {{ patternWarning(rule) }}
             <button v-if="!readonly" type="button" class="btn btn-sm btn-ghost" @click="update(index, { pattern: fixPattern(rule.pattern) })">
