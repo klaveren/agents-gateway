@@ -128,7 +128,10 @@ export class AgentCatalog implements IAgentDirectory {
   }
 
   get(id: string): IAgent | undefined {
-    return this.list().find((agent) => agent.id === id) ?? this.core().find((agent) => agent.id === id)
+    // ⚡ Só o agente pedido vira "como roda" (camada local, modelos utilizáveis): antes, cada `get` montava TODOS, e a
+    // conferência de permissão chama `get` por ferramenta — o servidor parava por segundos.
+    const stored = this.repository.list().find((agent) => agent.id === id)
+    return stored ? this.effective(toAgent(stored)) : this.core().find((agent) => agent.id === id)
   }
 
   /**
