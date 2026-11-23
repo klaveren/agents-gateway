@@ -93,6 +93,15 @@ export function takesExternalBrowser(args: string[]): boolean {
   return args.some((arg) => EXTERNAL.test(arg))
 }
 
+/**
+ * 📸 Onde o Playwright MCP grava capturas e downloads: a pasta de rascunho do projeto (`$TMPDIR` dos comandos dele), que
+ * as regras de leitura do agente alcançam — no `/tmp` ele não leria o que acabou de salvar. Quem já definiu
+ * `--output-dir` fica como está.
+ */
+export function argsForOutputDir(args: string[], dir: string): string[] {
+  return args.some((arg) => /^--output-dir(=|$)/.test(arg)) ? args : [...args, '--output-dir', dir]
+}
+
 /** Os argumentos do MCP com o navegador do gateway: tira os de abrir navegador e aponta para o CDP. */
 export function argsForEndpoint(args: string[], endpoint: string): string[] {
   const out: string[] = []

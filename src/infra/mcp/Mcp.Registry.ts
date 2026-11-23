@@ -10,10 +10,20 @@ import { resolveAllowedHosts } from '@infra/sandbox/Egress.Proxy'
 import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
 import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { IToolDefinition } from '@infra/tools/Tool.Types'
-import { INSTALL_PASSTHROUGH, isWritable } from '@infra/adapters/support/Subscription.Workspace'
+import { INSTALL_PASSTHROUGH, isWritable, projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 import { installDir, resolveCommand } from './Mcp.Install'
 import { IMcpClientOptions, McpServerClient, TURN_WAKE_MS } from './McpServer.Client'
-import { argsForEndpoint, chromiumExecutable, isPlaywrightMcp, LiveBrowser, liveBrowserEnabled, liveBrowsers, systemChromium, takesExternalBrowser } from './LiveBrowser.Adapter'
+import {
+  argsForEndpoint,
+  argsForOutputDir,
+  chromiumExecutable,
+  isPlaywrightMcp,
+  LiveBrowser,
+  liveBrowserEnabled,
+  liveBrowsers,
+  systemChromium,
+  takesExternalBrowser,
+} from './LiveBrowser.Adapter'
 import type { IBrowserLaunch } from './PersonBrowsers.Service'
 
 export interface IMcpServerStatus {
@@ -237,7 +247,13 @@ export class McpRegistry {
     if (!isWritable(env.HOME)) env.HOME = cwd
     const opened = shared ? undefined : await this.openLiveBrowser(config, sessionId, cwd, env)
     const browser = opened?.browser
-    const args = browser ? argsForEndpoint(proc.args, browser.endpoint) : proc.args
+    let args = browser ? argsForEndpoint(proc.args, browser.endpoint) : proc.args
+    // 📸 Capturas e downloads no `.tmp` do projeto (o `$TMPDIR` dos comandos), legível pelo agente. Sem projeto, como estava.
+    if (project && isPlaywrightMcp(proc.package)) {
+      const output = join(projectWorkspacePath(project), '.tmp')
+      mkdirSync(output, { recursive: true, mode: 0o700 })
+      args = argsForOutputDir(args, output)
+    }
     const client = new McpServerClient(`process://${serverKey}`, {}, { auth: 'none', label: serverKey, stdio: { command, args, env, cwd } })
     return {
       client,

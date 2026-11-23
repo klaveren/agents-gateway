@@ -1,6 +1,7 @@
 <script setup lang="ts">
   import ConnectedReadOnly from './ConnectedReadOnly.vue'
   import { useConnectionsStore } from '@/stores/connections'
+  import { usePermissionsStore } from '@/stores/permissions'
   import { lite, LITE_HIDDEN_AGENT_TABS, LITE_HIDDEN_PERMISSIONS, LITE_HIDDEN_TOOLS } from '@/lib/edition'
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
@@ -31,7 +32,7 @@
   import { useSettingsStore } from '@/stores/settings'
   import { useAuthStore } from '@/stores/auth'
   import { useProtocolsStore } from '@/stores/protocols'
-  import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, TMode, TPermissionCategory, TSandboxLevel } from '@/lib/types'
+  import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, IPermissionRule, TMode, TPermissionCategory, TSandboxLevel } from '@/lib/types'
   import { AUTO_TOOL_OFF, AUTO_TOOLS, disabledTools, layerTools, originHasTool, shownTools, type IAgentLocalLayerView } from '@/lib/localLayer'
   import { useAgentsStore } from '@/stores/agents'
   import { useMcpStore } from '@/stores/mcp'
@@ -490,6 +491,23 @@
     else if (!form.value.allowedTools.includes(entry)) form.value.allowedTools = [...form.value.allowedTools, entry]
   }
   /** As regras que valem para o agente aqui: as da origem e as locais (para as contagens das guias). */
+  // ⚠️ "sem efeito": o servidor avisa, sobre as regras de rede como estão no formulário (ainda sem salvar).
+  const ruleWarnings = ref<Array<{ category: string; pattern: string; message: string }>>([])
+  watch(
+    () => JSON.stringify((form.value.permissions ?? []).filter((rule) => rule.category === 'network' && rule.decision === 'allow' && rule.pattern.trim())),
+    (key) => {
+      const rules = JSON.parse(key) as IPermissionRule[]
+      if (!rules.length) {
+        ruleWarnings.value = []
+        return
+      }
+      void usePermissionsStore()
+        .warnings(rules)
+        .then((found) => (ruleWarnings.value = found))
+        .catch(() => (ruleWarnings.value = []))
+    },
+    { immediate: true },
+  )
   const shownRules = computed(() => [...originRules.value, ...(form.value.permissions ?? [])])
   const groupChoice = computed({
     get: () => (form.value.modelGroup === undefined || form.value.modelGroup === null ? '' : form.value.modelGroup),
@@ -1888,7 +1906,7 @@
               <PermissionRules :model-value="originRules" readonly :only="permissionSection" />
               <h4 class="text-xs font-medium text-zinc-300">{{ W.mine }}</h4>
             </template>
-            <PermissionRules v-model="form.permissions!" :only="permissionSection" />
+            <PermissionRules v-model="form.permissions!" :only="permissionSection" :ineffective="ruleWarnings" />
             <PermissionTester
               v-if="agent && !creating && (agent.projectId ?? projects.current)"
               :project-id="(agent.projectId ?? projects.current)!"

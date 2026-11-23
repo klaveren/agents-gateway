@@ -11,6 +11,7 @@ const QUOTA = [
   /resource[_ ]exhausted/i,
   /usage limit/i,
   /(?:hit|reached) (?:your|the) (?:usage |weekly |daily |session )?limit/i,
+  /(?:individual|monthly|daily|weekly) quota (?:reached|limit)|quota reached/i,
   /out of credits|credit balance is too low|billing/i,
 ]
 const RATE = [/rate[_ -]?limit/i, /too many requests/i, /\b429\b/]

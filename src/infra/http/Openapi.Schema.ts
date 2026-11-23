@@ -4877,6 +4877,35 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'Pending request', ...json(envelope(permissionRequestSchema)) }, '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/permissions/warnings': {
+      post: {
+        summary: 'The warnings ("sem efeito") of a list of rules not yet saved, e.g. the agent form: network rules aimed at the gateway own HTTP port while agents cannot reach it',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', properties: { rules: { type: 'array', items: permissionRuleSchema, maxItems: 300 } }, required: ['rules'] } } },
+        },
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  warnings: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: { category: { type: 'string' }, pattern: { type: 'string' }, code: { type: 'string' }, message: { type: 'string' } },
+                    },
+                  },
+                },
+              }),
+            ),
+          },
+          '422': failures['422'],
+        },
+      },
+    },
     '/projects/{projectId}/permissions': {
       get: {
         summary: 'The permission rules of a project (the project layer), plus the fixed system rules. Administrators only (404 otherwise)',

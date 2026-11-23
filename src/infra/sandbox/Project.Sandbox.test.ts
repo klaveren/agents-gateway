@@ -680,12 +680,13 @@ describe('writeFolders — as pastas de escrita criadas antes do comando', () =>
     assert.deepStrictEqual(writeFolders(plan, '/w/p'), ['/w/p/notas', '/w/p/apps/legado'])
   })
 
-  it('⛔ serviços locais no Linux: um socat por porta liberada, pelo portão, com o token do comando', () => {
-    const line = localForwards([27017, 27017, 6379, 0, 70000], 'tok123', 3128)
+  it('⛔ serviços locais no Linux: um socat por porta liberada, pelo auxiliar do portão, sem credencial na linha de comando', () => {
+    const line = localForwards([27017, 27017, 6379, 0, 70000], '/usr/bin/node', '/h/.home/.gateway-connect.cjs')
     assert.strictEqual(line.match(/socat /g)?.length, 2)
-    assert.match(line, /socat TCP-LISTEN:27017,bind=127\.0\.0\.1,reuseaddr,fork PROXY:127\.0\.0\.1:localhost:27017,proxyport=3128,proxyauth=tok123:x/)
+    assert.match(line, /socat TCP-LISTEN:27017,bind=127\.0\.0\.1,reuseaddr,fork 'SYSTEM:exec "\/usr\/bin\/node" "\/h\/\.home\/\.gateway-connect\.cjs" localhost 27017'/)
+    assert.doesNotMatch(line, /proxyauth|PROXY:|tok/)
     assert.match(line, /trap 'kill \$\(jobs -p\) 2>\/dev\/null' EXIT/)
-    assert.strictEqual(localForwards([], 't', 3128), '')
+    assert.strictEqual(localForwards([], '/n', '/c'), '')
   })
 })
 
