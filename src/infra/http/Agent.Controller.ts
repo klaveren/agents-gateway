@@ -110,6 +110,7 @@ import {
   agentBodySchema,
   createSessionSchema,
   renameConversationSchema,
+  channelSchema,
   followTurnSchema,
   sendMessageSchema,
   shareAgentSchema,
@@ -337,7 +338,12 @@ interface IInboxStream {
   emit: (type: string, data: object) => void
   following?: string
   unfollow?: () => void
+  /** Os canais ligados (`browser:<conversa>`, `terminal:<id>`): a conferência que vale para cada um e como parar. */
+  channels: Map<string, { recheck: () => Promise<void>; stop: () => void }>
 }
+
+/** O teto de canais ligados num stream da caixa de entrada. */
+const MAX_CHANNELS = 8
 
 /** Um turno assíncrono rodando: o que já saiu, para o `GET` do estado. */
 interface ILiveTurn {
@@ -475,6 +481,7 @@ export class AgentController {
     this.browserOpen = this.browserOpen.bind(this)
     this.browserClose = this.browserClose.bind(this)
     this.followTurn = this.followTurn.bind(this)
+    this.eventChannel = this.eventChannel.bind(this)
     this.getAgent = this.getAgent.bind(this)
     this.createAgent = this.createAgent.bind(this)
     this.updateAgent = this.updateAgent.bind(this)
@@ -952,7 +959,7 @@ export class AgentController {
       if (!agent || !this.agentReachable(agent, caller, requested) || !(await this.opensAdminOnly(agent))) throw new AgentNotFoundError(req.params.agentId as string)
       // Os commands e as skills: a caixa sugere os dois ao digitar `/` (a skill escolhida vai inteira, já carregada).
       const guidance = this.usecases.guidance
-      const resources = [...(guidance?.usableResources('command', agent.id) ?? []), ...(guidance?.usableResources('skill', agent.id) ?? [])].map((resource) => ({
+      const resources = [...(guidance?.usableResourceHints('command', agent.id) ?? []), ...(guidance?.usableResourceHints('skill', agent.id) ?? [])].map((resource) => ({
         id: resource.id,
         kind: resource.kind,
         description: resource.description,
@@ -964,7 +971,7 @@ export class AgentController {
       const project = receiving
         ? requested
         : (agent.projectId ?? (requested && this.usecases.projects?.exists(requested) && this.usecases.projects.canUse(caller, requested) ? requested : undefined))
-      const docs = guidance ? [...guidance.docs(null), ...(project ? guidance.docs(project) : [])] : []
+      const docs = guidance ? [...guidance.docHints(null), ...(project ? guidance.docHints(project) : [])] : []
       return [...resources, ...docs.map((doc) => ({ id: `${doc.kind}:${doc.id}`, kind: doc.kind, description: doc.summary ? `${doc.title} — ${doc.summary}` : doc.title }))]
     })
   }
@@ -1721,7 +1728,7 @@ export class AgentController {
     stream.open()
     // O id deste stream: é por ele que a tela pede o turno ao vivo da conversa aberta (`followTurn`), sem outra conexão.
     const streamId = randomUUID()
-    const inbox: IInboxStream = { owner: key, emit: (type, data) => stream.emit(type, data) }
+    const inbox: IInboxStream = { owner: key, emit: (type, data) => stream.emit(type, data), channels: new Map() }
     this.inboxStreams.set(streamId, inbox)
     stream.emit('stream.ready', { streamId })
 
@@ -1785,6 +1792,15 @@ export class AgentController {
         adminOf = view
         // A pertença aos projetos é lida de novo no próximo aviso do catálogo.
         member.clear()
+        // ⛔ Os canais (navegador, terminal) valem só enquanto a conferência da abertura de cada um passa.
+        for (const [name, channel] of [...inbox.channels]) {
+          try {
+            await channel.recheck()
+          } catch {
+            channel.stop()
+            inbox.channels.delete(name)
+          }
+        }
         const followed = inbox.following
         if (!followed) return
         try {
@@ -1798,6 +1814,7 @@ export class AgentController {
         unsubscribe()
         unsubscribeCatalog()
         this.unfollow(inbox)
+        this.stopChannels(inbox)
         this.inboxStreams.delete(streamId)
         this.releaseStream(key)
       },
@@ -1832,6 +1849,70 @@ export class AgentController {
       inbox.unfollow = this.watchTurn(sessionId, (type, data) => inbox.emit(type, { sessionId, ...data }), true)
       return { following: sessionId }
     })
+  }
+
+  /**
+   * `PUT /conversations/events/:streamId/channels` — liga (`on: true`) ou desliga um canal no stream da caixa de entrada
+   * já aberto: `browser:<conversa>` (a tela do navegador ao vivo) e `terminal:<id>` (o shell local). Os mesmos quadros do
+   * `/sessions/:id/browser` e do `/terminal/:id/stream` (`browser.frame`, `browser.tabs`, `browser.state`, `terminal.data`,
+   * `terminal.exit`), com o campo `channel`, na MESMA conexão — as telas não abrem uma conexão por painel.
+   *
+   * ⛔ A mesma regra dos streams antigos: stream de quem pede; navegador, de conversa dele (ou admin); terminal, só o
+   * local do admin, pela tela. Conferida de novo a cada `STREAM_RECHECK_MS`. 404 em qualquer recusa.
+   */
+  async eventChannel(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const resolved = await this.requireCaller()
+      const streamId = String(req.params.streamId ?? '')
+      const inbox = this.inboxStreams.get(streamId)
+      if (!inbox || inbox.owner !== (ownerOf(resolved)?.id ?? '')) throw new HttpError(404, 'not_found', 'Stream not found')
+      const { channel, on } = parseBody(channelSchema, req.body)
+      inbox.channels.get(channel)?.stop()
+      inbox.channels.delete(channel)
+      if (!on) return { channel, on: false }
+      if (inbox.channels.size >= MAX_CHANNELS) throw new HttpError(429, 'rate_limited', 'Too many open channels')
+      const target = channel.slice(channel.indexOf(':') + 1)
+      const emit = (type: string, data: object) => inbox.emit(type, { channel, ...data })
+      let entry: { recheck: () => Promise<void>; stop: () => void }
+      if (channel.startsWith('browser:')) {
+        await this.requireLiveAccess(target)
+        entry = { recheck: async () => void (await this.requireLiveAccess(target)), stop: this.watchBrowser(target, emit) }
+      } else {
+        await this.requireLocalTerminal(req, res)
+        const stop = localTerminals().watch(target, (event) => {
+          if (event.type === 'data') emit('terminal.data', { data: event.data })
+          else {
+            emit('terminal.exit', { code: event.code })
+            inbox.channels.delete(channel)
+          }
+        })
+        if (!stop) throw new HttpError(404, 'not_found', 'Terminal not found')
+        entry = { recheck: () => this.requireLocalTerminal(req, res), stop }
+      }
+      // ⛔ A conferência espera, e nesse meio o stream pode ter fechado (ninguém cancelaria a assinatura) ou o canal ter sido religado.
+      if (this.inboxStreams.get(streamId) !== inbox || inbox.channels.has(channel)) {
+        entry.stop()
+        throw new HttpError(404, 'not_found', 'Stream not found')
+      }
+      inbox.channels.set(channel, entry)
+      return { channel, on: true }
+    })
+  }
+
+  /** Os quadros do navegador ao vivo de uma conversa (o mesmo do `/sessions/:id/browser` e do canal `browser:`). */
+  private watchBrowser(sessionId: string, emit: (type: string, data: object) => void): () => void {
+    return liveBrowsers().watch(sessionId, (event) =>
+      event.type === 'frame'
+        ? emit('browser.frame', event.frame)
+        : event.type === 'tabs'
+          ? emit('browser.tabs', { tabs: event.tabs, current: event.current })
+          : emit('browser.state', { live: event.live }),
+    )
+  }
+
+  private stopChannels(inbox: IInboxStream): void {
+    for (const channel of inbox.channels.values()) channel.stop()
+    inbox.channels.clear()
   }
 
   /**
@@ -1888,13 +1969,7 @@ export class AgentController {
     const stream = new SseStream(res)
     stream.open()
     stream.comment('ready')
-    const unwatch = liveBrowsers().watch(sessionId, (event) =>
-      event.type === 'frame'
-        ? stream.emit('browser.frame', event.frame)
-        : event.type === 'tabs'
-          ? stream.emit('browser.tabs', { tabs: event.tabs, current: event.current })
-          : stream.emit('browser.state', { live: event.live }),
-    )
+    const unwatch = this.watchBrowser(sessionId, (type, data) => stream.emit(type, data))
 
     this.guardStream(
       res,

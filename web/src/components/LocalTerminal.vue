@@ -5,8 +5,8 @@
   import '@xterm/xterm/css/xterm.css'
   import '@/styles/monokai.css'
   import Icon from './Icon.vue'
-  import { api, openStream } from '@/lib/api'
-  import { readSse } from '@/lib/sse'
+  import { api } from '@/lib/api'
+  import { watchLive } from '@/lib/liveChannel'
 
   /**
    * ⌨️ O TERMINAL LOCAL, na coluna da conversa: o seu shell de login, como abrir o Terminal do Mac (ver `Local.Terminal`).
@@ -119,16 +119,21 @@
 
   async function stream(view: IView) {
     try {
-      const body = await openStream(`${base(view.session.id)}/stream`, { signal: view.abort.signal })
-      for await (const event of readSse(body)) {
-        const data = event.data as { data?: string; code?: number }
-        if (event.event === 'terminal.data' && data.data) view.term.write(data.data)
-        else if (event.event === 'terminal.exit') {
-          view.term.write(`\r\n\x1b[90m[processo encerrado: ${data.code ?? 0}]\x1b[0m\r\n`)
-          const tab = tabs.value.find((one) => one.id === view.session.id)
-          if (tab) tab.exited = data.code ?? 0
-        }
-      }
+      // Pelo stream da caixa de entrada (uma conexão a menos por terminal); sem ele, o endpoint do terminal, como antes.
+      await watchLive(
+        `terminal:${view.session.id}`,
+        `${base(view.session.id)}/stream`,
+        (type, payload) => {
+          const data = payload as { data?: string; code?: number }
+          if (type === 'terminal.data' && data.data) view.term.write(data.data)
+          else if (type === 'terminal.exit') {
+            view.term.write(`\r\n\x1b[90m[processo encerrado: ${data.code ?? 0}]\x1b[0m\r\n`)
+            const tab = tabs.value.find((one) => one.id === view.session.id)
+            if (tab) tab.exited = data.code ?? 0
+          }
+        },
+        view.abort.signal,
+      )
     } catch {
       // A coluna fechou (abort) ou o gateway reiniciou.
     }

@@ -38,6 +38,8 @@ export type TTurnFrame =
   | { type: 'turn.idle'; sessionId: string }
   /** A sugestão de próximo passo do turno `index`, segundos depois do fim dele. */
   | { type: 'turn.suggestion'; sessionId: string; index: number; text: string }
+/** Um quadro de canal (navegador ao vivo, terminal), no mesmo stream, marcado com o `channel`. */
+export type TChannelFrame = { type: string; channel: string } & Record<string, unknown>
 type TStreamFrame = TConversationEvent | TRunningEvent | TTurnFrame | { type: 'stream.ready'; streamId: string } | { type: 'catalog.changed'; changes: ICatalogChanged[] }
 
 const PAGE_SIZE = 30
@@ -161,6 +163,8 @@ export const useConversationsStore = defineStore('conversations', () => {
   /** O último `follow` enviado (o stream e a conversa): repetir o mesmo não vai ao servidor. */
   let sentFollow: { stream: string | undefined; target: string | null } = { stream: undefined, target: null }
   const turnListeners = new Set<(frame: TTurnFrame) => void>()
+  /** Os canais ligados no stream (`browser:<conversa>`, `terminal:<id>`) e quem escuta cada um (ver `openChannel`). */
+  const channelListeners = new Map<string, Set<(frame: TChannelFrame) => void>>()
   let generation = 0
 
   const hasMore = computed(() => scope.value === 'all' && items.value.length < total.value)
@@ -350,6 +354,11 @@ export const useConversationsStore = defineStore('conversations', () => {
             if (event.type === 'stream.ready') {
               streamId = event.streamId
               if (followed) sendFollow()
+              // O stream novo não sabe dos canais do antigo: liga de novo os que as telas ainda escutam.
+              for (const name of channelListeners.keys()) void putChannel(name, true).catch(() => undefined)
+            } else if (typeof (event as { channel?: unknown }).channel === 'string') {
+              const framed = event as unknown as TChannelFrame
+              for (const listener of channelListeners.get(framed.channel) ?? []) listener(framed)
             } else if (event.type.startsWith('turn.')) {
               const turn = event as TTurnFrame
               if (turn.sessionId === followed) for (const listener of turnListeners) listener(turn)
@@ -429,6 +438,40 @@ export const useConversationsStore = defineStore('conversations', () => {
     })
   }
 
+  function putChannel(channel: string, on: boolean): Promise<unknown> {
+    const id = streamId
+    if (!id) return Promise.reject(new Error('stream fechado'))
+    return api(`/conversations/events/${encodeURIComponent(id)}/channels`, { method: 'PUT', body: { channel, on } })
+  }
+
+  /**
+   * Liga um canal NO stream da caixa de entrada (o navegador ao vivo, um terminal): os quadros chegam aqui, sem uma conexão
+   * a mais por painel (o navegador abre poucas por host). Devolve como desligar; `undefined` se não deu (stream fechado,
+   * servidor antigo, acesso negado) — quem chamou abre o endpoint dedicado, como antes.
+   * ⚠️ O ouvinte entra ANTES do pedido: o primeiro quadro sai junto com a resposta dele.
+   */
+  async function openChannel(channel: string, listener: (frame: TChannelFrame) => void): Promise<(() => void) | undefined> {
+    if (!streamId) return undefined
+    const listeners = channelListeners.get(channel) ?? new Set()
+    const first = !listeners.size
+    listeners.add(listener)
+    channelListeners.set(channel, listeners)
+    const forget = () => {
+      listeners.delete(listener)
+      if (listeners.size) return
+      channelListeners.delete(channel)
+      void putChannel(channel, false).catch(() => undefined)
+    }
+    try {
+      if (first) await putChannel(channel, true)
+    } catch {
+      listeners.delete(listener)
+      if (!listeners.size) channelListeners.delete(channel)
+      return undefined
+    }
+    return forget
+  }
+
   function onTurn(listener: (frame: TTurnFrame) => void): () => void {
     turnListeners.add(listener)
     return () => turnListeners.delete(listener)
@@ -464,6 +507,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     unread.value = new Set()
     running.value = new Set()
     followed = undefined
+    channelListeners.clear()
     selectedId.value = undefined
   }
 
@@ -533,6 +577,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     activity,
     follow,
     refollow,
+    openChannel,
     onTurn,
     live,
     selectedId,

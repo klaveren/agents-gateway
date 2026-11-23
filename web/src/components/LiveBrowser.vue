@@ -1,9 +1,9 @@
 <script setup lang="ts">
   import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import Icon from './Icon.vue'
-  import { api, ApiError, openStream } from '@/lib/api'
+  import { api, ApiError } from '@/lib/api'
+  import { watchLive } from '@/lib/liveChannel'
   import { isControlKey, keyCodeOf } from '@/lib/keyCodes'
-  import { readSse } from '@/lib/sse'
   import '@/styles/monokai.css'
 
   /**
@@ -46,31 +46,36 @@
     abort = controller
     error.value = undefined
     try {
-      const body = await openStream(`/sessions/${encodeURIComponent(sessionId)}/browser`, { signal: controller.signal })
-      for await (const event of readSse(body)) {
-        const data = event.data as {
-          live?: boolean
-          data?: string
-          url?: string
-          title?: string
-          width?: number
-          height?: number
-          tabs?: Array<{ id: string; title: string; url: string }>
-          current?: string
-        }
-        if (event.event === 'browser.tabs') {
-          tabs.value = data.tabs ?? []
-          currentTab.value = data.current
-        } else if (event.event === 'browser.state') {
-          if (!data.live) tabs.value = []
-          live.value = !!data.live
-          // Navegador novo (ou o mesmo, numa conexão nova): ele ainda não sabe o tamanho da gaveta.
-          if (data.live) sendViewport()
-        } else if (event.event === 'browser.frame' && data.data) {
-          live.value = true
-          frame.value = { src: `data:image/jpeg;base64,${data.data}`, url: data.url, title: data.title, width: data.width, height: data.height }
-        }
-      }
+      // Pelo stream da caixa de entrada (uma conexão a menos); sem ele, o endpoint do navegador, como antes.
+      await watchLive(
+        `browser:${sessionId}`,
+        `/sessions/${encodeURIComponent(sessionId)}/browser`,
+        (type, payload) => {
+          const data = payload as {
+            live?: boolean
+            data?: string
+            url?: string
+            title?: string
+            width?: number
+            height?: number
+            tabs?: Array<{ id: string; title: string; url: string }>
+            current?: string
+          }
+          if (type === 'browser.tabs') {
+            tabs.value = data.tabs ?? []
+            currentTab.value = data.current
+          } else if (type === 'browser.state') {
+            if (!data.live) tabs.value = []
+            live.value = !!data.live
+            // Navegador novo (ou o mesmo, numa conexão nova): ele ainda não sabe o tamanho da gaveta.
+            if (data.live) sendViewport()
+          } else if (type === 'browser.frame' && data.data) {
+            live.value = true
+            frame.value = { src: `data:image/jpeg;base64,${data.data}`, url: data.url, title: data.title, width: data.width, height: data.height }
+          }
+        },
+        controller.signal,
+      )
     } catch (failure) {
       if (controller.signal.aborted) return
       error.value = failure instanceof Error ? failure.message : 'A conexão caiu.'
