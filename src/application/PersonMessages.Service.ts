@@ -93,7 +93,7 @@ export class PersonMessagesService {
   }
 
   /** O agente escreve. Devolve os nomes de quem recebeu. */
-  async send(input: { sessionId: string; agentId: string; to: string; title?: string; body: string; level?: string; turn?: number }): Promise<string[]> {
+  async send(input: { sessionId: string; agentId: string; to: string; title?: string; body: string; level?: string; turn?: number; replyTo?: string }): Promise<string[]> {
     const body = input.body?.trim() ?? ''
     if (!body) throw new PersonMessageError('message is required')
     if (body.length > PERSON_MESSAGE_LIMITS.body) throw new PersonMessageError(`message is longer than ${PERSON_MESSAGE_LIMITS.body} characters`)
@@ -108,6 +108,9 @@ export class PersonMessagesService {
         'you are in a delegated conversation: do not message people from here. Put what you need or what happened in your reply to the agent that delegated to you; it talks to the person.',
       )
     const recipients = this.recipients(input.to, conversation)
+    // 🎯 O agente responde a um PEDIDO (o id que veio na resposta da pessoa): a mensagem fica no item dele, em cada cópia.
+    const answering = input.replyTo ? this.requestAcross(input.sessionId, input.replyTo) : undefined
+    if (answering && isRequestLevel(level)) throw new PersonMessageError('replyTo is for an info answer to a request; a new request (attention or urgent) opens its own item')
     const at = this.now()
     for (const recipient of recipients) {
       const message: IPersonMessage = {
@@ -122,6 +125,7 @@ export class PersonMessagesService {
         level,
         ...(isRequestLevel(level) ? { status: 'pending' as const } : {}),
         ...(input.turn !== undefined ? { turn: input.turn } : {}),
+        ...(answering ? this.copyOf(answering, recipient.id, answering.recipientId, input.sessionId) : {}),
         createdAt: at,
       }
       this.deps.repository.insert(message)
@@ -133,6 +137,15 @@ export class PersonMessagesService {
   }
 
   /** ⛔ `replyTo` é um pedido do agente NESTE fio da pessoa (o id de outro fio ou de uma mensagem comum não vale). */
+  /** O pedido `id` desta conversa, na cópia de qualquer destinatário (o agente recebe o id da cópia de quem respondeu). */
+  private requestAcross(conversationId: string, id: string): IPersonMessage {
+    for (const recipient of this.deps.repository.recipientsOf(conversationId)) {
+      const found = this.deps.repository.thread(recipient, conversationId).find((message) => message.id === id)
+      if (found?.from === 'agent' && found.status) return found
+    }
+    throw new PersonMessageError(`replyTo ${id} is not a request of this conversation`, 'replyTo')
+  }
+
   private requestOf(mine: IPersonMessage[], replyTo?: string): IPersonMessage | undefined {
     if (!replyTo) return undefined
     const target = mine.find((message) => message.id === replyTo)

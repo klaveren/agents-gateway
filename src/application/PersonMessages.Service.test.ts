@@ -103,6 +103,19 @@ describe('PersonMessagesService', () => {
     )
   })
 
+  it('🎯 notify com replyTo: a resposta do agente fica no item do pedido, na cópia de cada um; pedido novo com replyTo, erro', async () => {
+    const { service } = build()
+    await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', title: 'Preciso de um OK', body: 'Posso subir?', level: 'attention' })
+    const asked = service.thread('u_ana', 'gw_alfa')[0]
+    await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', body: 'Subi.', replyTo: asked.id })
+    for (const who of ['u_ana', 'u_bia']) {
+      const [request, answer] = service.thread(who, 'gw_alfa')
+      assert.deepStrictEqual([answer.body, answer.replyTo], ['Subi.', request.id])
+    }
+    await assert.rejects(service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', body: 'x', replyTo: 'm_nada' }), /not a request/)
+    await assert.rejects(service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', body: 'x', level: 'urgent', replyTo: asked.id }), /info answer/)
+  })
+
   it('🎯 sem pedido, a resposta é à última mensagem do ITEM que a pessoa via, não ao pedido mais novo da conversa', async () => {
     const { service } = build()
     await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'owner', title: 'Apagar a tabela', body: 'Apague a tabela X.' })
