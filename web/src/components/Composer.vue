@@ -2,6 +2,7 @@
   import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
   import type { IOutgoingFile } from '@/stores/thread'
   import { shownSlashTab, SLASH_TABS, slashSuggestions, type ICommandHint, type TSlashKind } from '@/lib/commands'
+  import { readDraft, writeDraft } from '@/lib/draftStorage'
   import Icon from './Icon.vue'
 
   /**
@@ -57,26 +58,7 @@
     })
   }
 
-  /**
-   * ⚖️ O RASCUNHO NÃO SE PERDE: o texto digitado fica guardado neste navegador, por conversa — trocou de tela e voltou, ele está
-   * ali. Enviar limpa. É só conveniência de quem digita: o navegador que não guarda (aba anônima, bloqueio) segue sem ele.
-   */
-  const DRAFT_PREFIX = 'gw-draft:'
-  function readDraft(key: string): string {
-    try {
-      return localStorage.getItem(DRAFT_PREFIX + key) ?? ''
-    } catch {
-      return ''
-    }
-  }
-  function writeDraft(key: string, value: string): void {
-    try {
-      if (value) localStorage.setItem(DRAFT_PREFIX + key, value)
-      else localStorage.removeItem(DRAFT_PREFIX + key)
-    } catch {
-      // Sem o armazenamento do navegador, o rascunho só não sobrevive à troca de tela.
-    }
-  }
+  // ⚖️ O rascunho fica neste navegador, por conversa (`lib/draftStorage`).
   watch(
     () => props.draftKey,
     (key) => {
