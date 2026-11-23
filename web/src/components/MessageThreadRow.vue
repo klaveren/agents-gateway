@@ -17,6 +17,8 @@
     /** O nome do agente e o provedor do avatar, já resolvidos pela lista. */
     name: string
     provider: string
+    /** 🔊 A voz está lendo uma mensagem deste item agora. */
+    speaking?: boolean
   }>()
   const emit = defineEmits<{ archive: [key: string] }>()
 
@@ -219,7 +221,7 @@
       <RouterLink
         :to="`/messages/${thread.id}`"
         class="flex items-start gap-3 rounded-xl px-2 py-2.5 hover:bg-zinc-900"
-        :class="active ? 'bg-zinc-900' : ''"
+        :class="[active ? 'bg-zinc-900' : '', speaking ? 'ring-1 ring-emerald-500/60' : '']"
         draggable="false"
         data-test="message-thread"
         @dragstart.prevent
@@ -228,6 +230,7 @@
         <span class="min-w-0 flex-1">
           <span class="flex items-baseline gap-2">
             <span class="truncate text-sm" :class="thread.unread ? 'font-semibold text-zinc-50' : 'text-zinc-200'">{{ thread.title || name }}</span>
+            <span v-if="speaking" class="shrink-0 rounded bg-emerald-500/15 px-1.5 text-[10px] font-medium text-emerald-300" title="Lendo em voz alta agora" data-test="thread-speaking">🔊 lendo</span>
             <span v-if="thread.origin" class="shrink-0 rounded bg-sky-500/15 px-1.5 text-[10px] font-medium text-sky-300" :title="thread.origin.url" data-test="thread-origin">
               {{ thread.origin.projectId }} · servidor
             </span>

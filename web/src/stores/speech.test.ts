@@ -7,6 +7,9 @@ vi.mock('@/lib/api', async (original) => ({ ...(await original<typeof import('@/
 
 const played: string[] = []
 let rejectWith: string | undefined
+/** Segura o fim do áudio até o teste chamar `release` (para ver o que toca agora). */
+let holding = false
+let release: (() => void) | undefined
 
 class FakeAudio {
   src = ''
@@ -17,7 +20,8 @@ class FakeAudio {
     if (rejectWith) return Promise.reject(Object.assign(new Error('blocked'), { name: rejectWith }))
     played.push(this.src)
     // Termina logo, como um áudio curto.
-    queueMicrotask(() => this.onended?.())
+    if (holding) release = () => this.onended?.()
+    else queueMicrotask(() => this.onended?.())
     return Promise.resolve()
   }
 }
@@ -36,6 +40,8 @@ beforeEach(() => {
   setActivePinia(createPinia())
   played.length = 0
   rejectWith = undefined
+  holding = false
+  release = undefined
   thread = []
   prefs = voice()
   vi.stubGlobal('Audio', FakeAudio)
@@ -57,6 +63,22 @@ afterEach(() => {
 })
 
 describe('useSpeechStore', () => {
+  it('🔊 diz qual mensagem está sendo lida e quantas esperam; acabou, some', async () => {
+    holding = true
+    const store = useSpeechStore()
+    thread = [message('a', { title: 'Preciso do acesso', level: 'attention', status: 'pending' }), message('b', { createdAt: new Date(Date.now() + 3000).toISOString() })]
+    await store.onMessageCreated('c1')
+    await settle()
+    expect(store.current).toEqual({ thread: 'a', agentId: 'z', label: 'Preciso do acesso' })
+    expect(store.waiting).toBe(1)
+    release?.()
+    await settle()
+    expect(store.current).toEqual({ thread: 'c1', agentId: 'z', label: 'x' })
+    expect(store.waiting).toBe(0)
+    store.stop()
+    expect(store.current).toBeUndefined()
+  })
+
   it('lê as novas do agente, da mais antiga para a mais nova, uma vez cada', async () => {
     const store = useSpeechStore()
     thread = [message('b', { createdAt: new Date(Date.now() + 3000).toISOString() }), message('a'), message('p', { from: 'person' }), message('old', { createdAt: '2020-01-01T00:00:00Z' })]

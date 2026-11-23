@@ -8,8 +8,9 @@
 import Cocoa
 import WebKit
 import AVFoundation
+import UserNotifications
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandlerWithReply, AVAudioPlayerDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandlerWithReply, AVAudioPlayerDelegate, UNUserNotificationCenterDelegate {
   private var window: NSWindow!
   private var web: WKWebView!
   private var home: URL?
@@ -788,6 +789,7 @@ struct VoiceItem {
   let conversationId: String
   let messageId: String
   let label: String
+  var agent = ""
   var audio: Data?
   var rate = 1.0
 }
@@ -971,27 +973,27 @@ final class VoiceListener: NSObject, URLSessionDataDelegate {
       let fractional = ISO8601DateFormatter()
       fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
       let plain = ISO8601DateFormatter()
-      let fresh = list.compactMap { message -> (id: String, label: String, level: Int, at: Date)? in
+      let fresh = list.compactMap { message -> (id: String, label: String, agent: String, level: Int, at: Date)? in
         guard message["from"] as? String == "agent", let id = message["id"] as? String, !self.seen.contains(id),
               let stamp = message["createdAt"] as? String, let at = fractional.date(from: stamp) ?? plain.date(from: stamp),
               at > self.connectedAt else { return nil }
         let title = (message["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? String((message["body"] as? String ?? "").prefix(40))
-        return (id, title, Self.level(message["level"] as? String), at)
+        return (id, title, message["agentId"] as? String ?? "", Self.level(message["level"] as? String), at)
       }.sorted { $0.at < $1.at }
       guard !fresh.isEmpty else { return }
       for message in fresh {
         self.seen.insert(message.id)
-        self.hooks.record(VoiceItem(serverId: self.id, serverName: self.name, conversationId: conversation, messageId: message.id, label: message.label))
+        self.hooks.record(VoiceItem(serverId: self.id, serverName: self.name, conversationId: conversation, messageId: message.id, label: message.label, agent: message.agent))
       }
       guard let prefs = self.prefs, prefs.enabled, prefs.engine, self.hooks.enabled() else { return }
       // Um áudio de cada vez, do mais antigo ao mais novo: a ordem da fila é a da conversa.
-      func next(_ rest: ArraySlice<(id: String, label: String, level: Int, at: Date)>) {
+      func next(_ rest: ArraySlice<(id: String, label: String, agent: String, level: Int, at: Date)>) {
         guard let message = rest.first else { return }
         guard message.level >= prefs.minLevel else { return next(rest.dropFirst()) }
         self.fetch("messages/\(Self.seg(conversation))/\(Self.seg(message.id))/speech", accept: "audio/mpeg", timeout: 60) { status, audio in
           if status == 200, let audio, !audio.isEmpty {
             self.hooks.speak(VoiceItem(serverId: self.id, serverName: self.name, conversationId: conversation, messageId: message.id,
-                                       label: message.label, audio: audio, rate: prefs.rate))
+                                       label: message.label, agent: message.agent, audio: audio, rate: prefs.rate))
           } else if status == 409 {
             self.prefs?.engine = false
             self.hooks.changed()
@@ -1012,6 +1014,41 @@ extension AppDelegate {
     voiceMenu.delegate = self
     statusItem.menu = voiceMenu
     updateVoiceIcon()
+    // 🔔 O aviso do macOS no começo de cada leitura: o sistema pergunta uma vez se pode; recusou, só não aparece.
+    let center = UNUserNotificationCenter.current()
+    center.delegate = self
+    center.requestAuthorization(options: [.alert]) { _, _ in }
+  }
+
+  /// O que está sendo lido, numa linha: "Zeus · Preciso do acesso" (o agente some quando não veio).
+  fileprivate static func readingLine(_ item: VoiceItem) -> String {
+    item.agent.isEmpty ? item.label : "\(item.agent.prefix(1).uppercased() + item.agent.dropFirst()) · \(item.label)"
+  }
+
+  private func announce(_ item: VoiceItem) {
+    let content = UNMutableNotificationContent()
+    content.title = "🔊 \(Self.readingLine(item))"
+    content.subtitle = item.serverName
+    content.userInfo = ["serverId": item.serverId, "conversationId": item.conversationId]
+    content.threadIdentifier = "voice"
+    UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "voice-\(item.serverId)-\(item.messageId)", content: content, trigger: nil))
+  }
+
+  // Com o app na frente, o aviso aparece também (o padrão do macOS seria escondê-lo).
+  func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+    done([.banner, .list])
+  }
+
+  /// Clicou no aviso: abre a mensagem no servidor dela.
+  func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler done: @escaping () -> Void) {
+    let info = response.notification.request.content.userInfo
+    if let server = info["serverId"] as? String, let conversation = info["conversationId"] as? String {
+      DispatchQueue.main.async {
+        self.show(server, path: "messages/" + VoiceListener.seg(conversation))
+        self.showWindow()
+      }
+    }
+    done()
   }
 
   /// ⚖️ O conjunto de ouvintes segue `servers`, o servidor deste Mac e o login da janela. Quem não mudou (mesmo endereço e
@@ -1060,7 +1097,13 @@ extension AppDelegate {
     image?.isTemplate = true
     statusItem.button?.image = image
     statusItem.button?.imagePosition = .imageLeft
-    statusItem.button?.title = unread > 0 ? " \(unread)" : ""
+    // 🔊 Lendo: o agente e o título ao lado do ícone (curto; o menu tem o completo).
+    if voicePlayer != nil, let item = voiceLast {
+      let line = Self.readingLine(item)
+      statusItem.button?.title = " " + (line.count > 32 ? line.prefix(31) + "…" : line)
+    } else {
+      statusItem.button?.title = unread > 0 ? " \(unread)" : ""
+    }
   }
 
   // ⚖️ Uma fila só para todos os servidores: toca em sequência, nunca sobreposto.
@@ -1079,7 +1122,10 @@ extension AppDelegate {
       player.rate = Float(min(max(item.rate, 0.5), 2))
       voiceLast = item
       voicePlayer = player
-      if player.play() { return updateVoiceIcon() }
+      if player.play() {
+        announce(item)
+        return updateVoiceIcon()
+      }
     }
     voicePlayer = nil
     updateVoiceIcon()
@@ -1139,6 +1185,12 @@ extension AppDelegate {
       entry.state = on ? .on : .off
       menu.addItem(entry)
       return entry
+    }
+    if voicePlayer != nil, let item = voiceLast {
+      add("Lendo agora", nil)
+      add("   🔊 \(item.serverName) · \(Self.readingLine(item))", #selector(openVoiceItem(_:)), object: item)
+      if !voiceQueue.isEmpty { add("   Na fila: \(voiceQueue.count)", nil) }
+      menu.addItem(.separator())
     }
     add("Ler mensagens em voz alta", #selector(toggleVoice(_:)), on: voiceOn)
     add("Parar", #selector(stopVoice(_:)))

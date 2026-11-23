@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { api, apiBlob } from '@/lib/api'
 import { inMacApp } from '@/lib/servers'
 import { SILENT_AUDIO, speakable, type IVoice } from '@/lib/speech'
-import type { IPersonMessage } from './messages'
+import { messageKeyOf, type IPersonMessage } from './messages'
 
 type TResult = 'ended' | 'blocked' | 'error' | 'stopped'
 
@@ -11,6 +11,15 @@ type TResult = 'ended' | 'blocked' | 'error' | 'stopped'
 interface IItem {
   key: string
   path: string
+  /** A mensagem que o áudio lê (a frase de teste não tem). */
+  reading?: IReading
+}
+
+/** 🔊 O que está sendo lido agora: o item da lista de Mensagens, o agente e o título, para a tela mostrar. */
+export interface IReading {
+  thread: string
+  agentId: string
+  label: string
 }
 
 /**
@@ -24,6 +33,10 @@ export const useSpeechStore = defineStore('speech', () => {
   const playing = ref(false)
   /** O último problema ao tocar (o Perfil mostra junto do Testar); some no próximo sucesso. */
   const error = ref<string>()
+  /** A mensagem que toca agora (some quando o áudio acaba ou a leitura para). */
+  const current = ref<IReading>()
+  /** Quantas ainda esperam na fila. */
+  const waiting = ref(0)
   const startedAt = Date.now()
   const seen = new Set<string>()
   let queue: IItem[] = []
@@ -33,7 +46,7 @@ export const useSpeechStore = defineStore('speech', () => {
   let busy = false
   let generation = 0
 
-  const active = computed(() => playing.value || queue.length > 0)
+  const active = computed(() => playing.value || waiting.value > 0)
 
   async function load(): Promise<void> {
     voice.value = await api<IVoice>('/me/voice')
@@ -59,8 +72,13 @@ export const useSpeechStore = defineStore('speech', () => {
       const fresh = speakable(messages, { since: startedAt, minLevel: prefs.minLevel, seen })
       for (const message of fresh) {
         seen.add(message.id)
-        queue.push({ key: message.id, path: `/messages/${encodeURIComponent(conversationId)}/${encodeURIComponent(message.id)}/speech` })
+        queue.push({
+          key: message.id,
+          path: `/messages/${encodeURIComponent(conversationId)}/${encodeURIComponent(message.id)}/speech`,
+          reading: { thread: messageKeyOf(message), agentId: message.agentId, label: (message.title || message.body.replace(/\s+/g, ' ').trim()).slice(0, 80) },
+        })
       }
+      waiting.value = queue.length
       if (fresh.length) void pump()
     } catch {
       // Sem voz não é erro da tela: a mensagem continua na caixa.
@@ -103,6 +121,7 @@ export const useSpeechStore = defineStore('speech', () => {
     try {
       while (!blocked.value && mine === generation) {
         const item = queue.shift()
+        waiting.value = queue.length
         if (!item) break
         let blob: Blob
         try {
@@ -114,13 +133,16 @@ export const useSpeechStore = defineStore('speech', () => {
         if (mine !== generation) break
         const url = URL.createObjectURL(blob)
         let result: TResult
+        current.value = item.reading
         try {
           result = await play(url)
         } finally {
           URL.revokeObjectURL(url)
+          if (mine === generation) current.value = undefined
         }
         if (result === 'blocked') {
           queue.unshift(item)
+          waiting.value = queue.length
           blocked.value = true
         } else if (result === 'error') error.value = `Não consegui tocar o áudio neste navegador (${failure}).`
         else if (result === 'ended') {
@@ -138,6 +160,8 @@ export const useSpeechStore = defineStore('speech', () => {
   function stop(): void {
     generation++
     queue = []
+    waiting.value = 0
+    current.value = undefined
     audio?.pause()
     finish?.('stopped')
     finish = undefined
@@ -151,6 +175,7 @@ export const useSpeechStore = defineStore('speech', () => {
     const item = last
     stop()
     queue.push(item)
+    waiting.value = queue.length
     void pump()
   }
 
@@ -190,5 +215,5 @@ export const useSpeechStore = defineStore('speech', () => {
     last = undefined
   }
 
-  return { voice, blocked, playing, error, active, load, ensure, save, onMessageCreated, stop, replayLast, sample, unlock, reset }
+  return { voice, blocked, playing, error, current, waiting, active, load, ensure, save, onMessageCreated, stop, replayLast, sample, unlock, reset }
 })
