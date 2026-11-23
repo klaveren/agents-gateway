@@ -85,15 +85,41 @@ export interface ISpeechOrigin {
   conversation?: string
 }
 
+/** Os rótulos do padrão das mensagens (O que · Onde · Por quê · Como resolver), com ou sem negrito. */
+const QUAD_LABEL = /(?:\*\*|__)?\s*(O que|Onde|Por qu[eê]|Como resolver)\s*:\s*(?:\*\*|__)?/gi
+const SPOKEN_LABELS = ['o que', 'onde']
+const DETAILS_TAIL = ' Detalhes na tela.'
+
 /**
- * O texto que se fala de uma mensagem: a abertura ("Mensagem de Zeus, da conversa X."), o título (se houver) e o corpo
- * sem Markdown, espaços colapsados, cortado numa fronteira de frase perto de `SPEECH_MAX_CHARS` com o aviso de que o
- * resto está na tela.
+ * 🔊 O ESSENCIAL de uma mensagem para ouvir: no padrão O que · Onde · Por quê · Como resolver, só o "O que" e o "Onde";
+ * fora dele, o primeiro parágrafo (o título solto não conta). `more`: ficou coisa de fora (a tela tem o resto).
+ */
+export function speechEssential(body: string): { text: string; more: boolean } {
+  const parts = body.split(QUAD_LABEL)
+  if (parts.length > 2) {
+    const kept: string[] = []
+    for (let index = 1; index + 1 < parts.length; index += 2) {
+      const label = parts[index].toLowerCase()
+      if (SPOKEN_LABELS.includes(label)) kept.push(`${label === 'o que' ? 'O que' : 'Onde'}: ${parts[index + 1].trim().replace(/[.;\s]+$/, '')}.`)
+    }
+    if (kept.length) return { text: kept.join(' '), more: kept.length < (parts.length - 1) / 2 || !!parts[0].trim() }
+  }
+  const paragraphs = body.split(/\n\s*\n/).filter((paragraph) => paragraph.trim() && !/^\s{0,3}#{1,6}\s+[^\n]*$/.test(paragraph.trim()))
+  if (!paragraphs.length) return { text: body, more: false }
+  return { text: paragraphs[0], more: paragraphs.length > 1 }
+}
+
+/**
+ * O texto que se fala de uma mensagem: a abertura ("Mensagem de Zeus, da conversa X."), o título (se houver) e o
+ * essencial do corpo (`speechEssential`) sem Markdown, espaços colapsados, cortado numa fronteira de frase perto de
+ * `SPEECH_MAX_CHARS` com o aviso de que o resto está na tela.
  */
 export function speechText(message: { title?: string; body: string }, origin: ISpeechOrigin = {}): string {
   const clean = (text: string) => stripMarkdown(text).replace(/\s+/g, ' ').trim()
   const title = message.title ? clean(message.title) : ''
-  const body = clean(message.body)
+  const essential = speechEssential(message.body)
+  const spoken = clean(essential.text)
+  const body = essential.more && spoken ? `${spoken.replace(/[,;:\s]+$/, '').replace(/([^.!?])$/, '$1.')}${DETAILS_TAIL}` : spoken
   const agent = origin.agent ? clean(origin.agent) : ''
   const conversation = origin.conversation ? clean(origin.conversation).replace(/[.!?:]+$/, '') : ''
   const intro = agent || conversation ? `Mensagem${agent ? ` de ${agent}` : ''}${conversation ? `, da conversa ${conversation}` : ''}. ` : ''
