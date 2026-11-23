@@ -392,6 +392,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       const verdict = permissions.check(asker, { category: 'network', value: `${host}:${port}` }, { log: true })
       return { allowed: verdict.allowed, reason: verdict.reason, ...(verdict.rule ? { pattern: verdict.rule.pattern } : {}), ...(machine && verdict.allowed ? { open: true } : {}) }
     })
+    // ⛔ O token de rede deste comando também é segredo da conversa: se aparecer em qualquer saída (`processes`, `run_bash`), sai mascarado.
+    if (context?.sessionId) deps.mask?.register(context.sessionId, [{ value: token, label: 'token de rede' }])
     // ⛔ A pasta PRIVADA deste comando (a chave SSH, o proxychains com o token de rede): na pasta de dados, que nenhum comando
     // lê; o cerco libera só esta, só para ele. Sai com o comando.
     const privateDir = commandDirOf(runDir(), token)

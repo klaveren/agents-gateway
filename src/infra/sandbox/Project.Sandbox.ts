@@ -149,14 +149,19 @@ export function tcpInterceptor(confDir: string, token: string, bridgePort: numbe
 /**
  * ⛔ OS SERVIÇOS LOCAIS NO LINUX: lá o comando tem a própria rede (`--unshare-net`) e o `localhost` dele é outro. Um
  * cliente de banco não fala proxy, então cada porta liberada ganha, dentro do cerco, um `socat` ouvindo em
- * `127.0.0.1:<porta>` que leva a conexão pelo PORTÃO (com o token do comando) ao serviço do host. Quem decide continua
- * sendo a regra, conexão a conexão. Os encaminhadores morrem com o comando.
+ * `127.0.0.1:<porta>` que leva a conexão pelo PORTÃO ao serviço do host. Quem decide continua sendo a regra, conexão a
+ * conexão. Os encaminhadores morrem com o comando.
+ * ⛔ A credencial NÃO vai na linha de comando (o `processes` e o `/proc/<pid>/cmdline` a mostrariam): o `socat` roda o auxiliar
+ * do CONNECT (`writeConnector`), que lê o `HTTPS_PROXY` do ambiente do comando.
  */
-export function localForwards(ports: readonly number[], token: string, bridgePort: number): string {
+export function localForwards(ports: readonly number[], node: string, connector: string): string {
   if (!ports.length) return ''
   const unique = [...new Set(ports)].filter((port) => Number.isInteger(port) && port > 0 && port < 65536)
+  // Para o `socat`, `:`, `,` e `\` do endereço precisam de barra; o comando em si vai para o `sh -c` entre aspas.
+  const dq = (value: string) => `"${value.replace(/(["\\$`])/g, '\\$1')}"`
+  const escape = (value: string) => value.replace(/([\\:,!])/g, '\\$1')
   const forwards = unique.map(
-    (port) => `socat TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr,fork PROXY:127.0.0.1:localhost:${port},proxyport=${bridgePort},proxyauth=${token}:x >/dev/null 2>&1 &`,
+    (port) => `socat TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr,fork ${quote(`SYSTEM:${escape(`exec ${dq(node)} ${dq(connector)} localhost ${port}`)}`)} >/dev/null 2>&1 &`,
   )
   // O `trap` derruba os encaminhadores quando o comando acaba; a espera curta deixa eles abrirem a porta antes do uso.
   return `${forwards.join(' ')} trap 'kill $(jobs -p) 2>/dev/null' EXIT; sleep 0.2;`
@@ -431,7 +436,7 @@ export class ProjectSandbox implements IProjectSandbox {
       .map(([name, value]) => `export ${name}=${quote(value)}`)
       .join('; ')
     // No Mac o seatbelt divide a rede com o host: a porta liberada entra no perfil (`withMacLocalPorts`), sem encaminhador.
-    const forwards = process.platform === 'linux' ? localForwards(place.localPorts ?? [], networkToken, LINUX_BRIDGE_PORT) : ''
+    const forwards = process.platform === 'linux' ? localForwards(place.localPorts ?? [], process.execPath, connector) : ''
     // Depois dos encaminhadores (eles mesmos não passam pelo interceptador): só o comando do agente.
     const tcp = wantsTcp ? tcpInterceptor(own, networkToken, LINUX_BRIDGE_PORT) : ''
     const wrapped = await manager.wrapWithSandbox(`${prelude}; ${forwards} ${tcp} ${command}`, SANDBOX_SHELL, {
