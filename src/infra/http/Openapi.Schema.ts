@@ -6664,6 +6664,21 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/conversations/events/{streamId}/channels': {
+      put: {
+        summary: 'Turn a channel on or off on an open `/conversations/events` stream: `browser:<conversationId>` (live browser) or `terminal:<id>` (local shell)',
+        description:
+          'The stream then carries the same frames as `/sessions/{id}/browser` (`browser.frame`, `browser.tabs`, `browser.state`) or `/terminal/{id}/stream` (`terminal.data`, `terminal.exit`), each with a `channel` field. Same checks as the dedicated streams, repeated while it stays open: the stream must be the caller own; a browser channel needs a conversation of the caller (or an administrator); a terminal channel only an administrator, from the screen, on the same machine. 404 otherwise; 429 above 8 channels. The dedicated endpoints keep working.',
+        parameters: [{ name: 'streamId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', required: ['channel', 'on'], properties: { channel: { type: 'string' }, on: { type: 'boolean' } } }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { channel: { type: 'string' }, on: { type: 'boolean' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
     '/conversations/{id}/turns': {
       get: {
         summary:

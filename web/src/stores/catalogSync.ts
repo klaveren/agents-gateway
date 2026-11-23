@@ -99,4 +99,6 @@ function applyChanges(changes: readonly ICatalogChanged[]): void {
   }
   // O que é MEDIDO sobre o salvo (o tamanho do agente, o `/`) muda com quase tudo: a tela aberta relê.
   catalog.invalidate()
+  // O `/` da caixa: skill, command, documento ou a liberação do agente mudou; regra e o resto, não.
+  if (docs.length || resources.length || agents.length) catalog.commandsChanged()
 }

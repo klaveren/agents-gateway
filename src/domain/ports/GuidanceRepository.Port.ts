@@ -26,6 +26,11 @@ export interface IDocHit {
   status?: TDocStatus
 }
 
+/** Um recurso sem o corpo (id, tipo, descrição e de quem é): o que o `/` da caixa de mensagem precisa. */
+export type TResourceHint = Pick<IResource, 'id' | 'kind' | 'projectId' | 'sharedWith' | 'description'>
+/** Um documento sem o corpo: título e resumo bastam para listar. */
+export type TDocHint = Pick<IProjectDoc, 'id' | 'kind' | 'projectId' | 'title' | 'summary'>
+
 /** As rules e os documentos (specs e ADRs). Síncrono, como o resto do cadastro. */
 export interface IGuidanceRepository {
   /** As do escopo, pela posição. */
@@ -37,6 +42,8 @@ export interface IGuidanceRepository {
 
   /** Os do escopo, pelo tipo e pelo título. */
   docs(scope: TGuidanceScope, kind?: TDocKind): IProjectDoc[]
+  /** Como `docs`, sem ler o corpo nem as listas (só o que a listagem mostra). */
+  docHints(scope: TGuidanceScope, kind?: TDocKind): TDocHint[]
   /** Os documentos que OUTROS projetos compartilham com este (ver `IProjectDoc.sharedWith`). */
   docsSharedWith(projectId: string, kind?: TDocKind): IProjectDoc[]
   doc(id: string): IProjectDoc | undefined
@@ -66,8 +73,12 @@ export interface IGuidanceRepository {
 
   /** Os recursos (skills e commands) do escopo, pelo id. */
   resources(scope: TGuidanceScope, kind?: TResourceKind): IResource[]
+  /** Como `resources`, sem o corpo (ver `TResourceHint`). */
+  resourceHints(scope: TGuidanceScope, kind?: TResourceKind): TResourceHint[]
   /** As skills e os commands que OUTROS projetos compartilham com este (ver `IResource.sharedWith`). */
   resourcesSharedWith(projectId: string, kind?: TResourceKind): IResource[]
+  /** Como `resourcesSharedWith`, sem o corpo. */
+  resourceHintsSharedWith(projectId: string, kind?: TResourceKind): TResourceHint[]
   resource(id: string): IResource | undefined
   /** Grava (cria ou substitui) o recurso inteiro. */
   saveResource(resource: IResource): void

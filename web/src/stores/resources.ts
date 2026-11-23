@@ -35,6 +35,7 @@ export const useResourcesStore = defineStore('resources', () => {
       })
     }
     useAgentCatalogStore().invalidate()
+    useAgentCatalogStore().commandsChanged()
   }
 
   async function create(input: TResourceInput & { id: string; kind: TResourceKind }): Promise<IResource> {
@@ -80,6 +81,7 @@ export const useResourcesStore = defineStore('resources', () => {
     details.drop(id)
     for (const key of lists.keys()) lists.update(key, (list) => list.filter((item) => item.id !== id))
     useAgentCatalogStore().invalidate()
+    useAgentCatalogStore().commandsChanged()
   }
 
   /** Restaurou uma versão (o histórico): relê o recurso e o põe nas listas; a versão de antes de existir o tira delas. */
@@ -87,7 +89,8 @@ export const useResourcesStore = defineStore('resources', () => {
     if (!exists) {
       details.drop(id)
       for (const key of lists.keys()) lists.update(key, (list) => list.filter((item) => item.id !== id))
-      return useAgentCatalogStore().invalidate()
+      useAgentCatalogStore().invalidate()
+      return useAgentCatalogStore().commandsChanged()
     }
     put(await details.refresh(id))
   }

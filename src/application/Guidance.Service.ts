@@ -38,7 +38,7 @@ import {
 import { IBuilderDraft, IProtocolAddendum, IProtocolView, PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IImportProblem, describeMatch, IImportProblemMatch, withoutProblem } from '@domain/models/ImportProblem.Model'
 import { IRule, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
-import { IDocHit, IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
+import { IDocHit, IGuidanceRepository, TDocHint, TGuidanceScope, TResourceHint } from '@domain/ports/GuidanceRepository.Port'
 import { fileIssues, filesNote, IResourceFile, sortFiles } from '@domain/models/ResourceFile.Model'
 import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { protocolItemId } from '@domain/Catalog.Document'
@@ -1034,6 +1034,30 @@ export class GuidanceService {
    * que a guia Recursos libera (sem marcação, todos). Sem agente, nenhum.
    */
   usableResources(kind: TResourceKind, agentId?: string): IResource[] {
+    return this.usableBy(kind, agentId, {
+      scope: (scope) => this.repository.resources(scope, kind),
+      shared: (projectId) => this.repository.resourcesSharedWith(projectId, kind),
+    })
+  }
+
+  /** O mesmo que `usableResources`, sem o corpo (o `/` da caixa de mensagem só mostra id, tipo e descrição). */
+  usableResourceHints(kind: TResourceKind, agentId?: string): TResourceHint[] {
+    return this.usableBy(kind, agentId, {
+      scope: (scope) => this.repository.resourceHints(scope, kind),
+      shared: (projectId) => this.repository.resourceHintsSharedWith(projectId, kind),
+    })
+  }
+
+  /** Os documentos do escopo só com título e resumo (sem o corpo). */
+  docHints(scope: TGuidanceScope, kind?: TDocKind): TDocHint[] {
+    return this.repository.docHints(scope, kind)
+  }
+
+  private usableBy<T extends TResourceHint>(
+    kind: TResourceKind,
+    agentId: string | undefined,
+    load: { scope: (scope: TGuidanceScope) => T[]; shared: (projectId: string) => T[] },
+  ): T[] {
     // ⛔ O construtor não usa skills nem commands: ele os ESCREVE (e o índice só pesaria no prompt dele).
     const agent = agentId && !builderKindOf(agentId) ? this.agentOf(agentId) : undefined
     if (!agent) return []
@@ -1041,13 +1065,8 @@ export class GuidanceService {
     if (!granted.length) return []
     // ⛔ Compartilhado: lido na hora, então parar de compartilhar (ou apagar) o tira daqui; o id liberado fica gravado e é ignorado.
     const visible = [
-      ...this.repository.resources(null, kind),
-      ...(agent.projectId
-        ? [
-            ...this.repository.resources(agent.projectId, kind),
-            ...this.repository.resourcesSharedWith(agent.projectId, kind).filter((resource) => usableIn(resource, agent.projectId)),
-          ]
-        : []),
+      ...load.scope(null),
+      ...(agent.projectId ? [...load.scope(agent.projectId), ...load.shared(agent.projectId).filter((resource) => usableIn(resource, agent.projectId))] : []),
     ]
     return granted.includes(ALL_RESOURCES) ? visible : visible.filter((resource) => granted.includes(resource.id))
   }

@@ -299,6 +299,9 @@ export const shareAgentSchema = z.object({ projects: z.array(z.string().max(64))
 /** Qual conversa o stream da caixa de entrada acompanha ao vivo; `null` para. */
 export const followTurnSchema = z.object({ sessionId: z.string().min(1).max(200).nullable() })
 
+/** Liga ou desliga um canal no stream da caixa de entrada: `browser:<conversa>` ou `terminal:<id>`. */
+export const channelSchema = z.object({ channel: z.string().regex(/^(browser|terminal):[^\s]{1,200}$/), on: z.boolean() })
+
 export type TCreateSessionBody = z.infer<typeof createSessionSchema>
 export type TSendMessageBody = z.infer<typeof sendMessageSchema>
 export type TUpdateSettingsBody = z.infer<typeof updateSettingsSchema>

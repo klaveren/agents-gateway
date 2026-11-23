@@ -163,6 +163,21 @@ describe('AgentController — eventos das conversas (SSE)', () => {
     return reply.status
   }
 
+  /** `PUT /conversations/events/:streamId/channels` como `identity`: o status da resposta. */
+  const channel = async (controller: AgentController, identity: object, streamId: string | undefined, name: string, on = true) => {
+    const reply = { status: 200 }
+    const res = {
+      locals: {},
+      status(code: number) {
+        reply.status = code
+        return this
+      },
+      json: () => undefined,
+    } as unknown as Response
+    await withCaller(identity, () => controller.eventChannel({ params: { streamId }, body: { channel: name, on }, method: 'PUT' } as unknown as Request, res))
+    return reply.status
+  }
+
   /** Passa o tempo de UMA conferência dos streams abertos (`guardStream`) e espera ela terminar. */
   const recheck = async () => {
     mock.timers.tick(STREAM_RECHECK_MS)
@@ -350,6 +365,35 @@ describe('AgentController — eventos das conversas (SSE)', () => {
     // O stream de outro, ou a conversa de outro: 404.
     assert.strictEqual(await follow(controller, { token: 'good-bob', id: 'bob' }, alice.streamId, 'viva-alice'), 404)
     assert.strictEqual(await follow(controller, ALICE, alice.streamId, 'viva-bob'), 404)
+  })
+
+  it('canal `browser:` na caixa de entrada: os quadros chegam marcados com o canal; o de outro, nunca; desligar para', async () => {
+    const { controller, subscriptions } = build()
+    const alice = await connect(controller, ALICE)
+
+    // Sem navegador aberto, o canal avisa `browser.state` (o mesmo primeiro quadro do `/sessions/:id/browser`).
+    assert.strictEqual(await channel(controller, ALICE, alice.streamId, 'browser:viva-alice'), 200)
+    assert.deepStrictEqual(
+      alice.events().filter((event) => event.type.startsWith('browser.')),
+      [{ type: 'browser.state', channel: 'browser:viva-alice', live: false }],
+    )
+
+    // ⛔ A mesma regra do stream antigo: stream de outro, conversa de outro, canal fora do formato e terminal fora do Mac.
+    assert.strictEqual(await channel(controller, { token: 'good-bob', id: 'bob' }, alice.streamId, 'browser:viva-alice'), 404)
+    assert.strictEqual(await channel(controller, ALICE, alice.streamId, 'browser:viva-bob'), 404)
+    assert.strictEqual(await channel(controller, ALICE, alice.streamId, 'terminal:t1'), 404)
+    assert.strictEqual(await channel(controller, ALICE, alice.streamId, 'turn:x'), 422)
+
+    assert.strictEqual(await channel(controller, ALICE, alice.streamId, 'browser:viva-alice', false), 200)
+    alice.close()
+    assert.strictEqual(subscriptions(), 0, 'fechar o stream não deixa assinatura aberta')
+  })
+
+  it('o endpoint antigo `/sessions/:id/browser` segue valendo, com os mesmos quadros (sem o campo `channel`)', async () => {
+    const { controller } = build()
+    const old = await connect(controller, ALICE, controller.sessionBrowser, { params: { id: 'viva-alice' } } as unknown as Request)
+    assert.deepStrictEqual(old.events(), [{ type: 'browser.state', live: false }])
+    old.close()
   })
 
   describe('o stream aberto é conferido de novo (guardStream)', () => {

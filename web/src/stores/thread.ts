@@ -105,6 +105,32 @@ const messageOf = (failure: unknown): string => {
 /** Quantos turnos a conversa abre (os mais recentes) e quantos cada rolagem para cima traz. */
 export const TURN_PAGE = 5
 
+/** Quantas conversas visitadas ficam guardadas (a mais antiga sai primeiro). */
+export const CACHE_LIMIT = 10
+
+/** O que as telas de uma conversa guardam além do histórico (a contagem do Board, as filhas…): volta junto com ela. */
+export interface IThreadAux {
+  panelCount?: number
+  plansWaiting?: number
+  changesCount?: number
+  children?: IConversation[]
+}
+
+/** Uma conversa já visitada, como estava ao sair dela: abre na hora e se atualiza por trás (ver `open`). */
+interface ISnapshot {
+  header?: IConversation
+  agentId?: string
+  turns: ITurn[]
+  hasOlder: boolean
+  readOnly: boolean
+  liveSession?: boolean
+  session?: ISessionState
+  suggestion?: { index: number; text: string }
+  todos: ITodoItem[]
+  watches: IWatchItem[]
+  aux: IThreadAux
+}
+
 /** O histórico gravado como a rota devolve (com janela, `hasMore` diz se há turno antes do primeiro). */
 type THistory = { agentId?: string; conversation?: IConversation; turns: ITurn[]; hasMore?: boolean; readOnly?: boolean }
 
@@ -137,6 +163,13 @@ export const useThreadStore = defineStore('thread', () => {
   /** O índice do próximo turno: o do último carregado + 1 (com janela, o tamanho da lista não é o índice). */
   const nextIndex = () => (turns.value.at(-1)?.index ?? -1) + 1
   const error = ref<string>()
+  /**
+   * ⚖️ Abriu a partir do que já tinha (a conversa visitada): a tela mostra o guardado e o servidor confirma por trás.
+   * As leituras secundárias (Board, filhas, aprovações) esperam por isto e por `loading`.
+   */
+  const revalidating = ref(false)
+  /** O que as telas guardam da conversa aberta além do histórico (ver `IThreadAux`). */
+  const aux = ref<IThreadAux>({})
   /** `undefined` enquanto pergunta ao gateway. */
   const liveSession = ref<boolean>()
   /** O modelo e o raciocínio em vigor na sessão viva (ver `reconfigure`). */
@@ -158,6 +191,36 @@ export const useThreadStore = defineStore('thread', () => {
   const queued = ref<string[]>([])
   /** O que estava na fila quando o turno parou: volta para a caixa de texto (o servidor descartou). */
   const leftover = ref<string>()
+
+  /**
+   * As conversas já visitadas, da mais antiga à mais nova (`Map` guarda a ordem: sair e reentrar move para o fim).
+   * ⛔ A chave é só o id da conversa: nada de uma aparece na outra. Esquecidas no logout (`reset`).
+   */
+  const visited = new Map<string, ISnapshot>()
+
+  /** Guarda a conversa aberta (se carregou direito) para a próxima visita; passa do limite, sai a mais antiga. */
+  function remember(): void {
+    const id = sessionId.value
+    if (!id || draft.value || !windowed.value || loading.value || error.value || liveSession.value === undefined) return
+    visited.delete(id)
+    visited.set(id, {
+      header: header.value,
+      agentId: agentId.value,
+      turns: [...turns.value],
+      hasOlder: hasOlder.value,
+      readOnly: readOnly.value,
+      liveSession: liveSession.value,
+      session: session.value,
+      suggestion: suggestion.value,
+      todos: [...todos.value],
+      watches: [...watches.value],
+      aux: { ...aux.value },
+    })
+    while (visited.size > CACHE_LIMIT) visited.delete(visited.keys().next().value as string)
+  }
+
+  /** Quais conversas estão guardadas (da mais antiga à mais nova) — para a tela e os testes. */
+  const cachedIds = () => [...visited.keys()]
 
   let inFlight: AbortController | undefined
   /** O turno de fora que a tela está montando (ver `onLive`), pelo stream da caixa de entrada. */
@@ -191,32 +254,45 @@ export const useThreadStore = defineStore('thread', () => {
   }
 
   async function open(id: string, known?: IConversation, options: { all?: boolean } = {}): Promise<void> {
+    // A que estava aberta fica guardada (com o que ela tinha na tela) para a próxima visita.
+    remember()
     const current = leave(true)
+    const cached = options.all ? undefined : visited.get(id)
+    // Visitar de novo a põe como a mais recente (a que sai primeiro é a mais antiga).
+    if (cached) {
+      visited.delete(id)
+      visited.set(id, cached)
+    }
     sessionId.value = id
-    header.value = known
-    agentId.value = undefined
+    header.value = known ?? cached?.header
+    agentId.value = cached?.agentId
     draft.value = undefined
     pending.value = undefined
-    turns.value = []
+    // ⚖️ Conversa já visitada: aparece na hora, como estava; o servidor confirma por trás (`revalidate`). A primeira visita carrega do zero.
+    turns.value = cached ? [...cached.turns] : []
     windowed.value = !options.all
-    hasOlder.value = false
-    readOnly.value = false
-    suggestion.value = undefined
-    todos.value = []
-    watches.value = []
-    liveSession.value = undefined
-    session.value = undefined
+    hasOlder.value = cached?.hasOlder ?? false
+    readOnly.value = cached?.readOnly ?? false
+    suggestion.value = cached?.suggestion
+    todos.value = cached ? [...cached.todos] : []
+    watches.value = cached ? [...cached.watches] : []
+    liveSession.value = cached?.liveSession
+    session.value = cached?.session
+    aux.value = cached ? { ...cached.aux } : {}
     error.value = undefined
-    loading.value = true
+    loading.value = !cached
+    revalidating.value = !!cached
+    // O turno que está rodando aparece já: o acompanhamento começa sem esperar o histórico (o `turn.started` traz o que já saiu).
+    if (cached) inbox.follow(id)
 
     try {
       let unsure = false
       let historyFailure: string | undefined
-      void loadTodos(id, current)
-      void loadWatches(id, current)
+      let notFound = false
       const [history, live] = await Promise.all([
         api<THistory>(`/conversations/${encodeURIComponent(id)}/turns`, windowed.value ? { query: { limit: TURN_PAGE } } : {}).catch((failure): THistory => {
-          if (!isNotFound(failure)) historyFailure = messageOf(failure)
+          if (isNotFound(failure)) notFound = true
+          else historyFailure = messageOf(failure)
           return { turns: [] }
         }),
         api<ISessionState>(`/sessions/${encodeURIComponent(id)}`).catch((failure) => {
@@ -226,28 +302,58 @@ export const useThreadStore = defineStore('thread', () => {
         }),
       ])
       if (current !== generation) return
-      turns.value = history.turns
-      hasOlder.value = history.hasMore === true
+      if (cached && historyFailure) {
+        // Por trás, uma falha não apaga o que a pessoa já está vendo: fica o guardado, que a próxima leitura confirma.
+        return
+      }
+      if (cached && !notFound) mergeHistory(history)
+      else {
+        turns.value = history.turns
+        hasOlder.value = history.hasMore === true
+      }
       readOnly.value = history.readOnly === true
       agentId.value = 'agentId' in history ? history.agentId : undefined
       // ⚖️ A conversa fora da caixa de entrada (a delegada, a de outra pessoa) não tem cabeçalho na lista: vem com o histórico.
-      if (!header.value && 'conversation' in history && history.conversation) header.value = history.conversation
+      if (!known && 'conversation' in history && history.conversation) header.value = history.conversation
       liveSession.value = !!live || unsure
-      session.value = live ? { provider: live.provider, model: live.model, reasoning: live.reasoning, place: live.place } : undefined
+      session.value = live ? { place: live.place, provider: live.provider, model: live.model, reasoning: live.reasoning } : undefined
       // Depois do histórico: o turno em curso (`turn.started`) entra depois dos já gravados. Também na conversa
       // encerrada: a API a retoma ao mandar um turno, e ele aparece aqui.
       inbox.follow(id)
+      // O que é secundário (tarefas, vigias) vem DEPOIS do que desenha a conversa.
+      void loadTodos(id, current)
+      void loadWatches(id, current)
       if (historyFailure) error.value = `Não foi possível carregar o histórico: ${historyFailure}`
-      else if (unsure) error.value = 'Não foi possível confirmar se a sessão está ativa. Tente de novo em instantes.'
+      else if (unsure && !cached) error.value = 'Não foi possível confirmar se a sessão está ativa. Tente de novo em instantes.'
     } catch (failure) {
       if (current === generation) error.value = messageOf(failure)
     } finally {
-      if (current === generation) loading.value = false
+      if (current === generation) {
+        loading.value = false
+        revalidating.value = false
+      }
     }
+  }
+
+  /**
+   * A releitura de uma conversa já aberta (a mais recente do servidor) entra no que está na tela: os turnos mais novos
+   * trocam os de mesmo índice, os anteriores já carregados ficam. Se passaram mais turnos do que a janela traz, o buraco
+   * não se mostra: ficam só os da releitura, e os de antes voltam ao rolar para cima. Nunca troca por algo mais curto.
+   */
+  function mergeHistory(history: THistory): void {
+    const fetched = history.turns
+    const firstFetched = fetched[0]?.index
+    if (firstFetched === undefined) return
+    if ((turns.value.at(-1)?.index ?? -1) > (fetched.at(-1)?.index ?? -1)) return
+    const older = turns.value.filter((turn) => turn.index < firstFetched)
+    const gap = older.length > 0 && (older.at(-1)?.index ?? 0) + 1 < firstFetched
+    turns.value = gap ? fetched : [...older, ...fetched]
+    hasOlder.value = older.length > 0 && !gap ? hasOlder.value : history.hasMore === true
   }
 
   /** Conversa nova: ainda sem sessão. A sessão nasce na primeira mensagem. */
   function startDraft(next: IDraft): void {
+    remember()
     leave()
     sessionId.value = undefined
     header.value = undefined
@@ -262,6 +368,8 @@ export const useThreadStore = defineStore('thread', () => {
     error.value = undefined
     liveSession.value = true
     session.value = undefined
+    aux.value = {}
+    revalidating.value = false
     draft.value = next
   }
 
@@ -556,6 +664,7 @@ export const useThreadStore = defineStore('thread', () => {
 
   /** Logout: esquece tudo da conversa aberta e derruba o stream, para a próxima conta não herdar nada. */
   function reset(): void {
+    visited.clear()
     leave()
     sessionId.value = undefined
     header.value = undefined
@@ -567,6 +676,8 @@ export const useThreadStore = defineStore('thread', () => {
     todos.value = []
     watches.value = []
     loading.value = false
+    revalidating.value = false
+    aux.value = {}
     error.value = undefined
     liveSession.value = undefined
     session.value = undefined
@@ -685,6 +796,9 @@ export const useThreadStore = defineStore('thread', () => {
     panelVersion,
     browserVersion,
     loading,
+    revalidating,
+    aux,
+    cachedIds,
     error,
     liveSession,
     session,

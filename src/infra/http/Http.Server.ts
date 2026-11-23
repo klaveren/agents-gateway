@@ -650,6 +650,7 @@ function buildRoutes(
     { method: 'get', path: '/conversations/stats', handler: controller.conversationStats },
     { method: 'get', path: '/conversations/events', handler: controller.conversationEvents },
     { method: 'put', path: '/conversations/events/:streamId/follow', handler: controller.followTurn },
+    { method: 'put', path: '/conversations/events/:streamId/channels', handler: controller.eventChannel },
     { method: 'get', path: '/conversations/:id/turns', handler: controller.getConversationTurns },
     { method: 'get', path: '/conversations/:id/todos', handler: controller.getConversationTodos },
     { method: 'put', path: '/conversations/:id/share', handler: controller.shareConversation },

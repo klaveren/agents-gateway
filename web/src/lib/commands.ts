@@ -1,6 +1,6 @@
-import { computed, type Ref } from 'vue'
+import { computed, type Ref, watch } from 'vue'
 import { useResource } from '@/composables/useResource'
-import { useAgentCatalogStore } from '@/stores/agentCatalog'
+import { useSlashResourcesStore } from '@/stores/slashResources'
 
 /** O que o `/` oferece: as skills e os commands do agente e os documentos da conversa (`/spec:<id>` anexa o inteiro). */
 export type TSlashKind = 'skill' | 'command' | 'spec' | 'adr' | 'knowledge'
@@ -86,7 +86,16 @@ export function commandSuggestions(text: string, commands: readonly ICommandHint
  * as telas abertas com o mesmo agente e projeto leem a mesma cópia. Sem agente, nada; falhar não atrapalha a conversa.
  */
 export function useAgentCommands(agentId: Ref<string | undefined>, project?: Ref<string | undefined>): Ref<ICommandHint[]> {
-  const catalog = useAgentCatalogStore()
-  const { data } = useResource(catalog.commands, () => (agentId.value ? catalog.commandsKey(agentId.value, project?.value) : undefined))
+  const slash = useSlashResourcesStore()
+  const key = computed(() => (agentId.value ? slash.keyOf(agentId.value, project?.value) : undefined))
+  const { data } = useResource(slash.commands, () => key.value)
+  // A tela que mostra a chave relê na hora quando o catálogo muda; as outras, só quando forem mostradas.
+  watch(
+    key,
+    (value, _before, onCleanup) => {
+      if (value) onCleanup(slash.show(value))
+    },
+    { immediate: true },
+  )
   return computed(() => data.value ?? [])
 }

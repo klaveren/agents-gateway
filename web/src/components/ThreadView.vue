@@ -220,11 +220,48 @@
     changesOpen.value = false
     terminalOpen.value = true
   }
+  /**
+   * ⚖️ As leituras SECUNDÁRIAS de uma conversa (Board, mudanças, filhas) esperam o que a desenha (sessão e turnos, ver
+   * `thread.loading` e `thread.revalidating`) e saem no tempo ocioso: a troca de conversa não compete por conexão com elas.
+   * Pedir de novo com o mesmo nome troca o pedido anterior.
+   */
+  const deferred = new Map<string, () => void>()
+  const drawing = () => thread.loading || thread.revalidating
+  function afterPrimary(name: string, run: () => void): void {
+    deferred.get(name)?.()
+    let stop: (() => void) | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let idle: number | undefined
+    const cancel = () => {
+      stop?.()
+      clearTimeout(timer)
+      if (idle !== undefined && typeof cancelIdleCallback === 'function') cancelIdleCallback(idle)
+      deferred.delete(name)
+    }
+    const go = () => {
+      const fire = () => {
+        deferred.delete(name)
+        run()
+      }
+      if (typeof requestIdleCallback === 'function') idle = requestIdleCallback(fire, { timeout: 500 })
+      else timer = setTimeout(fire, 0)
+    }
+    deferred.set(name, cancel)
+    if (!drawing()) go()
+    else
+      stop = watch(drawing, (busy) => {
+        if (busy) return
+        stop?.()
+        go()
+      })
+  }
+  onBeforeUnmount(() => [...deferred.values()].forEach((cancel) => cancel()))
   /** O Board da conversa: o selo do ícone (itens em aberto) vale com o painel fechado; o painel relê quando abre, quando o turno acaba e quando o agente mexe nele. */
   const panelOpen = sideFlag('board')
-  const panelCount = ref<number>()
+  // ⚖️ Guardados com a conversa (`thread.aux`): ao revisitar, o selo já está lá e a releitura só o confirma.
+  const panelCount = computed({ get: () => thread.aux.panelCount, set: (value) => (thread.aux.panelCount = value) })
   /** Planos esperando a sua aprovação: o ponto amarelo no ícone do Board. */
-  const plansWaiting = ref(0)
+  const plansWaiting = computed({ get: () => thread.aux.plansWaiting ?? 0, set: (value) => (thread.aux.plansWaiting = value) })
   const panelRefresh = ref(0)
   async function loadPanelCount() {
     const id = header.value?.id
@@ -236,7 +273,7 @@
   }
   watch(
     () => header.value?.id,
-    () => void loadPanelCount(),
+    () => afterPrimary('panel', () => void loadPanelCount()),
     { immediate: true },
   )
   function refreshPanel() {
@@ -253,7 +290,7 @@
     },
   )
   const changesOpen = sideFlag('changes')
-  const changesCount = ref<number>()
+  const changesCount = computed({ get: () => thread.aux.changesCount, set: (value) => (thread.aux.changesCount = value) })
   const changesRefresh = ref(0)
   const inRepository = computed(() => typeof header.value?.metadata?.repository === 'string' && !!thread.sessionId)
   async function loadChangesCount() {
@@ -261,7 +298,7 @@
     const result = await api<{ files: unknown[] }>(`/sessions/${encodeURIComponent(thread.sessionId)}/changes`, { query: { scope: 'conversation' } }).catch(() => undefined)
     changesCount.value = result?.files.length
   }
-  watch(inRepository, () => void loadChangesCount(), { immediate: true })
+  watch(inRepository, () => afterPrimary('changes', () => void loadChangesCount()), { immediate: true })
   // Terminou um turno: o agente pode ter mudado arquivos (a contagem e o painel aberto se atualizam).
   watch(
     () => !!thread.pending,
@@ -297,7 +334,7 @@
     const from = header.value?.metadata?.delegatedFrom
     return typeof from === 'string' ? (agents.byId.get(from)?.name ?? from) : 'outro agente'
   })
-  const children = ref<IConversation[]>([])
+  const children = computed({ get: () => thread.aux.children ?? [], set: (value) => (thread.aux.children = value) })
   // Relida também quando uma conversa começa ou para de rodar: a filha contactada no meio do turno aparece e sobe na hora.
   // ⚖️ Os gatilhos que chegam juntos (abriu a conversa, os turnos carregaram, o cabeçalho veio) viram UMA leitura: eram três
   // a cada troca de conversa.
@@ -312,10 +349,9 @@
     () => [header.value?.id, thread.turns.length, conversations.running] as const,
     ([id], before) => {
       clearTimeout(childrenTimer)
-      // Trocou de conversa: as filhas da anterior saem já, e a leitura nova vem logo em seguida.
-      if (id !== before?.[0]) children.value = []
+      // Trocou de conversa: as filhas vêm com a conversa (as guardadas, ou nenhuma), e a leitura nova espera a conversa aparecer.
       if (!id) return
-      childrenTimer = setTimeout(() => void loadChildren(), 50)
+      childrenTimer = setTimeout(() => afterPrimary('children', () => void loadChildren()), 50)
     },
     { immediate: true },
   )
@@ -866,7 +902,7 @@
       <p v-if="thread.readOnly" class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3 text-center text-xs text-zinc-400" data-test="thread-read-only">
         Conversa de {{ owner?.email ?? owner?.id ?? 'outra pessoa' }} — só leitura.
       </p>
-      <HostApprovals v-if="!thread.readOnly" :session-id="thread.sessionId" :running="!!thread.pending || !!thread.following" />
+      <HostApprovals v-if="!thread.readOnly" :session-id="thread.loading || thread.revalidating ? undefined : thread.sessionId" :running="!!thread.pending || !!thread.following" />
       <SessionTuner v-if="thread.liveSession && agent && !thread.readOnly" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
       <Composer
         v-if="!thread.readOnly"
