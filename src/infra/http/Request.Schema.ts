@@ -182,6 +182,7 @@ export const updateSettingsSchema = z.object({
     .optional(),
   lockMainCheckout: z.boolean().nullable().optional(),
   machineAgents: z.boolean().nullable().optional(),
+  agentsReachGatewayApi: z.boolean().nullable().optional(),
 })
 
 /**

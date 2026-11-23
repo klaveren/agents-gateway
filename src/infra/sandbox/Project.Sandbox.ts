@@ -24,6 +24,7 @@ import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { dataDir, projectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
 import { esmImport } from '@infra/adapters/support/Esm.Import'
+import { deniedGatewayPorts } from '@infra/permissions/Gateway.Reach'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import { commandDirOf } from '@infra/accounts/Ssh.Kit'
 import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
@@ -438,7 +439,7 @@ export class ProjectSandbox implements IProjectSandbox {
       filesystem: { denyRead: cerco.readDeny, allowRead: cerco.readAllow, allowWrite: cerco.writeAllow, denyWrite: cerco.writeDeny },
     })
     if (this.platform !== 'darwin') return wrapped
-    if (place.machine) return withMacFileEvents(withMacProcessList(withMacOpenNetwork(wrapped, port, [Number(process.env.PORT) || 3000])))
+    if (place.machine) return withMacFileEvents(withMacProcessList(withMacOpenNetwork(wrapped, port, deniedGatewayPorts())))
     return withMacFileEvents(withMacProcessList(withMacTcpPorts(withMacLocalPorts(wrapped, port, place.localPorts ?? []), port, place.tcpPorts ?? [])))
   }
 

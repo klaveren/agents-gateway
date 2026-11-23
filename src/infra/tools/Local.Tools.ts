@@ -14,6 +14,7 @@ import { envSecrets } from '@domain/Env.File'
 import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { deniedGatewayPorts, gatewayHttpPort, gatewayReachOn } from '@infra/permissions/Gateway.Reach'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import { analyzeShell, type IShellCommand, opaqueRefusal } from '@infra/permissions/Shell.Parse'
 import {
@@ -339,8 +340,9 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       .map((rule) => /^(?:localhost|127\.0\.0\.1):(\d{1,5})$/.exec(rule.pattern.trim())?.[1])
       .filter((port): port is string => !!port)
       .map(Number)
-      // ⛔ A porta do próprio gateway nunca ganha encaminhador (o portão também a nega): o cliente recebe a recusa.
-      .filter((port) => port !== (Number(process.env.PORT) || 3000))
+      // ⛔ A porta do próprio gateway só ganha encaminhador com "Agentes alcançam a API deste gateway" ligado (até lá o portão
+      // a nega): o cliente recebe a recusa. Trade-off: ligado, o processo alcança a API com o token que tiver.
+      .filter((port) => !deniedGatewayPorts().includes(port))
     // TCP fora do HTTP liberado por regra EXATA (`10.10.0.1:32017`): o comando ganha o interceptador (ver `tcpInterceptor`).
     // No Mac, as portas dessas regras abrem direto no perfil (ver `withMacTcpPorts`).
     const tcpRules = [...(layers.agent ?? []), ...(layers.project ?? [])].filter((rule) => rule.category === 'network' && rule.decision === 'allow' && exactTcpTarget(rule.pattern))
@@ -362,6 +364,12 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const notes = [
       ...git.notes,
       ...(accounts?.problems ?? []).map((problem) => `⚠️ ${problem}`),
+      // A porta do próprio gateway é negada sempre, salvo a Configuração do admin: o agente fica sabendo o porquê.
+      ...(!gatewayReachOn() && new RegExp(`(?:localhost|127\\.0\\.0\\.1|\\[?::1\\]?):${gatewayHttpPort()}(?!\\d)`).test(command)
+        ? [
+            `⚠️ a porta ${gatewayHttpPort()} é a API do próprio gateway: fica sempre negada para os comandos, a menos que o admin ligue "Agentes alcançam a API deste gateway" (Sistema → Configurações).`,
+          ]
+        : []),
       ...(literal ? [`⚠️ o comando tem um segredo escrito por extenso (${literal}): use a variável de ambiente, não o valor.`] : []),
     ]
       .map((line) => `${line}\n`)

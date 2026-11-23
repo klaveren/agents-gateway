@@ -3,9 +3,19 @@ import { api } from '@/lib/api'
 import { keyedResource } from '@/lib/resource'
 import type { IPermissionDecision, IPermissionRule, TPermissionCategory } from '@/lib/types'
 
+/** Uma regra que o servidor aceitou mas que não tem efeito, e por quê. */
+export interface IRuleWarning {
+  category: TPermissionCategory
+  pattern: string
+  code: string
+  message: string
+}
+
 /** As permissões de um projeto como o servidor as devolve: as regras dele e as do sistema (só leitura). */
 export interface IProjectPermissions {
   rules: IPermissionRule[]
+  /** As regras aceitas que não valem (ex.: a porta do próprio gateway com o alcance desligado), com o motivo. */
+  warnings?: IRuleWarning[]
   system: IPermissionRule[]
   updatedAt?: string
   updatedBy?: string
@@ -20,9 +30,9 @@ export const usePermissionsStore = defineStore('permissions', () => {
   const projects = keyedResource((projectId) => api<IProjectPermissions>(path(projectId)))
 
   async function save(projectId: string, rules: IPermissionRule[]): Promise<IPermissionRule[]> {
-    const saved = (await api<{ rules: IPermissionRule[] }>(path(projectId), { method: 'PUT', body: { rules } })).rules
-    projects.update(projectId, (current) => ({ ...current, rules: saved }))
-    return saved
+    const answer = await api<{ rules: IPermissionRule[]; warnings?: IRuleWarning[] }>(path(projectId), { method: 'PUT', body: { rules } })
+    projects.update(projectId, (current) => ({ ...current, rules: answer.rules, warnings: answer.warnings ?? [] }))
+    return answer.rules
   }
 
   /**

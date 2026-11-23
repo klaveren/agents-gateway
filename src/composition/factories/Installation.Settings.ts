@@ -1,5 +1,6 @@
 import type { IAgentSettings } from '@domain/models/Settings.Model'
 import type { IGitGuardOptions } from '@infra/tools/Git.Guard'
+import { setGatewayReach } from '@infra/permissions/Gateway.Reach'
 import { makeSettings } from './Settings.Factory'
 
 let settings: IAgentSettings | undefined
@@ -37,6 +38,11 @@ export function machineAgentsLocked(): boolean {
   return process.env.MACHINE_AGENTS?.trim().toLowerCase() === 'off'
 }
 
+/** 🔌 "Agentes alcançam a API deste gateway" está ligado? Lido vivo a cada comando; antes da primeira leitura, não (falha fechada). */
+export function agentsReachGatewayApiOn(): boolean {
+  return installationSettings()?.agentsReachGatewayApi === true
+}
+
 /**
  * 🖥️ Os agentes de máquina valem NESTA instalação? Ligado nas Configurações e não travado pelo deploy. Antes da primeira
  * leitura das Configurações, não (falha fechada).
@@ -44,3 +50,6 @@ export function machineAgentsLocked(): boolean {
 export function machineAgentsOn(): boolean {
   return !machineAgentsLocked() && installationSettings()?.machineAgents === true
 }
+
+// O portão, o cerco e o prompt leem a Configuração por aqui (viva, sem reiniciar).
+setGatewayReach(agentsReachGatewayApiOn)

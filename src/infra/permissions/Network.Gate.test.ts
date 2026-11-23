@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import { connect, createServer, Socket } from 'node:net'
 import { after, before, describe, it } from 'node:test'
+import { setGatewayReach } from './Gateway.Reach'
 import { addressKind, NetworkGate, preferredAddress } from './Network.Gate'
 
 /** Um CONNECT cru na porta, com ou sem token; devolve a linha de status da resposta. */
@@ -130,6 +131,35 @@ describe('Network.Gate', () => {
     const own = gate.register(() => ({ allowed: true, reason: 'x', pattern: `localhost:${gatewayPort}` }))
     assert.match((await gate.decide(own, 'localhost', gatewayPort)).reason, /do próprio gateway/)
     for (const token of [exact, wildcard, own]) gate.release(token)
+  })
+
+  it('🔌 alcance à API do gateway: desligado nega até com a regra exata; ligado, só com a regra exata; a porta do portão nunca', async () => {
+    const gatewayPort = Number(process.env.PORT) || 3000
+    const exact = gate.register((host, target) => ({ allowed: host === 'localhost' && target === gatewayPort, reason: 'a API', pattern: `localhost:${gatewayPort}` }))
+    const wildcard = gate.register(() => ({ allowed: true, reason: 'tudo', pattern: '*' }))
+    const none = gate.register(() => ({ allowed: false, reason: 'sem regra' }))
+    const own = gate.register(() => ({ allowed: true, reason: 'x', pattern: `localhost:${port}` }))
+    try {
+      setGatewayReach(() => false)
+      const off = await gate.decide(exact, 'localhost', gatewayPort)
+      assert.strictEqual(off.allowed, false, 'desligado: nem a regra exata abre')
+      assert.match(off.reason, /Agentes alcançam a API deste gateway/)
+      setGatewayReach(() => true)
+      for (const host of ['localhost', '127.0.0.1', '::1']) {
+        const verdict = await gate.decide(exact, host, gatewayPort)
+        assert.deepStrictEqual([verdict.allowed, verdict.address], [true, '127.0.0.1'], host)
+      }
+      assert.strictEqual((await gate.decide(wildcard, 'localhost', gatewayPort)).allowed, false, 'curinga não abre')
+      assert.strictEqual((await gate.decide(none, 'localhost', gatewayPort)).allowed, false, 'sem regra, não')
+      assert.match((await gate.decide(own, 'localhost', port)).reason, /sempre negado/, 'a porta do portão segue negada ligado')
+      assert.strictEqual((await gate.decide(own, '169.254.169.254', 80)).allowed, false, 'metadados seguem negados')
+      // ao vivo: desliga e vale no próximo pedido
+      setGatewayReach(() => false)
+      assert.strictEqual((await gate.decide(exact, 'localhost', gatewayPort)).allowed, false)
+    } finally {
+      setGatewayReach(() => false)
+      for (const token of [exact, wildcard, none, own]) gate.release(token)
+    }
   })
 
   it('rede local só com regra exata, nunca por curinga', async () => {

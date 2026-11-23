@@ -31,6 +31,8 @@ export interface IAmbient {
   watch?: boolean
   /** 🖥️ Agente de máquina nesta conversa (ver `IProject.machineAgents`): a pasta de trabalho é só o ponto de partida. */
   machine?: boolean
+  /** 🔌 "Agentes alcançam a API deste gateway" está ligado nesta instalação (ver `gatewayReachOn`). Ausente = desligado. */
+  gatewayReach?: boolean
 }
 
 /** Os NOMES das variáveis secretas: as do agente e as de cada skill ou command que ele pode carregar. */
@@ -48,6 +50,10 @@ export interface IAmbientSecrets {
 export function talkLine(): string {
   return '- Outro agente: fale com `talk` — sem nada, mostra com quem você fala e as conversas abertas; `conversation` continua uma conversa (inclusive a que a pessoa já tem com ele, pelo id que ela passar); `wait: 0` não espera, e a resposta chega depois aqui. Não existe `send_message` nem `start_conversation` para você.'
 }
+
+/** ⛔ A porta do próprio gateway é negada aos comandos; sem esta linha o agente só via um `EPERM` e não sabia por quê. */
+export const GATEWAY_PORT_LINE =
+  '- Rede: as portas do próprio gateway (a da API dele e a do portão de rede) são sempre negadas aos seus comandos e aos processos que eles sobem, mesmo com regra de rede. A da API só abre se o admin ligar "Agentes alcançam a API deste gateway" (Sistema → Configurações); aí vale só com a regra exata `localhost:<porta>`.'
 
 /** A seção "## Ambiente" do system prompt. */
 export function ambientSection(ambient: IAmbient): string {
@@ -68,6 +74,7 @@ export function ambientSection(ambient: IAmbient): string {
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
   if (ambient.files) lines.push(agentFolderLine(ambient.files))
   if (ambient.terminal) lines.push(TEMP_LINE)
+  if (ambient.terminal && !ambient.gatewayReach) lines.push(GATEWAY_PORT_LINE)
   if (ambient.talk) lines.push(talkLine())
   for (const tool of ambient.deprecated ?? []) lines.push(deprecationLine(tool))
   lines.push(waitLine(ambient))

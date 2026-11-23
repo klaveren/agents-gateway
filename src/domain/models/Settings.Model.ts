@@ -123,6 +123,12 @@ export interface IAgentSettings {
    * `MACHINE_AGENTS=off` do deploy esconde a opção (ver `machineAgentsOn`).
    */
   machineAgents?: boolean
+  /**
+   * 🔌 "Agentes alcançam a API deste gateway": a porta HTTP do gateway deixa de ser negada sempre aos comandos dos agentes e
+   * passa a valer como serviço local (só com a regra de rede exata `localhost:<porta>`). Ausente/`false` = negada (o padrão).
+   * Vale na hora, sem reiniciar (ver `agentsReachGatewayApiOn`). A porta do portão de rede segue negada, ligado ou não.
+   */
+  agentsReachGatewayApi?: boolean
 
   updatedAt?: Date
   updatedBy?: string
@@ -190,6 +196,7 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
         : undefined,
     lockMainCheckout: typeof stored.lockMainCheckout === 'boolean' ? stored.lockMainCheckout : undefined,
     machineAgents: typeof stored.machineAgents === 'boolean' ? stored.machineAgents : undefined,
+    agentsReachGatewayApi: typeof stored.agentsReachGatewayApi === 'boolean' ? stored.agentsReachGatewayApi : undefined,
     updatedAt: date(stored.updatedAt),
     updatedBy: text(stored.updatedBy),
   }
@@ -260,6 +267,7 @@ const EDITABLE = [
   'protectedBranches',
   'lockMainCheckout',
   'machineAgents',
+  'agentsReachGatewayApi',
 ] as const
 const REQUIRED = ['audience'] as const
 

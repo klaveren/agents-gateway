@@ -400,6 +400,8 @@ export interface ISettings {
   lockMainCheckout?: boolean
   /** 🖥️ "Permitir agentes de máquina" (os que o admin do projeto marcar rodam no cerco aberto). Ausente = não. */
   machineAgents?: boolean
+  /** 🔌 "Agentes alcançam a API deste gateway": a porta HTTP do gateway deixa de ser negada sempre (só com a regra exata). Ausente = não. */
+  agentsReachGatewayApi?: boolean
   /** Os provedores sem cota agora, e quando voltam (só leitura). */
   benched?: Array<{ provider: string; until: string }>
   updatedAt?: string

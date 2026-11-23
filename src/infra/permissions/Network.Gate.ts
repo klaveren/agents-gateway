@@ -4,6 +4,7 @@ import { lookup } from 'node:dns/promises'
 import { createServer, IncomingMessage, request as httpRequest, Server, ServerResponse } from 'node:http'
 import { isIP, connect, createServer as createTcpServer, Server as TcpServer, Socket } from 'node:net'
 import { Duplex } from 'node:stream'
+import { deniedGatewayPorts } from './Gateway.Reach'
 
 /** A decisão para um destino: o que as regras do agente dizem (ver `Permission.Policy`). */
 export interface INetworkVerdict {
@@ -38,9 +39,13 @@ export class NetworkGate {
   private port?: number
   private readonly runs = new Map<string, TNetworkDecide>()
 
-  /** As portas do loopback que nenhum comando alcança: a do gateway (`PORT`) e a deste portão. */
+  /**
+   * As portas do loopback que nenhum comando alcança: a deste portão, SEMPRE, e a HTTP do gateway (`PORT`) enquanto
+   * "Agentes alcançam a API deste gateway" estiver desligado (o padrão). Ligado, a HTTP vira serviço local como o Mongo:
+   * só com a regra exata `localhost:<porta>` (ver `decide`). Lida a cada decisão: a troca vale sem reiniciar.
+   */
   private protectedPorts(): number[] {
-    return [Number(process.env.PORT) || 3000, ...(this.port ? [this.port] : [])]
+    return [...deniedGatewayPorts(), ...(this.port ? [this.port] : [])]
   }
 
   async start(): Promise<number> {
@@ -97,7 +102,7 @@ export class NetworkGate {
     // ⛔ Pelo endereço lido em binário, não pelo texto: `::ffff:7f00:1` e `0:0:0:0:0:0:0:1` também são o loopback.
     const loopbackName = raw === 'localhost' || (isIP(raw) !== 0 && classifyAddress(raw) === 'loopback')
     const name = loopbackName ? 'localhost' : raw
-    if (loopbackName && this.protectedPorts().includes(port)) return { allowed: false, reason: `localhost:${port} é do próprio gateway: sempre negado` }
+    if (loopbackName && this.protectedPorts().includes(port)) return { allowed: false, reason: deniedReason(`localhost:${port}`, port, this.port) }
     const verdict = decide(name, port)
     if (!verdict.allowed) return verdict
     if (loopbackName) {
@@ -116,7 +121,7 @@ export class NetworkGate {
     const kind = addressKind(address)
     if (kind === 'blocked') return { allowed: false, reason: `${name} aponta para ${address}, sempre negado` }
     // ⛔ As portas do gateway valem pelo ENDEREÇO resolvido também: o IP da LAN da própria máquina não é um atalho.
-    if (kind === 'private' && this.protectedPorts().includes(port)) return { allowed: false, reason: `${name}:${port} é do próprio gateway: sempre negado` }
+    if (kind === 'private' && this.protectedPorts().includes(port)) return { allowed: false, reason: deniedReason(`${name}:${port}`, port, this.port) }
     if (kind === 'private' && !verdict.open && (!verdict.pattern || verdict.pattern.includes('*'))) return { allowed: false, reason: `${name} é rede local: só com regra exata` }
     return { ...verdict, address }
   }
@@ -223,6 +228,12 @@ export class NetworkGate {
     res.on('close', () => upstream.destroy())
     req.pipe(upstream)
   }
+}
+
+/** O motivo da recusa de uma porta do gateway: a do portão é sempre; a HTTP diz como liberar (a Configuração do admin). */
+function deniedReason(target: string, port: number, gatePort: number | undefined): string {
+  if (port === gatePort) return `${target} é do próprio gateway: sempre negado`
+  return `${target} é do próprio gateway: sempre negado, a menos que o admin ligue "Agentes alcançam a API deste gateway" (Sistema → Configurações) e a regra exata exista`
 }
 
 const SOCKS_VERSION = 0x05

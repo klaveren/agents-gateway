@@ -1017,6 +1017,22 @@ describe('AgentController', () => {
         assert.strictEqual(stored.audience, 'restricted')
       })
 
+      it('🔌 agentsReachGatewayApi: nasce desligado, só o admin liga (os demais levam 404 como no resto das Configurações) e null volta ao padrão', async () => {
+        const settings = new NullSettingsRepository({ audience: 'all' })
+        assert.strictEqual((await settings.read()).agentsReachGatewayApi, undefined, 'padrão: desligado')
+        const denied = await call(MEMBER, put({ agentsReachGatewayApi: true }), settings)
+        assert.strictEqual(denied.statusCode, 404)
+        assert.strictEqual((await settings.read()).agentsReachGatewayApi, undefined, 'nada é gravado')
+        const on = await call(ADMIN, put({ agentsReachGatewayApi: true }), settings)
+        assert.strictEqual(on.statusCode, 200)
+        assert.strictEqual((await settings.read()).agentsReachGatewayApi, true)
+        assert.strictEqual(((await call(ADMIN, get, settings)).body?.result as { agentsReachGatewayApi?: boolean }).agentsReachGatewayApi, true)
+        const bad = await call(ADMIN, put({ agentsReachGatewayApi: 'sim' }), settings)
+        assert.strictEqual(bad.statusCode, 422)
+        await call(ADMIN, put({ agentsReachGatewayApi: null }), settings)
+        assert.strictEqual((await settings.read()).agentsReachGatewayApi, undefined)
+      })
+
       it('PUT recusa null em campo obrigatório e agente que não existe, sem gravar', async () => {
         const settings = new NullSettingsRepository({ audience: 'restricted' })
 

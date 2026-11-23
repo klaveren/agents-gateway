@@ -1,5 +1,6 @@
 <script setup lang="ts">
   import SaveFooter from '@/components/SaveFooter.vue'
+  import GatewayReachSetting from '@/components/GatewayReachSetting.vue'
   import MachineAgentsSetting from '@/components/MachineAgentsSetting.vue'
   import PushSetting from '@/components/PushSetting.vue'
   import SettingsTabs, { type TSettingsTab } from '@/components/SettingsTabs.vue'
@@ -461,6 +462,7 @@
         </section>
 
         <MachineAgentsSetting v-show="tab === 'machine'" />
+        <GatewayReachSetting v-show="tab === 'machine'" />
         <PushSetting v-show="tab === 'notices'" />
         <section v-if="!lite && settings.current.deployment" v-show="tab === 'deployment'" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
           <h2 class="font-medium">Implantação</h2>
