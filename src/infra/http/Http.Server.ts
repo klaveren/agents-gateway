@@ -676,6 +676,7 @@ function buildRoutes(
     // Os arquivos que o agente entregou (ver `ConversationFile.Model`): a lista e o download, para quem vê a conversa.
     { method: 'get', path: '/conversations/:id/files', handler: controller.listConversationFiles },
     { method: 'get', path: '/conversations/:id/files/:fileId', handler: controller.downloadConversationFile },
+    { method: 'get', path: '/conversations/:id/files/:fileId/view', handler: controller.viewConversationFile },
     // O registro de erros (só admin): ferramentas que falharam, turnos com erro, interrompidos.
     { method: 'get', path: '/errors', handler: controller.listErrors },
     { method: 'get', path: '/shared/:id', handler: controller.getSharedConversation },

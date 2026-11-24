@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import { computed, ref } from 'vue'
   import { copyText } from '@/lib/clipboard'
-  import { url } from '@/lib/api'
+  import { downloadUrl, viewable } from '@/lib/fileViewer'
   import { bytes, CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
   import { renderMarkdown } from '@/lib/markdown'
   import { agentReply, gatewayNotice } from '@/lib/notice'
@@ -13,7 +13,13 @@
   import { visibleWarnings } from '@/lib/turnWarnings'
 
   /** Um turno vira dois balões: a pergunta (direita) e a resposta do agente (esquerda). */
-  const props = defineProps<{ turn?: ITurn; pending?: IPendingTurn; showCost: boolean }>()
+  const props = defineProps<{
+    turn?: ITurn
+    pending?: IPendingTurn
+    showCost: boolean
+    /** 👁️ Abrir o arquivo entregue no painel Arquivos (`@open-file`); sem quem ouça, o chip só baixa. */
+    onOpenFile?: (id: string) => void
+  }>()
   const agents = useAgentsStore()
 
   /** O chip de ferramenta com erro aberto (o índice dele): o painel mostra a mensagem inteira. ⚖️ Um por vez. */
@@ -91,7 +97,8 @@
       return found ? [{ id: found[1]!, name: found[2]!, size: Number(found[3]) }] : []
     }),
   )
-  const fileUrl = (id: string) => url(`/conversations/${encodeURIComponent(props.turn!.sessionId)}/files/${encodeURIComponent(id)}`)
+  const fileUrl = (id: string) => downloadUrl(props.turn!.sessionId, id)
+  const canOpen = (name: string) => !!props.onOpenFile && viewable({ name, mime: '', size: 0 })
   const warnings = computed(() => visibleWarnings(props.turn?.warnings ?? props.pending?.warnings ?? []))
   const aborted = computed(() => props.turn?.aborted ?? props.pending?.aborted ?? false)
   const error = computed(() => props.turn?.error ?? props.pending?.error)
@@ -223,18 +230,37 @@
         <p v-if="error" class="mt-1 text-sm text-rose-300">Algo deu errado: {{ error }}</p>
         <p v-if="aborted" class="mt-1 text-xs text-zinc-400 italic">Interrompido.</p>
         <div v-if="deliveredFiles.length" class="mt-2 flex flex-wrap gap-1.5" data-test="delivered-files">
-          <a
+          <div
             v-for="file in deliveredFiles"
             :key="file.id"
-            :href="fileUrl(file.id)"
-            :download="file.name"
-            class="flex max-w-full items-center gap-1.5 rounded-lg bg-zinc-900/70 px-2.5 py-1.5 text-xs text-zinc-200 ring-1 ring-zinc-700 hover:bg-zinc-900 hover:ring-emerald-600"
-            :title="`Baixar ${file.name}`"
+            class="flex max-w-full items-center gap-1.5 rounded-lg bg-zinc-900/70 py-1 pr-1 pl-2.5 text-xs text-zinc-200 ring-1 ring-zinc-700"
+            data-test="delivered-file"
           >
             <Icon name="doc" class="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-            <span class="min-w-0 truncate">{{ file.name }}</span>
+            <span class="min-w-0 truncate" :title="file.name">{{ file.name }}</span>
             <span class="shrink-0 text-zinc-500">{{ bytes(file.size) }}</span>
-          </a>
+            <button
+              v-if="canOpen(file.name)"
+              type="button"
+              class="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-emerald-300"
+              :title="`Abrir ${file.name} no gateway`"
+              aria-label="Abrir no gateway"
+              data-test="delivered-file-open"
+              @click="onOpenFile?.(file.id)"
+            >
+              <Icon name="eye" class="h-3.5 w-3.5" />
+            </button>
+            <a
+              :href="fileUrl(file.id)"
+              :download="file.name"
+              class="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-emerald-300"
+              :title="`Baixar ${file.name}`"
+              aria-label="Baixar"
+              data-test="delivered-file-download"
+            >
+              <Icon name="download" class="h-3.5 w-3.5" />
+            </a>
+          </div>
         </div>
         <div v-if="turn" class="mt-1 flex items-center justify-end gap-2 text-[11px] text-zinc-500">
           <span v-if="turn.classification" class="flex items-center gap-1" :title="CLASSIFICATION_LABEL[turn.classification]">

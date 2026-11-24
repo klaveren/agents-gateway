@@ -7,13 +7,13 @@ import TurnBubbles from './TurnBubbles.vue'
 
 let app: App | undefined
 
-async function mount(turn: Partial<ITurn>) {
+async function mount(turn: Partial<ITurn>, extra: Record<string, unknown> = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:any(.*)', component: { render: () => null } }] })
   const host = document.createElement('div')
   document.body.appendChild(host)
-  app = createApp({ render: () => h(TurnBubbles, { turn: { at: '2026-11-03T12:00:00Z', request: 'oi', text: 'ok', ...turn } as ITurn, showCost: false }) })
+  app = createApp({ render: () => h(TurnBubbles, { turn: { at: '2026-11-03T12:00:00Z', request: 'oi', text: 'ok', ...turn } as ITurn, showCost: false, ...extra }) })
   app.use(pinia).use(router).mount(host)
   await nextTick()
   return host
@@ -95,11 +95,35 @@ describe('TurnBubbles — arquivo entregue', () => {
         { tool: 'deliver_file', args: { path: 'outro.csv' }, error: 'file is larger than 20 MB' },
       ] as ITurn['toolCalls'],
     })
-    const links = host.querySelectorAll<HTMLAnchorElement>('[data-test="delivered-files"] a')
-    expect(links).toHaveLength(1)
-    expect(links[0]!.getAttribute('href')).toBe('/v1/conversations/gw_1/files/f_ab12')
-    expect(links[0]!.getAttribute('download')).toBe('teste.csv')
-    expect(links[0]!.textContent).toContain('2 KB')
+    const chips = host.querySelectorAll('[data-test="delivered-file"]')
+    expect(chips).toHaveLength(1)
+    expect(chips[0]!.textContent).toContain('2 KB')
+    const download = chips[0]!.querySelector<HTMLAnchorElement>('[data-test="delivered-file-download"]')!
+    expect(download.getAttribute('href')).toBe('/v1/conversations/gw_1/files/f_ab12')
+    expect(download.getAttribute('download')).toBe('teste.csv')
+    // Sem quem ouça o `open-file`, o chip só baixa.
+    expect(chips[0]!.querySelector('[data-test="delivered-file-open"]')).toBeNull()
+  })
+
+  it('com quem ouça, o chip tem os dois ícones (abrir e baixar); o que não abre na tela, só baixar', async () => {
+    const opened: string[] = []
+    const note = (id: string, name: string) => `{"deliveredFile":{"id":"${id}","name":"${name}","size":10}}`
+    const host = await mount(
+      {
+        sessionId: 'gw_1',
+        toolCalls: [
+          { tool: 'deliver_file', args: {}, result: note('f_aa', 'grafico.png') },
+          { tool: 'deliver_file', args: {}, result: note('f_bb', 'planilha.xlsx') },
+        ] as ITurn['toolCalls'],
+      },
+      { onOpenFile: (id: string) => opened.push(id) },
+    )
+    const [image, sheet] = [...host.querySelectorAll('[data-test="delivered-file"]')]
+    expect(image!.querySelector('[data-test="delivered-file-download"]')).not.toBeNull()
+    expect(sheet!.querySelector('[data-test="delivered-file-download"]')).not.toBeNull()
+    expect(sheet!.querySelector('[data-test="delivered-file-open"]')).toBeNull()
+    image!.querySelector<HTMLButtonElement>('[data-test="delivered-file-open"]')!.click()
+    expect(opened).toEqual(['f_aa'])
   })
 })
 

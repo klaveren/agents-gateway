@@ -456,6 +456,7 @@ export class AgentController {
     this.updateConversationPanel = this.updateConversationPanel.bind(this)
     this.listConversationFiles = this.listConversationFiles.bind(this)
     this.downloadConversationFile = this.downloadConversationFile.bind(this)
+    this.viewConversationFile = this.viewConversationFile.bind(this)
     this.getSharedConversation = this.getSharedConversation.bind(this)
     this.conversationEvents = this.conversationEvents.bind(this)
     this.sessionLive = this.sessionLive.bind(this)
@@ -2875,6 +2876,19 @@ export class AgentController {
    * interpretar (`nosniff`, CSP fechada): um HTML ou SVG entregue não roda na origem do gateway.
    */
   async downloadConversationFile(req: Request, res: Response) {
+    await this.sendConversationFile(req, res, 'attachment')
+  }
+
+  /**
+   * `GET /conversations/:id/files/:fileId/view`: o conteúdo para o VISUALIZADOR da tela, que o busca com `fetch` e monta
+   * um blob (nunca abre esta URL no documento do gateway). ⛔ A mesma regra de acesso do download. `inline` só diz que
+   * é para ver; quem abrir a URL direto continua sem script nem recurso (`sandbox; default-src 'none'`, `nosniff`).
+   */
+  async viewConversationFile(req: Request, res: Response) {
+    await this.sendConversationFile(req, res, 'inline')
+  }
+
+  private async sendConversationFile(req: Request, res: Response, disposition: 'attachment' | 'inline') {
     try {
       const id = req.params.id as string
       await this.requireConversationAccess(id)
@@ -2882,13 +2896,13 @@ export class AgentController {
       if (!found) throw new HttpError(404, 'not_found', 'File not found')
       const ascii = found.file.name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')
       res.setHeader('Content-Type', found.file.mime)
-      res.setHeader('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(found.file.name)}`)
+      res.setHeader('Content-Disposition', `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(found.file.name)}`)
       res.setHeader('X-Content-Type-Options', 'nosniff')
-      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox")
+      res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'")
       res.setHeader('Cache-Control', 'private, no-store')
       res.send(found.data)
     } catch (error: unknown) {
-      this.sendFailure(res, error, '[AgentController.downloadConversationFile]')
+      this.sendFailure(res, error, `[AgentController.${disposition === 'inline' ? 'viewConversationFile' : 'downloadConversationFile'}]`)
     }
   }
 
