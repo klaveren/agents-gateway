@@ -242,27 +242,31 @@ export class McpRegistry {
     for (const name of INSTALL_PASSTHROUGH) if (process.env[name]) env[name] = process.env[name] as string
     for (const name of mcpVarNames(config)) if (vars[name] !== undefined) env[name] = vars[name]
     const shared = sessionId.startsWith(SHARED)
-    // O compartilhado por projeto trabalha na pasta do projeto: os arquivos de um não aparecem para o outro.
-    const cwd = shared ? join(installDir(serverKey), 'work', ...(sessionId === SHARED ? [] : [project || '_'])) : mkdtempSync(join(tmpdir(), `gw-mcp-${serverKey}-`))
-    mkdirSync(cwd, { recursive: true, mode: 0o700 })
+    // 📸 O Playwright MCP de um projeto grava no `.tmp` do projeto (o `$TMPDIR` dos comandos), legível pelo agente.
+    const output = !shared && project && isPlaywrightMcp(proc.package) ? join(projectWorkspacePath(project), '.tmp') : undefined
+    // O compartilhado por projeto trabalha na pasta do projeto: os arquivos de um não aparecem para o outro. O por
+    // conversa tem a pasta temporária dele (HOME sem gravação, perfil do navegador), apagada no fim.
+    const scratch = shared ? join(installDir(serverKey), 'work', ...(sessionId === SHARED ? [] : [project || '_'])) : mkdtempSync(join(tmpdir(), `gw-mcp-${serverKey}-`))
+    mkdirSync(scratch, { recursive: true, mode: 0o700 })
+    // ⚠️ O nome relativo do `browser_take_screenshot` (`./x.png`) resolve contra o CWD do processo, não o `--output-dir`:
+    // no temporário a captura sumia (fora do alcance do agente e apagada no fim). Com projeto, o cwd é o `.tmp` dele.
+    if (output) mkdirSync(output, { recursive: true, mode: 0o700 })
+    const cwd = output ?? scratch
     // ⚠️ No pod o HOME é só leitura (`readOnlyRootFilesystem`), e MCP grava nele (o Playwright, em `~/.cache`).
-    // Sem HOME gravável, o processo ganha um próprio: a pasta de trabalho dele.
-    if (!isWritable(env.HOME)) env.HOME = cwd
-    const opened = shared ? undefined : await this.openLiveBrowser(config, sessionId, cwd, env)
+    // Sem HOME gravável, o processo ganha um próprio: a pasta temporária dele (nunca o `.tmp` do projeto).
+    if (!isWritable(env.HOME)) env.HOME = scratch
+    const opened = shared ? undefined : await this.openLiveBrowser(config, sessionId, scratch, env)
     const browser = opened?.browser
     let args = browser ? argsForEndpoint(proc.args, browser.endpoint) : proc.args
-    // 📸 Capturas e downloads no `.tmp` do projeto (o `$TMPDIR` dos comandos), legível pelo agente. Sem projeto, como estava.
-    if (project && isPlaywrightMcp(proc.package)) {
-      const output = join(projectWorkspacePath(project), '.tmp')
-      mkdirSync(output, { recursive: true, mode: 0o700 })
-      args = argsForOutputDir(args, output)
-    }
+    // Sem projeto, como estava.
+    if (output) args = argsForOutputDir(args, output)
     const client = new McpServerClient(`process://${serverKey}`, {}, { auth: 'none', label: serverKey, stdio: { command, args, env, cwd } })
     return {
       client,
       cleanup: async () => {
         await this.dropBrowser(sessionId, opened)
-        if (!shared) rmSync(cwd, { recursive: true, force: true })
+        // ⛔ Só a temporária: o `.tmp` do projeto (o cwd do Playwright) fica, com as capturas.
+        if (!shared) rmSync(scratch, { recursive: true, force: true })
       },
     }
   }
