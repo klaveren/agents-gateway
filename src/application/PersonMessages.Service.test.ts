@@ -206,7 +206,11 @@ describe('Mensagens: um pedido por vez', () => {
     await request(service, 'Apagar?')
     const [first] = service.thread('u_ana', 'gw_alfa')
     const reply = service.reply('u_ana', 'gw_alfa', 'Pode', 'Ana', first.id)
-    assert.strictEqual(reply.input, `[Resposta de Ana pela caixa de Mensagens a "Subir?" (pedido ${first.id})]\n\nPode`)
+    assert.strictEqual(
+      reply.input,
+      `[Resposta de Ana pela caixa de Mensagens a "Subir?" (pedido ${first.id})]\nResponda a ESTE pedido com notify usando replyTo: "${first.id}".\n\nPode`,
+    )
+    assert.strictEqual(reply.requestId, first.id)
     const mine = service.thread('u_ana', 'gw_alfa')
     assert.deepStrictEqual([mine[0].status, mine[1].status, mine[0].answeredAt instanceof Date], ['answered', 'pending', true])
     assert.strictEqual(mine.at(-1)?.replyTo, first.id)
@@ -280,7 +284,9 @@ describe('Mensagens: um item por pedido', () => {
     const reply = service.reply('u_ana', first.id, 'Pode', 'Ana')
     assert.strictEqual(reply.conversationId, 'gw_alfa')
     assert.strictEqual(service.thread('u_ana', first.id)[0].status, 'answered')
-    service.mirror('gw_alfa', 'zeus', 'Subi.')
+    assert.strictEqual(service.answeredAfterReply('gw_alfa', first.id), false)
+    service.mirror('gw_alfa', 'zeus', 'Subi.', 'info', reply.requestId)
+    assert.strictEqual(service.answeredAfterReply('gw_alfa', first.id), true)
     assert.deepStrictEqual(
       service.thread('u_ana', first.id).map((message) => [message.from, message.body]),
       [
@@ -323,5 +329,65 @@ describe('Mensagens: um item por pedido', () => {
     assert.strictEqual(service.resolve('u_ana', 'm_nada'), undefined)
     service.setStatus('u_ana', first.id, first.id, 'resolved')
     assert.strictEqual(service.thread('u_ana', 'gw_alfa')[0].status, 'resolved')
+  })
+})
+
+describe('Mensagens: cada resposta volta ao pedido certo', () => {
+  const request = (service: PersonMessagesService, title: string) => service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', title, body: title, level: 'attention' })
+
+  it('🎯 o retorno com replyTo vai para dentro daquele pedido, na cópia de cada destinatário; sem replyTo, para o item da conversa', async () => {
+    const { service } = build()
+    await request(service, 'Subir?')
+    await request(service, 'Apagar?')
+    const [first, second] = service.thread('u_ana', 'gw_alfa')
+    service.reply('u_ana', first.id, 'Pode', 'Ana')
+    service.reply('u_ana', second.id, 'Não', 'Ana')
+    service.mirror('gw_alfa', 'zeus', 'Subi.', 'info', first.id)
+    service.mirror('gw_alfa', 'zeus', 'Nada apagado.', 'info', second.id)
+    service.mirror('gw_alfa', 'zeus', 'Resumo.')
+    assert.deepStrictEqual(
+      service.thread('u_ana', first.id).map((message) => message.body),
+      ['Subir?', 'Pode', 'Subi.'],
+    )
+    assert.deepStrictEqual(
+      service.thread('u_ana', second.id).map((message) => message.body),
+      ['Apagar?', 'Não', 'Nada apagado.'],
+    )
+    const [biaFirst] = service.thread('u_bia', 'gw_alfa')
+    assert.deepStrictEqual(
+      service.thread('u_bia', biaFirst.id).map((message) => message.body),
+      ['Subir?', 'Pode', 'Subi.'],
+      'a cópia da Bia, no pedido dela',
+    )
+    assert.deepStrictEqual(
+      service
+        .thread('u_ana', 'gw_alfa')
+        .filter((message) => !message.replyTo && !message.status)
+        .map((message) => message.body),
+      ['Resumo.'],
+    )
+  })
+
+  it('respondido de novo pela pessoa, o pedido volta a esperar o agente', async () => {
+    const { service } = build()
+    await request(service, 'Subir?')
+    const [first] = service.thread('u_ana', 'gw_alfa')
+    service.reply('u_ana', first.id, 'Pode', 'Ana')
+    await service.send({ sessionId: 'gw_alfa', agentId: 'zeus', to: 'admins', body: 'Subi.', replyTo: first.id })
+    assert.strictEqual(service.answeredAfterReply('gw_alfa', first.id), true)
+    service.reply('u_ana', first.id, 'E o outro?', 'Ana')
+    assert.strictEqual(service.answeredAfterReply('gw_alfa', first.id), false)
+  })
+
+  it('📎 a resposta com anexos: os nomes ficam na bolha da pessoa (sem o conteúdo) e o texto ao agente os cita', async () => {
+    const { service } = build()
+    await request(service, 'Manda o log?')
+    const [first] = service.thread('u_ana', 'gw_alfa')
+    const reply = service.reply('u_ana', first.id, '', 'Ana', undefined, [{ name: 'log.txt', mimeType: 'text/plain', size: 12 }])
+    assert.match(reply.input, /\(anexos: log\.txt\)/)
+    const mine = service.thread('u_ana', first.id).at(-1)
+    assert.deepStrictEqual([mine?.from, mine?.files], ['person', [{ name: 'log.txt', mimeType: 'text/plain', size: 12 }]])
+    assert.deepStrictEqual(service.thread('u_bia', service.thread('u_bia', 'gw_alfa')[0].id).at(-1)?.files?.[0].name, 'log.txt')
+    assert.throws(() => service.reply('u_ana', first.id, '  ', 'Ana'), /message is required/, 'sem texto e sem anexo, não')
   })
 })

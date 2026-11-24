@@ -95,7 +95,8 @@ export const API_PREFIX = '/v1'
  * Rota pública nova entra aqui — e só aqui, de propósito.
  */
 /** A mensagem de uma conversa: leva anexo, por isso o teto de corpo grande. */
-const MESSAGE_ROUTE = /^\/v1\/sessions\/[^/]+\/messages\/?$/
+/** A mensagem da conversa e a resposta pela caixa de Mensagens: as duas levam anexos (📎). */
+const MESSAGE_ROUTE = /^\/v1\/(sessions\/[^/]+\/messages|messages\/[^/]+\/reply)\/?$/
 /**
  * ⚖️ As rotas que gravam CONTEÚDO, cujo tamanho é de quem escreve (o sistema não impõe teto): o agente (prompt, soul,
  * triggers), os hooks e agendamentos dele (o prompt), rules, documentos, skills/commands e o complemento dos protocolos.

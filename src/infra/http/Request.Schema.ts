@@ -77,6 +77,14 @@ export const sendMessageSchema = z
     path: ['message'],
   })
 
+/** `POST /messages/:key/reply`: a resposta pela caixa, com os anexos nas regras da mensagem da conversa. O `replyTo` sai à parte. */
+export const replyMessageSchema = z
+  .object({
+    message: z.string().default(''),
+    files: z.array(fileSchema).max(MAX_FILES).optional(),
+  })
+  .passthrough()
+
 /**
  * Campo opcional que aceita `null` (ou texto vazio) como pedido de voltar ao padrão.
  *

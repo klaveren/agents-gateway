@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
+import type { IOutgoingFile } from '@/stores/thread'
 
 /** 💬 Uma mensagem de um fio (ver `PersonMessage.Model` no servidor). */
 export interface IPersonMessage {
@@ -21,6 +22,8 @@ export interface IPersonMessage {
   answeredAt?: string
   /** Na resposta da pessoa: o id do pedido a que ela respondeu. */
   replyTo?: string
+  /** 📎 Na resposta da pessoa: os anexos que foram com ela (o nome, o tipo e o tamanho). */
+  files?: Array<{ name: string; mimeType: string; size: number }>
 }
 
 /** Uma resposta da pessoa a caminho (ver `outbox`). `confirmed`: o fio já a trouxe do servidor (a bolha dela é a de lá). */
@@ -40,6 +43,8 @@ export interface IOutgoingReply {
   key: string
   body: string
   replyTo?: string
+  /** 📎 Os nomes dos anexos que vão junto. */
+  files?: string[]
   createdAt: string
   state: 'sending' | 'sent' | 'failed'
   error?: string
@@ -147,16 +152,24 @@ export const useMessagesStore = defineStore('messages', () => {
     outbox.value = outbox.value.filter((item) => item.id !== id)
   }
 
-  /** Responde pela caixa; com `replyTo`, é a resposta a UM pedido (que vira respondido). */
-  async function reply(key: string, message: string, replyTo?: string): Promise<{ queued: boolean }> {
+  /** Responde pela caixa; com `replyTo`, é a resposta a UM pedido (que vira respondido). 📎 `files` vão junto, para o turno. */
+  async function reply(key: string, message: string, replyTo?: string, files: IOutgoingFile[] = []): Promise<{ queued: boolean }> {
     // A que falhou antes no mesmo item sai: a pessoa está mandando de novo.
-    const item: IOutgoingReply = { id: `local-${++outgoingSeq}`, key, body: message, replyTo, createdAt: new Date().toISOString(), state: 'sending' }
+    const item: IOutgoingReply = {
+      id: `local-${++outgoingSeq}`,
+      key,
+      body: message,
+      replyTo,
+      ...(files.length ? { files: files.map((file) => file.name) } : {}),
+      createdAt: new Date().toISOString(),
+      state: 'sending',
+    }
     outbox.value = [...outbox.value.filter((other) => other.key !== key || other.state !== 'failed'), item]
     let result: { queued: boolean }
     try {
       result = await api<{ queued: boolean }>(`/messages/${encodeURIComponent(key)}/reply`, {
         method: 'POST',
-        body: replyTo ? { message, replyTo } : { message },
+        body: { message, ...(replyTo ? { replyTo } : {}), ...(files.length ? { files } : {}) },
       })
     } catch (failure) {
       patchOutgoing(item.id, { state: 'failed', error: failure instanceof Error ? failure.message : String(failure) })

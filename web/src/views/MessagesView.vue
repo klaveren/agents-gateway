@@ -12,6 +12,7 @@
   import type { ITurn } from '@/lib/types'
   import { readDraft, writeDraft } from '@/lib/draftStorage'
   import { usePopover } from '@/lib/popover'
+  import { useAttachments } from '@/composables/useAttachments'
   import { useAgentsStore } from '@/stores/agents'
   import { useSpeechStore } from '@/stores/speech'
   import { isResolved, useMessagesStore, type IOutgoingReply, type IPersonMessage, type IPersonThread } from '@/stores/messages'
@@ -180,6 +181,16 @@
     await loadContext()
   }
 
+  // 📎 Anexar na resposta: o clipe, colar e arrastar, como na caixa da conversa (ver `useAttachments`).
+  const attachments = useAttachments()
+  const { files: replyFiles, dragging } = attachments
+  const picker = ref<HTMLInputElement>()
+  // Outro item: os anexos não vão junto.
+  watch(
+    () => props.id,
+    () => (attachments.files.value = []),
+  )
+
   /** As respostas deste item a caminho (ver `messages.outbox`): a que o fio já trouxe usa a bolha de lá. */
   const outgoing = computed(() => messages.outbox.filter((item) => item.key === props.id))
   /** Os três pontos: a resposta foi e o agente ainda não respondeu no item. */
@@ -193,19 +204,22 @@
   function send() {
     const text = draft.value.trim()
     const key = props.id
-    if (!text || !key) return
+    const sentFiles = attachments.files.value
+    if ((!text && !sentFiles.length) || !key) return
     const target = replyTarget.value
     error.value = undefined
     draft.value = ''
+    attachments.files.value = []
     replyTarget.value = undefined
     void nextTick(() => document.querySelector('[data-test="message-end"]')?.scrollIntoView?.({ block: 'end' }))
-    messages.reply(key, text, target).catch(() => {
+    messages.reply(key, text, target, sentFiles).catch(() => {
       if (props.id !== key) {
         if (!readDraft(`message:${key}`).trim()) writeDraft(`message:${key}`, text)
         return
       }
-      if (draft.value.trim()) return
+      if (draft.value.trim() || attachments.files.value.length) return
       draft.value = text
+      attachments.files.value = sentFiles
       replyTarget.value = target
     })
   }
@@ -479,7 +493,13 @@
                 <button v-if="requestOf(message)" type="button" class="text-[11px] text-zinc-500 hover:text-zinc-300" data-test="message-in-reply-to" @click="goToRequest(message.replyTo!)">
                   ↳ em resposta a {{ requestLabel(requestOf(message)!) }}
                 </button>
-                <div class="rounded-2xl rounded-br-md bg-violet-600/80 px-3.5 py-2 text-sm whitespace-pre-wrap text-white">{{ message.body }}</div>
+                <div v-if="message.body" class="rounded-2xl rounded-br-md bg-violet-600/80 px-3.5 py-2 text-sm whitespace-pre-wrap text-white">{{ message.body }}</div>
+                <div v-if="message.files?.length" class="flex flex-wrap justify-end gap-1.5" data-test="message-person-files">
+                  <span v-for="(file, index) in message.files" :key="index" class="flex items-center gap-1 rounded-full bg-violet-600/30 px-2.5 py-1 text-xs text-violet-100">
+                    <Icon name="clip" class="h-3.5 w-3.5" />
+                    {{ file.name }}
+                  </span>
+                </div>
                 <span class="text-[11px] text-zinc-500">{{ shortTime(message.createdAt) }}</span>
               </div>
             </template>
@@ -488,10 +508,17 @@
               <div v-if="!item.confirmed" class="flex max-w-[85%] flex-col items-end gap-1 self-end" data-test="message-outgoing" :data-state="item.state">
                 <span v-if="outgoingTarget(item)" class="text-[11px] text-zinc-500">↳ em resposta a {{ requestLabel(outgoingTarget(item)!) }}</span>
                 <div
+                  v-if="item.body"
                   class="rounded-2xl rounded-br-md px-3.5 py-2 text-sm whitespace-pre-wrap text-white"
                   :class="item.state === 'failed' ? 'bg-violet-600/40 ring-1 ring-rose-500/60' : item.state === 'sending' ? 'bg-violet-600/60' : 'bg-violet-600/80'"
                 >
                   {{ item.body }}
+                </div>
+                <div v-if="item.files?.length" class="flex flex-wrap justify-end gap-1.5" data-test="message-outgoing-files">
+                  <span v-for="(name, index) in item.files" :key="index" class="flex items-center gap-1 rounded-full bg-violet-600/30 px-2.5 py-1 text-xs text-violet-100">
+                    <Icon name="clip" class="h-3.5 w-3.5" />
+                    {{ name }}
+                  </span>
                 </div>
                 <span v-if="item.state === 'sending'" class="text-[11px] text-zinc-500">Enviando…</span>
                 <span v-else-if="item.state === 'sent'" class="text-[11px] text-zinc-500">{{ item.queued ? 'Enviada · entra no turno em andamento' : 'Enviada' }}</span>
@@ -509,7 +536,15 @@
             <div data-test="message-end" />
           </div>
         </div>
-        <form class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3" @submit.prevent="send">
+        <form
+          class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3"
+          :class="dragging ? 'bg-emerald-500/10 outline-2 -outline-offset-2 outline-emerald-500/60 outline-dashed' : ''"
+          data-test="message-reply-form"
+          @submit.prevent="send"
+          @dragover="attachments.onDragOver"
+          @dragleave="attachments.onDragLeave"
+          @drop="attachments.onDrop"
+        >
           <p v-if="error" class="mb-2 text-sm text-rose-300">{{ error }}</p>
           <div v-if="targetMessage" class="mx-auto mb-2 flex max-w-3xl items-center gap-2 text-xs" data-test="reply-target">
             <span class="min-w-0 truncate rounded-full bg-emerald-500/15 px-3 py-1 text-emerald-300">Respondendo: {{ requestLabel(targetMessage) }}</span>
@@ -517,7 +552,26 @@
               ×
             </button>
           </div>
+          <div v-if="replyFiles.length" class="mx-auto mb-2 flex max-w-3xl flex-wrap gap-1.5" data-test="message-reply-files">
+            <span v-for="(file, index) in replyFiles" :key="index" class="flex items-center gap-1 rounded-full bg-zinc-800 px-2.5 py-1 text-xs">
+              {{ file.name }}
+              <button type="button" class="text-zinc-400 hover:text-white" :aria-label="`Tirar ${file.name}`" @click="replyFiles.splice(index, 1)">
+                <Icon name="x" class="h-3.5 w-3.5" />
+              </button>
+            </span>
+          </div>
           <div class="mx-auto flex max-w-3xl items-end gap-2">
+            <button
+              type="button"
+              class="grid h-10 w-10 shrink-0 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+              title="Anexar"
+              aria-label="Anexar"
+              data-test="message-reply-attach"
+              @click="picker?.click()"
+            >
+              <Icon name="clip" class="h-5 w-5" />
+            </button>
+            <input ref="picker" type="file" multiple class="hidden" data-test="message-reply-picker" @change="attachments.attach" />
             <textarea
               ref="composer"
               v-model="draft"
@@ -526,11 +580,12 @@
               :placeholder="targetMessage ? 'Responder a este pedido…' : current ? `Responder a ${agentName(current.agentId)} (vai para a conversa)` : 'Responder'"
               data-test="message-reply"
               @keydown="onKey"
+              @paste="attachments.onPaste"
             />
             <button
               type="submit"
               class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400 disabled:opacity-40"
-              :disabled="!draft.trim()"
+              :disabled="!draft.trim() && !replyFiles.length"
               title="Enviar"
             >
               <Icon name="send" class="h-5 w-5" />

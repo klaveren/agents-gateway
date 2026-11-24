@@ -128,6 +128,18 @@ describe('Mensagens (integração)', () => {
     assert.strictEqual(sent.status, 202, JSON.stringify(sent.body))
   })
 
+  it('📎 responder com anexos: as regras da mensagem da conversa (quantos, o formato) e a bolha da pessoa com os nomes', async () => {
+    await makePersonMessages().send({ sessionId: 'gw_do_atlas', agentId: 'atlas', to: 'owner', title: 'Manda o print?', body: 'Manda o print?', level: 'attention' })
+    const item = (await call('/messages', { token: member })).body.result.threads.find((thread: { title?: string }) => thread.title === 'Manda o print?')
+    const file = { name: 'print.png', mimeType: 'image/png', data: 'aGVsbG8=' }
+    assert.strictEqual((await call(`/messages/${item.id}/reply`, { method: 'POST', token: member, body: { message: 'x', files: Array(9).fill(file) } })).status, 422)
+    assert.strictEqual((await call(`/messages/${item.id}/reply`, { method: 'POST', token: member, body: { message: 'x', files: [{ name: 'a.png' }] } })).status, 422)
+    const sent = await call(`/messages/${item.id}/reply`, { method: 'POST', token: member, body: { message: '', files: [file] } })
+    assert.strictEqual(sent.status, 202, JSON.stringify(sent.body))
+    const mine = (await call(`/messages/${item.id}`, { token: member })).body.result.messages.at(-1)
+    assert.deepStrictEqual([mine.from, mine.files], ['person', [{ name: 'print.png', mimeType: 'image/png', size: 5 }]])
+  })
+
   it('🧵 responder a um pedido antigo do SUBAGENTE depois de um reinício: a conversa de delegação volta como filha da mãe', async () => {
     const now = new Date()
     const base = { agentId: 'atlas', provider: 'claude', mode: 'chat', model: 'claude-sonnet-5', createdAt: now, updatedAt: now, turns: 1, usage: {} }

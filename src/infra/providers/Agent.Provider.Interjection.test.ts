@@ -26,6 +26,7 @@ describe('AgentProvider — mensagem durante o turno', () => {
     }
     const store = new SessionStore()
     const seen: string[] = []
+    const seenFiles: string[][] = []
     let release: () => void = () => undefined
     let reached: () => void = () => undefined
     const atTool = new Promise<void>((resolve) => (reached = resolve))
@@ -45,6 +46,7 @@ describe('AgentProvider — mensagem durante o turno', () => {
       async *sendMessage(_agent, sessionId, input): AsyncIterable<IAgentEvent> {
         // O id da conversa abre o primeiro turno (ver `Ambient.Policy`); aqui interessa só o que a pessoa mandou.
         seen.push(input.text.replace(/^<contexto>[^<]*<\/contexto>\n\n/, ''))
+        seenFiles.push((input.files ?? []).map((file) => file.name))
         const now = () => new Date()
         yield { type: 'message.started', sessionId, timestamp: now() }
         if (seen.length === 1) {
@@ -81,7 +83,7 @@ describe('AgentProvider — mensagem durante o turno', () => {
       { list: () => [agent], get: (id) => (id === agent.id ? agent : undefined) },
       { list: () => [], get: config, connection: (id) => (config(id) ? { providerId: id, name: id, protocol: EProvider.CLAUDE, key: 'k' } : undefined) },
     )
-    return { provider, seen, store, atTool, release: () => release() }
+    return { provider, seen, seenFiles, store, atTool, release: () => release() }
   }
 
   /** Roda o turno; quando o adapter chega na ferramenta, `during` age (manda mensagens) e o turno segue. */
@@ -156,6 +158,20 @@ describe('AgentProvider — mensagem durante o turno', () => {
       assert.strictEqual(env.store.get(session.id)!.queued, undefined)
     })
   }
+
+  it('📎 mensagem com anexo na fila: não entra no meio da chamada (só texto ali); vai, com as outras e o anexo, na rodada seguinte', async () => {
+    const env = setup({ takes: true })
+    const session = await env.provider.createSession({ agentId: 'dev' })
+    const events = await turn(env, session.id, () => {
+      env.provider.enqueue(session.id, 'olha o print', [{ name: 'print.png', mimeType: 'image/png', data: 'aaaa' }])
+      env.provider.enqueue(session.id, 'e mais isto')
+    })
+    assert.deepStrictEqual(env.seen, ['migre', 'olha o print\n\ne mais isto'])
+    assert.deepStrictEqual(env.seenFiles, [[], ['print.png']])
+    assert.ok(kinds(events).includes('text:feito.'), 'no meio da chamada, nada entrou')
+    const record = env.store.get(session.id)!
+    assert.deepStrictEqual([record.queued, record.queuedFiles, record.turns], [undefined, undefined, 1])
+  })
 
   it('conversa parada não enfileira (vira turno normal); a fila tem teto', async () => {
     const env = setup({ takes: false })

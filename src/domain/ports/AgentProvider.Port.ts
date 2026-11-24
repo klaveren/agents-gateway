@@ -1,7 +1,7 @@
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
-import { IMessageInput } from '@domain/models/MessageInput.Model'
+import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { IConversationSession, IConversationTurn, INativeSnapshot } from '@domain/models/Conversation.Model'
 import { ISession } from '@domain/models/Session.Model'
 
@@ -43,8 +43,11 @@ export interface IAgentProvider {
   reconfigure(sessionId: string, change: ISessionChange): ISession
   /** O próximo turno começa compactando o contexto (ver `Compaction.Policy`). */
   requestCompaction?(sessionId: string): ISession
-  /** A mensagem para o turno rodando (ver `Interjection.Policy`): a posição na fila, ou nada se a conversa não está rodando. */
-  enqueue?(sessionId: string, text: string): number | undefined
+  /**
+   * A mensagem para o turno rodando (ver `Interjection.Policy`): a posição na fila, ou nada se a conversa não está rodando.
+   * 📎 Com anexos, ela espera o fim da rodada e vai na seguinte, com eles.
+   */
+  enqueue?(sessionId: string, text: string, files?: IFileAttachment[]): number | undefined
   list(): ISession[]
   /**
    * Reabre a sessão de uma conversa gravada que já não está na memória (expirou, ou o gateway reiniciou), com o MESMO

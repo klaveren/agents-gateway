@@ -4,6 +4,12 @@ export interface IFileAttachment {
   data: string // base64 encoded payload
 }
 
+/** Bytes do arquivo a partir do base64, sem decodificar o conteúdo. */
+export function base64Bytes(data: string): number {
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0
+  return Math.max(Math.floor((data.length * 3) / 4) - padding, 0)
+}
+
 export interface IMessageInput {
   text: string
   files?: IFileAttachment[]

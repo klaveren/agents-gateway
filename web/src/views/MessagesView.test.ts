@@ -146,6 +146,66 @@ describe('Mensagens', () => {
     expect(box.value).toBe('Liberado.')
   })
 
+  describe('📎 anexos na resposta', () => {
+    const settle = async () => {
+      for (let index = 0; index < 10; index++) await new Promise((resolve) => setTimeout(resolve, 0))
+      await nextTick()
+    }
+    const withData = (type: string, field: 'clipboardData' | 'dataTransfer', files: File[]) => {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, field, { value: { files, types: files.length ? ['Files'] : ['text/plain'] } })
+      return event
+    }
+    const chips = (host: HTMLElement) => Array.from(host.querySelectorAll('[data-test="message-reply-files"] > span')).map((chip) => chip.textContent?.trim())
+
+    it('colar e soltar anexam; só com o anexo, enviar libera e o arquivo vai junto (base64), com a bolha mostrando o nome', async () => {
+      const reply = deferred<{ queued: boolean }>()
+      const { host, calls } = await mount('s1', [thread], [agentMessage], { '/messages/s1/reply': reply.promise })
+      const box = host.querySelector<HTMLTextAreaElement>('[data-test="message-reply"]')!
+      const submit = () => host.querySelector<HTMLButtonElement>('form button[type="submit"]')!
+      // A caixa vazia (o rascunho de outro teste pode ter ficado no navegador).
+      box.value = ''
+      box.dispatchEvent(new Event('input'))
+      await nextTick()
+      expect(submit().disabled).toBe(true)
+      box.dispatchEvent(withData('paste', 'clipboardData', [new File(['x'], 'image.png', { type: 'image/png' })]))
+      const form = host.querySelector('[data-test="message-reply-form"]')!
+      form.dispatchEvent(withData('drop', 'dataTransfer', [new File(['abc'], 'log.txt', { type: 'text/plain' })]))
+      await settle()
+      expect(chips(host)).toEqual([expect.stringMatching(/^imagem-\d{6}-1\.png$/), 'log.txt'])
+      expect(submit().disabled).toBe(false)
+
+      form.dispatchEvent(new Event('submit'))
+      await flush()
+      const body = calls.find((call) => call.path === '/messages/s1/reply')?.init?.body as { message: string; files: Array<{ name: string; data: string }> }
+      expect(body.message).toBe('')
+      expect(body.files.map((file) => file.name)).toEqual([expect.stringMatching(/^imagem-/), 'log.txt'])
+      expect(body.files[1].data).toBe('YWJj')
+      expect(chips(host)).toEqual([])
+      expect(host.querySelector('[data-test="message-outgoing-files"]')?.textContent).toContain('log.txt')
+      reply.resolve({ queued: false })
+      await flush()
+    })
+
+    it('falhou: os anexos voltam para a caixa junto com o texto', async () => {
+      const reply = deferred<never>()
+      const { host } = await mount('s1', [thread], [agentMessage], { '/messages/s1/reply': reply.promise })
+      host.querySelector('[data-test="message-reply-form"]')!.dispatchEvent(withData('drop', 'dataTransfer', [new File(['a'], 'print.png', { type: 'image/png' })]))
+      await settle()
+      const box = await type(host, 'Olha')
+      expect(chips(host)).toEqual([])
+      reply.reject(new Error('sem conexão'))
+      await flush()
+      expect([box.value, chips(host)]).toEqual(['Olha', ['print.png']])
+    })
+
+    it('a bolha da pessoa mostra os anexos gravados', async () => {
+      const fio = [agentMessage, { id: 'p1', conversationId: 's1', agentId: 'zeus', from: 'person', body: '', files: [{ name: 'log.txt', mimeType: 'text/plain', size: 3 }], level: 'info', createdAt: '2026-11-19T11:00:00Z' }]
+      const { host } = await mount('s1', [thread], fio)
+      expect(host.querySelector('[data-test="message-person-files"]')?.textContent).toContain('log.txt')
+    })
+  })
+
   it('✍️ a resposta em escrita sobrevive à troca de tela; enviar limpa', async () => {
     localStorage.clear()
     let { host } = await mount('s1')

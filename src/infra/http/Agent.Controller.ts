@@ -53,7 +53,7 @@ import { AgentUnavailableError } from '@domain/errors/Domain.Error'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IConversationScope, toSharedConversation } from '@domain/models/Conversation.Model'
-import { IMessageInput } from '@domain/models/MessageInput.Model'
+import { base64Bytes, IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
 import { LIMIT_BOUNDS, liveLimit, UNLIMITED } from '@domain/models/Limits.Model'
@@ -114,6 +114,7 @@ import {
   renameConversationSchema,
   channelSchema,
   followTurnSchema,
+  replyMessageSchema,
   sendMessageSchema,
   shareAgentSchema,
   shareConversationSchema,
@@ -407,7 +408,8 @@ export class AgentController {
         const last = (await this.usecases.conversations.listTurns(conversationId)).at(-1)
         return last ? { index: last.index, text: last.text, notified: (last.toolCalls ?? []).some((call) => call.tool === NOTIFY_TOOL) } : undefined
       },
-      mirror: (conversationId, agentId, text) => this.usecases.personMessages?.mirror(conversationId, agentId, text),
+      mirror: (conversationId, agentId, text, options) => this.usecases.personMessages?.mirror(conversationId, agentId, text, options?.level ?? 'info', options?.replyTo),
+      answered: (conversationId, requestId) => this.usecases.personMessages?.answeredAfterReply(conversationId, requestId) ?? true,
     }))
   }
 
@@ -2669,17 +2671,20 @@ export class AgentController {
         const { service, recipientId, email } = await this.messagesOf()
         // O id do item: o de um pedido (a resposta é a ele) ou o da conversa.
         const key = req.params.conversationId as string
-        const text = String((req.body as { message?: unknown } | undefined)?.message ?? '')
+        // 📎 Os anexos com as mesmas regras do `POST /sessions/:id/messages` (quantos, o tamanho, o formato).
+        const { message: text, files } = parseBody(replyMessageSchema, req.body ?? {})
         const replyTo = replyToOf(req.body)
         // 🔌 Item da origem: a resposta vai para lá, e é lá que ela entra na conversa.
         const remote = await this.remoteItemOf(service, recipientId, email, key)
         if (remote) {
           if (!text.trim()) throw new HttpError(422, 'validation_error', 'message is required')
+          if (files?.length)
+            throw new HttpError(422, 'validation_error', 'attachments do not reach a connected project yet', [{ field: 'files', message: 'not supported for a connected project' }])
           return this.remote(() => this.usecases.connections!.replyRemoteMessage(remote.projectId, key, text, replyTo))
         }
         const resolved = await this.requireCaller()
         const authorName = (resolved.identity as { name?: string } | undefined)?.name || resolved.identity?.email || 'a pessoa'
-        return this.replyAs({ recipientId, key, text, replyTo, authorName })
+        return this.replyAs({ recipientId, key, text, replyTo, authorName, files })
       },
       { status: 202, message: 'Reply sent to the conversation' },
     )
@@ -2689,13 +2694,14 @@ export class AgentController {
    * 💬 O núcleo da resposta pela caixa (a rota daqui e a `/connect/:projectId/messages/:key/reply` da origem): confere o item da
    * pessoa, grava a resposta no fio, RETOMA a conversa se ela saiu da memória e roda o turno (ou entra na fila dele).
    */
-  async replyAs(input: { recipientId: string; key: string; text: string; replyTo?: string; authorName: string }): Promise<{ queued: boolean }> {
+  async replyAs(input: { recipientId: string; key: string; text: string; replyTo?: string; authorName: string; files?: IFileAttachment[] }): Promise<{ queued: boolean }> {
     const service = this.usecases.personMessages
     if (!service) throw new HttpError(404, 'not_found', 'Not found')
     const { recipientId, key: conversationId, text, replyTo } = input
     // A conversa primeiro: se ela não roda mais, a resposta nem entra no fio (não fica "respondido" sem ter ido).
     if (!service.thread(recipientId, conversationId).length) throw new HttpError(404, 'not_found', 'Not found')
-    if (!text.trim()) throw new HttpError(422, 'validation_error', 'message is required')
+    const files = input.files?.length ? input.files : undefined
+    if (!text.trim() && !files) throw new HttpError(422, 'validation_error', 'message is required')
     try {
       service.checkReplyTo(recipientId, conversationId, replyTo)
     } catch (error: unknown) {
@@ -2703,9 +2709,16 @@ export class AgentController {
       throw error
     }
     const session = await this.sessionForReply(service.resolve(recipientId, conversationId)?.conversationId ?? conversationId)
-    let reply: { input: string; agentId: string; conversationId: string }
+    let reply: { input: string; agentId: string; conversationId: string; requestId?: string }
     try {
-      reply = service.reply(recipientId, conversationId, text, input.authorName, replyTo)
+      reply = service.reply(
+        recipientId,
+        conversationId,
+        text,
+        input.authorName,
+        replyTo,
+        files?.map((file) => ({ name: file.name, mimeType: file.mimeType, size: base64Bytes(file.data) })),
+      )
     } catch (error: unknown) {
       if (error instanceof PersonMessageError && error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
       throw new HttpError(
@@ -2714,10 +2727,12 @@ export class AgentController {
         error instanceof Error ? error.message : String(error),
       )
     }
-    const message: IMessageInput = { text: reply.input }
-    // Conversa rodando: entra na fila do turno; quando ela parar, o último turno volta para o fio.
+    const message: IMessageInput = { text: reply.input, ...(files ? { files } : {}) }
+    // 🎯 O pedido respondido espera o fim do turno: o agente responde a ele com `notify` + `replyTo`, ou recebe o texto final.
+    this.replyMirror?.expect(reply.conversationId, reply.requestId)
+    // Conversa rodando: entra na fila do turno (os anexos juntos, na rodada seguinte); quando ela parar, fecha os pedidos.
     if (session.status === 'running' || this.liveTurns.has(reply.conversationId)) {
-      this.usecases.sendMessage.enqueue(reply.conversationId, reply.input)
+      this.usecases.sendMessage.enqueue(reply.conversationId, reply.input, files)
       void this.replyMirror?.whenIdle(reply.conversationId, reply.agentId)
       return { queued: true }
     }
@@ -2772,11 +2787,13 @@ export class AgentController {
   /** 💬 O turno que a resposta abriu terminou: o texto dele volta para o fio (a menos que o agente já tenha escrito com `notify`). */
   private mirrorFinished(conversationId: string, agentId: string): void {
     const finished = this.finishedTurns.get(conversationId) as { turn: number; tools?: string[]; status?: string; error?: string; text?: string } | undefined
-    if (!finished || (finished.tools ?? []).includes(NOTIFY_TOOL)) return
-    if (this.replyMirror?.wasMirrored(conversationId, finished.turn)) return
-    this.replyMirror?.markMirrored(conversationId, finished.turn)
-    if (finished.status === 'error') this.usecases.personMessages?.mirror(conversationId, agentId, `Não consegui responder: ${finished.error ?? 'o turno falhou'}`, 'attention')
-    else this.usecases.personMessages?.mirror(conversationId, agentId, finished.text ?? '')
+    if (!finished) return
+    this.replyMirror?.settle(conversationId, agentId, {
+      index: finished.turn,
+      text: finished.text ?? '',
+      notified: (finished.tools ?? []).includes(NOTIFY_TOOL),
+      ...(finished.status === 'error' ? { error: finished.error ?? '' } : {}),
+    })
   }
 
   async archiveConversation(req: Request, res: Response) {
