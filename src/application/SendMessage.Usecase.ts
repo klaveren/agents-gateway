@@ -2,7 +2,7 @@ import type { INextStepSuggester } from '@domain/ports/NextStepSuggester.Port'
 import { SessionBusyError, UsageCapReachedError } from '@domain/errors/Domain.Error'
 import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IStoredUsage } from '@domain/models/Conversation.Model'
-import { IMessageInput } from '@domain/models/MessageInput.Model'
+import { base64Bytes, IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { ITurnClassifier } from '@domain/ports/TurnClassifier.Port'
@@ -34,13 +34,6 @@ function usageOf(usage?: IUsage): IStoredUsage {
   }
 }
 
-/** Bytes do arquivo a partir do base64, sem decodificar o conteúdo. */
-function base64Size(data: string): number {
-  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0
-
-  return Math.max(Math.floor((data.length * 3) / 4) - padding, 0)
-}
-
 /**
  * Descritivo dos anexos, para o registro.
  *
@@ -51,7 +44,7 @@ function base64Size(data: string): number {
 function filesOf(input: IMessageInput): Array<{ name: string; mimeType: string; size: number }> | undefined {
   if (!input.files?.length) return undefined
 
-  return input.files.map((file) => ({ name: file.name, mimeType: file.mimeType, size: base64Size(file.data ?? '') }))
+  return input.files.map((file) => ({ name: file.name, mimeType: file.mimeType, size: base64Bytes(file.data ?? '') }))
 }
 
 /** Tempo do turno, medido pelos próprios eventos: até o último, e até o primeiro texto. */
@@ -163,8 +156,8 @@ export class SendMessageUseCase {
    * A mensagem para o turno que está rodando (ver `Interjection.Policy`): a posição na fila, ou nada quando a conversa não
    * está rodando (aí é um turno normal). Entra crua: o evento `message.injected` é que sai mascarado, como o resto.
    */
-  enqueue(sessionId: string, text: string): number | undefined {
-    return this.agentProvider.enqueue?.(sessionId, text)
+  enqueue(sessionId: string, text: string, files?: IFileAttachment[]): number | undefined {
+    return this.agentProvider.enqueue?.(sessionId, text, files)
   }
 
   /**

@@ -1,3 +1,4 @@
+import type { IFileAttachment } from '@domain/models/MessageInput.Model'
 import { newSessionId } from './Session.Key'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -52,6 +53,11 @@ export interface ISessionRecord {
   secretNames?: string[]
   /** As mensagens que esperam o turno rodando (ver `Interjection.Policy`). */
   queued?: string[]
+  /**
+   * 📎 Os anexos que vieram com mensagens da fila: com eles na fila, nada entra no meio da chamada (a lane só leva texto
+   * ali); tudo vai junto na rodada seguinte, os anexos com ela.
+   */
+  queuedFiles?: IFileAttachment[]
   metadata?: Record<string, unknown>
   abort?: AbortController
   native?: unknown

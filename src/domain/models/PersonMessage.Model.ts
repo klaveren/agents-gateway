@@ -52,6 +52,14 @@ export interface IPersonMessage {
   answeredAt?: Date
   /** Na resposta da pessoa: o id do pedido a que ela responde. */
   replyTo?: string
+  /** 📎 Na resposta da pessoa: os anexos que foram com ela para a conversa (só o nome, o tipo e o tamanho; o conteúdo vai ao turno). */
+  files?: IPersonMessageFile[]
+}
+
+export interface IPersonMessageFile {
+  name: string
+  mimeType: string
+  size: number
 }
 
 /**

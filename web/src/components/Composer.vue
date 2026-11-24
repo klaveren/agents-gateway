@@ -3,6 +3,7 @@
   import type { IOutgoingFile } from '@/stores/thread'
   import { shownSlashTab, SLASH_TABS, slashSuggestions, type ICommandHint, type TSlashKind } from '@/lib/commands'
   import { readDraft, writeDraft } from '@/lib/draftStorage'
+  import { useAttachments } from '@/composables/useAttachments'
   import Icon from './Icon.vue'
 
   /**
@@ -28,7 +29,6 @@
   const emit = defineEmits<{ send: [text: string, files: IOutgoingFile[], settle: (ok: boolean) => void]; stop: []; restored: []; appended: [] }>()
 
   const text = ref('')
-  const files = ref<IOutgoingFile[]>([])
   const area = ref<HTMLTextAreaElement>()
   const picker = ref<HTMLInputElement>()
 
@@ -72,59 +72,8 @@
     if (props.draftKey) writeDraft(props.draftKey, value)
   })
 
-  /** O conteúdo vai em base64 (`files[].data`), como a API espera. Vem do clipe, de arrastar ou de colar. */
-  async function addFiles(list: File[]) {
-    for (const file of list) {
-      const data = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
-        reader.onerror = () => reject(reader.error)
-        reader.readAsDataURL(file)
-      })
-      files.value.push({ name: pastedName(file), mimeType: file.type || 'application/octet-stream', data })
-    }
-  }
-
-  /** O print colado chega sempre como `image.png`: dois seguidos teriam o mesmo nome. */
-  function pastedName(file: File): string {
-    if (file.name && file.name !== 'image.png') return file.name
-    const extension = file.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png'
-    return `imagem-${new Date().toISOString().slice(11, 19).replaceAll(':', '')}-${files.value.length + 1}.${extension}`
-  }
-
-  async function attach(event: Event) {
-    const input = event.target as HTMLInputElement
-    await addFiles(Array.from(input.files ?? []))
-    input.value = ''
-  }
-
-  /** Colar com arquivo (um print, uma imagem copiada) anexa; colar só texto segue como sempre. */
-  function onPaste(event: ClipboardEvent) {
-    const pasted = Array.from(event.clipboardData?.files ?? [])
-    if (props.disabled || !pasted.length) return
-    event.preventDefault()
-    void addFiles(pasted)
-  }
-
-  /** Arrastar arquivo para cima da caixa anexa. `dragging` acende a borda enquanto ele está por cima. */
-  const dragging = ref(false)
-  const carriesFiles = (event: DragEvent) => !!event.dataTransfer?.types.includes('Files')
-  function onDragOver(event: DragEvent) {
-    if (props.disabled || !carriesFiles(event)) return
-    event.preventDefault()
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
-    dragging.value = true
-  }
-  function onDragLeave(event: DragEvent) {
-    const form = event.currentTarget as HTMLElement
-    if (!form.contains(event.relatedTarget as Node | null)) dragging.value = false
-  }
-  function onDrop(event: DragEvent) {
-    dragging.value = false
-    if (props.disabled || !carriesFiles(event)) return
-    event.preventDefault()
-    void addFiles(Array.from(event.dataTransfer?.files ?? []))
-  }
+  // 📎 Anexar: o clipe, colar e arrastar (o mesmo da resposta pelas Mensagens).
+  const { files, dragging, attach, onPaste, onDragOver, onDragLeave, onDrop } = useAttachments(() => !!props.disabled)
 
   function grow() {
     const element = area.value
