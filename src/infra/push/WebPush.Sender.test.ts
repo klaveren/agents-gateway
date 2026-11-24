@@ -85,10 +85,10 @@ describe('Web Push: a configuração do admin', () => {
   })
 
   it('importar um par: confere que a privada gera a pública, troca e desliga os aparelhos; a privada nunca sai em config()', () => {
-    const { push, repository } = build()
+    const { push } = build()
     push.subscribe('u_ana', { endpoint: APPLE, keys: KEYS })
-    const other = build().push
-    const pair = { publicKey: other.publicKey(), privateKey: (other as unknown as { repository: typeof repository }).repository.vapid()!.privateKey }
+    const other = build()
+    const pair = { publicKey: other.push.publicKey(), privateKey: other.repository.vapid()!.privateKey }
     assert.throws(() => push.importKeys(push.publicKey(), pair.privateKey), /does not match/)
     assert.throws(() => push.importKeys(pair.publicKey, 'curta'), PushError)
     push.importKeys(pair.publicKey, pair.privateKey)

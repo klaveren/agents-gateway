@@ -248,10 +248,9 @@ describe('probeKey', () => {
 const voiceCalls: Array<{ url: string; auth: string | null }> = []
 const voiceFetch = (async (url: string | URL | Request, init?: RequestInit) => {
   voiceCalls.push({ url: String(url), auth: new Headers(init?.headers).get('authorization') })
-  return new Response(
-    JSON.stringify({ output: { voice_list: [{ voice_id: 'qwen-audio-3.0-tts-flash-minha-1', target_model: 'qwen-audio-3.0-tts-flash', status: 'OK' }] } }),
-    { status: 200 },
-  )
+  return new Response(JSON.stringify({ output: { voice_list: [{ voice_id: 'qwen-audio-3.0-tts-flash-minha-1', target_model: 'qwen-audio-3.0-tts-flash', status: 'OK' }] } }), {
+    status: 200,
+  })
 }) as typeof fetch
 
 describe('catálogo de modelos (integração)', () => {

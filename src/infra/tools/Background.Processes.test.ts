@@ -51,9 +51,15 @@ describe('Background.Processes (o terminal longo)', () => {
     const marker = `sleep 78${process.pid % 10}`
     // O pai (node) segue vivo segurando o neto, que roda em sessão própria: fora do grupo do shell.
     const spawner = `require('child_process').spawn('/bin/sh', ['-c', '${marker}'], { detached: true, stdio: 'ignore' }); setInterval(() => {}, 1000)`
-    const started = startCommand(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(spawner)}`, { cwd: root, env: { PATH: process.env.PATH! }, shell: '/bin/bash', timeoutMs: 60_000 })
-    await until(() => alive(marker))
-    assert.strictEqual(alive(marker), true)
+    const started = startCommand(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(spawner)}`, {
+      cwd: root,
+      env: { PATH: process.env.PATH! },
+      shell: '/bin/bash',
+      timeoutMs: 60_000,
+    })
+    // O `sleep` de verdade, não o `sh -c` que ainda vai criá-lo (`^`: o começo da linha de comando).
+    await until(() => alive(`^${marker}`))
+    assert.strictEqual(alive(`^${marker}`), true)
     killGroup(started.pid)
     await started.done
     await until(() => !alive(marker))

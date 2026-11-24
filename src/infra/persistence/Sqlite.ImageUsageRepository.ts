@@ -36,7 +36,17 @@ export class SqliteImageUsageRepository {
   record(entry: IImageUsageEntry): void {
     this.db
       .prepare('INSERT INTO image_usage (at, user_id, project_id, agent_id, provider, model, input_tokens, output_tokens, total_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(entry.at.toISOString(), entry.userId, entry.projectId ?? null, entry.agentId ?? null, entry.provider, entry.model, entry.inputTokens, entry.outputTokens, entry.totalTokens)
+      .run(
+        entry.at.toISOString(),
+        entry.userId,
+        entry.projectId ?? null,
+        entry.agentId ?? null,
+        entry.provider,
+        entry.model,
+        entry.inputTokens,
+        entry.outputTokens,
+        entry.totalTokens,
+      )
   }
 
   /** As imagens de um instante em diante. */

@@ -61,7 +61,10 @@ export function processTable(): Map<number, number> {
   }
   try {
     for (const line of execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8', timeout: 5000 }).split('\n')) {
-      const [pid, ppid] = line.trim().split(/\s+/).map((part) => Number.parseInt(part, 10))
+      const [pid, ppid] = line
+        .trim()
+        .split(/\s+/)
+        .map((part) => Number.parseInt(part, 10))
       if (Number.isFinite(pid) && Number.isFinite(ppid)) table.set(pid, ppid)
     }
   } catch {
@@ -98,6 +101,26 @@ function signal(target: number, sig: NodeJS.Signals): boolean {
 }
 
 /**
+ * ⛔ A ÁRVORE CONGELADA: lida com tudo andando, um processo que cria um filho no meio da leitura deixa o filho de fora — e
+ * ele escapa, órfão, quando o pai morre. Congela (SIGSTOP) o grupo e cada descendente visto e relê até a árvore parar de
+ * crescer: parado, ninguém cria filho novo. Quem chama manda o SIGTERM e depois o SIGCONT.
+ */
+function frozenTree(pid: number): number[] {
+  signal(-pid, 'SIGSTOP')
+  signal(pid, 'SIGSTOP')
+  const frozen = new Set<number>()
+  for (let round = 0; round < 10; round += 1) {
+    const fresh = descendantsOf([pid]).filter((child) => !frozen.has(child))
+    if (fresh.length === 0) break
+    for (const child of fresh) {
+      signal(child, 'SIGSTOP')
+      frozen.add(child)
+    }
+  }
+  return [...frozen]
+}
+
+/**
  * ⛔ O GRUPO E A ÁRVORE: matar só o filho deixava o `sleep` neto vivo; matar só o grupo deixava quem abriu grupo ou
  * sessão própria (`setsid`, `detached` — o `validate-all.mjs` do `pnpm validate` seguiu 1 h). A árvore é lida ANTES do
  * SIGTERM: morto o pai, o neto vai para o `init` e some dela. No fim da graça, SIGKILL no grupo, em quem foi visto e em
@@ -105,10 +128,13 @@ function signal(target: number, sig: NodeJS.Signals): boolean {
  */
 export function killGroup(pid: number | undefined): void {
   if (!pid) return
-  const tree = descendantsOf([pid])
+  const tree = frozenTree(pid)
   const group = signal(-pid, 'SIGTERM')
   const leader = group || signal(pid, 'SIGTERM')
   for (const child of tree) signal(child, 'SIGTERM')
+  // Congelados, não tratavam o SIGTERM: voltam a andar só agora, já com ele pendente.
+  signal(-pid, 'SIGCONT')
+  for (const child of tree) signal(child, 'SIGCONT')
   if (!leader && tree.length === 0) return
   setTimeout(() => {
     // O pid só entra se o grupo dele ainda existe: saído, o número pode ter ido para outro processo.
