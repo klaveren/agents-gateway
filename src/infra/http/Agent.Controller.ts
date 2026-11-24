@@ -134,6 +134,7 @@ import { fromThisMachine } from './Drain.State'
 import { PushError, type WebPushSender } from '@infra/push/WebPush.Sender'
 import { z } from 'zod'
 import type { IHostApprovals } from '@application/HostApprovals.Service'
+import { ReplyMirror } from './Reply.Mirror'
 
 /**
  * As tools LOCAIS que um agente PODE receber — o perímetro, decidido no deploy.
@@ -395,6 +396,20 @@ export class AgentController {
   /** Os turnos assíncronos rodando (por conversa) e o resultado do último de cada uma, até o gravado chegar. */
   private readonly liveTurns = new Map<string, ILiveTurn>()
   private readonly finishedTurns = new Map<string, Record<string, unknown> & { turn: number }>()
+  /** A resposta pela caixa com a conversa rodando: uma espera por conversa, o mesmo turno uma vez só (ver `ReplyMirror`). */
+  private replyMirrorOwn?: ReplyMirror
+  private get replyMirror(): ReplyMirror | undefined {
+    const events = this.usecases.events
+    if (!events) return undefined
+    return (this.replyMirrorOwn ??= new ReplyMirror({
+      events,
+      lastTurn: async (conversationId) => {
+        const last = (await this.usecases.conversations.listTurns(conversationId)).at(-1)
+        return last ? { index: last.index, text: last.text, notified: (last.toolCalls ?? []).some((call) => call.tool === NOTIFY_TOOL) } : undefined
+      },
+      mirror: (conversationId, agentId, text) => this.usecases.personMessages?.mirror(conversationId, agentId, text),
+    }))
+  }
 
   constructor(private readonly usecases: IAgentControllerDeps) {
     this.health = this.health.bind(this)
@@ -2703,7 +2718,7 @@ export class AgentController {
     // Conversa rodando: entra na fila do turno; quando ela parar, o último turno volta para o fio.
     if (session.status === 'running' || this.liveTurns.has(reply.conversationId)) {
       this.usecases.sendMessage.enqueue(reply.conversationId, reply.input)
-      void this.mirrorWhenIdle(reply.conversationId, reply.agentId)
+      void this.replyMirror?.whenIdle(reply.conversationId, reply.agentId)
       return { queued: true }
     }
     const { done } = this.launch(reply.conversationId, session, message, undefined)
@@ -2756,32 +2771,12 @@ export class AgentController {
 
   /** 💬 O turno que a resposta abriu terminou: o texto dele volta para o fio (a menos que o agente já tenha escrito com `notify`). */
   private mirrorFinished(conversationId: string, agentId: string): void {
-    const finished = this.finishedTurns.get(conversationId) as { tools?: string[]; status?: string; error?: string; text?: string } | undefined
+    const finished = this.finishedTurns.get(conversationId) as { turn: number; tools?: string[]; status?: string; error?: string; text?: string } | undefined
     if (!finished || (finished.tools ?? []).includes(NOTIFY_TOOL)) return
+    if (this.replyMirror?.wasMirrored(conversationId, finished.turn)) return
+    this.replyMirror?.markMirrored(conversationId, finished.turn)
     if (finished.status === 'error') this.usecases.personMessages?.mirror(conversationId, agentId, `Não consegui responder: ${finished.error ?? 'o turno falhou'}`, 'attention')
     else this.usecases.personMessages?.mirror(conversationId, agentId, finished.text ?? '')
-  }
-
-  /** 💬 A resposta entrou na fila de um turno rodando: quando a conversa para, o último turno gravado volta para o fio. */
-  private async mirrorWhenIdle(conversationId: string, agentId: string): Promise<void> {
-    const events = this.usecases.events
-    if (!events) return
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => (unsubscribe(), resolve()), 60 * 60_000)
-      timer.unref?.()
-      const unsubscribe = events.subscribe((event) => {
-        if (event.type === 'conversation.idle' && event.sessionId === conversationId) {
-          clearTimeout(timer)
-          unsubscribe()
-          resolve()
-        }
-      })
-    })
-    // O turno é gravado um instante depois do fim.
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    const turns = await this.usecases.conversations.listTurns(conversationId).catch(() => [])
-    const last = turns.at(-1)
-    if (last && !(last.toolCalls ?? []).some((call) => call.tool === NOTIFY_TOOL)) this.usecases.personMessages?.mirror(conversationId, agentId, last.text)
   }
 
   async archiveConversation(req: Request, res: Response) {
