@@ -24,8 +24,10 @@ import {
   noProxyFor,
   projectPathIssue,
   ProjectSandbox,
+  releaseConversationWorkspace,
   sweepCommandLogs,
   sweepMountPoints,
+  sweepProjectMountPoints,
   systemReadAllowlist,
   withMacFileEvents,
   withMacLocalPorts,
@@ -571,6 +573,75 @@ describe('ProjectSandbox', () => {
     assert.ok(!existsSync(join(project, '.npmrc')), 'o último saiu: varre')
   })
 
+  it('⛔ a varredura é POR PASTA: o último comando de uma pasta a limpa, mesmo com outro rodando noutra pasta', async () => {
+    const srt = fakeSrt()
+    const sandbox = new ProjectSandbox(env, srt.load)
+    const plan = (base: Parameters<Parameters<ProjectSandbox['wrapWith']>[2]>[0]) => cercoPlan({}, { ...base, system: [] })
+    const alfa = join(root, 'por-pasta', 'alfa')
+    const beta = join(root, 'por-pasta', 'beta')
+    for (const dir of [alfa, beta]) mkdirSync(dir, { recursive: true })
+    const lineA = await sandbox.wrapWith('ls', alfa, plan, 'tok-pa')
+    const lineB = await sandbox.wrapWith('ls', beta, plan, 'tok-pb')
+    // O ponto que sobrou em cada pasta, com os dois rodando.
+    writeFileSync(join(alfa, 'package.json'), '')
+    writeFileSync(join(beta, 'package.json'), '')
+    sandbox.done(lineB)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(!existsSync(join(beta, 'package.json')), 'o último da beta saiu: a beta limpa, com o da alfa ainda rodando')
+    assert.ok(existsSync(join(alfa, 'package.json')), 'a alfa tem comando rodando: nada sai')
+    // Um comando novo na beta varre a beta, nunca a alfa (ocupada).
+    writeFileSync(join(beta, '.npmrc'), '')
+    const lineB2 = await sandbox.wrapWith('ls', beta, plan, 'tok-pb2')
+    assert.ok(!existsSync(join(beta, '.npmrc')))
+    assert.ok(existsSync(join(alfa, 'package.json')))
+    sandbox.done(lineA)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(!existsSync(join(alfa, 'package.json')), 'o último da alfa saiu: varre')
+    sandbox.done(lineB2)
+  })
+
+  it('⛔ pasta acima ou abaixo da de um comando rodando também espera: a worktree dentro do projeto não varre com o projeto ocupado', async () => {
+    const srt = fakeSrt()
+    const sandbox = new ProjectSandbox(env, srt.load)
+    const plan = (base: Parameters<Parameters<ProjectSandbox['wrapWith']>[2]>[0]) => cercoPlan({}, { ...base, system: [] })
+    const project = join(root, 'aninhado')
+    const worktree = join(project, 'repositories', 'app')
+    mkdirSync(worktree, { recursive: true })
+    const outer = await sandbox.wrapWith('ls', project, plan, 'tok-fora')
+    writeFileSync(join(worktree, 'package.json'), '')
+    // O da worktree começa e sai com o do projeto rodando: a worktree está DENTRO da pasta dele, o ponto pode ser dele.
+    const inner = await sandbox.wrapWith('ls', worktree, plan, 'tok-dentro')
+    assert.ok(existsSync(join(worktree, 'package.json')), 'com o projeto ocupado, a worktree não varre ao começar')
+    sandbox.done(inner)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(existsSync(join(worktree, 'package.json')), 'nem ao sair')
+    // O do projeto sai: a worktree, que esperava por ele, varre junto.
+    sandbox.done(outer)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(!existsSync(join(worktree, 'package.json')))
+  })
+
+  it('done(linha) solta o comando certo; uma linha desconhecida, ou nenhuma, solta o mais antigo', async () => {
+    const srt = fakeSrt()
+    const sandbox = new ProjectSandbox(env, srt.load)
+    const plan = (base: Parameters<Parameters<ProjectSandbox['wrapWith']>[2]>[0]) => cercoPlan({}, { ...base, system: [] })
+    const um = join(root, 'linhas', 'um')
+    const dois = join(root, 'linhas', 'dois')
+    for (const dir of [um, dois]) mkdirSync(dir, { recursive: true })
+    await sandbox.wrapWith('ls', um, plan, 'tok-l1')
+    const second = await sandbox.wrapWith('ls', dois, plan, 'tok-l2')
+    writeFileSync(join(um, 'yarn.lock'), '')
+    writeFileSync(join(dois, 'yarn.lock'), '')
+    sandbox.done(second)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepStrictEqual([existsSync(join(um, 'yarn.lock')), existsSync(join(dois, 'yarn.lock'))], [true, false])
+    sandbox.done('nao-foi-embrulhada')
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(!existsSync(join(um, 'yarn.lock')), 'sem achar a linha: o mais antigo')
+    // Sem comando rodando, um `done` a mais não quebra.
+    sandbox.done()
+  })
+
   it('⛔ comando cercado que falha ao embrulhar não deixa a conta aberta (a varredura segue valendo)', async () => {
     const srt = fakeSrt()
     const sandbox = new ProjectSandbox(env, srt.load)
@@ -922,6 +993,38 @@ describe('sweepMountPoints — as sobras de ponto de montagem na pasta do projet
     symlinkSync(real, join(base, 'link'))
     assert.deepStrictEqual(sweepMountPoints(join(base, 'link')), [])
     assert.ok(existsSync(join(real, 'package.json')))
+  })
+})
+
+describe('releaseConversationWorkspace — a pasta da conversa (o `cwd` do CLI do Claude)', () => {
+  const base = mkdtempSync(join(tmpdir(), 'gw-conversa-'))
+  after(() => rmSync(base, { recursive: true, force: true }))
+
+  it('⛔ varre os pontos de montagem e apaga a pasta só se ficou vazia; o que o agente gravou fica', () => {
+    const empty = join(base, 'vazia')
+    mkdirSync(join(empty, '.claude', 'commands'), { recursive: true })
+    for (const name of ['package.json', '.env', '.npmrc', 'bunfig.toml']) writeFileSync(join(empty, name), '')
+    assert.deepStrictEqual(releaseConversationWorkspace(empty, () => undefined).length, 6)
+    assert.ok(!existsSync(empty), 'vazia depois da varredura: sai')
+
+    const kept = join(base, 'com-arquivo')
+    mkdirSync(kept, { recursive: true })
+    writeFileSync(join(kept, 'package.json'), '')
+    writeFileSync(join(kept, 'notas.md'), 'do agente')
+    releaseConversationWorkspace(kept, () => undefined)
+    assert.ok(!existsSync(join(kept, 'package.json')))
+    assert.strictEqual(readFileSync(join(kept, 'notas.md'), 'utf8'), 'do agente', 'o que o agente gravou fica, e a pasta também')
+    assert.deepStrictEqual(releaseConversationWorkspace(join(base, 'nao-existe')), [])
+  })
+
+  it('no boot, a varredura dos projetos passa pelas pastas de conversa que um processo anterior deixou', () => {
+    const env = { CONVERSATIONS_DB: join(base, 'dados', 'gateway.db') } as NodeJS.ProcessEnv
+    const conversation = join(base, 'dados', 'projects', 'alfa', '.tmp', 'conversations', 'gw_1')
+    mkdirSync(conversation, { recursive: true })
+    writeFileSync(join(conversation, 'package.json'), '')
+    assert.ok(sweepProjectMountPoints(env).includes(join(conversation, 'package.json')))
+    assert.ok(!existsSync(conversation))
+    assert.ok(existsSync(join(base, 'dados', 'projects', 'alfa', '.tmp', 'conversations')), 'só a da conversa sai')
   })
 })
 
