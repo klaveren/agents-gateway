@@ -29,7 +29,8 @@ const str = (value: unknown) => (typeof value === 'string' && value.trim() ? val
  * - nada → com quem ele fala e as conversas abertas com cada um;
  * - `conversation` sem `message` → o estado dela (rodando? a última resposta);
  * - `message` → fala: numa conversa nova (`to`), na filha dele ou na da mesma pessoa com o outro agente (`conversation`);
- *   `wait: 0` não espera — a resposta entra depois nesta conversa, como mensagem do gateway.
+ *   `wait: 0` não espera — a resposta entra depois nesta conversa, como mensagem do gateway. O destino ocupado (num
+ *   turno) não recusa: a mensagem entra na fila dele e a resposta chega do mesmo jeito, sem esperar.
  * ⛔ As travas são as da delegação (`Delegation.Service`) e a regra `delegate` do projeto e do agente, aqui.
  */
 export function makeTalkTool(allowed: readonly string[], slot: DelegationSlot, permissions?: IPermissionChecker): ILocalTool {
@@ -37,7 +38,7 @@ export function makeTalkTool(allowed: readonly string[], slot: DelegationSlot, p
     origin: 'local',
     name: DELEGATE_TOOL_NAME,
     description:
-      "Talk to another agent — the ONLY way to (agents do not get start_conversation, send_message nor delegate_to_agent). No arguments: who you can talk to and the conversations already open with each (yours, and the ones the same person has with them in this project). `to` + `message`: a new conversation with that agent. `conversation` + `message`: continue that conversation (one you opened, or the person's own conversation with that agent — e.g. an id the person gave you). `conversation` alone: is it running, and its last reply. `wait: 0`: do not wait — the reply comes later into this conversation as a gateway message. Give the other agent everything it needs in `message`: it does not see this conversation.",
+      "Talk to another agent — the ONLY way to (agents do not get start_conversation, send_message nor delegate_to_agent). No arguments: who you can talk to and the conversations already open with each (yours, and the ones the same person has with them in this project). `to` + `message`: a new conversation with that agent. `conversation` + `message`: continue that conversation (one you opened, or the person's own conversation with that agent — e.g. an id the person gave you). `conversation` alone: is it running, and its last reply. `wait: 0`: do not wait — the reply comes later into this conversation as a gateway message. If the other agent is busy in a turn, the message is queued for it (never refused) and the reply comes into this conversation the same way — do not resend. Give the other agent everything it needs in `message`: it does not see this conversation.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -80,9 +81,16 @@ export function makeTalkTool(allowed: readonly string[], slot: DelegationSlot, p
       return {
         status: 'success',
         result: JSON.stringify(
-          outcome.pending
-            ? { to: outcome.agentId, conversation: outcome.sessionId, status: 'pending', note: 'the reply will come into this conversation as a gateway message' }
-            : { to: outcome.agentId, conversation: outcome.sessionId, reply: outcome.reply },
+          outcome.queued
+            ? {
+                to: outcome.agentId,
+                conversation: outcome.sessionId,
+                status: 'queued',
+                note: `${outcome.agentId} está ocupado; sua mensagem entrou na fila e a resposta chega nesta conversa quando ele responder. Não reenvie.`,
+              }
+            : outcome.pending
+              ? { to: outcome.agentId, conversation: outcome.sessionId, status: 'pending', note: 'the reply will come into this conversation as a gateway message' }
+              : { to: outcome.agentId, conversation: outcome.sessionId, reply: outcome.reply },
         ),
       }
     },

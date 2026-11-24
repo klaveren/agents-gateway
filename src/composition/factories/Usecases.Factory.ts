@@ -108,6 +108,8 @@ export function makeUsecases() {
       },
     ),
   )
+  // Com o destino num turno, a mensagem do `talk` entra na fila dele: pelo turno ao vivo a delegação vê a resposta sair.
+  makeTools().delegation.get()?.useLive(live)
   // O `talk` sem mensagem: com quem o agente fala, as conversas abertas com cada um e o estado de uma delas.
   makeTools()
     .delegation.get()
