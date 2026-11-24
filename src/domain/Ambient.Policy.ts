@@ -80,7 +80,7 @@ export function ambientSection(ambient: IAmbient): string {
   lines.push(waitLine(ambient))
   if (ambient.panel)
     lines.push(
-      '- Arquivo para a pessoa (CSV, relatório, imagem, PDF): entregue com `deliver_file` — ela baixa pelo botão na conversa. Ela não abre a sua pasta; não mande o caminho.',
+      '- Arquivo para a pessoa (CSV, relatório, imagem, PDF): entregue com `deliver_file` — ela baixa pelo botão na conversa. Ela não abre a sua pasta; não mande o caminho. Screenshot só para você ver a página fica na pasta; para mostrar à pessoa ou guardar como prova, entregue.',
     )
   if (ambient.panel)
     lines.push(

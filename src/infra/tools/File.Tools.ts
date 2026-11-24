@@ -594,7 +594,7 @@ export function deliverFileTool(deps: IFileToolDeps, deliveries: IFileDeliveries
     origin: 'local',
     name: DELIVER_FILE_TOOL,
     description:
-      'Hands a file you created to the person: it shows up in the chat as a download button, and stays there while the conversation exists. Use it whenever the person should get a file (CSV, report, image, PDF…) — the conversation folder is temporary and they cannot open it. Pass the path of the file (relative to your working folder, or absolute); at most 20 MB.',
+      'Hands a file you created to the person: it shows up in the chat as a download button, and stays there while the conversation exists. Use it whenever the person should get a file (CSV, report, image, PDF…) — the conversation folder is temporary and they cannot open it. A screenshot you took only to look at a page stays in the folder; deliver it only when it is for the person to see or to keep as evidence. Pass the path of the file (relative to your working folder, or absolute); at most 20 MB.',
     inputSchema: {
       type: 'object',
       properties: {
