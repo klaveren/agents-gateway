@@ -2,13 +2,15 @@
   import { computed, onBeforeUnmount, ref, watch } from 'vue'
   import { openRowId } from '@/composables/useOpenRow'
   import { shortTime } from '@/lib/format'
+  import { usePopover } from '@/lib/popover'
   import type { IPersonThread } from '@/stores/messages'
   import AgentAvatar from './AgentAvatar.vue'
   import Icon from './Icon.vue'
 
   /**
    * 💬 Uma linha da lista de Mensagens, com o mesmo "deslizar para revelar" da lista de conversas (ConversationRow): uma
-   * ação só (Arquivar, ou Voltar à caixa nas arquivadas) atrás da linha, à direita.
+   * ação só (Arquivar, ou Voltar à caixa nas arquivadas) atrás da linha, à direita. No mouse e no teclado, o mesmo num menu
+   * de três pontos (com "Marcar como resolvido"/"Reabrir" no pedido).
    */
   const props = defineProps<{
     thread: IPersonThread
@@ -20,7 +22,7 @@
     /** 🔊 A voz está lendo uma mensagem deste item agora. */
     speaking?: boolean
   }>()
-  const emit = defineEmits<{ archive: [key: string] }>()
+  const emit = defineEmits<{ archive: [key: string]; status: [key: string, status: 'resolved' | 'pending'] }>()
 
   /** A largura da ação revelada. */
   const ACTIONS_WIDTH = 72
@@ -66,8 +68,40 @@
   }
 
   function archive(): void {
+    menuOpen.value = false
     if (openRowId.value === id.value) openRowId.value = undefined
     emit('archive', id.value)
+  }
+
+  // ── Menu de três pontos ──────────────────────────────────────────────────────────────────────────
+
+  const { open: menuOpen, root: menuRoot } = usePopover()
+  /** O pedido do item já foi dado por resolvido (nada em aberto); sem `open` (origem antiga), vale o `pending`. */
+  const resolved = computed(() => (props.thread.open ?? props.thread.pending) === 0)
+
+  /**
+   * ⚠️ O menu sai da linha (`Teleport` para o `body`, `fixed`), como no de Conversas: dentro dela, o `overflow-x-clip` o
+   * cortava. A posição é a do botão, medida ao abrir; rolar ou redimensionar fecha.
+   */
+  const menuPlace = ref<{ top: number; right: number }>()
+  watch(menuOpen, (open) => {
+    const rect = menuRoot.value?.getBoundingClientRect()
+    menuPlace.value = open && rect ? { top: rect.bottom + 4, right: window.innerWidth - rect.right } : undefined
+    if (open) {
+      window.addEventListener('scroll', closeMenu, true)
+      window.addEventListener('resize', closeMenu)
+    } else {
+      window.removeEventListener('scroll', closeMenu, true)
+      window.removeEventListener('resize', closeMenu)
+    }
+  })
+  function closeMenu(): void {
+    menuOpen.value = false
+  }
+
+  function toggleStatus(): void {
+    menuOpen.value = false
+    emit('status', id.value, resolved.value ? 'pending' : 'resolved')
   }
 
   /** ⚖️ Solta: passou de 70% da linha arquiva; passou da metade da ação fica aberta; senão volta. */
@@ -165,6 +199,7 @@
   })
 
   onBeforeUnmount(() => {
+    closeMenu()
     clearTimeout(wheelTimer)
     clearTimeout(returnTimer)
     if (openRowId.value === id.value) openRowId.value = undefined
@@ -206,18 +241,49 @@
       @wheel="onWheel"
       @click.capture="onClickCapture"
     >
-      <!-- Teclado e mouse: o mesmo que o gesto, num botão que aparece com o foco ou o passar do mouse (no toque, é o gesto). -->
-      <button
-        type="button"
-        class="absolute top-2 right-2 z-10 rounded-full bg-zinc-800 p-1.5 text-zinc-300 opacity-0 group-hover:opacity-100 hover:text-zinc-50 focus:opacity-100 [@media(hover:none)]:hidden"
-        :title="archiveLabel"
-        :aria-label="archiveLabel"
-        data-test="message-thread-archive"
-        @pointerdown.stop
-        @click.stop="archive"
-      >
-        <Icon name="archive" class="h-3.5 w-3.5" />
-      </button>
+      <!-- Teclado e mouse: o mesmo que o gesto, num menu que aparece com o foco ou o passar do mouse (no toque, é o gesto). -->
+      <div ref="menuRoot" class="absolute top-1.5 right-1.5 z-10">
+        <button
+          type="button"
+          class="grid h-7 w-7 place-items-center rounded-full bg-zinc-900/90 text-zinc-300 opacity-0 group-hover:opacity-100 hover:bg-zinc-800 focus:opacity-100 [@media(hover:none)]:hidden"
+          :class="{ '!opacity-100': menuOpen }"
+          title="Mais ações"
+          aria-label="Mais ações"
+          aria-haspopup="menu"
+          :aria-expanded="menuOpen"
+          data-test="message-thread-menu"
+          @pointerdown.stop
+          @click.stop="menuOpen = !menuOpen"
+        >
+          <Icon name="more" class="h-4 w-4" />
+        </button>
+        <Teleport to="body">
+          <div
+            v-if="menuOpen && menuPlace"
+            role="menu"
+            class="fixed z-50 w-48 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 py-1 text-sm shadow-xl"
+            :style="{ top: `${menuPlace.top}px`, right: `${menuPlace.right}px` }"
+            @pointerdown.stop
+            @mousedown.stop
+          >
+            <button type="button" role="menuitem" class="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-zinc-800" data-test="message-thread-archive" @click="archive">
+              <Icon name="archive" class="h-4 w-4 text-emerald-400" />
+              {{ archiveLabel }}
+            </button>
+            <button
+              v-if="thread.requestId"
+              type="button"
+              role="menuitem"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-zinc-800"
+              data-test="message-thread-status"
+              @click="toggleStatus"
+            >
+              <Icon :name="resolved ? 'refresh' : 'check'" class="h-4 w-4 text-zinc-400" />
+              {{ resolved ? 'Reabrir' : 'Marcar como resolvido' }}
+            </button>
+          </div>
+        </Teleport>
+      </div>
       <RouterLink
         :to="`/messages/${thread.id}`"
         class="flex items-start gap-3 rounded-xl px-2 py-2.5 hover:bg-zinc-900"

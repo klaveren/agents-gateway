@@ -164,18 +164,46 @@ describe('Mensagens', () => {
 
   it('🗂️ arquiva direto da lista, sem abrir o fio', async () => {
     const { host, calls } = await mount()
-    host.querySelector<HTMLButtonElement>('[data-test="message-thread-archive"]')!.click()
+    host.querySelector<HTMLButtonElement>('[data-test="message-thread-menu"]')!.click()
+    await flush()
+    document.querySelector<HTMLButtonElement>('[data-test="message-thread-archive"]')!.click()
     await flush()
     expect(calls.find((call) => call.path === '/messages/s1/archive')?.init).toMatchObject({ method: 'PUT', body: { archived: true } })
     expect(host.querySelectorAll('[data-test="message-thread"]')).toHaveLength(0)
   })
 
-  it('"Arquivar lidas" leva só as lidas; a não lida fica', async () => {
-    const read = { ...thread, id: 's2', conversationId: 's2', unread: 0, last: { ...agentMessage, id: 'm2', conversationId: 's2' } }
-    const { host, calls } = await mount(undefined, [thread, read])
-    host.querySelector<HTMLButtonElement>('[data-test="archive-read"]')!.click()
+  it('"Arquivar resolvidas" (no menu ao lado da busca) leva o pedido resolvido e o aviso lido; pendente, respondido e não lido ficam', async () => {
+    const item = (id: string, over: Record<string, unknown>) => ({ ...thread, id, conversationId: 'c', unread: 0, last: { ...agentMessage, id }, ...over })
+    const threads = [
+      thread, // aviso não lido
+      item('info', {}), // aviso lido
+      item('m_pend', { requestId: 'm_pend', pending: 1, open: 1 }),
+      item('m_resp', { requestId: 'm_resp', pending: 0, open: 1 }), // respondido, não resolvido
+      item('m_res', { requestId: 'm_res', pending: 0, open: 0 }),
+      item('m_old', { requestId: 'm_old', pending: 0, origin: { projectId: 'p', url: 'http://x' } }), // origem antiga, sem `open`
+    ]
+    const { host, calls } = await mount(undefined, threads)
+    expect(host.querySelector('[data-test="archive-resolved"]')).toBeNull()
+    host.querySelector<HTMLButtonElement>('[data-test="messages-menu"]')!.click()
     await flush()
-    expect(calls.filter((call) => call.path.endsWith('/archive')).map((call) => call.path)).toEqual(['/messages/s2/archive'])
+    expect(host.querySelector('[data-test="resolved-count"]')?.textContent).toBe('2')
+    host.querySelector<HTMLButtonElement>('[data-test="archive-resolved"]')!.click()
+    await flush()
+    expect(calls.filter((call) => call.path.endsWith('/archive')).map((call) => call.path)).toEqual(['/messages/info/archive', '/messages/m_res/archive'])
+  })
+
+  it('o menu ao lado da busca leva às arquivadas e volta; sem resolvidas, não oferece arquivar', async () => {
+    const { host, calls } = await mount()
+    host.querySelector<HTMLButtonElement>('[data-test="messages-menu"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="archive-resolved"]')).toBeNull()
+    host.querySelector<HTMLButtonElement>('[data-test="archived-toggle"]')!.click()
+    await flush()
+    expect(calls.some((call) => call.path === '/messages' && (call.init?.query as Record<string, unknown> | undefined)?.archived === 1)).toBe(true)
+    expect(host.querySelector('h1')?.textContent).toBe('Arquivadas')
+    host.querySelector<HTMLButtonElement>('[data-test="messages-menu"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="archived-toggle"]')?.textContent).toContain('Voltar à caixa de entrada')
   })
 
   it('na tela estreita o fio aberto também arquiva (pela barra de cima)', async () => {

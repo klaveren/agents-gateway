@@ -11,9 +11,10 @@
   import { renderMarkdown } from '@/lib/markdown'
   import type { ITurn } from '@/lib/types'
   import { readDraft, writeDraft } from '@/lib/draftStorage'
+  import { usePopover } from '@/lib/popover'
   import { useAgentsStore } from '@/stores/agents'
   import { useSpeechStore } from '@/stores/speech'
-  import { useMessagesStore, type IOutgoingReply, type IPersonMessage, type IPersonThread } from '@/stores/messages'
+  import { isResolved, useMessagesStore, type IOutgoingReply, type IPersonMessage, type IPersonThread } from '@/stores/messages'
 
   /**
    * 💬 MENSAGENS: o que os agentes escreveram para a pessoa (`notify`), num fio por conversa — como um app de mensagens. A
@@ -228,17 +229,35 @@
     if (key === props.id) await router.push('/messages')
   }
 
-  /** As lidas da caixa, de uma vez: o que ainda precisa de você (não lida) fica. */
-  const readThreads = computed(() => (messages.archived ? [] : shown.value.filter((thread) => !thread.unread)))
-  const archivingRead = ref(false)
-  async function archiveRead() {
-    archivingRead.value = true
+  /** 📌 Dá o pedido por resolvido (ou o reabre) direto da lista, pelo menu da linha. */
+  async function setThreadStatus(key: string, status: 'resolved' | 'pending') {
+    const thread = messages.threads.find((candidate) => candidate.id === key)
+    if (!thread?.requestId) return
     try {
-      for (const thread of readThreads.value) await messages.archive(thread.id, true)
+      await messages.setStatus(key, thread.requestId, status)
+    } catch (failure) {
+      error.value = failure instanceof Error ? failure.message : String(failure)
+    }
+  }
+
+  /** As resolvidas da caixa, de uma vez: pedido ainda em aberto (pendente ou só respondido) e aviso não lido ficam. */
+  const resolvedThreads = computed(() => (messages.archived ? [] : shown.value.filter(isResolved)))
+  const archivingResolved = ref(false)
+  async function archiveResolved() {
+    archivingResolved.value = true
+    try {
+      for (const thread of resolvedThreads.value) await messages.archive(thread.id, true)
       if (props.id && !messages.threads.some((thread) => thread.id === props.id)) await router.push('/messages')
     } finally {
-      archivingRead.value = false
+      archivingResolved.value = false
     }
+  }
+
+  /** O menu de três pontos ao lado da busca, no desenho do de Conversas: arquivar as resolvidas e as arquivadas. */
+  const { open: menuOpen, root: menuRoot } = usePopover()
+  function pick(action: () => unknown) {
+    menuOpen.value = false
+    void action()
   }
 
   const snippet = (text: string) => text.replace(/\s+/g, ' ').slice(0, 140)
@@ -249,23 +268,8 @@
     <template #list>
       <section class="flex h-full flex-col" data-test="messages-list">
         <header class="flex items-center gap-2 px-4 pt-4 pb-2">
-          <h1 class="text-xl font-semibold">Mensagens</h1>
+          <h1 class="text-xl font-semibold">{{ messages.archived ? 'Arquivadas' : 'Mensagens' }}</h1>
           <span v-if="messages.unread" class="rounded-full bg-emerald-500 px-1.5 text-xs font-semibold text-zinc-950">{{ messages.unread }}</span>
-          <button
-            v-if="readThreads.length"
-            type="button"
-            class="btn btn-sm btn-ghost ml-auto"
-            :disabled="archivingRead"
-            title="Arquivar as conversas já lidas"
-            data-test="archive-read"
-            @click="archiveRead"
-          >
-            <Icon name="archive" class="h-4 w-4" />
-            Arquivar lidas
-          </button>
-          <button type="button" class="btn btn-sm btn-ghost" :class="readThreads.length ? '' : 'ml-auto'" @click="messages.showArchived(!messages.archived)">
-            {{ messages.archived ? 'Caixa de entrada' : 'Arquivadas' }}
-          </button>
         </header>
         <div class="flex items-center gap-2 px-4 pb-2 text-xs" data-test="push">
           <template v-if="push === 'on'">
@@ -281,13 +285,62 @@
           <span v-else-if="push === 'denied'" class="text-zinc-500">Notificações bloqueadas para este site nos ajustes do navegador.</span>
           <span v-if="pushError" class="text-rose-300">{{ pushError }}</span>
         </div>
-        <div class="px-4 pb-2">
+        <!-- A busca e o menu de três pontos: arquivar as resolvidas e ver as arquivadas. -->
+        <div class="flex items-center gap-1.5 px-4 pb-2">
           <input
             v-model="search"
             type="search"
-            class="h-9 w-full rounded-full bg-zinc-900 px-4 text-sm outline-none placeholder:text-zinc-500"
+            class="h-9 min-w-0 flex-1 rounded-full bg-zinc-900 px-4 text-sm outline-none placeholder:text-zinc-500"
             placeholder="Buscar por agente ou assunto…"
           />
+          <div ref="menuRoot" class="relative shrink-0">
+            <button
+              type="button"
+              class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800"
+              :class="menuOpen || messages.archived ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400'"
+              title="Mais opções"
+              aria-label="Mais opções"
+              aria-haspopup="menu"
+              :aria-expanded="menuOpen"
+              data-test="messages-menu"
+              @click="menuOpen = !menuOpen"
+            >
+              <Icon name="more" class="h-5 w-5" />
+            </button>
+            <div v-if="menuOpen" role="menu" class="absolute top-full right-0 z-50 mt-1 w-64 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40">
+              <div class="border-b border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-500">Mensagens</div>
+              <button
+                v-if="resolvedThreads.length"
+                type="button"
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                :disabled="archivingResolved"
+                data-test="archive-resolved"
+                @click="pick(archiveResolved)"
+              >
+                <Icon name="check" class="h-4 w-4 shrink-0 text-zinc-400" />
+                <span class="min-w-0 flex-1">
+                  <span class="block">Arquivar resolvidas</span>
+                  <span class="block truncate text-xs text-zinc-500">Pedidos resolvidos e avisos já lidos</span>
+                </span>
+                <span class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400" data-test="resolved-count">{{ resolvedThreads.length }}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-zinc-800"
+                :class="messages.archived ? 'text-emerald-300' : 'text-zinc-200'"
+                data-test="archived-toggle"
+                @click="pick(() => messages.showArchived(!messages.archived))"
+              >
+                <Icon name="archive" class="h-4 w-4 shrink-0 text-zinc-400" />
+                <span class="min-w-0 flex-1">
+                  <span class="block">{{ messages.archived ? 'Voltar à caixa de entrada' : 'Arquivadas' }}</span>
+                  <span class="block truncate text-xs text-zinc-500">{{ messages.archived ? 'As mensagens em aberto' : 'As mensagens que você guardou' }}</span>
+                </span>
+              </button>
+            </div>
+          </div>
         </div>
         <p v-if="messages.loaded && !shown.length" class="px-4 py-8 text-center text-sm text-zinc-500">
           {{ messages.archived ? 'Nenhuma mensagem arquivada.' : 'Nenhuma mensagem. Quando um agente precisar de você, ela aparece aqui.' }}
@@ -302,6 +355,7 @@
               :provider="agentProvider(thread.agentId)"
               :speaking="speech.current?.thread === thread.id"
               @archive="archiveThread"
+              @status="setThreadStatus"
             />
           </li>
         </ul>

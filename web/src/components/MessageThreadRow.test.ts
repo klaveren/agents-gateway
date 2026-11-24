@@ -196,15 +196,43 @@ describe('MessageThreadRow: clique e ação', () => {
     expect(offsetOf(slide)).toBe('translateX(0px)')
   })
 
-  it('a ação revelada e o botão de hover emitem archive; nas arquivadas o rótulo é Voltar à caixa', async () => {
+  it('a ação revelada e o menu de três pontos emitem archive; nas arquivadas o rótulo é Voltar à caixa', async () => {
     const host = await mount({ archived: true })
     sized(host)
     expect(host.querySelector('[data-action=archive]')!.textContent).toContain('Voltar à caixa')
 
     host.querySelector<HTMLElement>('[data-action=archive]')!.click()
-    host.querySelector<HTMLElement>('[data-test=message-thread-archive]')!.click()
+    host.querySelector<HTMLElement>('[data-test=message-thread-menu]')!.click()
+    await flush()
+    // O menu sai da linha (vai para o body).
+    const item = document.querySelector<HTMLElement>('[data-test=message-thread-archive]')!
+    expect(item.textContent).toContain('Voltar à caixa')
+    expect(document.querySelector('[data-test=message-thread-status]')).toBeNull()
+    item.click()
+    await flush()
 
     expect(archived).toEqual(['a', 'a'])
+    expect(document.querySelector('[data-test=message-thread-archive]')).toBeNull()
+  })
+
+  it('no pedido, o menu marca como resolvido (o respondido também) e reabre o resolvido', async () => {
+    const statuses: string[] = []
+    const onStatus = (_key: string, status: string) => statuses.push(status)
+    const host = await mount({ thread: thread('p', { requestId: 'p', pending: 0, open: 1 }), onStatus })
+    host.querySelector<HTMLElement>('[data-test=message-thread-menu]')!.click()
+    await flush()
+    const item = document.querySelector<HTMLElement>('[data-test=message-thread-status]')!
+    expect(item.textContent).toContain('Marcar como resolvido')
+    item.click()
+    app?.unmount()
+    document.body.innerHTML = ''
+
+    const resolved = await mount({ thread: thread('p', { requestId: 'p', pending: 0, open: 0 }), onStatus })
+    resolved.querySelector<HTMLElement>('[data-test=message-thread-menu]')!.click()
+    await flush()
+    expect(document.querySelector('[data-test=message-thread-status]')!.textContent).toContain('Reabrir')
+    document.querySelector<HTMLElement>('[data-test=message-thread-status]')!.click()
+    expect(statuses).toEqual(['resolved', 'pending'])
   })
 })
 

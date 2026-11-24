@@ -53,4 +53,15 @@ describe('Sqlite.PersonMessageRepository: migração do estado dos pedidos', () 
     repository.setStatus('u', 'c', 'r', 'pending', at)
     assert.deepStrictEqual([repository.thread('u', 'c')[0].status, repository.thread('u', 'c')[0].answeredAt], ['pending', undefined])
   })
+
+  it('threads: `open` conta o pedido pendente e o respondido; resolvido e aviso ficam de fora', () => {
+    const repository = new SqlitePersonMessageRepository(':memory:')
+    const base = { recipientId: 'u', conversationId: 'c', agentId: 'zeus', body: 'b', createdAt: new Date('2026-01-01T10:00:00Z') }
+    repository.insert({ ...base, id: 'p', from: 'agent', level: 'attention', status: 'pending' })
+    repository.insert({ ...base, id: 'a', from: 'agent', level: 'attention', status: 'answered' })
+    repository.insert({ ...base, id: 'r', from: 'agent', level: 'attention', status: 'resolved' })
+    repository.insert({ ...base, id: 'i', from: 'agent', level: 'info' })
+    const open = Object.fromEntries(repository.threads('u').map((thread) => [thread.id, [thread.pending, thread.open]]))
+    assert.deepStrictEqual(open, { p: [1, 1], a: [0, 1], r: [0, 0], c: [0, 0] })
+  })
 })
