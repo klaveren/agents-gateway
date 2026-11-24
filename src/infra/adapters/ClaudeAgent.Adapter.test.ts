@@ -17,7 +17,7 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { CLAUDE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
-import { CLAUDE_TOOL_NAMES, ClaudeAgentAdapter, cliEnv, cliSessionExists, preToolUse, windowOf } from './ClaudeAgent.Adapter'
+import { CLAUDE_TOOL_NAMES, ClaudeAgentAdapter, cliEnv, cliSessionExists, mcpPendingContext, preToolUse, windowOf } from './ClaudeAgent.Adapter'
 import { SessionStore } from '@infra/session/Session.Store'
 
 type TQuery = typeof query
@@ -404,6 +404,50 @@ describe('ClaudeAgentAdapter', () => {
     // ⚖️ O nome completo das do gateway vai no prompt: o modelo chamava `use_resource` sem o prefixo.
     assert.ok(String(seen[0].options?.systemPrompt).endsWith(CLAUDE_TOOL_NAMES))
     assert.match(CLAUDE_TOOL_NAMES, /mcp__local__use_resource/)
+  })
+
+  it('⚖️ o CLI espera os MCPs antes do 1.º turno, também sem conexão montada, e o ambiente do gateway segue', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true) })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    const env = seen[0].options?.env ?? {}
+    assert.strictEqual(env.MCP_CONNECTION_NONBLOCKING, '0')
+    assert.strictEqual(env.MCP_CONNECT_TIMEOUT_MS, '15000')
+    assert.strictEqual(env.MCP_TIMEOUT, '15000')
+    assert.strictEqual(env.PATH, process.env.PATH)
+  })
+
+  it('⚖️ MCP que não ligou a tempo: aviso no turno e ao modelo, com o pedido', async () => {
+    const seen: TQueryParams[] = []
+    const init = {
+      type: 'system',
+      subtype: 'init',
+      session_id: CLI_SESSION_ID,
+      mcp_servers: [
+        { name: 'local', status: 'connected' },
+        { name: 'mcp_crm', status: 'pending' },
+      ],
+    }
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(() => [init, ...turn().slice(1)], seen), catalog: catalogWith(true) })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.ok(events.some((event) => event.type === 'warning' && /MCP sem conexão neste turno/.test(String((event.payload as { message?: string }).message))))
+    const hook = seen[0].options?.hooks?.UserPromptSubmit?.[0]?.hooks[0]
+    assert.ok(hook)
+    const output = (await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' } as never, undefined, { signal: new AbortController().signal })) as {
+      hookSpecificOutput?: { additionalContext?: string }
+    }
+    assert.match(String(output.hookSpecificOutput?.additionalContext), /ainda está conectando.*não conclua que não existem/)
+  })
+
+  it('MCP conectado: sem aviso; sem init, o aviso não segura o pedido além do teto', async () => {
+    const hook = mcpPendingContext(Promise.resolve(undefined))
+    assert.deepStrictEqual(await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' } as never, undefined, { signal: new AbortController().signal }), {})
+    const never = mcpPendingContext(new Promise(() => {}), 10)
+    assert.deepStrictEqual(await never({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' } as never, undefined, { signal: new AbortController().signal }), {})
   })
 
   it('omits the remote server when no MCP is connected', async () => {
