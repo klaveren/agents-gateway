@@ -141,9 +141,21 @@ export function decide(subject: IPermissionSubject, layers: IPermissionLayers, s
     if (!hit.length) continue
     // ⚖️ Entre as que liberam, a EXATA vem antes do curinga: o portão só deixa a rede local passar com regra exata, e um
     // `network *` salvo antes de `10.10.0.1:22` fazia o `*` decidir (e a rede local ser recusada).
-    const rule = hit.find((item) => item.decision === 'deny') ?? hit.find((item) => !item.pattern.includes('*')) ?? hit[0]
-    const where = layer === 'agent' ? 'do agente' : 'do projeto'
-    return { allowed: rule.decision === 'allow', layer, rule, reason: `${rule.decision === 'allow' ? 'permitido' : 'negado'} pela regra ${where} "${rule.pattern}"` }
+    let rule = hit.find((item) => item.decision === 'deny') ?? hit.find((item) => !item.pattern.includes('*')) ?? hit[0]
+    let from: 'agent' | 'project' = layer
+    // ⚖️ ENTRE CAMADAS TAMBÉM: o `network *` do agente liberando não esconde a regra EXATA que o projeto já dá
+    // (`10.10.0.1:22`). Sem isso, o curinga decidia e o portão recusava a rede local, com a regra exata ali embaixo. Só
+    // troca curinga que libera por exata que libera: negar do projeto segue sem passar por cima do agente.
+    if (layer === 'agent' && rule.decision === 'allow' && rule.pattern.includes('*')) {
+      const exact = (layers.project ?? []).filter((item) => matches(item, subject))
+      const below = exact.some((item) => item.decision === 'deny') ? undefined : exact.find((item) => !item.pattern.includes('*'))
+      if (below) {
+        rule = below
+        from = 'project'
+      }
+    }
+    const where = from === 'agent' ? 'do agente' : 'do projeto'
+    return { allowed: rule.decision === 'allow', layer: from, rule, reason: `${rule.decision === 'allow' ? 'permitido' : 'negado'} pela regra ${where} "${rule.pattern}"` }
   }
   if (layers.machine && MACHINE_OPEN.includes(subject.category))
     return { allowed: true, layer: 'default', reason: `permitido: agente de máquina, sem regra de ${CATEGORY_LABEL[subject.category]} que negue` }
