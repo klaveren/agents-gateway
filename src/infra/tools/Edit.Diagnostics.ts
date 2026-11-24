@@ -188,7 +188,7 @@ function cercado(permissions: IPermissionChecker, sandbox: IProjectSandbox, root
       return await startCommand(wrapped, { cwd, env: subscriptionEnv({ HOME: realRoot }), shell: SANDBOX_SHELL, timeoutMs }).done
     } finally {
       gate.release(token)
-      if (wrapped) sandbox.done?.()
+      if (wrapped) sandbox.done?.(wrapped)
     }
   }
 }

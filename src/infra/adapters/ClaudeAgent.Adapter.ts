@@ -9,9 +9,9 @@ import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection, UnavailableProviderError } from './support/Keyed.Client'
-import { dataDir, workspaceFor, subscriptionEnv } from './support/Subscription.Workspace'
+import { conversationWorkspace, dataDir, workspaceFor, subscriptionEnv } from './support/Subscription.Workspace'
 import { query, type CanUseTool, type EffortLevel, type Options, type HookCallback, type PermissionResult, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import { IProjectSandbox, PATH_FIELDS, projectPathIssue, projectSandbox } from '@infra/sandbox/Project.Sandbox'
+import { IProjectSandbox, PATH_FIELDS, projectPathIssue, projectSandbox, releaseConversationWorkspace } from '@infra/sandbox/Project.Sandbox'
 import { deniedPath, type IOwnFolder, realOf } from '@infra/tools/File.Tools'
 import { askerOf } from '@infra/tools/Local.Tools'
 import type { IPermissionChecker } from '@application/Permissions.Service'
@@ -178,10 +178,18 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       return
     }
 
-    // ⚠️ O CLI já não tem a conversa (o turno caiu antes de ele gravar, ou a pasta se perdeu): o `resume` falharia com
-    // "No conversation found". Começa outra, com a transcrição na frente, como na retomada depois de um reinício.
+    // A pasta da conversa (repositório ou worktree, ver `Work.Folder`) vence a do projeto inteiro.
+    const workDir = context.workFolder?.dir ?? workspaceFor(agent.projectId, sessionId)
+    // ⛔ O `cwd` do CLI: sem repositório, uma pasta SÓ desta conversa dentro do projeto, nunca a raiz — o sandbox do CLI cria no `cwd`
+    // arquivos vazios (`package.json`, `.env*`) que quebravam o build de quem morava abaixo (ver `conversationWorkspace`). As regras
+    // e o filtro do projeto seguem contando da raiz (`workDir`); o caminho relativo resolve no `cwd`, como o CLI resolve.
+    const cliDir = !context.workFolder && agent.projectId ? conversationWorkspace(agent.projectId, sessionId) : workDir
+
     const configDir = env?.CLAUDE_CONFIG_DIR ?? (this.protocol === EProvider.CLAUDE_SUB ? join(homedir(), '.claude') : undefined)
-    if (native.started && configDir && !cliSessionExists(native.sdkSessionId, configDir)) {
+    // ⚠️ O CLI já não tem a conversa (o turno caiu antes de ele gravar, ou a pasta se perdeu): o `resume` falharia com
+    // "No conversation found". Começa outra, com a transcrição na frente, como na retomada depois de um reinício. O CLI só
+    // retoma a conversa da pasta do `cwd` dele: a que ficou no `cwd` antigo (a raiz do projeto) recomeça assim também.
+    if (native.started && configDir && !cliSessionExists(native.sdkSessionId, configDir, cliDir)) {
       record.native = undefined
       native = this.nativeOf(record)
       const handoff = handoffText(record.transcript ?? [], HANDOFF_MAX_CHARS, 'resume')
@@ -195,21 +203,19 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     const natives = nativeToolsOf(agent.allowedTools, EProvider.CLAUDE).flatMap((tool) => tool.sdkNames ?? [tool.sdkName])
     const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools, context)) ?? []
 
-    // A pasta da conversa (repositório ou worktree, ver `Work.Folder`) vence a do projeto inteiro.
-    const workDir = context.workFolder?.dir ?? workspaceFor(agent.projectId, sessionId)
     const project = agent.projectId || context.workFolder ? { projectId: agent.projectId ?? context.conversationProjectId ?? '', dir: workDir } : undefined
     const gate = this.makeGate(
       [...agent.allowedTools, ...natives, ...local.map((tool) => tool.name)],
       remotes,
       project,
-      { asker: askerOf(context), cwd: workDir, ...(context.workFolder ? { folder: context.workFolder } : {}) },
+      { asker: askerOf(context), cwd: cliDir, root: workDir, ...(context.workFolder ? { folder: context.workFolder } : {}) },
       Object.keys(context.secretEnv ?? {}),
       this.agentFolder?.(agent.id, context.conversationProjectId),
       agent.adminOnly === true,
       // Lida a cada chamada: parou de compartilhar, a pasta sai na próxima. Junto, a saída grande que o CLI guardou desta conversa.
       () => [...(this.sharedFolders?.(askerOf(context).projectId, agent.id) ?? []), ...cliToolResultDirs(sessionId)],
     )
-    const trackResults = () => configDir && trackCliToolResults(sessionId, { configDir, cwd: workDir, cliSessionId: native.sdkSessionId })
+    const trackResults = () => configDir && trackCliToolResults(sessionId, { configDir, cwd: cliDir, cliSessionId: native.sdkSessionId })
     trackResults()
     // ⛔ O CLI é um processo filho: o header do MCP do gateway fica no argv dele, ao alcance do agente. Leva a CONCESSÃO do
     // turno (ver `Grant.Credential`), nunca o token de quem conversa.
@@ -246,7 +252,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
                   matcher: [...EDIT_NATIVES].join('|'),
                   // As ferramentas rodam juntas: o tempo de uma, e uma folga.
                   timeout: (agent.diagnostics.timeoutSeconds ?? DEFAULT_DIAGNOSTICS_SECONDS) + 15,
-                  hooks: [postEdit((file) => this.diagnostics!.after(resolve(workDir, file), workDir, agent.diagnostics, context))],
+                  hooks: [postEdit((file) => this.diagnostics!.after(resolve(cliDir, file), workDir, agent.diagnostics, context))],
                 },
               ]
             : []),
@@ -261,8 +267,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
       // As variáveis do agente e a identidade de quem chama vão para o terminal do CLI (o Bash nativo) — ver `Agent.Identity`.
       ...(env ? { env: cliTerminalEnv(agent.env, env, context) } : {}),
-      // Toda lane num diretório vazio por conversa: o `cwd` do processo é a pasta do gateway (`.env`, banco).
-      cwd: workDir,
+      // Toda lane num diretório por conversa (ou no repositório dela): o `cwd` do processo é a pasta do gateway (`.env`, banco).
+      cwd: cliDir,
     }
 
     const effort = this.toEffort(record.reasoning)
@@ -431,7 +437,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       if (grant) turnGrants().release(grant)
       releaseInput()
       record.abort = undefined
-      stream.return(undefined).catch(() => undefined)
+      // ⛔ O CLI saiu do turno: os pontos de montagem do sandbox dele saem da pasta da conversa, e ela também, se ficou vazia.
+      const ended = stream.return(undefined).catch(() => undefined)
+      if (cliDir !== workDir) void ended.finally(() => releaseConversationWorkspace(cliDir))
     }
   }
 
@@ -488,7 +496,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     allowed: string[],
     remotes: readonly IAgentMcpServer[] = [],
     project?: { projectId: string; dir: string },
-    who?: { asker: ReturnType<typeof askerOf>; cwd: string; folder?: { dir: string; projectDir: string } },
+    who?: { asker: ReturnType<typeof askerOf>; cwd: string; root?: string; folder?: { dir: string; projectDir: string } },
     secretNames: readonly string[] = [],
     own?: IOwnFolder,
     adminOnly = false,
@@ -519,7 +527,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         // Na própria pasta, ela é a raiz (a do agente de projeto mora nos dados, fora da worktree): só os nomes protegidos valem.
         // ⛔ Só o `Read` alcança um repositório irmão do projeto, e só o liberado por regra de leitura (ver `siblingReader`).
         const sibling = bare === 'Read' && who && !folder.mine ? siblingReader(who.folder, this.permissions?.layers?.(who.asker)) : undefined
-        const protectedPath = protectedPathOf(bare, input, folder.mine ? own!.dir : project?.dir, sibling)
+        const protectedPath = protectedPathOf(bare, input, folder.mine ? own!.dir : project?.dir, sibling, folder.mine || !project ? undefined : who?.cwd)
         if (protectedPath) return { behavior: 'deny', message: `${protectedPath}: este arquivo é protegido.` }
         // ⛔ Bash, Grep e Glob do CLI rodam FORA do cerco e das regras (`terminal`/`read`/`write`, SYSTEM_RULES, Bash.Guard, rede
         // com token): leem o ambiente do gateway (/proc), o HOME e as pastas de outros agentes. Só o agente GLOBAL e `adminOnly`
@@ -554,7 +562,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private fileRefusal(
     bare: string,
     input: Record<string, unknown>,
-    who: { asker: ReturnType<typeof askerOf>; cwd: string; folder?: { dir: string; projectDir: string } },
+    who: { asker: ReturnType<typeof askerOf>; cwd: string; root?: string; folder?: { dir: string; projectDir: string } },
   ): string | undefined {
     if (bare === 'WebFetch') {
       let target: URL
@@ -572,7 +580,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     for (const field of PATH_FIELDS[bare] ?? []) {
       const value = input[field]
       if (typeof value !== 'string' || !value) continue
-      const root = realOf(who.cwd)
+      // O relativo resolve no `cwd` do CLI; a regra conta da raiz (a do projeto, quando o `cwd` é a pasta da conversa).
+      const root = realOf(who.root ?? who.cwd)
       const target = realOf(resolve(who.cwd, value))
       const inside = relative(root, target)
       const path = inside && !inside.startsWith('..') && !isAbsolute(inside) ? inside : target
@@ -620,7 +629,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     // O repositório irmão liberado: o `Read` de um arquivo dele (as regras e a lista protegida já decidiram acima).
     const wanted = bare === 'Read' && typeof input.file_path === 'string' && input.file_path ? realOf(resolve(cwd, input.file_path)) : undefined
     if (wanted && sibling?.(wanted)) return { behavior: 'allow' }
-    const issue = projectPathIssue(project.dir, project.dir, bare, input)
+    const issue = projectPathIssue(project.dir, cwd, bare, input)
     return issue ? { behavior: 'deny', message: `${issue}: o agente deste projeto só lê e grava na pasta dele.` } : { behavior: 'allow' }
   }
 
@@ -785,11 +794,18 @@ export function claudeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(dataDir(env), 'claude-cli')
 }
 
+/** O tamanho do nome de pasta que o CLI guarda inteiro (acima, corta e põe um sufixo). */
+const CLI_SLUG_MAX = 200
+
 /** O CLI ainda tem a conversa `id`? (`<config>/projects/<qualquer pasta>/<id>.jsonl`). */
-export function cliSessionExists(id: string, root = claudeConfigDir()): boolean {
+export function cliSessionExists(id: string, root = claudeConfigDir(), cwd?: string): boolean {
   const projects = join(root, 'projects')
   if (!existsSync(projects)) return false
-  return readdirSync(projects).some((dir) => existsSync(join(projects, dir, `${id}.jsonl`)))
+  // Com o `cwd`: só a pasta dele (o nome que o CLI dá, do caminho como veio e do real), que é onde o `resume` procura. ⚠️ Nome
+  // longo o CLI corta (e põe um sufixo): vale o começo.
+  const wanted = cwd ? [...new Set([cwd, realOf(cwd)].map((path) => path.replace(/[^a-zA-Z0-9]/g, '-')))] : undefined
+  const fits = (dir: string) => !wanted || wanted.some((slug) => dir === slug || (slug.length > CLI_SLUG_MAX && dir.startsWith(slug.slice(0, CLI_SLUG_MAX))))
+  return readdirSync(projects).some((dir) => fits(dir) && existsSync(join(projects, dir, `${id}.jsonl`)))
 }
 
 /** O texto de um `tool_result` (string ou blocos), para a mensagem de erro. */
@@ -806,11 +822,12 @@ function resultText(content: unknown): string {
 }
 
 /** O caminho protegido que uma nativa de arquivo do Claude pediu (ver `deniedPath`), ou nada. Glob relativo não aponta para fora. */
-function protectedPathOf(toolName: string, input: Record<string, unknown>, root = PROTECTED_ROOT, sibling?: (real: string) => boolean): string | undefined {
+function protectedPathOf(toolName: string, input: Record<string, unknown>, root = PROTECTED_ROOT, sibling?: (real: string) => boolean, cwd?: string): string | undefined {
   for (const field of PATH_FIELDS[toolName] ?? []) {
     const value = input[field]
     if (typeof value !== 'string' || !value || ((field === 'pattern' || field === 'glob') && !isAbsolute(value))) continue
-    const abs = resolve(root === PROTECTED_ROOT ? process.cwd() : root, value)
+    // O relativo resolve onde o CLI resolve: no `cwd` dele (a pasta da conversa), quando é outro que a raiz.
+    const abs = resolve(cwd ?? (root === PROTECTED_ROOT ? process.cwd() : root), value)
     const reason = deniedPath(abs, root, false, sibling)
     if (reason) return `${toolName}: ${value} (${reason})`
     if (WRITE_TOOLS.has(toolName) && isResourceFilePath(abs)) return `${toolName}: ${value} (resource files are read-only: edit them in the gateway)`

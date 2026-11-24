@@ -83,6 +83,21 @@ export function workspaceFor(projectId: string | undefined, sessionId: string): 
   return projectId ? projectWorkspace(projectId) : sessionWorkspace(sessionId)
 }
 
+/** Onde moram as pastas de conversa dentro do projeto (ver `conversationWorkspace`). */
+export const CONVERSATIONS_DIR = join('.tmp', 'conversations')
+
+/**
+ * ⛔ A PASTA DE UMA CONVERSA DENTRO DO PROJETO: `<projeto>/.tmp/conversations/<sessão>`. É o `cwd` do CLI do Claude numa conversa
+ * de projeto sem repositório. O sandbox do CLI cria no `cwd` arquivos vazios para negar (`package.json`, `.env*`, `.npmrc`…); na
+ * raiz do projeto eles quebravam o build de quem morava abaixo (o `package.json` vazio, lido subindo a árvore). Aqui ficam só
+ * desta conversa, e a pasta sai no fim do turno se ficou vazia (ver `releaseConversationWorkspace`).
+ */
+export function conversationWorkspace(projectId: string, sessionId: string, env: NodeJS.ProcessEnv = process.env): string {
+  const dir = join(projectWorkspace(projectId, env), CONVERSATIONS_DIR, sessionId.replace(/[^a-zA-Z0-9_-]/g, '_') || 'sem-conversa')
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  return dir
+}
+
 /** O HOME de um cliente que espalha dotfiles (o Codex) num projeto: `<projeto>/.home`, e não a raiz da pasta. */
 export function projectHome(projectId: string): string {
   const dir = join(projectWorkspace(projectId), '.home')
