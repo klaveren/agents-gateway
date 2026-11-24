@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises'
 import { printsSecret } from '@domain/models/ResourceSecret.Model'
 import { cliTerminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
@@ -20,6 +21,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { reasoningLevel } from '@domain/Reasoning.Levels'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { interjectionNote } from '@domain/Interjection.Policy'
+import { mcpPendingNote, mcpWaitEnv, unavailableMcpServers } from '@domain/McpConnection.Policy'
 import { DEFAULT_DIAGNOSTICS_SECONDS, diagnosticsOn, IAgent } from '@domain/models/Agent.Model'
 import type { IEditDiagnostics } from '@infra/tools/Edit.Diagnostics'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -220,6 +222,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     // ⛔ O CLI é um processo filho: o header do MCP do gateway fica no argv dele, ao alcance do agente. Leva a CONCESSÃO do
     // turno (ver `Grant.Credential`), nunca o token de quem conversa.
     const grant = remotes.some(usesGatewayCredential) ? turnGrants().register({ tools: [], context: { ...context, sessionId } }) : undefined
+    // Os servidores remotos do agente pelo nome no CLI: o `init` diz quais ligaram, e o aviso usa o nome que o agente conhece.
+    const expectedServers = new Map(remotes.map((remote) => [claudeMcpServerName(remote.config.id), remote.config.name || remote.config.id]))
+    let reportMcp!: (note: string | undefined) => void
+    const mcpNote = new Promise<string | undefined>((resolve) => (reportMcp = resolve))
     const options: Options = {
       model: record.model,
       // ⚖️ No Claude, as do gateway vêm com prefixo: o modelo chamava `use_resource` (sem ele) e inventava `mcp__local__Read`.
@@ -241,6 +247,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // chaves, dados do gateway) seriam pulados.
       // O detector de laço (ver `Loop.Guard`) vale aqui para as nativas e as do MCP; as locais já passam por ele ao rodar.
       hooks: {
+        // O servidor que não ligou a tempo vira aviso ao modelo, no mesmo turno (ver `McpConnection.Policy`).
+        ...(expectedServers.size ? { UserPromptSubmit: [{ hooks: [mcpPendingContext(mcpNote)] }] } : {}),
         PreToolUse: [{ hooks: [preToolUse(gate, (tool, args) => (tool.startsWith(`mcp__${LOCAL_SERVER_NAME}__`) ? undefined : this.loops?.check(sessionId, tool, args)))] }],
         PostToolUse: [
           // A mensagem que a pessoa mandou com o turno rodando entra depois da próxima ferramenta (ver `Interjection.Policy`).
@@ -266,7 +274,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       abortController: abort,
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
       // As variáveis do agente e a identidade de quem chama vão para o terminal do CLI (o Bash nativo) — ver `Agent.Identity`.
-      ...(env ? { env: cliTerminalEnv(agent.env, env, context) } : {}),
+      // ⚖️ Sempre, também sem conexão montada (aí o ambiente é o do gateway, como o SDK já faria): o CLI espera os MCPs
+      // antes do 1.º turno, com teto (ver `McpConnection.Policy`).
+      env: cliTerminalEnv(agent.env, { ...(env ?? process.env), ...mcpWaitEnv() }, context),
       // Toda lane num diretório por conversa (ou no repositório dela): o `cwd` do processo é a pasta do gateway (`.env`, banco).
       cwd: cliDir,
     }
@@ -306,6 +316,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
           const enabled = new Set((message as { tools?: string[] }).tools ?? [])
           const missing = natives.filter((name) => !enabled.has(name))
           if (missing.length) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `O SDK do Claude não ligou: ${missing.join(', ')}.` } }
+
+          const pending = unavailableMcpServers((message as { mcp_servers?: { name: string; status: string }[] }).mcp_servers, expectedServers)
+          reportMcp(pending.length ? mcpPendingNote(pending) : undefined)
+          if (pending.length) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `MCP sem conexão neste turno: ${pending.join(', ')}.` } }
           continue
         }
 
@@ -772,6 +786,20 @@ function postInterjection(take: () => string[]): HookCallback {
     if (input.hook_event_name !== 'PostToolUse') return {}
     const arrived = take()
     return arrived.length ? { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: interjectionNote(arrived) } } : {}
+  }
+}
+
+/** Quanto o aviso de MCP espera o `init` do turno: o `init` vem antes do pedido, isto é só a rede se ele faltar. */
+const MCP_NOTE_WAIT_MS = 5_000
+
+/** O `UserPromptSubmit`: o aviso dos MCPs que não ligaram vai ao modelo junto com o pedido. */
+export function mcpPendingContext(note: Promise<string | undefined>, waitMs: number = MCP_NOTE_WAIT_MS): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== 'UserPromptSubmit') return {}
+    const stop = new AbortController()
+    const late = sleep(waitMs, undefined, { signal: stop.signal }).catch(() => undefined)
+    const text = await Promise.race([note, late]).finally(() => stop.abort())
+    return text ? { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: text } } : {}
   }
 }
 
