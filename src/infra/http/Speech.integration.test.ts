@@ -144,7 +144,10 @@ describe('Voz (integração)', () => {
     assert.ok(all.totals.usage.totalTokens >= 60)
     const mine = (await call('/usage/me', { token: member })).body.result
     assert.strictEqual(mine.byAgent.find((item: { agentId: string }) => item.agentId === 'voice-messages').turns, 2)
-    assert.strictEqual((await call('/usage/me', { token: admin })).body.result.byAgent.some((item: { agentId: string }) => item.agentId === 'voice-messages'), false)
+    assert.strictEqual(
+      (await call('/usage/me', { token: admin })).body.result.byAgent.some((item: { agentId: string }) => item.agentId === 'voice-messages'),
+      false,
+    )
   })
 
   it('🖼️ a imagem aparece na tela Uso sob o agente que a pediu, e só para a pessoa dona (mesmas linhas que o teto lê)', async () => {
@@ -156,7 +159,10 @@ describe('Voz (integração)', () => {
     assert.deepStrictEqual([zeus.turns, zeus.usage.inputTokens, zeus.usage.outputTokens], [1, 5, 400])
     const top = mine.top.find((item: { id: string }) => item.id === `image:${userId}`)
     assert.deepStrictEqual([top.title, top.agentId], ['Imagens', 'zeus'])
-    assert.strictEqual((await call('/usage/me', { token: admin })).body.result.byAgent.some((item: { agentId: string }) => item.agentId === 'zeus'), false)
+    assert.strictEqual(
+      (await call('/usage/me', { token: admin })).body.result.byAgent.some((item: { agentId: string }) => item.agentId === 'zeus'),
+      false,
+    )
   })
 
   it('🔊 configurações da voz: provider e modelo juntos, provider existente com chave', async () => {

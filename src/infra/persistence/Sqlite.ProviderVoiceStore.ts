@@ -35,7 +35,9 @@ export class SqliteProviderVoiceStore implements IProviderVoiceStore {
 
   set(providerId: string, voices: IProviderVoice[], at: Date): void {
     this.db
-      .prepare('INSERT INTO provider_voices (provider_id, voices, fetched_at) VALUES (?, ?, ?) ON CONFLICT (provider_id) DO UPDATE SET voices = excluded.voices, fetched_at = excluded.fetched_at')
+      .prepare(
+        'INSERT INTO provider_voices (provider_id, voices, fetched_at) VALUES (?, ?, ?) ON CONFLICT (provider_id) DO UPDATE SET voices = excluded.voices, fetched_at = excluded.fetched_at',
+      )
       .run(providerId, JSON.stringify(voices), at.toISOString())
   }
 

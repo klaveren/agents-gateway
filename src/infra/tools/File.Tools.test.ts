@@ -424,11 +424,7 @@ describe('File.Tools — ⛔ repositório irmão do projeto (só leitura, por re
   })
 
   it('lê o irmão com `read allow repositories/B/**`, na camada do agente e na do projeto, e com padrão absoluto', async () => {
-    for (const layers of [
-      { agent: [rule('read', 'repositories/B/**')] },
-      { project: [rule('read', 'repositories/B/**')] },
-      { agent: [rule('read', `${repoB}/**`)] },
-    ])
+    for (const layers of [{ agent: [rule('read', 'repositories/B/**')] }, { project: [rule('read', 'repositories/B/**')] }, { agent: [rule('read', `${repoB}/**`)] }])
       assert.match(String((await read(layers, join(repoB, 'README.md'))).result), /readme de B/)
     // A pasta da própria conversa segue como sempre.
     assert.match(String((await read({}, 'a.txt')).result), /de A/)
