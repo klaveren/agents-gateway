@@ -7,13 +7,13 @@ import type { IPermissionChecker } from '@application/Permissions.Service'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import { askerOf } from './Local.Tools'
 import { ILocalTool, IToolResult } from './Tool.Types'
+import { pagedText, readBudgetChars } from '@domain/Reading.Policy'
 
 export const FETCH_URL_TOOL = 'fetch_url'
 
 const MAX_REDIRECTS = 5
 const TIMEOUT_MS = 20_000
 const MAX_BYTES = 3 * 1024 * 1024
-const MAX_CHARS = 40_000
 const TEXTUAL = /^(text\/|application\/(json|xml|xhtml\+xml|rss\+xml|atom\+xml|ld\+json|javascript))/
 
 /**
@@ -29,7 +29,7 @@ export function fetchUrlTool(permissions?: IPermissionChecker): ILocalTool {
     origin: 'local',
     name: FETCH_URL_TOOL,
     description:
-      'Opens a web page (http/https) and returns its readable text (HTML is converted; JSON, XML and plain text come as they are). Long pages are cut. Use it to read a URL the person gave or a search result.',
+      'Opens a web page (http/https) and returns its readable text (HTML is converted; JSON, XML and plain text come as they are). Long pages come whole, split in parts, up to a reading ceiling. Use it to read a URL the person gave or a search result.',
     inputSchema: {
       type: 'object',
       properties: { url: { type: 'string', description: 'The full URL, with http:// or https://' } },
@@ -63,7 +63,7 @@ export function fetchUrlTool(permissions?: IPermissionChecker): ILocalTool {
             target = new URL(location, target)
             continue
           }
-          return await answer(target, response)
+          return await answer(target, response, context?.readBudgetChars ?? readBudgetChars())
         }
         return { status: 'error', result: `fetch_url: more than ${MAX_REDIRECTS} redirects.` }
       } catch (error) {
@@ -101,7 +101,7 @@ function open(target: URL, address: string): Promise<IncomingMessage> {
   })
 }
 
-async function answer(target: URL, response: IncomingMessage): Promise<IToolResult> {
+async function answer(target: URL, response: IncomingMessage, budgetChars: number): Promise<IToolResult> {
   const status = response.statusCode ?? 0
   const type = String(response.headers['content-type'] ?? '').toLowerCase()
   if (type && !TEXTUAL.test(type)) {
@@ -110,7 +110,8 @@ async function answer(target: URL, response: IncomingMessage): Promise<IToolResu
   }
   const { body, cut } = await readBody(response)
   const text = type.includes('html') || /^\s*<(!doctype html|html)/i.test(body) ? htmlText(body) : body.trim()
-  const clipped = text.length > MAX_CHARS ? `${text.slice(0, MAX_CHARS)}\n\n[… cut at ${MAX_CHARS} characters]` : text
+  // 📖 A página inteira, em partes, até o teto da leitura (ver `Reading.Policy`).
+  const clipped = pagedText(text, budgetChars, () => 'O resto da página não cabe nesta leitura: procure a parte que falta por um endereço mais específico.').text
   const head = `URL: ${target.href}\nStatus: ${status}${cut ? ' (body cut at 3 MB)' : ''}\n\n`
   return { status: status >= 400 ? 'error' : 'success', result: `${head}${clipped || '(empty page)'}` }
 }

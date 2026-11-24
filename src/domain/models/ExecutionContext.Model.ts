@@ -45,6 +45,11 @@ export interface IExecutionContext {
    * Claude, o shell do Codex e do Antigravity). Nunca vai ao modelo nem ao log; os valores já estão na máscara da conversa.
    */
   secretEnv?: Readonly<Record<string, string>>
+  /**
+   * 📖 O TETO DE UMA LEITURA LONGA (ver `Reading.Policy`), em caracteres: 25% da janela do modelo do turno. Ausente = o da
+   * janela padrão.
+   */
+  readBudgetChars?: number
 }
 
 /** A pasta resolvida e o git dela (o `.git` comum de uma worktree fica fora da pasta). */
