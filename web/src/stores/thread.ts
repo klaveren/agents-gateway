@@ -118,6 +118,8 @@ export interface IThreadAux {
   panelCount?: number
   plansWaiting?: number
   changesCount?: number
+  /** Os arquivos que o agente entregou na conversa (o contador do item Arquivos). */
+  deliveredCount?: number
   children?: IConversation[]
 }
 

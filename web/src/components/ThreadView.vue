@@ -90,10 +90,10 @@
   const { hidden: listHidden, toggle: toggleList } = useListHidden()
   const LiveBrowser = defineAsyncComponent(() => import('./LiveBrowser.vue'))
   /**
-   * 🧭 A COLUNA LATERAL da conversa é UMA: navegador, arquivos, alterações, board ou terminal, um de cada vez, com a
+   * 🧭 A COLUNA LATERAL da conversa é UMA: navegador, repositório, arquivos entregues, alterações, board ou terminal, um de cada vez, com a
    * barra de ícones em cima para trocar num clique. Cada `xxxOpen` é só uma vista dela.
    */
-  type TSidePane = 'changes' | 'files' | 'board' | 'browser' | 'terminal'
+  type TSidePane = 'changes' | 'files' | 'deliveries' | 'board' | 'browser' | 'terminal'
   const sidePane = ref<TSidePane>()
   const sideFlag = (pane: TSidePane) =>
     computed({
@@ -116,6 +116,7 @@
     () => {
       sidePane.value = undefined
       keepMounted.value = new Set()
+      deliveredSelected.value = undefined
       browserSeen.value = false
     },
   )
@@ -143,19 +144,43 @@
   function openBrowser() {
     panelOpen.value = false
     filesOpen.value = false
+    deliveriesOpen.value = false
     changesOpen.value = false
     terminalOpen.value = false
     browserOpen.value = true
   }
-  /** 📁 Os arquivos do repositório da conversa (Monaco): a mesma coluna ao lado, no lugar do navegador. */
+  /** 📁 O REPOSITÓRIO da conversa (os arquivos dele no Monaco): a mesma coluna ao lado, no lugar do navegador. */
   const RepositoryFiles = defineAsyncComponent(() => import('./RepositoryFiles.vue'))
   const filesOpen = sideFlag('files')
   function openFiles() {
     panelOpen.value = false
     browserOpen.value = false
+    deliveriesOpen.value = false
     changesOpen.value = false
     terminalOpen.value = false
     filesOpen.value = true
+  }
+  /**
+   * 📎 Os ARQUIVOS que o agente entregou na conversa (com ou sem repositório): a lista e o visualizador, sem executar
+   * nada do arquivo (ver `fileViewer.ts`). O chip do arquivo no turno abre aqui, com ele escolhido.
+   */
+  const ConversationFiles = defineAsyncComponent(() => import('./ConversationFiles.vue'))
+  const deliveriesOpen = sideFlag('deliveries')
+  const deliveredCount = computed({ get: () => thread.aux.deliveredCount ?? 0, set: (value) => (thread.aux.deliveredCount = value) })
+  const deliveredSelected = ref<string>()
+  const deliveriesRefresh = ref(0)
+  function openDeliveries(fileId?: string) {
+    // De novo o mesmo arquivo (a pessoa escolheu outro na lista no meio): passa por vazio para o painel ver a troca.
+    if (fileId) {
+      deliveredSelected.value = undefined
+      void nextTick(() => (deliveredSelected.value = fileId))
+    }
+    panelOpen.value = false
+    browserOpen.value = false
+    filesOpen.value = false
+    changesOpen.value = false
+    terminalOpen.value = false
+    deliveriesOpen.value = true
   }
   /**
    * ⌨️ Os atalhos da coluna lateral, no padrão do VS Code: ⌘⇧B navegador, ⌘⇧E arquivos, ⌃⇧G alterações. De novo, fecha.
@@ -187,9 +212,10 @@
   const sideItems = computed(() =>
     [
       { id: 'changes' as const, label: 'Alterações', icon: 'git' as const, keys: '⌃⇧G', show: inRepository.value },
-      { id: 'files' as const, label: 'Arquivos', icon: 'folder' as const, keys: '⌘⇧E', show: inRepository.value && !!thread.sessionId },
+      { id: 'deliveries' as const, label: 'Arquivos', icon: 'doc' as const, keys: '', show: deliveredCount.value > 0 && !!header.value },
       { id: 'board' as const, label: 'Board', icon: 'panel' as const, keys: '', show: !!header.value },
       { id: 'browser' as const, label: 'Navegador', icon: 'globe' as const, keys: '⌘⇧B', show: !!thread.sessionId },
+      { id: 'files' as const, label: 'Repositório', icon: 'folder' as const, keys: '⌘⇧E', show: inRepository.value && !!thread.sessionId },
       { id: 'terminal' as const, label: 'Terminal', icon: 'slash' as const, keys: '⌃`', show: terminalAvailable.value },
     ].filter((item) => item.show),
   )
@@ -200,6 +226,7 @@
     panelOpen.value = false
     browserOpen.value = false
     filesOpen.value = false
+    deliveriesOpen.value = false
     terminalOpen.value = false
     changesOpen.value = true
   }
@@ -217,6 +244,7 @@
     panelOpen.value = false
     browserOpen.value = false
     filesOpen.value = false
+    deliveriesOpen.value = false
     changesOpen.value = false
     terminalOpen.value = true
   }
@@ -307,6 +335,26 @@
         changesRefresh.value += 1
         void loadChangesCount()
       }
+    },
+  )
+  async function loadDeliveredCount() {
+    const id = header.value?.id
+    if (!id) return void (deliveredCount.value = 0)
+    const files = await api<unknown[]>(`/conversations/${encodeURIComponent(id)}/files`).catch(() => undefined)
+    if (id === header.value?.id && files) deliveredCount.value = files.length
+  }
+  watch(
+    () => header.value?.id,
+    () => afterPrimary('deliveries', () => void loadDeliveredCount()),
+    { immediate: true },
+  )
+  // Terminou um turno: o agente pode ter entregue arquivo (o contador e o painel aberto se atualizam).
+  watch(
+    () => !!thread.pending,
+    (running, before) => {
+      if (!before || running) return
+      if (deliveriesOpen.value) deliveriesRefresh.value += 1
+      else void loadDeliveredCount()
     },
   )
   const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.draft?.agentId ?? ''))
@@ -728,20 +776,22 @@
                   <kbd class="pl-2 font-sans text-[10px] text-zinc-500" :class="{ 'ml-auto': !changesCount }">⌃⇧G</kbd>
                 </button>
                 <button
-                  v-if="inRepository && thread.sessionId"
+                  v-if="deliveredCount > 0 && header"
                   role="menuitem"
                   class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
-                  data-test="files-item"
-                  @click="fromMenu(openFiles)"
+                  data-test="deliveries-item"
+                  @click="fromMenu(() => openDeliveries())"
                 >
-                  <Icon name="folder" class="h-4 w-4 text-zinc-400" />
+                  <Icon name="doc" class="h-4 w-4 text-zinc-400" />
                   Arquivos
-                  <kbd class="ml-auto pl-2 font-sans text-[10px] text-zinc-500">⌘⇧E</kbd>
+                  <span class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300" data-test="deliveries-count">{{ deliveredCount }}</span>
                 </button>
                 <button
                   role="menuitem"
                   class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
-                  @click="fromMenu(() => ((panelOpen = !panelOpen), (browserOpen = false), (filesOpen = false), (changesOpen = false), (terminalOpen = false)))"
+                  @click="
+                    fromMenu(() => ((panelOpen = !panelOpen), (browserOpen = false), (filesOpen = false), (deliveriesOpen = false), (changesOpen = false), (terminalOpen = false)))
+                  "
                 >
                   <Icon name="panel" class="h-4 w-4 text-zinc-400" />
                   Board
@@ -758,6 +808,17 @@
                   Navegador
                   <kbd class="ml-auto pl-2 font-sans text-[10px] text-zinc-500">⌘⇧B</kbd>
                   <span v-if="browserSeen" class="ml-auto h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                </button>
+                <button
+                  v-if="inRepository && thread.sessionId"
+                  role="menuitem"
+                  class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                  data-test="files-item"
+                  @click="fromMenu(openFiles)"
+                >
+                  <Icon name="folder" class="h-4 w-4 text-zinc-400" />
+                  Repositório
+                  <kbd class="ml-auto pl-2 font-sans text-[10px] text-zinc-500">⌘⇧E</kbd>
                 </button>
                 <button
                   v-if="terminalAvailable"
@@ -868,7 +929,9 @@
           <p v-else-if="header" class="mx-auto rounded-full bg-zinc-900/80 px-3 py-1 text-xs text-zinc-400">Começou em {{ fullTime(header.createdAt) }}</p>
           <template v-for="(turn, index) in thread.turns" :key="`${turn.sessionId}-${turn.index}`">
             <p v-if="switchBefore(index)" class="mx-auto rounded-full border border-zinc-800 px-3 py-0.5 font-mono text-[11px] text-zinc-500">{{ switchBefore(index) }}</p>
-            <div :data-turn="turn.index" class="flex flex-col gap-5 rounded-2xl transition-colors"><TurnBubbles :turn="turn" :show-cost="projects.manages" /></div>
+            <div :data-turn="turn.index" class="flex flex-col gap-5 rounded-2xl transition-colors">
+              <TurnBubbles :turn="turn" :show-cost="projects.manages" @open-file="openDeliveries" />
+            </div>
           </template>
           <TurnBubbles v-if="thread.pending" :pending="thread.pending" :show-cost="projects.manages" />
           <p v-if="thread.error" class="mx-auto text-sm text-rose-300">{{ thread.error }}</p>
@@ -976,6 +1039,13 @@
             <ConversationPanel :conversation-id="header.id" :refresh-key="panelRefresh" @count="panelCount = $event" @waiting="plansWaiting = $event" />
           </div>
         </div>
+        <ConversationFiles
+          v-else-if="sidePane === 'deliveries' && header"
+          :conversation-id="header.id"
+          :selected="deliveredSelected"
+          :refresh-key="deliveriesRefresh"
+          @count="deliveredCount = $event"
+        />
         <RepositoryFiles
           v-if="keepMounted.has('files') && thread.sessionId"
           v-show="sidePane === 'files'"

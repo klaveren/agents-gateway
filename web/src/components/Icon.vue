@@ -47,6 +47,7 @@
       | 'tokens'
       | 'forward'
       | 'pick'
+      | 'eye'
   }>()
 </script>
 
@@ -178,6 +179,10 @@
     </template>
     <template v-else-if="name === 'refresh'"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4" /></template>
     <template v-else-if="name === 'download'"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></template>
+    <template v-else-if="name === 'eye'">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </template>
     <template v-else-if="name === 'external'"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></template>
   </svg>
 </template>

@@ -4855,6 +4855,17 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'The file', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, '404': failures['404'] },
       },
     },
+    '/conversations/{id}/files/{fileId}/view': {
+      get: {
+        summary:
+          "A delivered file's content for the screen's viewer: the real type, inline, `nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`. The screen fetches it and builds a blob; it never runs the file's content. Who can see the conversation",
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'fileId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'The file', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, '404': failures['404'] },
+      },
+    },
     '/secret-requests': {
       post: {
         summary:
