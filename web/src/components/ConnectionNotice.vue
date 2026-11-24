@@ -46,7 +46,10 @@
 
 <template>
   <!-- Flutuante, no canto: não empurra a tela de ninguém. No celular, acima da barra de navegação. -->
-  <div v-if="shown.length || updated.length || skipped.length" class="fixed right-3 bottom-[calc(4.75rem+var(--safe-bottom))] z-40 flex max-w-sm flex-col gap-2 md:bottom-4">
+  <div
+    v-if="shown.length || updated.length || skipped.length"
+    class="fixed top-[calc(0.75rem+env(safe-area-inset-top))] left-1/2 z-40 flex w-[min(24rem,calc(100vw-1.5rem))] -translate-x-1/2 flex-col gap-2"
+  >
     <div
       v-if="updated.length"
       class="flex flex-col overflow-hidden rounded-xl border border-emerald-500/40 bg-emerald-950/95 shadow-lg"
