@@ -6114,7 +6114,7 @@ export const OPENAPI_DOCUMENT = {
       },
       put: {
         summary:
-          'Save the fallback groups of the project (`{ groups, defaultModelGroup }`, the whole list). Each step must be a model the project received, with the provider enabled and the model enabled in the catalog; the default may be a project or a gateway group, or `none`. Project administrators',
+          'Save the fallback groups of the project (`{ groups, defaultModelGroup }`, the whole list). Each step must be a model the project received, with the provider enabled and the model enabled in the catalog; the default may be a project or a gateway group, or `none`; a group an agent of the project uses cannot be removed. Project administrators',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,

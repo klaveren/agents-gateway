@@ -5,7 +5,7 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
 import { CATALOG_KINDS, TCatalogKind } from '@domain/Catalog.Document'
-import { MODEL_GROUP_BOUNDS, MODEL_GROUP_ID, SWITCHABLE_FAILURES } from '@domain/Fallback.Policy'
+import { MODEL_GROUP_BOUNDS, MODEL_GROUP_ID, NO_MODEL_GROUP, SWITCHABLE_FAILURES } from '@domain/Fallback.Policy'
 import type { TProviderFailure } from '@domain/Provider.Failure'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
 import type { IAgent } from '@domain/models/Agent.Model'
@@ -391,6 +391,34 @@ function withoutLiteHidden(server: McpServer): McpServer {
   })
 }
 
+/** 🔁 Os grupos de fallback de um projeto e o padrão dele (a rota da tela: quem administra o projeto). */
+async function projectGroups(
+  api: TSelfApi,
+  projectId: string,
+): Promise<{ ok: true; groups: Array<{ id: string }>; defaultModelGroup?: string } | { ok: false; reply: ISelfReply }> {
+  const current = await api('GET', `/projects/${encodeURIComponent(projectId)}/model-groups`)
+  if (!current.ok) return { ok: false, reply: current }
+  const result = current.result as { groups?: Array<{ id: string }>; defaultModelGroup?: string }
+  return { ok: true, groups: result.groups ?? [], ...(result.defaultModelGroup ? { defaultModelGroup: result.defaultModelGroup } : {}) }
+}
+
+/** Grava as listas inteiras do projeto pela rota da tela (as mesmas travas e validações). */
+function putProjectGroups(api: TSelfApi, projectId: string, groups: unknown[], defaultModelGroup: string | undefined) {
+  return api('PUT', `/projects/${encodeURIComponent(projectId)}/model-groups`, { body: { groups, defaultModelGroup: defaultModelGroup ?? null } })
+}
+
+/** Grupo do GATEWAY pedido por quem só administra projeto: diz o que fazer em vez de um 404 mudo. */
+function gatewayOnly() {
+  return {
+    ...text({
+      status: 403,
+      code: 'forbidden',
+      message: 'Only a gateway administrator changes the gateway model groups: pass `projectId` for the groups of a project you administer',
+    }),
+    isError: true,
+  }
+}
+
 /** Onde as ferramentas de sistema caem para quem não administra o gateway. */
 const NO_TOOLS = { registerTool: () => undefined } as unknown as McpServer
 
@@ -587,18 +615,37 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     async ({ scope, id }) => reply(await api('GET', `/${scope === 'agent' ? 'agents' : 'resources'}/${encodeURIComponent(id)}/secrets`)),
   )
 
-  system.registerTool(
+  server.registerTool(
     'list_model_groups',
     {
       description:
-        'The model groups (Settings → model groups): ordered steps (provider + model) and when to switch. An agent points to one (`modelGroup`; absent = `defaultModelGroup`, `none` = no switching): a conversation opened without a model starts at the first available step, and when a model fails (quota, rate limit, model unavailable…) the conversation moves to the next step and STAYS there. Edit them with save_model_group / delete_model_group.',
+        'The model groups (fallback): ordered steps (provider + model) and when to switch. An agent points to one (`modelGroup`; absent = the default group, `none` = no switching): a conversation opened without a model starts at the first available step, and when a model fails (quota, rate limit, model unavailable…) the conversation moves to the next step and STAYS there. Without `projectId`: the GATEWAY groups and default (gateway administrators). With `projectId`: the groups and default of that PROJECT (its administrators) plus the gateway groups it inherits (`inherited`); a group id is looked up in the project first, and the project default wins over the gateway one. Edit them with save_model_group / delete_model_group / set_default_model_group.',
+      inputSchema: { projectId: z.string().trim().min(1).optional().describe('The project; absent = the gateway groups.') },
       annotations: { readOnlyHint: true },
     },
-    async () =>
-      reply(await api('GET', '/settings'), (result) => {
-        const settings = result as { modelGroups?: unknown[]; defaultModelGroup?: string }
-        return { defaultModelGroup: settings.defaultModelGroup ?? null, modelGroups: settings.modelGroups ?? [] }
-      }),
+    async ({ projectId }) => {
+      if (!projectId) {
+        if (!access.gateway) return gatewayOnly()
+        return reply(await api('GET', '/settings'), (result) => {
+          const settings = result as { modelGroups?: unknown[]; defaultModelGroup?: string }
+          return { defaultModelGroup: settings.defaultModelGroup ?? null, modelGroups: settings.modelGroups ?? [] }
+        })
+      }
+      const own = await projectGroups(api, projectId)
+      if (!own.ok) return reply(own.reply)
+      const gateway = await api('GET', '/model-groups')
+      if (!gateway.ok) return reply(gateway)
+      const inherited = gateway.result as { groups?: Array<{ id: string }>; defaultModelGroup?: string }
+      const shadowed = new Set(own.groups.map((group) => group.id))
+      return text({
+        projectId,
+        defaultModelGroup: own.defaultModelGroup ?? null,
+        gatewayDefaultModelGroup: inherited.defaultModelGroup ?? null,
+        effectiveDefaultModelGroup: own.defaultModelGroup ?? inherited.defaultModelGroup ?? null,
+        modelGroups: own.groups,
+        inherited: (inherited.groups ?? []).filter((group) => !shadowed.has(group.id)).map((group) => ({ ...group, inherited: true })),
+      })
+    },
   )
 
   system.registerTool(
@@ -1102,12 +1149,13 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     async ({ providerId, modelId, ...price }) => reply(await api('PUT', `/providers/${encodeURIComponent(providerId)}/models`, { body: { modelId, price } })),
   )
 
-  system.registerTool(
+  server.registerTool(
     'save_model_group',
     {
       description:
-        'Create or replace ONE model group by id (the others stay): ordered `steps` (provider + model, both must be enabled and the provider running), `switchOn` (failures that move to the next step; absent = quota, rate_limit, model) and `cooldownMinutes`. Send every field, since an omitted one falls back to its default. Every problem comes back at once.',
+        'Create or replace ONE model group by id (the others stay): ordered `steps` (provider + model, both must be enabled and the provider running; in a project, also released to the project), `switchOn` (failures that move to the next step; absent = quota, rate_limit, model) and `cooldownMinutes`. Without `projectId`: a GATEWAY group (gateway administrators). With `projectId`: a group of that PROJECT (its administrators); the same id as a gateway group overrides it there. Send every field, since an omitted one falls back to its default. Every problem comes back at once.',
       inputSchema: {
+        projectId: z.string().trim().min(1).optional().describe('The project; absent = a gateway group.'),
         id: z.string().trim().regex(MODEL_GROUP_ID, '2–48 lowercase letters, digits or hyphens'),
         name: z.string().trim().min(1).max(MODEL_GROUP_BOUNDS.name),
         description: z.string().trim().max(MODEL_GROUP_BOUNDS.description).optional(),
@@ -1119,36 +1167,99 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
         cooldownMinutes: z.number().int().min(MODEL_GROUP_BOUNDS.cooldownMinutes.min).max(MODEL_GROUP_BOUNDS.cooldownMinutes.max).optional(),
       },
     },
-    async (group) => {
+    async ({ projectId, ...group }) => {
+      const replace = (groups: Array<{ id: string }>) => {
+        const list = groups.slice()
+        const at = list.findIndex((item) => item.id === group.id)
+        if (at >= 0) list[at] = group
+        else list.push(group)
+        return list
+      }
+      if (projectId) {
+        // ⚖️ Lê e regrava a lista inteira pela rota da tela (mesmas travas); o padrão do projeto vai junto, senão a rota o limparia.
+        const own = await projectGroups(api, projectId)
+        if (!own.ok) return reply(own.reply)
+        return reply(await putProjectGroups(api, projectId, replace(own.groups), own.defaultModelGroup), (result) => ({
+          projectId,
+          saved: group.id,
+          modelGroups: (result as { groups?: unknown[] }).groups ?? [],
+        }))
+      }
+      if (!access.gateway) return gatewayOnly()
       // ⚖️ Lê, troca só esta e grava a lista pelo PUT /settings: a validação da tela vale (passo ativo, provider que roda).
       const current = await api('GET', '/settings')
       if (!current.ok) return reply(current)
-      const groups = ((current.result as { modelGroups?: Array<{ id: string }> }).modelGroups ?? []).slice()
-      const at = groups.findIndex((item) => item.id === group.id)
-      if (at >= 0) groups[at] = group
-      else groups.push(group)
-      return reply(await api('PUT', '/settings', { body: { modelGroups: groups } }), (result) => ({
+      return reply(await api('PUT', '/settings', { body: { modelGroups: replace((current.result as { modelGroups?: Array<{ id: string }> }).modelGroups ?? []) } }), (result) => ({
         saved: group.id,
         modelGroups: (result as { modelGroups?: unknown[] }).modelGroups ?? [],
       }))
     },
   )
 
-  system.registerTool(
+  server.registerTool(
     'delete_model_group',
     {
-      description: 'Delete one model group by id. Refused while an agent uses it or it is the default group.',
-      inputSchema: { id: z.string().trim().min(1) },
+      description:
+        'Delete one model group by id. Without `projectId`: a GATEWAY group (gateway administrators); with `projectId`: a group of that PROJECT (its administrators). Refused while an agent uses it or it is the default group.',
+      inputSchema: { projectId: z.string().trim().min(1).optional().describe('The project; absent = a gateway group.'), id: z.string().trim().min(1) },
       annotations: { destructiveHint: true },
     },
-    async ({ id }) => {
+    async ({ projectId, id }) => {
+      const unknown = () => ({ ...text({ status: 404, code: 'not_found', message: `unknown model group: ${id}` }), isError: true })
+      if (projectId) {
+        const own = await projectGroups(api, projectId)
+        if (!own.ok) return reply(own.reply)
+        if (!own.groups.some((item) => item.id === id)) return unknown()
+        if (own.defaultModelGroup === id)
+          return {
+            ...text({ status: 422, code: 'validation_error', message: `${id} is the default group of the project: change it first (set_default_model_group)` }),
+            isError: true,
+          }
+        return reply(
+          await putProjectGroups(
+            api,
+            projectId,
+            own.groups.filter((item) => item.id !== id),
+            own.defaultModelGroup,
+          ),
+          (result) => ({ projectId, deleted: id, modelGroups: (result as { groups?: unknown[] }).groups ?? [] }),
+        )
+      }
+      if (!access.gateway) return gatewayOnly()
       const current = await api('GET', '/settings')
       if (!current.ok) return reply(current)
       const groups = (current.result as { modelGroups?: Array<{ id: string }> }).modelGroups ?? []
-      if (!groups.some((item) => item.id === id)) return { ...text({ status: 404, code: 'not_found', message: `unknown model group: ${id}` }), isError: true }
+      if (!groups.some((item) => item.id === id)) return unknown()
       return reply(await api('PUT', '/settings', { body: { modelGroups: groups.filter((item) => item.id !== id) } }), (result) => ({
         deleted: id,
         modelGroups: (result as { modelGroups?: unknown[] }).modelGroups ?? [],
+      }))
+    },
+  )
+
+  server.registerTool(
+    'set_default_model_group',
+    {
+      description:
+        'Set the DEFAULT model group: the one of every agent that points to none. Without `projectId`: the gateway default (gateway administrators); `groupId` = a gateway group, or `none`/empty/null = no default (a failing model ends the turn). With `projectId`: the default of that PROJECT (its administrators), which wins over the gateway one; `groupId` = a project or gateway group, `none` = no switching in the project, or empty/null = back to the gateway default.',
+      inputSchema: {
+        projectId: z.string().trim().min(1).optional().describe('The project; absent = the gateway default.'),
+        groupId: z.string().trim().max(48).nullable().describe('A group id, `none`, or empty/null (see the description).'),
+      },
+    },
+    async ({ projectId, groupId }) => {
+      const wanted = groupId || undefined
+      if (projectId) {
+        const own = await projectGroups(api, projectId)
+        if (!own.ok) return reply(own.reply)
+        return reply(await putProjectGroups(api, projectId, own.groups, wanted), (result) => ({
+          projectId,
+          defaultModelGroup: (result as { defaultModelGroup?: string }).defaultModelGroup ?? null,
+        }))
+      }
+      if (!access.gateway) return gatewayOnly()
+      return reply(await api('PUT', '/settings', { body: { defaultModelGroup: wanted === NO_MODEL_GROUP ? null : (wanted ?? null) } }), (result) => ({
+        defaultModelGroup: (result as { defaultModelGroup?: string }).defaultModelGroup ?? null,
       }))
     },
   )
