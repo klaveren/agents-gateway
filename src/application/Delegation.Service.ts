@@ -3,6 +3,7 @@ import { DELEGATED_BY, DELEGATED_FROM, DELEGATION_CHAIN, DELEGATION_DEPTH, deleg
 import { EMode } from '@domain/enums/EMode.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { ITurnLive } from '@domain/ports/TurnLive.Port'
 import { CreateSessionUseCase } from './CreateSession.Usecase'
 import { SendMessageUseCase } from './SendMessage.Usecase'
 
@@ -72,7 +73,12 @@ export function ownIssue(parent: IStoredConversation & { id: string }, target: I
   return undefined
 }
 
-export type TDelegationResult = { ok: true; agentId: string; sessionId: string; reply: string; pending?: boolean } | { ok: false; error: string }
+export type TDelegationResult = { ok: true; agentId: string; sessionId: string; reply: string; pending?: boolean; queued?: boolean } | { ok: false; error: string }
+
+type TOutcome = { ok: true; reply: string } | { ok: false; error: string }
+
+/** Quantas vezes a mensagem volta para a fila quando o destino começou outro turno entre uma tentativa e a próxima. */
+const QUEUE_ATTEMPTS = 3
 
 /**
  * Um agente pedindo a outro: abre (ou continua) uma conversa FILHA, manda a mensagem e devolve a resposta.
@@ -122,6 +128,13 @@ export class DelegationService {
   }
 
   private lookup?: ITalkLookup
+
+  /** O turno ao vivo das conversas: por ele a delegação vê a mensagem enfileirada entrar e a resposta sair. */
+  private live?: ITurnLive
+
+  useLive(live: ITurnLive): void {
+    this.live = live
+  }
 
   useLookup(lookup: ITalkLookup): void {
     this.lookup = lookup
@@ -234,7 +247,6 @@ export class DelegationService {
       if (child && (child.metadata?.[DELEGATED_BY] !== parent.id || child.agentId !== request.agentId)) {
         const issue = ownIssue(parent, child, sessionId, request.agentId)
         if (issue) return { ok: false, error: issue }
-        if (child.status === 'running') return { ok: false, error: `conversation ${sessionId} is running a turn now; wait for it to finish, or tell the person` }
         own = { resumed: false }
       }
       if (!child) {
@@ -281,11 +293,23 @@ export class DelegationService {
     // O turno da mãe que fez a chamada: parada, ou noutro turno, na volta = a chamada caiu e a mãe já seguiu.
     const turnAtCall = parent.turns
     const target = sessionId
+    // ⚖️ O DESTINO ESTÁ NUM TURNO: a mensagem não é recusada. Entra na fila dele (no turno em curso, ou num novo) e a
+    // resposta volta sozinha para esta conversa, como no `wait: 0`. A pessoa, pela tela, já tinha isso.
+    if (this.runningNow(target) && !this.live) return { ok: false, error: `conversation ${target} is running a turn now; try again when it finishes` }
+    if (this.runningNow(target) && this.live) {
+      const text = own ? relayedMessage(parent.agentId, parent.id, request.message) : request.message
+      void this.queued(parent, request, target, own, text, QUEUE_ATTEMPTS)
+        .then((outcome) => this.deliver(parent.id, request.agentId, target, outcome, 'queued'))
+        .catch((error: unknown) =>
+          console.warn(`[delegação] a resposta de ${request.agentId} (${target}) não foi entregue: ${error instanceof Error ? error.message : String(error)}`),
+        )
+      return { ok: true, agentId: request.agentId, sessionId: target, reply: '', pending: true, queued: true }
+    }
     const exchange = this.exchange(parent, request, target, own)
     if (request.wait === false) {
       // ⚖️ SEM ESPERAR: a resposta entra depois na conversa que pediu (no turno que ainda roda, ou num novo), como mensagem.
       void exchange
-        .then((outcome) => this.deliver(parent.id, request.agentId, target, outcome, true))
+        .then((outcome) => this.deliver(parent.id, request.agentId, target, outcome, 'asked'))
         .catch((error: unknown) =>
           console.warn(`[delegação] a resposta de ${request.agentId} (${target}) não foi entregue: ${error instanceof Error ? error.message : String(error)}`),
         )
@@ -296,13 +320,92 @@ export class DelegationService {
     return outcome.ok ? { ok: true, agentId: request.agentId, sessionId: target, reply: outcome.reply } : { ok: false, error: `${request.agentId} failed: ${outcome.error}` }
   }
 
-  /** O turno na conversa de destino, até o fim: a resposta (ou a falha). A conversa que voltou aqui sai da memória depois. */
-  private async exchange(
+  private runningNow(sessionId: string): boolean {
+    try {
+      return this.provider.describe(sessionId).status === 'running'
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * ⚖️ A MENSAGEM NA FILA DO DESTINO (ver `Interjection.Policy`): entra no turno que ele roda e a resposta é o texto que
+   * o turno produz DEPOIS dela, até o fim. O turno acabou sem ela entrar (parou, ou ela chegou no último instante): vai
+   * como um turno novo, como se o destino estivesse parado. Começou outro turno no meio: volta para a fila (até `attempts`).
+   * Duas mensagens para o mesmo destino seguem a ordem da fila.
+   */
+  private async queued(
     parent: { id: string; agentId: string },
     request: IDelegationRequest,
     sessionId: string,
     own: { resumed: boolean } | undefined,
-  ): Promise<{ ok: true; reply: string } | { ok: false; error: string }> {
+    text: string,
+    attempts: number,
+  ): Promise<TOutcome> {
+    const live = this.live
+    if (!live || attempts <= 0) return { ok: false, error: `conversation ${sessionId} stayed busy; try again later` }
+    let entered = false
+    let reply = ''
+    let seen = 0
+    let position: number | undefined
+    let settle: (value: 'entered' | 'missed') => void = () => undefined
+    const done = new Promise<'entered' | 'missed'>((resolve) => (settle = resolve))
+    // Assina ANTES de pôr na fila: a entrada (e o fim) não escapam entre uma coisa e outra.
+    const stop = live.subscribe(sessionId, (signal) => {
+      if (signal.type === 'turn.finished') return settle(entered ? 'entered' : 'missed')
+      if (signal.type !== 'turn.event') return
+      const event = signal.event
+      const payload = (event.payload ?? {}) as Record<string, unknown>
+      if (!entered && event.type === 'message.injected') {
+        seen += 1
+        // A própria mensagem (o texto sai mascarado; na dúvida, a posição dela na fila).
+        if (payload.text === text || (position !== undefined && seen >= position)) entered = true
+        return
+      }
+      if (entered && event.type === 'text.delta') reply += String(payload.text ?? '')
+    })
+    try {
+      try {
+        position = this.provider.enqueue?.(sessionId, text)
+      } catch (error: unknown) {
+        // A fila está cheia: espera o turno acabar e tenta de novo.
+        console.warn(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (position === undefined) {
+        // Não está mais rodando (ou a fila não coube): sem fila, é um turno normal.
+        stop()
+        if (!this.runningNow(sessionId)) return await this.exchange(parent, request, sessionId, own)
+        await this.untilFinished(sessionId)
+        return await this.queued(parent, request, sessionId, own, text, attempts - 1)
+      }
+      console.log(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): ocupado; mensagem na fila (posição ${position})`)
+      const how = await done
+      stop()
+      if (how === 'entered') {
+        console.log(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): respondeu à mensagem da fila`)
+        return { ok: true, reply }
+      }
+      if (this.runningNow(sessionId)) return await this.queued(parent, request, sessionId, own, text, attempts - 1)
+      return await this.exchange(parent, request, sessionId, own)
+    } finally {
+      stop()
+    }
+  }
+
+  /** Espera o turno ao vivo da conversa acabar (ou ela já não rodar). */
+  private untilFinished(sessionId: string): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.live || !this.runningNow(sessionId)) return resolve()
+      const stop = this.live.subscribe(sessionId, (signal) => {
+        if (signal.type !== 'turn.finished') return
+        stop()
+        resolve()
+      })
+    })
+  }
+
+  /** O turno na conversa de destino, até o fim: a resposta (ou a falha). A conversa que voltou aqui sai da memória depois. */
+  private async exchange(parent: { id: string; agentId: string }, request: IDelegationRequest, sessionId: string, own: { resumed: boolean } | undefined): Promise<TOutcome> {
     let reply = ''
     let failure: string | undefined
     const startedAt = Date.now()
@@ -334,7 +437,7 @@ export class DelegationService {
    * a resposta entra num turno NOVO da mãe — ela lê e continua, como numa conversa. Com a mãe rodando outro turno, entra
    * nele (a fila do turno). Antes, o agente-mãe só ficava sabendo pela tela.
    */
-  private deliverIfLost(parentId: string, turnAtCall: number, agentId: string, childId: string, outcome: { ok: true; reply: string } | { ok: false; error: string }): void {
+  private deliverIfLost(parentId: string, turnAtCall: number, agentId: string, childId: string, outcome: TOutcome): void {
     let status: string
     let turns: number
     try {
@@ -344,18 +447,18 @@ export class DelegationService {
     }
     // A mãe ainda está no turno que delegou: a resposta chega pela ferramenta, como sempre.
     if (status === 'running' && turns === turnAtCall) return
-    this.deliver(parentId, agentId, childId, outcome, false)
+    this.deliver(parentId, agentId, childId, outcome, 'late')
   }
 
   /** A resposta que chega como MENSAGEM na conversa que pediu: no turno que ela roda agora (a fila), ou num turno novo. */
-  private deliver(parentId: string, agentId: string, childId: string, outcome: { ok: true; reply: string } | { ok: false; error: string }, asked: boolean): void {
+  private deliver(parentId: string, agentId: string, childId: string, outcome: TOutcome, why: 'asked' | 'queued' | 'late'): void {
     let status: string
     try {
       ;({ status } = this.provider.describe(parentId))
     } catch {
       status = 'idle'
     }
-    const when = asked ? 'que você pediu sem esperar' : 'que chegou depois do fim do seu turno'
+    const when = { asked: 'que você pediu sem esperar', queued: 'à mensagem que entrou na fila dele', late: 'que chegou depois do fim do seu turno' }[why]
     const text = outcome.ok
       ? `[Resposta de ${agentId} (conversation ${childId}), ${when}: leia e continue de onde parou.]\n\n${outcome.reply || '(sem texto)'}`
       : `[A conversa com ${agentId} (conversation ${childId}) falhou, ${when}: ${outcome.error}. Decida: tentar de novo (talk com a conversation, para continuar a mesma), outro caminho, ou avisar a pessoa.]`
