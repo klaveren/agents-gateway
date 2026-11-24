@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { api } from '@/lib/api'
+import { useMessagesStore } from '@/stores/messages'
 import MessagesView from './MessagesView.vue'
 
 vi.mock('@/lib/api', async (original) => ({ ...(await original<typeof import('@/lib/api')>()), api: vi.fn() }))
@@ -80,16 +81,69 @@ describe('Mensagens', () => {
     expect(host.querySelector('[data-test="message-agent"] .prose-agent strong')?.textContent).toBe('banco')
   })
 
-  it('responder manda para a conversa e avisa que a resposta do agente volta para cá', async () => {
-    const { host, calls } = await mount('s1')
+  /** Uma resposta do servidor que o teste solta quando quiser. */
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (failure: unknown) => void
+    const promise = new Promise<T>((ok, fail) => ((resolve = ok), (reject = fail)))
+    return { promise, resolve, reject }
+  }
+  async function type(host: HTMLElement, text: string) {
     const box = host.querySelector<HTMLTextAreaElement>('[data-test="message-reply"]')!
-    box.value = 'Liberado.'
+    box.value = text
     box.dispatchEvent(new Event('input'))
     await nextTick()
     host.querySelector('form')!.dispatchEvent(new Event('submit'))
     await flush()
+    return box
+  }
+
+  it('⚡ a resposta entra no fio NA HORA, antes de o servidor responder; a caixa limpa e libera; vem os três pontos até o agente responder', async () => {
+    const reply = deferred<{ queued: boolean }>()
+    const fio: unknown[] = [agentMessage]
+    const { host, calls } = await mount('s1', [thread], fio, { '/messages/s1/reply': reply.promise })
+    const box = await type(host, 'Liberado.')
+
     expect(calls.find((call) => call.path === '/messages/s1/reply')?.init).toMatchObject({ method: 'POST', body: { message: 'Liberado.' } })
-    expect(host.textContent).toContain('A resposta do agente aparece aqui')
+    const bubble = host.querySelector('[data-test="message-outgoing"]')
+    expect(bubble?.textContent).toContain('Liberado.')
+    expect(bubble?.textContent).toContain('Enviando…')
+    expect(box.value).toBe('')
+    expect(host.querySelector<HTMLButtonElement>('form button[type="submit"]')!.disabled).toBe(true) // só por estar vazia
+    box.value = 'outra'
+    box.dispatchEvent(new Event('input'))
+    await nextTick()
+    expect(host.querySelector<HTMLButtonElement>('form button[type="submit"]')!.disabled).toBe(false)
+
+    // O servidor aceitou e o fio trouxe a resposta gravada: a bolha passa a ser a de lá, e os pontos esperam o agente.
+    fio.push({ id: 'p1', conversationId: 's1', agentId: 'zeus', from: 'person', body: 'Liberado.', level: 'info', createdAt: '2026-11-19T11:00:00Z' })
+    reply.resolve({ queued: false })
+    await flush()
+    expect(host.querySelector('[data-test="message-outgoing"]')).toBeNull()
+    expect(host.querySelectorAll('[data-test="message-person"]')).toHaveLength(1)
+    expect(host.querySelector('[data-test="message-awaiting"]')).not.toBeNull()
+
+    // O agente respondeu: os pontos saem.
+    fio.push({ ...agentMessage, id: 'm2', title: undefined, body: 'Subi.', level: 'info', createdAt: '2026-11-19T11:05:00Z' })
+    await useMessagesStore().openThread('s1')
+    await flush()
+    expect(host.querySelector('[data-test="message-awaiting"]')).toBeNull()
+    expect(host.textContent).toContain('Subi.')
+  })
+
+  it('falhou: a bolha fica marcada com o erro e o texto volta para a caixa', async () => {
+    const reply = deferred<never>()
+    const { host } = await mount('s1', [thread], [agentMessage], { '/messages/s1/reply': reply.promise })
+    const box = await type(host, 'Liberado.')
+    expect(box.value).toBe('')
+
+    reply.reject(new Error('sem conexão'))
+    await flush()
+    const bubble = host.querySelector('[data-test="message-outgoing"]')
+    expect(bubble?.getAttribute('data-state')).toBe('failed')
+    expect(host.querySelector('[data-test="message-outgoing-error"]')?.textContent).toContain('sem conexão')
+    expect(host.querySelector('[data-test="message-awaiting"]')).toBeNull()
+    expect(box.value).toBe('Liberado.')
   })
 
   it('✍️ a resposta em escrita sobrevive à troca de tela; enviar limpa', async () => {

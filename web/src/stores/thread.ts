@@ -48,6 +48,11 @@ export interface IOutgoingFile {
   data: string
 }
 
+export interface ISendOptions {
+  /** A conversa nova nasceu (o `POST /sessions` voltou), antes do turno: a tela troca a rota sem esperar o fim. */
+  onCreated?: (id: string) => void
+}
+
 /** `ok: false` = a mensagem NÃO foi registrada (quem chamou devolve o texto à caixa). `created`: sessão que nasceu aqui. */
 export interface ISendResult {
   ok: boolean
@@ -421,7 +426,7 @@ export const useThreadStore = defineStore('thread', () => {
    * ⚠️ Um turno SEM resposta não fica no histórico como enviado: o texto volta para quem digitou
    * (`ok: false`) e o erro aparece. Só a parada pedida pelo usuário mantém o turno, marcado como interrompido.
    */
-  async function send(text: string, files: IOutgoingFile[]): Promise<ISendResult> {
+  async function send(text: string, files: IOutgoingFile[], options: ISendOptions = {}): Promise<ISendResult> {
     if (sending.value || following.value) return enqueue(text, files)
     const mine = generation
     const stale = () => mine !== generation
@@ -430,7 +435,10 @@ export const useThreadStore = defineStore('thread', () => {
     let ok = false
     const controller = new AbortController()
     inFlight = controller
-    let turn: IPendingTurn | undefined
+    // ⚖️ A bolha com o pedido e os três pontos entram NA HORA, antes de qualquer resposta do servidor (criar a sessão
+    // pode demorar: repositório, worktree). Falhou, ela sai e o texto volta para a caixa.
+    const turn: IPendingTurn = { request: text, files: files.length, text: '', reasoning: '', tools: [], warnings: [], interjections: [], aborted: false }
+    pending.value = turn
     /** O servidor aceitou a mensagem: o stream do turno abriu. */
     let streaming = false
 
@@ -447,15 +455,16 @@ export const useThreadStore = defineStore('thread', () => {
           })
         ).id
         if (stale()) return { ok: false }
-        sessionId.value = unrouted = born
+        sessionId.value = born
         liveSession.value = true
         inbox.follow(born)
         if (model) session.value = { provider, model, reasoning }
+        // A conversa nasceu: quem pediu troca a rota já (o stream segue, a sessão aberta é a mesma). Sem quem avise, troca no fim.
+        if (options.onCreated) options.onCreated(born)
+        else unrouted = born
       }
 
       const id = sessionId.value
-      turn = { request: text, files: files.length, text: '', reasoning: '', tools: [], warnings: [], interjections: [], aborted: false }
-      pending.value = turn
 
       const body = await openStream(`/sessions/${encodeURIComponent(id)}/messages`, { method: 'POST', body: { message: text, files }, signal: controller.signal })
       streaming = true
@@ -493,7 +502,7 @@ export const useThreadStore = defineStore('thread', () => {
       if (!aborted && streaming && isConnectionDrop(failure)) {
         ok = true
         reattach()
-      } else if (aborted && turn) {
+      } else if (aborted && sessionId.value) {
         turns.value = [...turns.value, settled(sessionId.value ?? '', { ...(pending.value ?? turn), aborted: true }, nextIndex(), session.value)]
         ok = true
       } else if (!aborted) {

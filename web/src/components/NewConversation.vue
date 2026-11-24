@@ -137,8 +137,17 @@
   }
 
   async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) => void) {
-    const { ok, created } = await thread.send(text, files)
-    settle(ok)
+    // ⚖️ A rota troca assim que a conversa nasce, não no fim do turno: a tela da conversa assume o mesmo stream.
+    let moved = false
+    const { ok, created } = await thread.send(text, files, {
+      onCreated: (id) => {
+        moved = true
+        void router.replace(`/c/${id}`)
+      },
+    })
+    // Já na tela da conversa, esta caixa não existe mais: o texto que falhou volta para a caixa de lá.
+    if (moved && !ok) thread.leftover = text
+    else settle(ok)
     if (created) await router.replace(`/c/${created}`)
   }
 </script>
