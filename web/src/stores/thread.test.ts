@@ -387,6 +387,77 @@ describe('send: falhas', () => {
   })
 })
 
+describe('send: conversa nova, otimista', () => {
+  it('⚡ a bolha com o pedido entra antes de a sessão nascer; ao nascer, avisa (a rota troca) e o stream segue', async () => {
+    let born!: (value: { id: string }) => void
+    routes({ '/sessions': () => new Promise((resolve) => (born = resolve)) })
+    const thread = useThreadStore()
+    thread.startDraft({ agentId: 'x', mode: 'agent', tools: false, model: 'm1', repository: 'r' })
+    const stream = channel()
+    vi.mocked(openStream).mockResolvedValue(new ReadableStream())
+    vi.mocked(readSse).mockImplementation(() => stream.iterate())
+    const onCreated = vi.fn()
+
+    const sent = thread.send('oi', [], { onCreated })
+    await tick()
+    // O POST /sessions ainda não voltou: a bolha e os três pontos já estão na tela.
+    expect(thread.pending?.request).toBe('oi')
+    expect(thread.sending).toBe(true)
+    expect(onCreated).not.toHaveBeenCalled()
+
+    born({ id: 'novo' })
+    await tick()
+    // Nasceu: a rota troca já, com o turno ainda rodando.
+    expect(onCreated).toHaveBeenCalledWith('novo')
+    expect(thread.sessionId).toBe('novo')
+    expect(thread.pending?.request).toBe('oi')
+
+    stream.push('text.delta', { text: 'olá' })
+    stream.end()
+    // Quem já trocou a rota não recebe `created` (trocaria de novo).
+    expect(await sent).toEqual({ ok: true, created: undefined })
+    expect(thread.turns.map((turn) => turn.text)).toEqual(['olá'])
+  })
+
+  it('a falha ao criar a sessão tira a bolha e devolve o texto (ok: false)', async () => {
+    let fail!: (failure: unknown) => void
+    routes({ '/sessions': () => new Promise((_resolve, reject) => (fail = reject)) })
+    const thread = useThreadStore()
+    thread.startDraft({ agentId: 'x', mode: 'chat', tools: false, model: 'm1' })
+    const onCreated = vi.fn()
+
+    const sent = thread.send('oi', [], { onCreated })
+    await tick()
+    expect(thread.pending?.request).toBe('oi')
+    fail(new ApiError(409, 'model_disabled', 'modelo fora'))
+
+    expect(await sent).toEqual({ ok: false })
+    expect(thread.pending).toBeUndefined()
+    expect(thread.turns).toEqual([])
+    expect(thread.error).toBe('modelo fora')
+    expect(onCreated).not.toHaveBeenCalled()
+  })
+
+  it('parar antes de a sessão nascer não grava turno: o texto volta', async () => {
+    routes({ '/sessions': () => new Promise(() => undefined) })
+    vi.mocked(api).mockImplementation(async (path: string, init?: { signal?: AbortSignal }) => {
+      if (path === '/sessions')
+        return new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))) as never
+      return {} as never
+    })
+    const thread = useThreadStore()
+    thread.startDraft({ agentId: 'x', mode: 'chat', tools: false, model: 'm1' })
+
+    const sent = thread.send('oi', [])
+    await tick()
+    await thread.stop()
+
+    expect(await sent).toEqual({ ok: false })
+    expect(thread.turns).toEqual([])
+    expect(thread.pending).toBeUndefined()
+  })
+})
+
 describe('open: sessão viva', () => {
   it('falha transitória NÃO marca a conversa como não ativa', async () => {
     routes({ '/sessions/': () => Promise.reject(new ApiError(503, undefined, 'indisponível')) })

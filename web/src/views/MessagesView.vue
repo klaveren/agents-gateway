@@ -13,7 +13,7 @@
   import { readDraft, writeDraft } from '@/lib/draftStorage'
   import { useAgentsStore } from '@/stores/agents'
   import { useSpeechStore } from '@/stores/speech'
-  import { useMessagesStore, type IPersonMessage, type IPersonThread } from '@/stores/messages'
+  import { useMessagesStore, type IOutgoingReply, type IPersonMessage, type IPersonThread } from '@/stores/messages'
 
   /**
    * 💬 MENSAGENS: o que os agentes escreveram para a pessoa (`notify`), num fio por conversa — como um app de mensagens. A
@@ -30,8 +30,6 @@
 
   const error = ref<string>()
   const draft = ref('')
-  const sending = ref(false)
-  const sentNote = ref<string>()
   const search = ref('')
 
   // 📱 O aviso no aparelho (Web Push): ligado por um toque, aparelho a aparelho.
@@ -147,7 +145,6 @@
   watch(
     () => props.id,
     async (id) => {
-      sentNote.value = undefined
       // ⚖️ A resposta em escrita fica guardada por mensagem: trocou de tela e voltou, ela está ali.
       draft.value = id ? readDraft(`message:${id}`) : ''
       replyTarget.value = undefined
@@ -182,23 +179,34 @@
     await loadContext()
   }
 
-  async function send() {
+  /** As respostas deste item a caminho (ver `messages.outbox`): a que o fio já trouxe usa a bolha de lá. */
+  const outgoing = computed(() => messages.outbox.filter((item) => item.key === props.id))
+  /** Os três pontos: a resposta foi e o agente ainda não respondeu no item. */
+  const awaiting = computed(() => outgoing.value.some((item) => item.state === 'sent' && item.agentsBefore !== undefined))
+  const outgoingTarget = (item: IOutgoingReply) => (item.replyTo ? fio.value.find((candidate) => candidate.id === item.replyTo) : undefined)
+
+  /**
+   * ⚖️ Otimista: a resposta entra no fio NA HORA, a caixa limpa e libera. Falhou, a bolha fica marcada com o erro e o texto
+   * volta para a caixa (se a pessoa não digitou outra coisa por cima); noutro item, volta para o rascunho do item dela.
+   */
+  function send() {
     const text = draft.value.trim()
-    if (!text || !props.id || sending.value) return
-    sending.value = true
+    const key = props.id
+    if (!text || !key) return
+    const target = replyTarget.value
     error.value = undefined
-    try {
-      const result = await messages.reply(props.id, text, replyTarget.value)
-      draft.value = ''
-      replyTarget.value = undefined
-      sentNote.value = result.queued
-        ? 'Enviado: a conversa está rodando, sua resposta entra no turno atual. A resposta do agente aparece aqui.'
-        : 'Enviado para a conversa. A resposta do agente aparece aqui.'
-    } catch (failure) {
-      error.value = failure instanceof Error ? failure.message : String(failure)
-    } finally {
-      sending.value = false
-    }
+    draft.value = ''
+    replyTarget.value = undefined
+    void nextTick(() => document.querySelector('[data-test="message-end"]')?.scrollIntoView?.({ block: 'end' }))
+    messages.reply(key, text, target).catch(() => {
+      if (props.id !== key) {
+        if (!readDraft(`message:${key}`).trim()) writeDraft(`message:${key}`, text)
+        return
+      }
+      if (draft.value.trim()) return
+      draft.value = text
+      replyTarget.value = target
+    })
   }
 
   function onKey(event: KeyboardEvent) {
@@ -421,7 +429,29 @@
                 <span class="text-[11px] text-zinc-500">{{ shortTime(message.createdAt) }}</span>
               </div>
             </template>
-            <p v-if="sentNote" class="self-end text-xs text-zinc-500">{{ sentNote }}</p>
+            <!-- A resposta a caminho: na hora, antes de o servidor responder; a que o fio já trouxe usa a bolha de lá. -->
+            <template v-for="item in outgoing" :key="item.id">
+              <div v-if="!item.confirmed" class="flex max-w-[85%] flex-col items-end gap-1 self-end" data-test="message-outgoing" :data-state="item.state">
+                <span v-if="outgoingTarget(item)" class="text-[11px] text-zinc-500">↳ em resposta a {{ requestLabel(outgoingTarget(item)!) }}</span>
+                <div
+                  class="rounded-2xl rounded-br-md px-3.5 py-2 text-sm whitespace-pre-wrap text-white"
+                  :class="item.state === 'failed' ? 'bg-violet-600/40 ring-1 ring-rose-500/60' : item.state === 'sending' ? 'bg-violet-600/60' : 'bg-violet-600/80'"
+                >
+                  {{ item.body }}
+                </div>
+                <span v-if="item.state === 'sending'" class="text-[11px] text-zinc-500">Enviando…</span>
+                <span v-else-if="item.state === 'sent'" class="text-[11px] text-zinc-500">{{ item.queued ? 'Enviada · entra no turno em andamento' : 'Enviada' }}</span>
+                <span v-else class="flex items-center gap-2 text-[11px] text-rose-300" data-test="message-outgoing-error">
+                  Não enviada: {{ item.error }}
+                  <button type="button" class="text-zinc-400 hover:text-zinc-100" title="Tirar da tela" aria-label="Tirar a mensagem não enviada" @click="messages.dismissOutgoing(item.id)">×</button>
+                </span>
+              </div>
+            </template>
+            <div v-if="awaiting" class="flex h-9 items-center gap-1 self-start rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5" aria-label="Aguardando a resposta do agente" data-test="message-awaiting">
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.3s]" />
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.15s]" />
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400" />
+            </div>
             <div data-test="message-end" />
           </div>
         </div>
@@ -446,7 +476,7 @@
             <button
               type="submit"
               class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400 disabled:opacity-40"
-              :disabled="sending || !draft.trim()"
+              :disabled="!draft.trim()"
               title="Enviar"
             >
               <Icon name="send" class="h-5 w-5" />

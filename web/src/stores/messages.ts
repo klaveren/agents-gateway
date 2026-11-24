@@ -23,6 +23,21 @@ export interface IPersonMessage {
   replyTo?: string
 }
 
+/** Uma resposta da pessoa a caminho (ver `outbox`). `confirmed`: o fio já a trouxe do servidor (a bolha dela é a de lá). */
+export interface IOutgoingReply {
+  id: string
+  key: string
+  body: string
+  replyTo?: string
+  createdAt: string
+  state: 'sending' | 'sent' | 'failed'
+  error?: string
+  queued?: boolean
+  confirmed?: boolean
+  /** Quantas mensagens do agente o item tinha quando ela foi: chegou mais uma, ele respondeu. */
+  agentsBefore?: number
+}
+
 /**
  * 🔑 O item a que a mensagem pertence (o mesmo `messageKeyOf` do servidor): o pedido é o próprio item; a resposta a ele
  * (da pessoa ou o retorno do agente) vai para o item dele; o resto, para o item da conversa.
@@ -83,6 +98,7 @@ export const useMessagesStore = defineStore('messages', () => {
     // O id da conversa traz a conversa inteira: o item dela é só o que não é de pedido.
     const messages = result.messages.filter((message) => messageKeyOf(message) === key)
     open.value = { key, conversationId: result.messages[0]?.conversationId ?? key, messages }
+    settleOutbox()
     if (markRead && messages.some((message) => message.from === 'agent' && !message.readAt)) {
       const read = await api<{ unread: number }>(`/messages/${encodeURIComponent(key)}/read`, { method: 'POST' })
       unread.value = read.unread
@@ -90,13 +106,52 @@ export const useMessagesStore = defineStore('messages', () => {
     }
   }
 
+  /**
+   * 📤 As respostas que a pessoa mandou desta tela, antes de o fio as trazer do servidor: entram NA HORA (enviando), e a
+   * enviada segue esperando a resposta do agente (os três pontos) até chegar uma mensagem dele no item. ⚖️ Só na memória:
+   * o fio gravado é a verdade; isto é o que ainda não chegou nele.
+   */
+  const outbox = ref<IOutgoingReply[]>([])
+  let outgoingSeq = 0
+  const agentCount = (key: string) => (open.value?.key === key ? open.value.messages.filter((message) => message.from === 'agent').length : undefined)
+  function patchOutgoing(id: string, patch: Partial<IOutgoingReply>): void {
+    outbox.value = outbox.value.map((item) => (item.id === id ? { ...item, ...patch } : item))
+  }
+  /**
+   * O fio do item foi relido: a enviada já está nele (a bolha passa a ser a do servidor) e, se o agente respondeu depois
+   * dela, sai de vez. Sem a contagem de antes (foi mandada com outro item aberto), não há o que esperar: sai também.
+   */
+  function settleOutbox(): void {
+    const current = open.value
+    if (!current) return
+    const agents = current.messages.filter((message) => message.from === 'agent').length
+    outbox.value = outbox.value
+      .filter((item) => item.key !== current.key || item.state !== 'sent' || (item.agentsBefore !== undefined && agents <= item.agentsBefore))
+      .map((item) => (item.key === current.key && item.state === 'sent' ? { ...item, confirmed: true } : item))
+  }
+  /** Tira da tela a que falhou (o texto já voltou para a caixa). */
+  function dismissOutgoing(id: string): void {
+    outbox.value = outbox.value.filter((item) => item.id !== id)
+  }
+
   /** Responde pela caixa; com `replyTo`, é a resposta a UM pedido (que vira respondido). */
   async function reply(key: string, message: string, replyTo?: string): Promise<{ queued: boolean }> {
-    const result = await api<{ queued: boolean }>(`/messages/${encodeURIComponent(key)}/reply`, {
-      method: 'POST',
-      body: replyTo ? { message, replyTo } : { message },
-    })
-    await Promise.all([openThread(key), load()])
+    // A que falhou antes no mesmo item sai: a pessoa está mandando de novo.
+    const item: IOutgoingReply = { id: `local-${++outgoingSeq}`, key, body: message, replyTo, createdAt: new Date().toISOString(), state: 'sending' }
+    outbox.value = [...outbox.value.filter((other) => other.key !== key || other.state !== 'failed'), item]
+    let result: { queued: boolean }
+    try {
+      result = await api<{ queued: boolean }>(`/messages/${encodeURIComponent(key)}/reply`, {
+        method: 'POST',
+        body: replyTo ? { message, replyTo } : { message },
+      })
+    } catch (failure) {
+      patchOutgoing(item.id, { state: 'failed', error: failure instanceof Error ? failure.message : String(failure) })
+      throw failure
+    }
+    patchOutgoing(item.id, { state: 'sent', queued: result.queued, agentsBefore: agentCount(key) })
+    // ⚠️ Já foi: a releitura que falhar não desfaz o envio (devolver o texto faria a pessoa mandar duas vezes).
+    await Promise.all([openThread(key), load()]).catch(() => undefined)
     return result
   }
 
@@ -153,10 +208,11 @@ export const useMessagesStore = defineStore('messages', () => {
     unread.value = 0
     pending.value = 0
     open.value = undefined
+    outbox.value = []
     loaded.value = false
   }
 
   const waiting = computed(() => threads.value.filter((thread) => thread.unread > 0).length)
 
-  return { threads, unread, pending, archived, loaded, open, waiting, load, openThread, reply, setStatus, archive, showArchived, changed, reset }
+  return { threads, unread, pending, archived, loaded, open, waiting, outbox, load, openThread, reply, dismissOutgoing, setStatus, archive, showArchived, changed, reset }
 })
