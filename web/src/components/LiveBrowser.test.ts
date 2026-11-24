@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createPinia } from 'pinia'
 import { createApp, h, nextTick, type App } from 'vue'
 import { api, ApiError, openStream } from '@/lib/api'
 import LiveBrowser from './LiveBrowser.vue'
@@ -88,5 +89,76 @@ describe('LiveBrowser — a pessoa abre o navegador', () => {
     const host = await mount(false)
     expect(host.querySelector<HTMLInputElement>('[data-test="live-browser-url"]')!.readOnly).toBe(true)
     expect(host.querySelector('[data-test="live-browser-open"]')).toBeNull()
+  })
+})
+
+describe('LiveBrowser — teclado com acento, ç e IME', () => {
+  async function mountLive() {
+    vi.mocked(api).mockResolvedValue({} as never)
+    vi.mocked(openStream).mockResolvedValue(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('event: browser.state\ndata: {"live":true}\n\n'))
+        },
+      }),
+    )
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    // Com o Pinia, sem stream da caixa de entrada: o navegador cai no endpoint dedicado (o mock acima).
+    app = createApp({ render: () => h(LiveBrowser, { sessionId: 's1', interactive: true }) }).use(createPinia())
+    app.mount(host)
+    await flush()
+    const field = host.querySelector<HTMLTextAreaElement>('[data-test="live-browser-typing"]')!
+    field.focus()
+    return field
+  }
+  const inputs = () =>
+    vi
+      .mocked(api)
+      .mock.calls.filter(([path]) => path === '/sessions/s1/browser/input')
+      .map(([, options]) => (options as { body: unknown }).body)
+
+  it('acento por composição (tecla morta) chega como texto "á", uma vez', async () => {
+    const field = await mountLive()
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Dead', code: 'Quote', bubbles: true }))
+    field.dispatchEvent(new CompositionEvent('compositionstart', { data: '' }))
+    field.value = '´'
+    field.dispatchEvent(new InputEvent('input', { data: '´', isComposing: true }))
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'á', code: 'KeyA', isComposing: true, bubbles: true }))
+    field.value = 'á'
+    field.dispatchEvent(new InputEvent('input', { data: 'á', isComposing: true }))
+    field.dispatchEvent(new CompositionEvent('compositionend', { data: 'á' }))
+    field.dispatchEvent(new InputEvent('input', { data: 'á' }))
+    await flush()
+    expect(inputs()).toEqual([{ type: 'text', text: 'á' }])
+    expect(field.value).toBe('')
+  })
+
+  it('ç com Option (Alt) chega como texto, não como atalho', async () => {
+    const field = await mountLive()
+    const keydown = new KeyboardEvent('keydown', { key: 'ç', code: 'KeyC', altKey: true, bubbles: true, cancelable: true })
+    field.dispatchEvent(keydown)
+    expect(keydown.defaultPrevented).toBe(false)
+    field.value = 'ç'
+    field.dispatchEvent(new InputEvent('input', { data: 'ç' }))
+    await flush()
+    expect(inputs()).toEqual([{ type: 'text', text: 'ç' }])
+  })
+
+  it('letra comum vai só como texto; Enter e Backspace seguem como tecla', async () => {
+    const field = await mountLive()
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', bubbles: true, cancelable: true }))
+    field.value = 'a'
+    field.dispatchEvent(new InputEvent('input', { data: 'a' }))
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true })
+    field.dispatchEvent(enter)
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', bubbles: true, cancelable: true }))
+    await flush()
+    expect(enter.defaultPrevented).toBe(true)
+    expect(inputs()).toEqual([
+      { type: 'text', text: 'a' },
+      { type: 'key', key: 'Enter', code: 'Enter', keyCode: 13, text: '\r', modifiers: 0 },
+      { type: 'key', key: 'Backspace', code: 'Backspace', keyCode: 8, text: undefined, modifiers: 0 },
+    ])
   })
 })

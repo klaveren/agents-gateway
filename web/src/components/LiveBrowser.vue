@@ -33,6 +33,8 @@
   const frame = ref<{ src: string; url?: string; title?: string; width?: number; height?: number }>()
   const error = ref<string>()
   const screen = ref<HTMLElement>()
+  /** ⌨️ O campo invisível que recebe o foco da tela: é nele que o sistema compõe acento, ç, til e IME. */
+  const typing = ref<HTMLTextAreaElement>()
   const focused = ref(false)
   let abort: AbortController | undefined
   let retry: ReturnType<typeof setTimeout> | undefined
@@ -212,7 +214,7 @@
 
   function onClick(event: MouseEvent) {
     if (picking.value) return void choose(event)
-    screen.value?.focus()
+    typing.value?.focus()
     const at = point(event)
     if (at)
       send({
@@ -250,19 +252,43 @@
     }, 50)
   }
 
+  let composing = false
+  /**
+   * ⌨️ Só as teclas que não escrevem (Enter, apagar, setas...) e os atalhos com Ctrl/Cmd vão como tecla. O que escreve fica
+   * para o campo invisível (`onInput`): tecla morta, Option no Mac e IME só viram texto lá — por tecla, o acento se perdia e o
+   * ç ia com Alt, como atalho.
+   */
   function onKey(event: KeyboardEvent) {
     if (!props.interactive || !live.value) return
+    if (event.isComposing || composing) return
     if (picking.value && event.key === 'Escape') {
       event.preventDefault()
       return togglePick()
     }
     // Colar: o evento `paste` traz o texto.
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') return
-    const printable = event.key.length === 1 && !event.metaKey && !event.ctrlKey
-    if (!printable && !isControlKey(event.key) && !event.metaKey && !event.ctrlKey) return
+    if (!isControlKey(event.key) && !event.metaKey && !event.ctrlKey) return
     event.preventDefault()
     const keyCode = keyCodeOf(event)
-    send({ type: 'key', key: event.key, code: event.code, keyCode, text: printable ? event.key : event.key === 'Enter' ? '\r' : undefined, modifiers: modifiers(event) })
+    const text = event.metaKey || event.ctrlKey ? undefined : event.key === 'Enter' ? '\r' : undefined
+    send({ type: 'key', key: event.key, code: event.code, keyCode, text, modifiers: modifiers(event) })
+  }
+
+  // ✍️ O texto do campo invisível vai inteiro para a aba (`Input.insertText`); durante a composição, espera o fim.
+  function flushTyping() {
+    const field = typing.value
+    if (!field || !field.value) return
+    const text = field.value
+    field.value = ''
+    if (props.interactive && live.value) send({ type: 'text', text })
+  }
+  function onInput(event: Event) {
+    if (composing || (event as InputEvent).isComposing) return
+    flushTyping()
+  }
+  function onCompositionEnd() {
+    composing = false
+    flushTyping()
   }
   function onPaste(event: ClipboardEvent) {
     if (!props.interactive || !live.value) return
@@ -373,15 +399,29 @@
     </div>
     <div
       ref="screen"
-      :tabindex="interactive ? 0 : undefined"
       class="relative min-h-0 flex-1 overflow-hidden border-t bg-zinc-900/50 outline-none"
       :class="focused && interactive && live ? 'border-emerald-500' : 'border-zinc-800'"
       data-test="live-browser-screen"
-      @focus="focused = true"
-      @blur="focused = false"
-      @keydown="onKey"
-      @paste="onPaste"
     >
+      <textarea
+        v-if="interactive"
+        ref="typing"
+        class="pointer-events-none absolute top-0 left-0 h-px w-px resize-none overflow-hidden border-0 bg-transparent p-0 text-transparent caret-transparent opacity-0 outline-none"
+        aria-label="Digitar no navegador"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
+        tabindex="0"
+        data-test="live-browser-typing"
+        @focus="focused = true"
+        @blur="focused = false"
+        @keydown="onKey"
+        @paste="onPaste"
+        @input="onInput"
+        @compositionstart="composing = true"
+        @compositionend="onCompositionEnd"
+      />
       <img
         v-if="frame"
         :src="frame.src"
