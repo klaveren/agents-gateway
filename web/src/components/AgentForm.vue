@@ -372,6 +372,30 @@
   }
   const envRepeated = computed(() => envDuplicates(envList.value))
 
+  /** 🌐 Limpar as sessões guardadas do navegador: as do projeto aberto (ou das conversas sem projeto) ou as de todos. */
+  const browserClearing = ref(false)
+  const browserNote = ref<string>()
+  async function clearBrowserSessions(all: boolean) {
+    if (!props.agent || browserClearing.value) return
+    const where = all ? 'de todos os projetos' : projects.current ? `do projeto ${currentProjectName.value}` : 'das conversas sem projeto'
+    if (!window.confirm(`Apagar as sessões do navegador ${where}? O agente perde os logins guardados.`)) return
+    browserClearing.value = true
+    browserNote.value = undefined
+    try {
+      await api(`/agents/${encodeURIComponent(props.agent.id)}/browser/clear`, { method: 'POST', body: all ? { all: true } : { projectId: projects.current ?? null } })
+      browserNote.value = 'Sessões apagadas.'
+    } catch (error: unknown) {
+      browserNote.value =
+        error instanceof ApiError && error.code === 'browser_in_use'
+          ? 'O navegador está aberto numa conversa. Feche-o e tente de novo.'
+          : error instanceof Error
+            ? error.message
+            : String(error)
+    } finally {
+      browserClearing.value = false
+    }
+  }
+
   const DIAGNOSTIC_CHECKS: Array<{ key: 'typecheck' | 'lint' | 'format'; label: string }> = [
     { key: 'typecheck', label: 'Tipos (tsc)' },
     { key: 'lint', label: 'Lint (eslint)' },
@@ -883,6 +907,7 @@
           permissions: (agent.permissions ?? []).map((rule) => ({ ...rule })),
           terminal: agent.terminal ? { ...agent.terminal } : null,
           diagnostics: agent.diagnostics ? { ...agent.diagnostics } : null,
+          browser: agent.browser?.keepLogin ? { keepLogin: true } : null,
           triggers: (agent.triggers ?? []).map((trigger) => ({ ...trigger })),
           tags: [...(agent.tags ?? [])],
           modelGroup: agent.modelGroup ?? null,
@@ -1104,6 +1129,8 @@
         // Vazio apaga todos.
         triggers: form.value.triggers ?? [],
         diagnostics: form.value.diagnostics?.typecheck || form.value.diagnostics?.lint || form.value.diagnostics?.format ? form.value.diagnostics : null,
+        // Desligado = cada conversa com um navegador limpo.
+        browser: form.value.browser?.keepLogin ? { keepLogin: true } : null,
         // Nenhuma apaga todas.
         env: envRecord(envList.value),
         // Padrão vai como `null` (na edição volta ao grupo padrão); criando, ausente.
@@ -1707,6 +1734,32 @@
                   @input="form.diagnostics = { ...(form.diagnostics ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
                 />
               </label>
+            </div>
+            <div class="flex flex-col gap-2" data-test="agent-browser">
+              <h3 class="text-sm font-medium text-zinc-200">Navegador</h3>
+              <p class="text-xs text-zinc-500">
+                Ligado, o login feito no navegador (pelo agente ou por você, na tela da conversa) fica guardado e vale nas próximas conversas deste agente, um por projeto. Os
+                cookies guardados valem como login. Desligado, cada conversa abre um navegador limpo.
+              </p>
+              <label class="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  class="accent-emerald-500"
+                  data-test="agent-browser-keep-login"
+                  :checked="!!form.browser?.keepLogin"
+                  @change="form.browser = ($event.target as HTMLInputElement).checked ? { keepLogin: true } : null"
+                />
+                Manter o login entre conversas
+              </label>
+              <div v-if="!creating && agent" class="flex flex-wrap items-center gap-2">
+                <button type="button" class="btn btn-sm btn-secondary" data-test="agent-browser-clear" :disabled="browserClearing" @click="clearBrowserSessions(false)">
+                  Limpar sessões do navegador
+                </button>
+                <button type="button" class="btn btn-sm btn-secondary" data-test="agent-browser-clear-all" :disabled="browserClearing" @click="clearBrowserSessions(true)">
+                  Limpar de todos os projetos
+                </button>
+                <span v-if="browserNote" class="text-xs text-zinc-400">{{ browserNote }}</span>
+              </div>
             </div>
           </fieldset>
         </div>

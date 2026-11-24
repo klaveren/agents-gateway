@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { HttpError } from '@infra/http/Http.Error'
 import { isAlwaysBlockedHost } from '@domain/Url.Policy'
+import { BrowserProfiles, browserProfiles, IBrowserProfileOwner } from './BrowserProfiles.Service'
 import { LiveBrowser, liveBrowserEnabled, liveBrowsers, LiveBrowsers } from './LiveBrowser.Adapter'
 
 /** Como abrir o Chromium: o executável, o sandbox e o ambiente. */
@@ -26,6 +27,8 @@ export interface IPersonBrowsersOptions {
   now?: () => number
   tmp?: string
   remove?: (path: string) => void
+  /** Os perfis guardados (o agente que guarda o login): o MESMO do MCP. Padrão: o do processo. */
+  profiles?: BrowserProfiles
 }
 
 const MINUTE = 60_000
@@ -56,7 +59,7 @@ export function personBrowserUrl(raw: unknown): string | undefined {
  * 🙋 O NAVEGADOR QUE A PESSOA ABRE (a tela), antes de o agente usar o Playwright: o mesmo `LiveBrowser` da conversa, na
  * mesma mesa (`liveBrowsers()`), então o MCP que subir depois ADOTA este navegador (mesmo login, mesmos cookies).
  *
- * ⚖️ Fecha sozinho quando ninguém olha e nenhum MCP usa por `idleMs` (10 min): a pasta do perfil some junto.
+ * ⚖️ Fecha sozinho quando ninguém olha e nenhum MCP usa por `idleMs` (10 min): a pasta do perfil temporário some junto (o perfil guardado do agente fica, ver `BrowserProfiles`).
  * Um navegador que o MCP abriu não é da pessoa: ela não o fecha enquanto o MCP vive.
  */
 export class PersonBrowsers {
@@ -80,7 +83,7 @@ export class PersonBrowsers {
   }
 
   /** Abre (ou só leva ao endereço, se já há navegador na conversa). */
-  async open(sessionId: string, rawUrl?: unknown): Promise<void> {
+  async open(sessionId: string, rawUrl?: unknown, owner?: IBrowserProfileOwner): Promise<void> {
     if (!(this.options.enabled ?? liveBrowserEnabled)()) throw new HttpError(409, 'browser_disabled', 'The live browser is turned off on this server')
     const url = personBrowserUrl(rawUrl)
     // Dois pedidos juntos abrem UM navegador: a conferência e o registro do pedido em curso são síncronos.
@@ -91,7 +94,7 @@ export class PersonBrowsers {
       if (url) await existing.navigate(url)
       return
     }
-    const job = this.launchFor(sessionId, url)
+    const job = this.launchFor(sessionId, url, owner)
     this.opening.set(sessionId, job)
     try {
       await job
@@ -100,11 +103,16 @@ export class PersonBrowsers {
     }
   }
 
-  private async launchFor(sessionId: string, url: string | undefined): Promise<void> {
+  private async launchFor(sessionId: string, url: string | undefined, owner?: IBrowserProfileOwner): Promise<void> {
     const how = this.options.resolve()
     if (!how) throw new HttpError(409, 'browser_unavailable', 'No browser is installed on this server (install the Playwright MCP or Chromium)')
-    const userDataDir = join(this.options.tmp ?? tmpdir(), `gw-browser-${safe(sessionId)}`)
-    const remove = this.options.remove ?? ((path: string) => rmSync(path, { recursive: true, force: true }))
+    const temp = join(this.options.tmp ?? tmpdir(), `gw-browser-${safe(sessionId)}`)
+    // 🌐 O agente que guarda o login: a pessoa entra no site AQUI e vale para ele (o mesmo perfil do MCP).
+    const profile = (this.options.profiles ?? browserProfiles()).acquire(sessionId, temp, owner)
+    const userDataDir = profile.userDataDir
+    const removeTemp = this.options.remove ?? ((path: string) => rmSync(path, { recursive: true, force: true }))
+    // ⛔ O perfil guardado nunca é apagado ao fechar: só se larga (a cópia, essa sim, some).
+    const remove = (path: string) => (profile.kind === 'temp' ? removeTemp(path) : profile.release())
     let browser: LiveBrowser
     try {
       browser = await this.launcher({ executable: how.executable, userDataDir, noSandbox: how.noSandbox, env: how.env.HOME ? how.env : { ...how.env, HOME: userDataDir }, url })

@@ -65,6 +65,12 @@ export interface IAgent {
    */
   diagnostics?: IAgentDiagnostics
   /**
+   * 🌐 O navegador (Chromium) do agente. `keepLogin`: o perfil fica guardado na pasta de dados do gateway, um por agente
+   * e por projeto, e o login feito numa conversa (pelo agente ou pela pessoa, na tela) vale nas próximas. ⚠️ Os cookies
+   * guardados valem como login. Ausente = desligado: cada conversa abre um perfil temporário, apagado ao fechar.
+   */
+  browser?: IAgentBrowser
+  /**
    * Os triggers do agente: AÇÕES ATIVADAS SOB DEMANDA, dele e de mais ninguém. O prompt lista o id e o "quando" de cada
    * um (o índice "## Triggers"), e o corpo só entra quando o agente o carrega (`use_resource`, tipo trigger).
    */
@@ -109,6 +115,15 @@ export interface IAgentDiagnostics {
   format?: boolean
   /** O tempo de cada ferramenta. Ausente = `DEFAULT_DIAGNOSTICS_SECONDS`. */
   timeoutSeconds?: number
+}
+
+export interface IAgentBrowser {
+  keepLogin?: boolean
+}
+
+/** O agente guarda o login do navegador entre conversas. */
+export function keepsBrowserLogin(settings: IAgentBrowser | undefined): boolean {
+  return settings?.keepLogin === true
 }
 
 export const AGENT_DIAGNOSTICS_BOUNDS = { timeoutSeconds: { min: 5, max: 600 } } as const

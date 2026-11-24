@@ -7281,6 +7281,22 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/agents/{agentId}/browser/clear': {
+      post: {
+        summary: "Delete the agent's saved browser sessions (cookies and sign-ins kept with `browser.keepLogin`). Only who administers the agent",
+        description:
+          'With `projectId`, the profile of that project (absent = conversations without a project); with `all: true`, every project. For a global agent, the admin of `projectId` may clear that project. Refused while the browser is open.',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: false, ...json({ type: 'object', properties: { projectId: { type: 'string', nullable: true }, all: { type: 'boolean' } } }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { cleared: { type: 'boolean' } } })) },
+          '403': failures['403'],
+          '404': failures['404'],
+          '409': { description: '`browser_in_use`: a conversation of this agent has the browser open', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
+      },
+    },
     '/sessions/{id}/browser/viewport': {
       post: {
         summary: 'Size the live browser tab to the viewer (CSS pixels and device scale) while someone watches. Only the owner of the conversation',

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { IMcpServerConfig, isLaunchedMcp, mcpAsksProject, mcpFixedVars, mcpSecretKey, mcpServerKey, mcpServesProject, mcpVarNames } from '@domain/models/McpServer.Model'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
+import { BrowserProfiles, browserProfiles } from './BrowserProfiles.Service'
 import { containerArgs, instanceName, openEgress } from '@infra/sandbox/Docker.Sandbox'
 import { resolveAllowedHosts } from '@infra/sandbox/Egress.Proxy'
 import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
@@ -93,6 +94,8 @@ export class McpRegistry {
   /** O token OAuth de cada pessoa (ver `McpOAuth`). Ligado na composição; ausente, `auth: oauth` não tem cliente. */
   private oauth?: { accessToken(serverKey: string, userId: string): Promise<string | undefined> }
   private reaper?: NodeJS.Timeout
+  /** Os perfis guardados do navegador (o mesmo do navegador da pessoa). Trocável no teste. */
+  profiles: BrowserProfiles = browserProfiles()
 
   constructor(
     private readonly servers: IMcpServerRepository,
@@ -295,7 +298,16 @@ export class McpRegistry {
     const executable = chromiumExecutable(installDir(mcpServerKey(config)), env)
     if (!executable) return undefined
     try {
-      const browser = await LiveBrowser.launch({ executable, userDataDir: join(cwd, '.browser'), noSandbox: proc.args.includes('--no-sandbox'), env })
+      // 🌐 O agente que guarda o login usa o perfil dele no projeto (ver `BrowserProfiles`); o resto, o temporário de sempre.
+      const profile = this.profiles.acquire(sessionId, join(cwd, '.browser'))
+      let browser: LiveBrowser
+      try {
+        browser = await LiveBrowser.launch({ executable, userDataDir: profile.userDataDir, noSandbox: proc.args.includes('--no-sandbox'), env })
+      } catch (error: unknown) {
+        profile.release()
+        throw error
+      }
+      browser.onClosed(() => profile.release())
       browser.lease()
       liveBrowsers().register(sessionId, browser)
       return { browser, launched: true }

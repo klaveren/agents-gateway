@@ -633,6 +633,7 @@ function buildRoutes(
     { method: 'get', path: '/agents/:agentId/commands', handler: controller.getAgentCommands },
     { method: 'put', path: '/agents/:agentId', handler: controller.updateAgent },
     { method: 'delete', path: '/agents/:agentId', handler: controller.deleteAgent },
+    { method: 'post', path: '/agents/:agentId/browser/clear', handler: controller.browserClear },
     { method: 'post', path: '/agents/:agentId/import-issues/resolve', handler: controller.resolveAgentImportIssue },
     { method: 'put', path: '/agents/:agentId/shares', handler: controller.shareAgent },
     { method: 'get', path: '/agents/:agentId/tools', handler: controller.getAgentTools },
