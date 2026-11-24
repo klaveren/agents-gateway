@@ -24,6 +24,17 @@ export interface IPersonMessage {
 }
 
 /** Uma resposta da pessoa a caminho (ver `outbox`). `confirmed`: o fio já a trouxe do servidor (a bolha dela é a de lá). */
+/**
+ * ✅ O item já foi tratado e pode ir para as arquivadas: o pedido, quando nada dele está em aberto (`open === 0`; respondido
+ * sem a pessoa dar por resolvido ainda conta); o item de avisos, quando já foi lido. Item de projeto conectado cuja origem
+ * não manda `open` (versão antiga) não entra: não dá para saber.
+ */
+export function isResolved(thread: IPersonThread): boolean {
+  if (thread.open === undefined && (thread.origin || thread.requestId)) return false
+  if (thread.requestId) return thread.open === 0
+  return !thread.unread && !thread.open
+}
+
 export interface IOutgoingReply {
   id: string
   key: string
@@ -61,6 +72,8 @@ export interface IPersonThread {
   unread: number
   /** Quantos pedidos do fio ainda estão pendentes. */
   pending: number
+  /** Quantos pedidos do item estão em aberto (pendente ou respondido sem resolver); sem o campo, origem antiga: não se sabe. */
+  open?: number
   archived: boolean
   /** 🔌 Só nos itens de um projeto conectado: a conversa mora na origem (`stale`: a origem não respondeu, é a última lista). */
   origin?: { projectId: string; url: string; stale?: boolean }
@@ -170,7 +183,9 @@ export const useMessagesStore = defineStore('messages', () => {
         ),
       }
     }
-    threads.value = threads.value.map((thread) => (thread.id === messageId ? { ...thread, pending: result.status === 'pending' ? 1 : 0 } : thread))
+    threads.value = threads.value.map((thread) =>
+      thread.id === messageId ? { ...thread, pending: result.status === 'pending' ? 1 : 0, open: result.status === 'pending' ? 1 : 0 } : thread,
+    )
   }
 
   async function archive(key: string, value = true): Promise<void> {

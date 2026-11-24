@@ -104,11 +104,13 @@ export class SqlitePersonMessageRepository implements IPersonMessageRepository {
           last: message,
           unread: message.from === 'agent' && !message.readAt ? 1 : 0,
           pending: message.status === 'pending' ? 1 : 0,
+          open: isOpen(message) ? 1 : 0,
           archived: !!message.archivedAt,
         })
       } else {
         if (message.from === 'agent' && !message.readAt) current.unread += 1
         if (message.status === 'pending') current.pending += 1
+        if (isOpen(message)) current.open = (current.open ?? 0) + 1
       }
       const thread = threads.get(key)!
       // O assunto do item: o título mais recente que o agente deu (no pedido, o dele).
@@ -200,4 +202,9 @@ function toMessage(row: TRow): IPersonMessage {
     ...(date(row.answered_at) ? { answeredAt: date(row.answered_at) } : {}),
     ...(typeof row.reply_to === 'string' ? { replyTo: row.reply_to } : {}),
   }
+}
+
+/** Pedido ainda em aberto: pendente ou respondido sem ter sido dado por resolvido. */
+function isOpen(message: IPersonMessage): boolean {
+  return message.status === 'pending' || message.status === 'answered'
 }
