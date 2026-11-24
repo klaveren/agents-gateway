@@ -1,4 +1,5 @@
 import { LiveBrowser, liveBrowsers, TLiveBrowserInput } from '@infra/mcp/LiveBrowser.Adapter'
+import { browserProfiles, IBrowserProfileOwner } from '@infra/mcp/BrowserProfiles.Service'
 import { PersonBrowsers } from '@infra/mcp/PersonBrowsers.Service'
 import { NOTIFY_TOOL } from '@domain/models/PersonMessage.Model'
 import { PersonMessageError, type PersonMessagesService } from '@application/PersonMessages.Service'
@@ -47,7 +48,7 @@ import { estimateTokens } from '@domain/Token.Estimate'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { bashPolicy } from '@infra/tools/Bash.Guard'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { diagnosticsOn, IAgent, IAgentTarget } from '@domain/models/Agent.Model'
+import { diagnosticsOn, IAgent, IAgentTarget, keepsBrowserLogin } from '@domain/models/Agent.Model'
 import { AgentUnavailableError } from '@domain/errors/Domain.Error'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -108,6 +109,7 @@ import { normalizeShares, sharedInto } from '@domain/Share.Policy'
 import { parseBody, replyToOf } from './Request.Parser'
 import {
   agentBodySchema,
+  browserClearSchema,
   createSessionSchema,
   renameConversationSchema,
   channelSchema,
@@ -1137,6 +1139,7 @@ export class AgentController {
         const terminal = body.terminal === undefined ? this.agents.get(parsed.id)?.terminal : undefined
         const modelGroup = body.modelGroup === undefined ? this.agents.get(parsed.id)?.modelGroup : undefined
         const diagnostics = body.diagnostics === undefined ? this.agents.get(parsed.id)?.diagnostics : undefined
+        const browser = body.browser === undefined ? this.agents.get(parsed.id)?.browser : undefined
         const triggers = body.triggers === undefined ? this.agents.get(parsed.id)?.triggers : undefined
         const tags = body.tags === undefined ? this.agents.get(parsed.id)?.tags : undefined
         const env = body.env === undefined ? this.agents.get(parsed.id)?.env : undefined
@@ -1150,6 +1153,7 @@ export class AgentController {
           ...(terminal ? { terminal } : {}),
           ...(modelGroup ? { modelGroup } : {}),
           ...(diagnostics ? { diagnostics } : {}),
+          ...(keepsBrowserLogin(browser) ? { browser } : {}),
           ...(triggers?.length ? { triggers } : {}),
           ...(tags?.length ? { tags } : {}),
           ...(env && Object.keys(env).length ? { env } : {}),
@@ -1989,15 +1993,23 @@ export class AgentController {
   }
 
   /** ⛔ Só o DONO da conversa mexe no navegador dela (404 aos demais), com ou sem navegador aberto. */
-  private async requireBrowserOwner(sessionId: string): Promise<void> {
+  private async requireBrowserOwner(sessionId: string): Promise<IBrowserProfileOwner> {
     const resolved = await this.requireCaller()
-    let metadata: Record<string, unknown> | undefined
+    let found: { agentId: string; metadata?: Record<string, unknown> } | undefined
     try {
-      metadata = (await this.usecases.getSession.execute(sessionId)).metadata
+      found = await this.usecases.getSession.execute(sessionId)
     } catch {
-      metadata = (await this.usecases.conversations.findSession(sessionId).catch(() => undefined))?.metadata
+      found = await this.usecases.conversations.findSession(sessionId).catch(() => undefined)
     }
-    if (!metadata || !this.ownsConversation(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    const metadata = found?.metadata
+    if (!found || !metadata || !this.ownsConversation(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    // 🌐 De quem é o perfil do navegador (a conversa pode não estar viva na memória: o dono vem do que está gravado).
+    const project = metadata[PROJECT_METADATA_KEY]
+    return {
+      agentId: found.agentId,
+      ...(typeof project === 'string' && project ? { projectId: project } : {}),
+      keepLogin: keepsBrowserLogin(this.agents.get(found.agentId)?.browser),
+    }
   }
 
   /**
@@ -2007,12 +2019,33 @@ export class AgentController {
   async browserOpen(req: Request, res: Response) {
     try {
       const id = req.params.id as string
-      await this.requireBrowserOwner(id)
-      await this.personBrowsers().open(id, ((req.body ?? {}) as { url?: unknown }).url)
+      const owner = await this.requireBrowserOwner(id)
+      await this.personBrowsers().open(id, ((req.body ?? {}) as { url?: unknown }).url, owner)
       res.json(ok({ live: true }))
     } catch (error: unknown) {
       this.sendFailure(res, error, '[AgentController.browserOpen]')
     }
+  }
+
+  /**
+   * `POST /agents/:agentId/browser/clear` — 🧹 apaga as sessões guardadas do navegador do agente: as do projeto pedido
+   * (`projectId`; ausente = as das conversas sem projeto) ou, com `all: true`, as de todos. ⛔ Só quem administra o agente
+   * (ou, no agente global, o admin do projeto pedido); 409 com o navegador aberto.
+   */
+  async browserClear(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const agentId = req.params.agentId as string
+      const body = parseBody(browserClearSchema, req.body ?? {})
+      const agent = this.agents.get(agentId)
+      // O global, num projeto: o admin daquele projeto limpa o perfil daquele projeto (o "todos" é do gateway).
+      if (agent && !agent.projectId && body.projectId && !body.all) await requireProjectsAdmin(this.usecases.proof, [body.projectId], 'browserClear')
+      else await this.requireAgentAdmin(agentId, 'browserClear')
+      if (!agent) throw new AgentNotFoundError(agentId)
+      const projectId = body.all ? null : body.projectId || undefined
+      if (!browserProfiles().clear(agentId, projectId))
+        throw new HttpError(409, 'browser_in_use', 'The browser of this agent is open; close the conversation browser and try again')
+      return { cleared: true }
+    })
   }
 
   /** `POST /sessions/:id/browser/close` — fecha o navegador que a pessoa abriu (409 se o agente está usando). */
@@ -3922,6 +3955,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     ...(body.permissions ? { permissions: body.permissions } : {}),
     ...(body.terminal && (body.terminal.timeoutSeconds || body.terminal.maxOutputChars) ? { terminal: body.terminal } : {}),
     ...(body.diagnostics && diagnosticsOn(body.diagnostics) ? { diagnostics: body.diagnostics } : {}),
+    ...(body.browser && keepsBrowserLogin(body.browser) ? { browser: { keepLogin: true } } : {}),
     ...(body.triggers?.length ? { triggers: body.triggers.map((trigger) => ({ id: trigger.id.trim(), when: trigger.when.trim(), body: trigger.body })) } : {}),
     ...(body.env && Object.keys(body.env).length ? { env: { ...body.env } } : {}),
     ...(body.files?.length ? { files: body.files.map(({ path, sha256, bytes }) => ({ path, sha256, bytes })) } : {}),

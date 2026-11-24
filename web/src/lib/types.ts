@@ -196,6 +196,8 @@ export interface IAgentDetail extends IAgent {
   terminal?: IAgentTerminal
   /** O diagnóstico depois de editar. Ausente = desligado. */
   diagnostics?: IAgentDiagnostics
+  /** O navegador: guardar o login entre conversas. Ausente = desligado. */
+  browser?: IAgentBrowser
   /** As ações ativadas sob demanda (guia Triggers). */
   triggers?: IAgentTrigger[]
   /** O grupo de modelos: ausente = o padrão; `none` = não troca. */
@@ -245,6 +247,11 @@ export interface IAgentDiagnostics {
   timeoutSeconds?: number
 }
 
+/** O navegador do agente: `keepLogin` guarda o perfil (cookies, login) por agente e projeto, entre conversas. */
+export interface IAgentBrowser {
+  keepLogin?: boolean
+}
+
 export interface IAgentTerminal {
   timeoutSeconds?: number
   maxOutputChars?: number
@@ -271,6 +278,8 @@ export interface IAgentInput {
   terminal?: IAgentTerminal | null
   /** `null` desliga. */
   diagnostics?: IAgentDiagnostics | null
+  /** `null` desliga (cada conversa com um navegador limpo). */
+  browser?: IAgentBrowser | null
   /** Vazio apaga todos. */
   triggers?: IAgentTrigger[]
   /** Ausente mantém; `null` volta ao grupo padrão; `none` = não troca; senão o id de um grupo. */

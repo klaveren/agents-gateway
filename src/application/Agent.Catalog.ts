@@ -4,7 +4,7 @@ import { toCapabilities } from '@domain/Capability.Catalog'
 import { agentIssues, IAgentRules, triggerIssues } from '@domain/Agent.Policy'
 import { AgentInUseError, AgentNotFoundError, GuidanceNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
 import { describeMatch, IImportProblemMatch, withoutProblem } from '@domain/models/ImportProblem.Model'
-import { diagnosticsOn, IAgent, IAgentTarget, IAgentTrigger } from '@domain/models/Agent.Model'
+import { diagnosticsOn, IAgent, keepsBrowserLogin, IAgentTarget, IAgentTrigger } from '@domain/models/Agent.Model'
 import { mergeLocalLayer, TAgentLocalLayerInput } from '@domain/models/AgentLocalLayer.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
 import { cleanRules, IPermissionRule, permissionIssues } from '@domain/Permission.Policy'
@@ -404,6 +404,7 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.permissions?.length ? { permissions: stored.permissions } : {}),
     ...(stored.terminal && (stored.terminal.timeoutSeconds || stored.terminal.maxOutputChars) ? { terminal: { ...stored.terminal } } : {}),
     ...(diagnosticsOn(stored.diagnostics) ? { diagnostics: { ...stored.diagnostics } } : {}),
+    ...(keepsBrowserLogin(stored.browser) ? { browser: { keepLogin: true } } : {}),
     ...(stored.triggers?.length ? { triggers: stored.triggers.map((trigger) => ({ id: trigger.id, when: trigger.when, body: trigger.body })) } : {}),
     ...(stored.env && Object.keys(stored.env).length ? { env: { ...stored.env } } : {}),
     ...(stored.files?.length ? { files: stored.files.map((file) => ({ ...file })) } : {}),

@@ -276,7 +276,12 @@ export const agentBodySchema = z.object({
     })
     .nullable()
     .optional(),
+  /** O navegador do agente (guardar o login entre conversas). Ausente na edição = mantém; `null` desliga. */
+  browser: z.object({ keepLogin: z.boolean().optional() }).nullable().optional(),
 })
+
+/** Limpar as sessões guardadas do navegador do agente: as do projeto (ausente = sem projeto) ou, com `all`, todas. */
+export const browserClearSchema = z.object({ projectId: z.string().max(200).nullable().optional(), all: z.boolean().optional() })
 
 /**
  * Contas. ⚠️ A senha só tem teto aqui (o hash custa CPU por caractere); o mínimo é regra do domínio
