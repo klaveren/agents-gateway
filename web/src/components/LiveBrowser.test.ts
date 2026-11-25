@@ -225,3 +225,47 @@ describe('LiveBrowser — rolar com o dedo no celular', () => {
     expect(sent.some((body) => body.type === 'wheel')).toBe(false)
   })
 })
+
+describe('LiveBrowser — no celular o teclado só abre quando a pessoa pede', () => {
+  async function mountTouch(editable: boolean) {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)', addEventListener() {}, removeEventListener() {} }))
+    vi.mocked(api).mockImplementation(async (path: string) => (path === '/sessions/s1/browser/input' ? ({ done: true, editable } as never) : ({} as never)))
+    vi.mocked(openStream).mockResolvedValue(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          const frame = JSON.stringify({ data: 'AAAA', url: 'https://x.test', width: 400, height: 800 })
+          controller.enqueue(new TextEncoder().encode(`event: browser.state\ndata: {"live":true}\n\nevent: browser.frame\ndata: ${frame}\n\n`))
+        },
+      }),
+    )
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp({ render: () => h(LiveBrowser, { sessionId: 's1', interactive: true }) }).use(createPinia())
+    app.mount(host)
+    await flush()
+    const image = host.querySelector<HTMLImageElement>('[data-test="live-browser-frame"]')!
+    image.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 800, right: 400, bottom: 800, x: 0, y: 0, toJSON: () => ({}) })
+    return host
+  }
+  // Só o matchMedia: o ResizeObserver do topo do arquivo segue valendo.
+  afterEach(() => vi.stubGlobal('matchMedia', undefined))
+
+  it('tocar num botão da página não foca o campo invisível (não abre o teclado)', async () => {
+    const host = await mountTouch(false)
+    host.querySelector<HTMLImageElement>('[data-test="live-browser-frame"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10 }))
+    await flush()
+    expect(document.activeElement).not.toBe(host.querySelector('[data-test="live-browser-typing"]'))
+    expect(host.querySelector('[data-test="live-browser-keyboard"]')!.className).not.toContain('animate-pulse')
+  })
+
+  it('tocar num campo de texto acende o botão do teclado; o botão foca o campo invisível', async () => {
+    const host = await mountTouch(true)
+    host.querySelector<HTMLImageElement>('[data-test="live-browser-frame"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10 }))
+    await flush()
+    const button = host.querySelector<HTMLButtonElement>('[data-test="live-browser-keyboard"]')!
+    expect(button.className).toContain('animate-pulse')
+    button.click()
+    await flush()
+    expect(document.activeElement).toBe(host.querySelector('[data-test="live-browser-typing"]'))
+  })
+})

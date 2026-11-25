@@ -106,14 +106,26 @@
 
   // 🖱️ A entrada vai em fila: a ordem do clique e das teclas é a da pessoa.
   let queue = Promise.resolve()
-  function send(event: Record<string, unknown>) {
+  function send(event: Record<string, unknown>, then?: (result: { editable?: boolean } | undefined) => void) {
     if (!props.interactive || !live.value) return
     queue = queue.then(() =>
-      api(`${base()}/input`, { method: 'POST', body: event }).then(
-        () => undefined,
+      api<{ editable?: boolean }>(`${base()}/input`, { method: 'POST', body: event }).then(
+        (result) => then?.(result),
         () => undefined,
       ),
     )
+  }
+
+  /**
+   * ⌨️ NO TOQUE (celular), o teclado só abre quando a pessoa pede: o iPhone abre o teclado a cada foco num campo, e o
+   * foco ia para o campo invisível a cada clique — até num botão. O botão do teclado acende quando o clique caiu num campo
+   * de texto da página; no computador, nada muda (o clique segue focando o campo).
+   */
+  const touchOnly = typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+  const wantsKeyboard = ref(false)
+  function openKeyboard() {
+    wantsKeyboard.value = false
+    typing.value?.focus()
   }
 
   /** Do ponto na imagem para o pixel da aba (a imagem pode estar menor que a aba enquanto a gaveta muda de tamanho). */
@@ -220,16 +232,22 @@
       return
     }
     if (picking.value) return void choose(event)
-    typing.value?.focus()
+    if (touchOnly) typing.value?.blur()
+    else typing.value?.focus()
     const at = point(event)
     if (at)
-      send({
-        type: 'click',
-        ...at,
-        button: event.button === 2 ? 'right' : event.button === 1 ? 'middle' : 'left',
-        clickCount: Math.min(3, event.detail || 1),
-        modifiers: modifiers(event),
-      })
+      send(
+        {
+          type: 'click',
+          ...at,
+          button: event.button === 2 ? 'right' : event.button === 1 ? 'middle' : 'left',
+          clickCount: Math.min(3, event.detail || 1),
+          modifiers: modifiers(event),
+        },
+        (result) => {
+          if (touchOnly) wantsKeyboard.value = !!result?.editable
+        },
+      )
   }
 
   let lastMove = 0
@@ -437,6 +455,19 @@
         @click="togglePick"
       >
         <Icon name="pick" class="h-4 w-4" />
+      </button>
+      <button
+        v-if="touchOnly && interactive"
+        type="button"
+        class="bar-btn"
+        :class="{ 'animate-pulse bg-emerald-500/20 text-emerald-300': wantsKeyboard }"
+        title="Abrir o teclado para digitar na página"
+        aria-label="Abrir o teclado"
+        :disabled="!live"
+        data-test="live-browser-keyboard"
+        @click="openKeyboard"
+      >
+        <Icon name="keyboard" class="h-4 w-4" />
       </button>
     </div>
     <div
