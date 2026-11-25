@@ -668,6 +668,18 @@ export const useThreadStore = defineStore('thread', () => {
     inbox.refollow()
     void refresh().catch(() => undefined)
   }
+  /**
+   * 🔄 Puxar para atualizar: relê a conversa aberta. Parada, volta a acompanhar como ao reabrir a tela (`reattach`); com um
+   * turno em curso, só relê o histórico (o turno segue pelo stream).
+   */
+  async function reload(): Promise<void> {
+    if (!sessionId.value) return
+    if (!sending.value && !following.value) {
+      pending.value = undefined
+      inbox.refollow()
+    }
+    await refresh().catch(() => undefined)
+  }
   if (typeof document !== 'undefined')
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && sessionId.value && !sending.value && !following.value) reattach()
@@ -823,6 +835,7 @@ export const useThreadStore = defineStore('thread', () => {
     startDraft,
     setHeader,
     refresh,
+    reload,
     send,
     reconfigure,
     compact,

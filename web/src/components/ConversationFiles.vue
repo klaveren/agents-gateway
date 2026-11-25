@@ -5,6 +5,7 @@
   import { bytes, shortTime } from '@/lib/format'
   import { downloadUrl, fetchFileBlob, kindLabel, languageOf, TEXT_VIEW_MAX_BYTES, viewable, viewerOf, type IDeliveredFile } from '@/lib/fileViewer'
   import Icon from './Icon.vue'
+  import { useRefreshHandler } from '@/lib/pullRefresh'
 
   /**
    * 📎 Os ARQUIVOS DA CONVERSA: o que o agente entregou (`deliver_file` e afins), em lista, com o visualizador ao lado.
@@ -42,6 +43,7 @@
     }
   }
   watch(() => [props.conversationId, props.refreshKey], load, { immediate: true })
+  useRefreshHandler(load)
   watch(
     () => props.selected,
     (id) => {

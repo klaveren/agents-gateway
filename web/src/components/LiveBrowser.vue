@@ -316,7 +316,7 @@
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col" data-test="live-browser">
+  <div class="flex h-full min-h-0 flex-col" data-test="live-browser" data-no-pull>
     <div v-if="tabs.length" class="mk-tabs flex h-8 shrink-0" data-test="live-browser-tabs">
       <div class="flex min-w-0 flex-1 overflow-x-auto" role="tablist">
         <div

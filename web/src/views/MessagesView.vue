@@ -15,6 +15,7 @@
   import { useAttachments } from '@/composables/useAttachments'
   import { useAgentsStore } from '@/stores/agents'
   import { useSpeechStore } from '@/stores/speech'
+  import { useRefreshHandler } from '@/lib/pullRefresh'
   import { isResolved, useMessagesStore, type IOutgoingReply, type IPersonMessage, type IPersonThread } from '@/stores/messages'
 
   /**
@@ -63,6 +64,18 @@
   const requestLabel = (message: IPersonMessage) => (message.title || message.body.replace(/\s+/g, ' ').trim()).slice(0, 60)
   const replyTarget = ref<string>()
   const composer = ref<HTMLTextAreaElement>()
+
+  // 🔄 Puxar para atualizar: a lista e o item aberto (com o contexto da conversa). O rascunho fica.
+  useRefreshHandler(async () => {
+    error.value = undefined
+    try {
+      await messages.load()
+      if (props.id) await messages.openThread(props.id)
+      await loadContext()
+    } catch (failure) {
+      error.value = failure instanceof Error ? failure.message : String(failure)
+    }
+  })
 
   onMounted(() => {
     void pushState()
