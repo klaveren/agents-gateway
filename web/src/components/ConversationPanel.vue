@@ -207,12 +207,18 @@
 </script>
 
 <template>
-  <div class="flex min-h-0 flex-col gap-5" data-test="conversation-panel">
+  <div class="flex min-h-0 min-w-0 flex-col gap-5 wrap-anywhere" data-test="conversation-panel">
     <header class="flex flex-wrap items-center gap-2">
       <h2 class="font-medium">Board</h2>
       <span v-if="panel?.updatedAt" class="text-xs text-zinc-500">atualizado {{ fullTime(panel.updatedAt) }}</span>
       <div class="ml-auto flex items-center gap-1">
-        <button class="grid h-8 w-8 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800" title="Exportar Markdown" aria-label="Exportar Markdown" data-test="export-md" @click="exportMarkdown">
+        <button
+          class="grid h-8 w-8 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800"
+          title="Exportar Markdown"
+          aria-label="Exportar Markdown"
+          data-test="export-md"
+          @click="exportMarkdown"
+        >
           <Icon name="download" class="h-4 w-4" />
         </button>
         <RouterLink
@@ -255,7 +261,8 @@
         data-test="tab-plans"
         @click="tab = 'plans'"
       >
-        Planos<span v-if="plans.length" class="text-zinc-500"> · {{ plans.length }}</span>
+        Planos
+        <span v-if="plans.length" class="text-zinc-500">· {{ plans.length }}</span>
         <span v-if="waiting" class="ml-1 rounded-full bg-amber-500/20 px-1.5 text-xs text-amber-200" data-test="plans-waiting">{{ waiting }}</span>
       </button>
     </nav>
@@ -277,7 +284,8 @@
         </button>
         <div v-if="openPlan === plan.id" class="flex flex-col gap-3 border-t border-zinc-800 p-3">
           <p v-if="plan.feedback" class="text-xs" :class="plan.feedback.kind === 'approved' ? 'text-success-300' : 'text-rose-200'">
-            {{ plan.feedback.kind === 'approved' ? 'Aprovado' : 'Ajustes pedidos' }} por {{ plan.feedback.by }}<template v-if="plan.feedback.text">: {{ plan.feedback.text }}</template>
+            {{ plan.feedback.kind === 'approved' ? 'Aprovado' : 'Ajustes pedidos' }} por {{ plan.feedback.by }}
+            <template v-if="plan.feedback.text">: {{ plan.feedback.text }}</template>
             <span v-if="plan.feedback.delivered === false" class="text-zinc-500">· o agente vê no próximo turno</span>
           </p>
           <div class="prose-agent wrap-anywhere text-sm" data-test="plan-body" v-html="renderMarkdown(plan.body)" />
