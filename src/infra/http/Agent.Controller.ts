@@ -2117,8 +2117,8 @@ export class AgentController {
       const event = parseBrowserInput(req.body)
       if (!event) throw new HttpError(422, 'validation_error', 'Invalid browser input')
       const browser = await this.requireOwnBrowser(req.params.id as string)
-      await browser.input(event)
-      res.json(ok({ done: true }))
+      const result = await browser.input(event)
+      res.json(ok({ done: true, ...(result ?? {}) }))
     } catch (error: unknown) {
       this.sendFailure(res, error, '[AgentController.browserInput]')
     }

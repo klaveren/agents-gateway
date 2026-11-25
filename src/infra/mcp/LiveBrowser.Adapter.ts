@@ -362,7 +362,18 @@ export class LiveBrowser {
   }
 
   /** 🖱️ O clique, a rolagem e o teclado da pessoa, na aba que a tela mostra. */
-  async input(event: TLiveBrowserInput): Promise<void> {
+  /**
+   * ⌨️ O clique caiu num campo de texto? A tela do celular só abre o teclado quando a pessoa pede (o iPhone abre o teclado
+   * a cada foco); com isto, o botão do teclado acende quando a página espera texto.
+   */
+  private async focusedEditable(sid: string): Promise<boolean> {
+    const expression =
+      "(() => { let e = document.activeElement; while (e && e.shadowRoot && e.shadowRoot.activeElement) e = e.shadowRoot.activeElement; if (!e) return false; if (e.isContentEditable) return true; if (e.tagName === 'TEXTAREA') return !e.readOnly && !e.disabled; if (e.tagName !== 'INPUT') return false; return !e.readOnly && !e.disabled && !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/i.test(e.type) })()"
+    const result = (await this.send('Runtime.evaluate', { expression, returnByValue: true }, sid).catch(() => undefined)) as { result?: { value?: unknown } } | undefined
+    return result?.result?.value === true
+  }
+
+  async input(event: TLiveBrowserInput): Promise<{ editable?: boolean } | void> {
     this.touchedAt = Date.now()
     // As abas não dependem da aba à mostra.
     if (event.type === 'tab-select') {
@@ -394,7 +405,7 @@ export class LiveBrowser {
         await mouse({ type: 'mouseMoved', x: event.x, y: event.y, modifiers })
         await mouse({ type: 'mousePressed', x: event.x, y: event.y, button, clickCount, modifiers })
         await mouse({ type: 'mouseReleased', x: event.x, y: event.y, button, clickCount, modifiers })
-        return
+        return { editable: await this.focusedEditable(sid) }
       }
       case 'wheel':
         await mouse({ type: 'mouseWheel', x: event.x, y: event.y, deltaX: event.deltaX, deltaY: event.deltaY })
@@ -484,7 +495,10 @@ export class LiveBrowser {
    */
   async navigate(url: string): Promise<void> {
     this.touchedAt = Date.now()
-    if (this.attached) return this.input({ type: 'navigate', url })
+    if (this.attached) {
+      await this.input({ type: 'navigate', url })
+      return
+    }
     await this.send('Target.createTarget', { url })
   }
 
