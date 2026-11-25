@@ -10,6 +10,7 @@
   import { useConversationsStore } from '@/stores/conversations'
   import { useProjectsStore } from '@/stores/projects'
   import { useThreadStore } from '@/stores/thread'
+  import { useRefreshHandler } from '@/lib/pullRefresh'
 
   const props = defineProps<{ id?: string }>()
 
@@ -24,6 +25,8 @@
   const hasDetail = computed(() => isNew.value || !!props.id)
 
   onMounted(() => void conversations.load(projects.seesAll))
+  // 🔄 Puxar para atualizar: a lista e a conversa aberta (o turno em curso, se houver, volta pelo stream).
+  useRefreshHandler(() => Promise.allSettled([conversations.load(projects.seesAll), props.id ? thread.reload() : undefined]))
 
   watch(
     () => props.id,
