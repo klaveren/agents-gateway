@@ -118,12 +118,14 @@
 
   /** Do ponto na imagem para o pixel da aba (a imagem pode estar menor que a aba enquanto a gaveta muda de tamanho). */
   function point(event: MouseEvent): { x: number; y: number } | undefined {
-    const image = event.currentTarget as HTMLElement
+    return pointAt(event.currentTarget as HTMLElement, event.clientX, event.clientY)
+  }
+  function pointAt(image: HTMLElement, clientX: number, clientY: number): { x: number; y: number } | undefined {
     const box = image.getBoundingClientRect()
     if (!box.width || !box.height) return undefined
     const width = frame.value?.width ?? box.width
     const height = frame.value?.height ?? box.height
-    return { x: ((event.clientX - box.left) * width) / box.width, y: ((event.clientY - box.top) * height) / box.height }
+    return { x: ((clientX - box.left) * width) / box.width, y: ((clientY - box.top) * height) / box.height }
   }
 
   const modifiers = (event: KeyboardEvent | MouseEvent) => (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0)
@@ -213,6 +215,10 @@
   }
 
   function onClick(event: MouseEvent) {
+    if (dragged) {
+      dragged = false
+      return
+    }
     if (picking.value) return void choose(event)
     typing.value?.focus()
     const at = point(event)
@@ -243,13 +249,49 @@
     event.preventDefault()
     const at = point(event)
     if (!at) return
-    wheel = { x: at.x, y: at.y, dx: wheel.dx + event.deltaX, dy: wheel.dy + event.deltaY }
+    scroll(at, event.deltaX, event.deltaY)
+  }
+  function scroll(at: { x: number; y: number }, deltaX: number, deltaY: number) {
+    wheel = { x: at.x, y: at.y, dx: wheel.dx + deltaX, dy: wheel.dy + deltaY }
     if (wheelTimer) return
     wheelTimer = setTimeout(() => {
       wheelTimer = undefined
       send({ type: 'wheel', x: wheel.x, y: wheel.y, deltaX: wheel.dx, deltaY: wheel.dy })
       wheel = { x: 0, y: 0, dx: 0, dy: 0 }
     }, 50)
+  }
+
+  /**
+   * 👆 ROLAR COM O DEDO (celular): a imagem não rola sozinha (`touch-none`); arrastar vira a roda do mouse na aba, no
+   * sentido do dedo (subir o dedo desce a página). Um toque sem arrastar segue como clique; depois de arrastar, o clique
+   * que o navegador gera no fim do toque é ignorado.
+   */
+  let touch: { x: number; y: number; moved: boolean } | undefined
+  let dragged = false
+  function onTouchStart(event: TouchEvent) {
+    const finger = event.touches[0]
+    touch = event.touches.length === 1 && finger ? { x: finger.clientX, y: finger.clientY, moved: false } : undefined
+    dragged = false
+  }
+  function onTouchMove(event: TouchEvent) {
+    const finger = event.touches[0]
+    if (!touch || !finger || !props.interactive || !live.value) return
+    const dx = touch.x - finger.clientX
+    const dy = touch.y - finger.clientY
+    if (!touch.moved && Math.abs(dx) < 6 && Math.abs(dy) < 6) return
+    touch.moved = true
+    event.preventDefault()
+    const image = event.currentTarget as HTMLElement
+    const at = pointAt(image, finger.clientX, finger.clientY)
+    if (!at) return
+    const box = image.getBoundingClientRect()
+    const ratio = box.width ? (frame.value?.width ?? box.width) / box.width : 1
+    scroll(at, dx * ratio, dy * ratio)
+    touch = { x: finger.clientX, y: finger.clientY, moved: true }
+  }
+  function onTouchEnd() {
+    dragged = !!touch?.moved
+    touch = undefined
   }
 
   let composing = false
@@ -427,13 +469,17 @@
         :src="frame.src"
         :alt="frame.title ?? 'Tela do navegador'"
         draggable="false"
-        class="block w-full select-none"
+        class="block w-full touch-none select-none"
         :class="[{ 'opacity-50': live === false }, picking ? 'cursor-crosshair' : interactive && live ? 'cursor-pointer' : '']"
         data-test="live-browser-frame"
         @click="onClick"
         @contextmenu.prevent="onClick"
         @mousemove="onMove"
         @wheel="onWheel"
+        @touchstart="onTouchStart"
+        @touchmove="onTouchMove"
+        @touchend="onTouchEnd"
+        @touchcancel="onTouchEnd"
         @mouseleave="hover = undefined"
       />
       <div
