@@ -162,3 +162,66 @@ describe('LiveBrowser — teclado com acento, ç e IME', () => {
     ])
   })
 })
+
+describe('LiveBrowser — rolar com o dedo no celular', () => {
+  async function mountWithFrame() {
+    vi.mocked(api).mockResolvedValue({} as never)
+    vi.mocked(openStream).mockResolvedValue(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          const frame = JSON.stringify({ data: 'AAAA', url: 'https://x.test', width: 800, height: 1600 })
+          controller.enqueue(new TextEncoder().encode(`event: browser.state\ndata: {"live":true}\n\nevent: browser.frame\ndata: ${frame}\n\n`))
+        },
+      }),
+    )
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp({ render: () => h(LiveBrowser, { sessionId: 's1', interactive: true }) }).use(createPinia())
+    app.mount(host)
+    await flush()
+    const image = host.querySelector<HTMLImageElement>('[data-test="live-browser-frame"]')!
+    image.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 800, right: 400, bottom: 800, x: 0, y: 0, toJSON: () => ({}) })
+    return image
+  }
+  const inputs = () =>
+    vi
+      .mocked(api)
+      .mock.calls.filter(([path]) => path === '/sessions/s1/browser/input')
+      .map(([, options]) => (options as { body: { type: string; deltaY?: number } }).body)
+  const touchAt = (type: string, y: number) => {
+    const event = new Event(type, { bubbles: true, cancelable: true }) as TouchEvent
+    Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientX: 100, clientY: y }] })
+    return event
+  }
+
+  it('subir o dedo desce a página: vira roda na aba, na escala da aba; o clique do fim do toque é ignorado', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const image = await mountWithFrame()
+      image.dispatchEvent(touchAt('touchstart', 500))
+      const move = touchAt('touchmove', 400)
+      image.dispatchEvent(move)
+      image.dispatchEvent(touchAt('touchend', 400))
+      image.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 100, clientY: 400 }))
+      await vi.advanceTimersByTimeAsync(60)
+      await flush()
+      expect(move.defaultPrevented).toBe(true)
+      const sent = inputs()
+      expect(sent.filter((body) => body.type === 'click')).toEqual([])
+      expect(sent.filter((body) => body.type === 'wheel').map((body) => body.deltaY)).toEqual([200])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('um toque sem arrastar segue como clique, sem rolar', async () => {
+    const image = await mountWithFrame()
+    image.dispatchEvent(touchAt('touchstart', 500))
+    image.dispatchEvent(touchAt('touchend', 500))
+    image.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 100, clientY: 500 }))
+    await flush()
+    const sent = inputs()
+    expect(sent.some((body) => body.type === 'click')).toBe(true)
+    expect(sent.some((body) => body.type === 'wheel')).toBe(false)
+  })
+})
