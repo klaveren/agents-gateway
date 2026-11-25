@@ -206,12 +206,18 @@ export class ProjectsService {
   /**
    * 🔁 Os grupos de fallback do projeto e o padrão dele (as listas inteiras). ⛔ Cada passo tem de ser um modelo que o projeto
    * recebeu; `unusable` diz por que um passo não serve (provider desligado, modelo desativado), como nos grupos do gateway.
+   * ⛔ O grupo que SAI e que um agente do projeto usa (`usedBy`) não sai — a não ser que o gateway tenha um de mesmo id.
    */
   setModelGroups(
     id: string,
     change: { modelGroups: IModelGroup[]; defaultModelGroup?: string },
     by: string,
-    rules: { known?: (provider: string) => boolean; unusable?: (step: IFallbackStep) => string | undefined; gatewayGroups?: readonly string[] } = {},
+    rules: {
+      known?: (provider: string) => boolean
+      unusable?: (step: IFallbackStep) => string | undefined
+      gatewayGroups?: readonly string[]
+      usedBy?: (group: string) => string | undefined
+    } = {},
   ): IProject {
     const project = this.get(id)
     const allowed = project.models?.allowed
@@ -221,6 +227,11 @@ export class ProjectsService {
     const ids = new Set([...change.modelGroups.map((group) => group.id), ...(rules.gatewayGroups ?? [])])
     if (change.defaultModelGroup && change.defaultModelGroup !== NO_MODEL_GROUP && !ids.has(change.defaultModelGroup))
       issues.push({ field: 'defaultModelGroup', message: `unknown group: ${change.defaultModelGroup}` })
+    for (const old of project.models?.modelGroups ?? []) {
+      if (ids.has(old.id)) continue
+      const agent = rules.usedBy?.(old.id)
+      if (agent) issues.push({ field: 'groups', message: `${old.id} is used by agent ${agent}` })
+    }
     if (issues.length) throw new InvalidProjectError(issues)
     const { modelGroups: _groups, defaultModelGroup: _default, ...rest } = project.models ?? {}
     const models: IProjectModels = {

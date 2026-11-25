@@ -1521,6 +1521,7 @@ export class AgentController {
           return undefined
         },
         gatewayGroups: (settings.modelGroups ?? []).map((group) => group.id),
+        usedBy: (group) => this.agents.list().find((agent) => agent.projectId === id && agent.modelGroup === group)?.id,
       })
       return { groups: saved.models?.modelGroups ?? [], ...(saved.models?.defaultModelGroup ? { defaultModelGroup: saved.models.defaultModelGroup } : {}) }
     })
