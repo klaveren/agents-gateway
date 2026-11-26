@@ -127,6 +127,34 @@ describe('ProjectSwitcher — o servidor, no app do Mac', () => {
     expect(post).toHaveBeenCalledWith({ op: 'switch', id: 's4', project: 'beta' })
   })
 
+  it('os projetos daqui e dos outros servidores saem em ordem alfabética; o mesmo nome fica junto, pelo servidor', async () => {
+    const post = vi.fn(async (message: Record<string, unknown>) =>
+      message.op === 'projects'
+        ? {
+            servers: [
+              {
+                id: 's4',
+                name: 'Servidor 4',
+                state: 'ok',
+                projects: [
+                  { id: 'zeta', name: 'Zeta' },
+                  { id: 'alfa', name: 'Alfa' },
+                  { id: 'beta', name: 'beta' },
+                ],
+              },
+            ],
+          }
+        : { current: 'local', manage: true, servers: SERVERS },
+    )
+    ;(globalThis as TWindow).webkit = { messageHandlers: { gatewayServers: { postMessage: post } } }
+    const host = await mount()
+    await openMenu(host)
+    const rows = [...host.querySelectorAll<HTMLElement>('[role="menuitemradio"]:not([data-test="server-item"]), [data-test="other-project-item"]')]
+      .filter((row) => row.querySelector('.truncate') && row.querySelector('.server-tag'))
+      .map((row) => `${row.querySelector('.truncate')!.textContent} · ${row.querySelector('.server-tag')!.textContent}`)
+    expect(rows).toEqual(['Alfa · Este Mac', 'Alfa · Servidor 4', 'beta · Servidor 4', 'Zeta · Servidor 4'])
+  })
+
   it('na tela de outro servidor dá para trocar, mas o cadastro não aparece', async () => {
     install({ current: 's4', manage: false })
     const host = await mount()
