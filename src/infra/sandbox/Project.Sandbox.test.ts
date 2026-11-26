@@ -738,6 +738,24 @@ describe('forBubblewrap — o cerco no Linux', () => {
     const linux = forBubblewrap(plan(['/data/tools', `${root}/src/**`]), root, list)
     assert.ok(linux.readDeny.includes(root) && linux.readAllow.includes(`${root}/src/**`))
   })
+
+  it('⛔ a pasta dos comandos fecha inteira: a de outro comando (que pode sumir antes do bwrap subir) nunca entra no plano', () => {
+    const commands = '/data/run/commands'
+    const own = `${commands}/meu`
+    const running: Record<string, string[]> = { ...tree, '/data': [...tree['/data'], 'run'], '/data/run': ['commands', 'logs'], [commands]: ['meu', 'outro-a', 'outro-b'] }
+    const linux = forBubblewrap(plan(['/data/tools', `${root}/**`, own]), root, (dir) => running[dir] ?? [], [commands])
+    assert.ok(linux.readDeny.includes(commands) && linux.readDeny.includes('/data/run/logs'))
+    assert.ok(!linux.readDeny.some((path) => path.startsWith(`${commands}/`)), linux.readDeny.join(' '))
+    assert.ok(linux.readAllow.includes(own))
+    // Sem a vedação, o comportamento antigo: cada vizinho entra (a corrida).
+    const split = forBubblewrap(plan(['/data/tools', `${root}/**`, own]), root, (dir) => running[dir] ?? [])
+    assert.ok(split.readDeny.includes(`${commands}/outro-a`))
+  })
+
+  it('a vedação não vale para a pasta que contém a raiz (a escrita lá dentro morreria)', () => {
+    const linux = forBubblewrap(plan(['/data/tools', `${root}/**`]), root, list, ['/data/projects'])
+    assert.ok(!linux.readDeny.includes('/data/projects') && linux.readDeny.includes('/data/projects/outro'))
+  })
 })
 
 describe('writeFolders — as pastas de escrita criadas antes do comando', () => {

@@ -47,6 +47,17 @@ export function antigravityBin(env: NodeJS.ProcessEnv = process.env): string {
 
 const TURN_TIMEOUT_S = 600
 
+/** Quantas vezes o gateway segue um turno que acabou mudo depois de uma ferramenta que falhou (ver `sendMessage`). */
+export const ANTIGRAVITY_FOLLOW_UPS = 1
+
+const SANDBOX_DENIED = 'Negado pelo sandbox:'
+
+/** A mensagem que segue o turno mudo: o que falhou e por onde continuar. */
+export function followUpMessage(failure: string | undefined): string | undefined {
+  if (!failure) return undefined
+  return `A ferramenta falhou (${failure.split('\n')[0].slice(0, 300)}). Continue com as ferramentas do gateway (${ANTIGRAVITY_TURN_TOOLS_SERVER}): o terminal é o run_bash, os arquivos são read_file, write_file e edit_file. O terminal nativo (run_command) está desligado.`
+}
+
 /**
  * Os argumentos de um turno.
  *
@@ -158,45 +169,29 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
       yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'As ferramentas do gateway não chegam ao Antigravity aqui: ficam de fora.' } }
     const plugin = turnToolsPluginDir(workspace)
     rmSync(plugin, { recursive: true, force: true })
-    if (grant) writeTurnToolsPlugin(workspace, this.turnTools!.url, { 'X-Turn-Grant': grant })
-    const child = this.spawn(antigravityBin(), antigravityArgs(record.model, native.conversationId), {
-      cwd: workspace,
-      env: cliTerminalEnv(agent.env, subscriptionEnv({ HOME: home }), context),
-      stdio: ['pipe', 'pipe', 'pipe'],
-      signal: abort.signal,
-    })
-    // Uma mensagem e o fim da entrada: o `agy` roda o turno e sai. CLI que morre antes de ler não derruba o gateway.
-    child.stdin?.on('error', () => undefined)
-    child.stdin?.end(antigravityInput(prompt))
-    let stderr = ''
-    child.stderr?.on('data', (chunk: Buffer) => (stderr = (stderr + chunk.toString()).slice(-4000)))
-    const exited = new Promise<number | null>((resolve) => {
-      child.on('close', (code) => resolve(code))
-      child.on('error', () => resolve(null))
-    })
-
-    const state: IAntigravityTurn = { native, toolSteps: new Set(), sawResult: false, turns: 0 }
+    if (grant)
+      writeTurnToolsPlugin(
+        workspace,
+        this.turnTools!.url,
+        { 'X-Turn-Grant': grant },
+        tools.map((tool) => tool.name),
+      )
+    let message = prompt
     try {
-      for await (const line of createInterface({ input: child.stdout! })) {
-        for (const event of antigravityEvents(line, sessionId, state)) {
-          yield event
-          if (event.type === 'error') return
+      // ⚖️ O turno que PARA logo depois de uma ferramenta negada ou com erro (o `run_command` nativo, que o sandbox do CLI
+      // nega e encerra o turno) segue mais uma vez, com o motivo, em vez de acabar vazio. Teto: `ANTIGRAVITY_FOLLOW_UPS`.
+      for (let round = 0; ; round += 1) {
+        const outcome: IAntigravityRound = yield* this.runOnce(agent, record, message, workspace, home, abort, context)
+        if (outcome.stop) return
+        const followUp = round < ANTIGRAVITY_FOLLOW_UPS && native.conversationId ? followUpMessage(outcome.failure) : undefined
+        if (!followUp) break
+        yield {
+          type: 'warning',
+          sessionId,
+          timestamp: now(),
+          payload: { message: `O Antigravity parou logo depois de uma ferramenta que falhou: o gateway seguiu o turno com o motivo.` },
         }
-        const limit = maxToolTurns()
-        if (limit !== undefined && state.turns > limit) {
-          child.kill('SIGTERM')
-          yield { type: 'error', sessionId, timestamp: now(), payload: { message: `Antigravity passed ${limit} tool steps.` } }
-          return
-        }
-      }
-      const code = await exited
-      if (abort.signal.aborted) {
-        yield { type: 'message.aborted', sessionId, timestamp: now() }
-        return
-      }
-      if (!state.sawResult) {
-        yield { type: 'error', sessionId, timestamp: now(), payload: errorPayload(stderr, antigravityFailure(stderr, code)) }
-        return
+        message = followUp
       }
       yield { type: 'message.completed', sessionId, timestamp: now() }
     } catch (error: unknown) {
@@ -207,9 +202,76 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
       yield { type: 'error', sessionId, timestamp: now(), payload: errorPayload(error) }
     } finally {
       record.abort = undefined
-      if (child.exitCode === null) child.kill('SIGTERM')
       if (grant) grants.release(grant)
       rmSync(plugin, { recursive: true, force: true })
+    }
+  }
+
+  /** Uma rodada do `agy` (um processo, uma mensagem). `stop`: já terminou (erro, cancelamento) e não há o que completar. */
+  private async *runOnce(
+    agent: IAgent,
+    record: ISessionRecord,
+    message: string,
+    workspace: string,
+    home: string,
+    abort: AbortController,
+    context: IExecutionContext,
+  ): AsyncGenerator<IAgentEvent, IAntigravityRound> {
+    const sessionId = record.id
+    const now = () => new Date()
+    const native = this.nativeOf(record)
+    const child = this.spawn(antigravityBin(), antigravityArgs(record.model, native.conversationId), {
+      cwd: workspace,
+      env: cliTerminalEnv(agent.env, subscriptionEnv({ HOME: home }), context),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      signal: abort.signal,
+    })
+    // Uma mensagem e o fim da entrada: o `agy` roda o turno e sai. CLI que morre antes de ler não derruba o gateway.
+    child.stdin?.on('error', () => undefined)
+    child.stdin?.end(antigravityInput(message))
+    let stderr = ''
+    child.stderr?.on('data', (chunk: Buffer) => (stderr = (stderr + chunk.toString()).slice(-4000)))
+    const exited = new Promise<number | null>((resolve) => {
+      child.on('close', (code) => resolve(code))
+      child.on('error', () => resolve(null))
+    })
+
+    const state: IAntigravityTurn = { native, toolSteps: new Set(), sawResult: false, turns: 0 }
+    // A última ferramenta, enquanto nada veio depois dela: o que a rodada deixou pendurado.
+    let last: { tool: string; error?: string } | undefined
+    let denied: string | undefined
+    const failure = () => (last ? `${last.tool}: ${last.error ?? (denied ? `negado pelo sandbox do Antigravity (${denied})` : 'não terminou')}` : undefined)
+    try {
+      for await (const line of createInterface({ input: child.stdout! })) {
+        for (const event of antigravityEvents(line, sessionId, state)) {
+          yield event
+          if (event.type === 'error') return { stop: true }
+          // Só a ferramenta que FECHOU a rodada conta: com texto ou um resultado depois dela, o modelo seguiu.
+          if (event.type === 'tool.started') last = { tool: event.payload.tool }
+          else if (event.type === 'tool.error' && last) last.error = event.payload.message
+          else if (event.type === 'tool.result' || (event.type === 'text.delta' && event.payload.text.trim())) last = undefined
+          else if (event.type === 'warning' && event.payload.message.startsWith(SANDBOX_DENIED))
+            denied = event.payload.message.slice(SANDBOX_DENIED.length).trim().replace(/\.$/, '')
+        }
+        const limit = maxToolTurns()
+        if (limit !== undefined && state.turns > limit) {
+          child.kill('SIGTERM')
+          yield { type: 'error', sessionId, timestamp: now(), payload: { message: `Antigravity passed ${limit} tool steps.` } }
+          return { stop: true }
+        }
+      }
+      const code = await exited
+      if (abort.signal.aborted) {
+        yield { type: 'message.aborted', sessionId, timestamp: now() }
+        return { stop: true }
+      }
+      if (!state.sawResult) {
+        yield { type: 'error', sessionId, timestamp: now(), payload: errorPayload(stderr, antigravityFailure(stderr, code)) }
+        return { stop: true }
+      }
+      return { stop: false, failure: failure() }
+    } finally {
+      if (child.exitCode === null) child.kill('SIGTERM')
     }
   }
 
@@ -253,12 +315,51 @@ export function turnToolsPluginDir(workspace: string): string {
  * pasta (`<pasta>/.agents/plugins/<nome>/mcp_config.json`). O plugin vai na pasta VAZIA da conversa, com o token do turno
  * (`Turn.Grants`), e sai no fim do turno. ⛔ SÓ a concessão vai no arquivo (o agente o lê): o token de quem conversa nunca. Verificado no `agy` 1.4.9: ele conecta e manda os headers.
  */
-export function writeTurnToolsPlugin(workspace: string, url: string, headers: Record<string, string>): string {
+export function writeTurnToolsPlugin(workspace: string, url: string, headers: Record<string, string>, toolNames: readonly string[] = []): string {
   const dir = turnToolsPluginDir(workspace)
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  mkdirSync(join(dir, 'rules'), { recursive: true, mode: 0o700 })
   writeFileSync(join(dir, 'plugin.json'), JSON.stringify({ name: TURN_TOOLS_PLUGIN, version: '1.0.0', description: 'As ferramentas do gateway nesta conversa.' }), { mode: 0o600 })
   writeFileSync(join(dir, 'mcp_config.json'), JSON.stringify({ mcpServers: { [TURN_TOOLS_SERVER]: { url, headers } } }), { mode: 0o600 })
+  writeFileSync(join(dir, 'rules', 'AGENTS.md'), nativeToolsRule(toolNames), { mode: 0o600 })
+  writeFileSync(join(dir, 'hooks.json'), JSON.stringify(nativeTerminalHook(toolNames), null, 2), { mode: 0o600 })
   return dir
+}
+
+/** O terminal nativo do `agy` (o passo `run_command`): o sandbox do CLI o nega e, no modo headless, a negação encerra o turno. */
+export const NATIVE_TERMINAL_TOOL = 'run_command'
+
+function terminalHint(toolNames: readonly string[]): string {
+  return toolNames.includes('run_bash') ? `O terminal é a ferramenta run_bash do servidor ${ANTIGRAVITY_TURN_TOOLS_SERVER}` : 'Esta conversa não tem terminal'
+}
+
+/**
+ * ⛔ O CLI NÃO ESCONDE O TERMINAL NATIVO (o `agy` 1.4 não tem flag nem configuração para tirar uma ferramenta dele): a regra
+ * do plugin diz ao modelo que o terminal é o do gateway. A pasta do `agy` é a vazia da conversa: o projeto só pelas
+ * ferramentas do gateway.
+ */
+export function nativeToolsRule(toolNames: readonly string[]): string {
+  return [
+    '# Ferramentas desta conversa',
+    '',
+    `- O terminal nativo (${NATIVE_TERMINAL_TOOL}) está DESLIGADO: nunca o chame. ${terminalHint(toolNames)}.`,
+    `- O projeto e os arquivos chegam só pelas ferramentas do servidor ${ANTIGRAVITY_TURN_TOOLS_SERVER} (read_file, write_file, edit_file, search_files): a pasta local desta conversa é vazia.`,
+    '- Se uma ferramenta do gateway falhar, leia o motivo e tente de novo ou siga por outra ferramenta do gateway; sempre termine com uma resposta em texto.',
+    '',
+  ].join('\n')
+}
+
+/**
+ * O gancho `PreToolUse` do plugin: o `run_command` nativo é recusado COM o motivo e o caminho certo, que o modelo lê. Sem
+ * ele, quem recusava era o sandbox do CLI, sem dizer nada ao modelo, e o turno acabava vazio. O comando só escreve a decisão
+ * (`sh -c`, na pasta do plugin); a entrada é descartada.
+ */
+export function nativeTerminalHook(toolNames: readonly string[]): Record<string, unknown> {
+  const decision = JSON.stringify({ decision: 'deny', reason: `O terminal nativo está desligado nesta conversa. ${terminalHint(toolNames)}.` })
+  return {
+    'gateway-terminal': {
+      PreToolUse: [{ matcher: NATIVE_TERMINAL_TOOL, hooks: [{ type: 'command', command: `cat >/dev/null; printf '%s\\n' '${decision.replace(/'/g, `'\\''`)}'`, timeout: 5 }] }],
+    },
+  }
 }
 
 /**
@@ -293,6 +394,12 @@ export function antigravityFailure(stderr: string, code: number | null): string 
   if (/Authentication required|authentication failed/i.test(stderr)) return 'O Antigravity não está conectado: entre em Sistema → Modelos → Antigravity → Entrar.'
   if (code === null) return `Não consegui rodar o Antigravity (${antigravityBin()}). Instale o agy ou defina ANTIGRAVITY_BIN.`
   return stderr.trim().split('\n').slice(-3).join(' ') || `agy saiu com código ${code}`
+}
+
+interface IAntigravityRound {
+  stop: boolean
+  /** A ferramenta que fechou a rodada sem dar certo (erro, ou negada pelo sandbox do CLI sem resultado), e o motivo. */
+  failure?: string
 }
 
 interface IAntigravityTurn {
@@ -382,7 +489,7 @@ export function antigravityEvents(line: string, sessionId: string, state: IAntig
       })
     }
     const denied = (result.denied_actions ?? []).map((action) => action.display_name ?? action.action).filter(Boolean)
-    if (denied.length) events.push({ type: 'warning', sessionId, timestamp, payload: { message: `Negado pelo sandbox: ${denied.join(', ')}.` } })
+    if (denied.length) events.push({ type: 'warning', sessionId, timestamp, payload: { message: `${SANDBOX_DENIED} ${denied.join(', ')}.` } })
     if (result.status && result.status !== 'SUCCESS')
       events.push({ type: 'error', sessionId, timestamp, payload: errorPayload(result.error || result.status || '', result.error || `Antigravity: ${result.status}`) })
     return events
