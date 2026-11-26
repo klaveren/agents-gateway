@@ -37,6 +37,8 @@ export function aggregateTurn(sessionId: string, events: Iterable<IAgentEvent>):
     interjections: [],
     aborted: false,
   }
+  // A chamada de cada id, quando o provedor manda o id (o passo do Antigravity): o resultado vai para ELA, nunca por ordem.
+  const byId = new Map<string, ITurnToolCall>()
 
   for (const event of events) {
     switch (event.type) {
@@ -48,16 +50,19 @@ export function aggregateTurn(sessionId: string, events: Iterable<IAgentEvent>):
         turn.reasoning += event.payload.text
         break
 
-      case 'tool.started':
-        turn.toolCalls.push({ tool: event.payload.tool, args: event.payload.args })
+      case 'tool.started': {
+        const call: ITurnToolCall = { tool: event.payload.tool, args: event.payload.args }
+        turn.toolCalls.push(call)
+        if (event.payload.callId !== undefined) byId.set(event.payload.callId, call)
         break
+      }
 
       case 'tool.result':
-        attachToPendingCall(turn, event.payload.tool, (call) => (call.result = event.payload.result))
+        attachToCall(turn, byId, event.payload, (call) => (call.result = event.payload.result))
         break
 
       case 'tool.error':
-        attachToPendingCall(turn, event.payload.tool, (call) => (call.error = event.payload.message))
+        attachToCall(turn, byId, event.payload, (call) => (call.error = event.payload.message))
         break
 
       case 'usage':
@@ -83,6 +88,19 @@ export function aggregateTurn(sessionId: string, events: Iterable<IAgentEvent>):
   }
 
   return turn
+}
+
+/**
+ * Pelo id, quando o evento o traz: a chamada dele, ou avulso (nunca a "mais antiga em aberto": um passo que não fechou
+ * empurrava cada resultado seguinte para a chamada de antes). Sem id, pela ordem (ver `attachToPendingCall`).
+ */
+function attachToCall(turn: ITurnResult, byId: Map<string, ITurnToolCall>, payload: { tool: string; callId?: string }, apply: (call: ITurnToolCall) => void): void {
+  if (payload.callId === undefined) return attachToPendingCall(turn, payload.tool, apply)
+  const call = byId.get(payload.callId)
+  if (call) return apply(call)
+  const orphan: ITurnToolCall = { tool: payload.tool, args: {} }
+  apply(orphan)
+  turn.toolCalls.push(orphan)
 }
 
 /**

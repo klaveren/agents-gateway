@@ -87,4 +87,23 @@ describe('aggregateTurn', () => {
 
     assert.strictEqual(turn.error, 'API down')
   })
+  it('⛔ com id, o resultado vai para a chamada do MESMO passo: um passo que não fechou não empurra os seguintes', () => {
+    // 26/11 (Antigravity): o `ls` foi cancelado sem DONE, e cada resultado seguinte do run_bash caía na chamada de antes —
+    // o erro do `story-commit.sh --help` aparecia no `pwd`.
+    const turn = aggregateTurn('s1', [
+      ev('tool.started', { tool: 'run_bash', args: { command: 'ls' }, callId: 'c:1' }),
+      ev('tool.started', { tool: 'run_bash', args: { command: 'pwd' }, callId: 'c:2' }),
+      ev('tool.result', { tool: 'run_bash', result: '/repo', callId: 'c:2' }),
+      ev('tool.started', { tool: 'run_bash', args: { command: 'x --help' }, callId: 'c:3' }),
+      ev('tool.error', { tool: 'run_bash', message: 'flag desconhecida', callId: 'c:3' }),
+      ev('tool.error', { tool: 'run_bash', message: 'interrompida', callId: 'c:1' }),
+      ev('tool.result', { tool: 'run_bash', result: 'avulso', callId: 'c:9' }),
+    ])
+    assert.deepStrictEqual(turn.toolCalls, [
+      { tool: 'run_bash', args: { command: 'ls' }, error: 'interrompida' },
+      { tool: 'run_bash', args: { command: 'pwd' }, result: '/repo' },
+      { tool: 'run_bash', args: { command: 'x --help' }, error: 'flag desconhecida' },
+      { tool: 'run_bash', args: {}, result: 'avulso' },
+    ])
+  })
 })

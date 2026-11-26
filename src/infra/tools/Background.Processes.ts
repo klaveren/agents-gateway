@@ -36,6 +36,8 @@ function positiveInt(raw: string | undefined, fallback: number): number {
 
 /** Depois do SIGTERM, quanto se espera antes do SIGKILL. */
 const KILL_GRACE_MS = 5000
+/** Depois que o processo sai, quanto se espera pelo fim da saída antes de responder sem ele (ver `startCommand`). */
+export const PIPE_GRACE_MS = 2000
 
 /**
  * Os pares `pid → ppid` da máquina. Linux: o `/proc` (o pod não tem `ps`). macOS: `ps -A -o pid=,ppid=`.
@@ -188,18 +190,40 @@ export function startCommand(line: string, options: IRunOptions): IStarted {
   const timer = setTimeout(() => {
     timedOut = true
     killGroup(child.pid)
+    // O líder pode nem sair (preso num `D`): passado o SIGKILL do grupo, a resposta vem assim mesmo.
+    setTimeout(() => release(null, 'SIGKILL'), KILL_GRACE_MS).unref()
   }, options.timeoutMs)
   timer.unref()
+  // ⛔ O `close` só vem quando os canais fecham: um neto que saiu do grupo (um daemon, um `setsid`) com a saída herdada
+  // os segurava abertos, e o `run_bash` nunca respondia. Saiu o processo (ou estourou o tempo e o grupo foi morto), a
+  // resposta vem no máximo `PIPE_GRACE_MS` depois, com o que chegou até ali.
+  let stuck: NodeJS.Timeout | undefined
+  const release = (code: number | null, signal: NodeJS.Signals | null) => {
+    if (stuck) return
+    stuck = setTimeout(() => {
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+      finishOnce?.(code, signal)
+    }, PIPE_GRACE_MS)
+    stuck.unref()
+  }
+  let finishOnce: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined
   const done = new Promise<IRunResult>((resolve) => {
+    let finished = false
     const finish = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (finished) return
+      finished = true
       clearTimeout(timer)
+      if (stuck) clearTimeout(stuck)
       options.onExit?.()
       const result = { code, ...(signal ? { signal } : {}), output, timedOut, ...(options.logFile ? { logFile: options.logFile } : {}) }
       // ⛔ Só resolve com o log gravado: o `bash_logs` lê o arquivo logo depois, e `end()` sozinho deixava o fim na fila.
       if (log) log.end(() => resolve(result))
       else resolve(result)
     }
+    finishOnce = finish
     child.on('close', finish)
+    child.on('exit', release)
     child.on('error', (error) => {
       output += `${error.message}\n`
       finish(null, null)

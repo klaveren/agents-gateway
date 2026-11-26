@@ -18,9 +18,13 @@ import {
   antigravityArgs,
   antigravityFailure,
   antigravityInput,
+  ANTIGRAVITY_BASH_MAX_S,
+  UNFINISHED_STEP_MESSAGE,
   turnToolsPluginDir,
+  withToolDeadline,
   writeTurnToolsPlugin,
 } from './AntigravityAgent.Adapter'
+import { aggregateTurn } from '@application/Turn.Aggregator'
 
 interface ISpawned {
   command: string
@@ -147,7 +151,7 @@ describe('AntigravityAgentAdapter', () => {
       events.map((event) => event.type),
       ['message.started', 'tool.started', 'tool.error', 'text.delta', 'usage', 'warning', 'message.completed'],
     )
-    assert.deepStrictEqual(events.find((event) => event.type === 'tool.error')?.payload, { tool: 'run_command', message: 'permission check failed' })
+    assert.deepStrictEqual(events.find((event) => event.type === 'tool.error')?.payload, { tool: 'run_command', message: 'permission check failed\nmais', callId: 'conv-1:1' })
     assert.deepStrictEqual(events.find((event) => event.type === 'usage')?.payload, { inputTokens: 50, cacheReadTokens: 10, outputTokens: 5, reasoningTokens: 2 })
   })
 
@@ -338,5 +342,73 @@ describe('AntigravityAgentAdapter', () => {
     assert.match(decision.reason, /run_bash/)
     const none = writeTurnToolsPlugin(mkdtempSync(join(tmpdir(), 'agy-ws-')), 'http://x', {}, ['read_file'])
     assert.match(readFileSync(join(none, 'rules', 'AGENTS.md'), 'utf8'), /não tem terminal/)
+  })
+  /** As linhas do `agy` 1.4.9 de verdade (26/11): o resultado em `tool_info.output`, um passo CANCELADO e um que ficou aberto. */
+  const toolTurn = () => [
+    JSON.stringify({ event: 'init', conversation_id: 'conv-7' }),
+    ...[
+      { step_index: 2, state: 'ACTIVE', tool: 'ls -la apps' },
+      { step_index: 2, state: 'CANCELED', tool: 'ls -la apps' },
+      { step_index: 4, state: 'ACTIVE', tool: 'pwd' },
+      { step_index: 4, state: 'DONE', tool: 'pwd', output: '/repo/_worktrees/EP-1' },
+      { step_index: 4, state: 'DONE', tool: 'pwd', output: '/repo/_worktrees/EP-1' },
+      { step_index: 6, state: 'ACTIVE', tool: 'x --help' },
+      { step_index: 6, state: 'ERROR', tool: 'x --help', error: "Exit code 1: ERRO uso: flag desconhecida '--help'\n→ FAÇA: …" },
+      { step_index: 8, state: 'ACTIVE', tool: 'x --dry-run' },
+    ].map(({ step_index, state, tool, output, error }) =>
+      JSON.stringify({
+        event: 'step_update',
+        step_update: {
+          step_index,
+          state,
+          step_type: 'tool',
+          tool_name: 'mcp_gateway_tools_run_bash',
+          tool_info: {
+            name: 'mcp_gateway_tools_run_bash',
+            parameters: { command: tool },
+            ...(output ? { output } : {}),
+            ...(error ? { error: { type: 'TOOL_ERROR', message: error } } : {}),
+          },
+        },
+      }),
+    ),
+    JSON.stringify({ event: 'result', result: { status: 'SUCCESS' } }),
+  ]
+
+  it('⛔ cada resultado na SUA chamada (pelo passo): o cancelado e o que ficou aberto fecham com o motivo; o texto da ferramenta fica gravado', async () => {
+    const adapter = new AntigravityAgentAdapter({ store: new SessionStore(), spawn: fakeSpawn([], toolTurn), home: () => '/h' })
+    const session = await adapter.createSession(agent, {})
+    const events = await collect(adapter.sendMessage(agent, session.id, { text: 'olá' }, {}))
+    const all = aggregateTurn(session.id, events).toolCalls
+    // A rodada parou numa ferramenta sem resultado: o gateway segue UMA vez (o `spawn` falso repete as mesmas linhas).
+    assert.strictEqual(all.length, 8)
+    const calls = all.slice(0, 4)
+    assert.deepStrictEqual(
+      calls.map((call) => [call.args.command, call.result ?? null, call.error ?? null]),
+      [
+        ['ls -la apps', null, 'interrompida: o Antigravity encerrou o passo antes do resultado'],
+        ['pwd', '/repo/_worktrees/EP-1', null],
+        ['x --help', null, "Exit code 1: ERRO uso: flag desconhecida '--help'\n→ FAÇA: …"],
+        ['x --dry-run', null, UNFINISHED_STEP_MESSAGE],
+      ],
+    )
+    // O resumo do turno mudo diz por que parou, com a primeira linha só.
+    const summary = events
+      .filter((event) => event.type === 'text.delta')
+      .map((event) => event.payload.text)
+      .join('')
+    assert.match(summary, /Parou em `mcp_gateway_tools_run_bash`: sem resultado: o Antigravity encerrou a rodada/)
+  })
+
+  it('⏱️ a ferramenta sempre responde antes dos 3 min do agy: o run_bash longo é cortado com aviso, a que não volta vira erro com o motivo', async () => {
+    let seen: Record<string, unknown> = {}
+    const capped = await withToolDeadline('run_bash', { command: 'pnpm test', timeoutSeconds: 600 }, async (args) => ((seen = args), { status: 'success', result: 'ok' }))
+    assert.strictEqual(seen.timeoutSeconds, ANTIGRAVITY_BASH_MAX_S)
+    assert.match(capped.result, /^Aviso: o Antigravity espera no máximo 3 min.*\nok$/s)
+    const kept = await withToolDeadline('run_bash', { command: 'ls', timeoutSeconds: 30 }, async (args) => ((seen = args), { status: 'success', result: 'ok' }))
+    assert.deepStrictEqual([seen.timeoutSeconds, kept.result], [30, 'ok'])
+    const late = await withToolDeadline('read_file', {}, () => new Promise(() => undefined), 20)
+    assert.strictEqual(late.status, 'error')
+    assert.match(late.result, /Sem resposta do gateway em 0s \(read_file\)/)
   })
 })

@@ -27,6 +27,7 @@ import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { deniedGatewayPorts } from '@infra/permissions/Gateway.Reach'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import { commandDirOf } from '@infra/accounts/Ssh.Kit'
+import { expandReadDenyGlobs } from '@infra/sandbox/ReadDeny.Globs'
 import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
 import { ENV_FILE_PATTERNS, globToRegex, pathMatches, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import { FILE_DIRS } from '@domain/models/ResourceFile.Model'
@@ -397,7 +398,10 @@ export class ProjectSandbox implements IProjectSandbox {
     const wantsTcp = process.platform === 'linux' && (place.tcp || place.machine)
     if (wantsTcp) mkdirSync(own, { recursive: true, mode: 0o700 })
     if (existsSync(own)) planned.readAllow.push(own)
-    const cerco = this.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir, [dirname(own)])) : planned
+    const bubblewrap = this.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir, [dirname(own)])) : undefined
+    // ⚡ No Linux as negações de leitura com curinga chegam ao runtime já expandidas (ver `ReadDeny.Globs`): a varredura
+    // dele, a cada comando, prendia o servidor por minutos numa worktree com `node_modules`.
+    const cerco = bubblewrap ? { ...bubblewrap, readDeny: await expandReadDenyGlobs(bubblewrap.readDeny) } : planned
     for (const dir of writeFolders(cerco, root)) mkdirSync(dir, { recursive: true, mode: 0o700 })
     if (place.gitCommonDir) ensureEmptyAttributes(place.gitCommonDir)
     const scratch = (name: string) => {
