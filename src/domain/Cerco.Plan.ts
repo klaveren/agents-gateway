@@ -1,6 +1,6 @@
 import { isAbsolute, join, relative } from 'node:path'
 import { siblingDir, siblingPattern } from './SiblingRepository.Policy'
-import { decide, globToRegex, IPermissionLayers, IPermissionRule, ISystemRule, opened, SYSTEM_RULES } from './Permission.Policy'
+import { decide, globToRegex, IPermissionLayers, IPermissionRule, ISystemRule, opened, pathMatches, SYSTEM_RULES } from './Permission.Policy'
 
 /**
  * O CERCO MONTADO DAS REGRAS: as listas de leitura e escrita que o sistema operacional aplica ao comando do terminal
@@ -78,6 +78,13 @@ export interface ICercoBase {
    * irmão do repositório da conversa nunca se grava, e na conversa sem repositório o `.git` de cada um fica protegido.
    */
   repositories?: readonly string[]
+  /**
+   * ⚖️ A WORKTREE LÊ O REPOSITÓRIO PRINCIPAL: a pasta dele (`dir`) e as entradas que se leem (`entries`, caminhos reais: tudo
+   * menos o `.git`, que já vem por `gitCommonDir`, e menos a pasta que contém a worktree, `_worktrees`, com as das outras
+   * conversas). Quem sobe as pastas (esbuild, vite, o Node atrás de `node_modules`) passa pela raiz do repositório: fechada,
+   * o `package.json` dela virava device ilegível. Só leitura; as negações de leitura (segredos, regras) valem ancoradas nela.
+   */
+  checkout?: { dir: string; entries: readonly string[] }
 }
 
 /**
@@ -175,6 +182,8 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
   }
   const read = lists('read')
   const write = lists('write')
+  // As negações de leitura também no repositório principal que a worktree lê (o `.env` da raiz dele, as regras do projeto).
+  const checkoutDeny = base.checkout ? readDenyRules(layers, base).flatMap((rule) => checkoutPaths(rule.pattern, base.checkout!.dir, base.projectRoot)) : []
   const git = base.gitCommonDir ? [base.gitCommonDir] : []
   const repositories = base.repositories ?? []
   // Conversa SEM repositório (a raiz é o projeto): o `.git` de cada repositório dentro dela, como no caso de um só (ver `gitWriteDenies`).
@@ -183,7 +192,7 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
   const siblings = repositories.filter((dir) => !contains(dir, base.root) && !contains(base.root, dir))
   return {
     // A raiz fechada para leitura por padrão: só o que as regras liberam (e as pastas de trabalho) se lê dentro dela.
-    readDeny: [...new Set([...(base.readAllowlist ? ['/'] : []), ...base.alwaysDeny, base.root, ...read.deny])],
+    readDeny: [...new Set([...(base.readAllowlist ? ['/'] : []), ...base.alwaysDeny, base.root, ...read.deny, ...checkoutDeny])],
     readAllow: [
       ...new Set([
         ...(base.readAllowlist ?? []),
@@ -191,6 +200,8 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
         ...base.alwaysRead,
         ...git,
         ...read.allow,
+        // ⛔ A entrada que uma negação pega não se reabre (o `.env` da raiz: no Linux o runtime só casa `**/.env` abaixo da pasta).
+        ...(base.checkout?.entries ?? []).filter((entry) => !checkoutDeny.some((pattern) => pathMatches(pattern, entry))),
         ...(base.readOnly ?? []),
         ...own(base, 'read'),
         ...sparedTemplates(layers, base),
@@ -208,6 +219,22 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
       ]),
     ],
   }
+}
+
+/** As negações de leitura que valem (as do sistema que nenhuma liberação abriu, as do agente e as do projeto que o agente não reabriu). */
+function readDenyRules(layers: IPermissionLayers, base: ICercoBase): Array<{ pattern: string }> {
+  const agentAllow = (layers.agent ?? []).filter((rule) => rule.category === 'read' && rule.decision === 'allow')
+  return [
+    ...[...SYSTEM_RULES, ...(base.system ?? [])].filter((rule) => rule.category === 'read' && rule.decision === 'deny' && !opened(rule, layers)),
+    ...(layers.agent ?? []).filter((rule) => rule.category === 'read' && rule.decision === 'deny'),
+    ...(layers.project ?? []).filter((rule) => rule.category === 'read' && rule.decision === 'deny' && !reopened(rule.pattern, agentAllow)),
+  ]
+}
+
+/** O padrão no repositório principal: relativo a ele, e o escrito a partir da pasta do projeto ancorado nele. */
+function checkoutPaths(pattern: string, dir: string, projectRoot: string | undefined): string[] {
+  const anchored = projectAnchored(pattern, dir, projectRoot)
+  return [toSandboxPath(pattern, dir), ...(anchored ? [anchored] : [])]
 }
 
 /**
