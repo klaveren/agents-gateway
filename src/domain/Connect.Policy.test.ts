@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { canonicalize, documentFromText } from './Catalog.Document'
+import { canonicalize, documentFromText, projectDocument } from './Catalog.Document'
 import { forLocal, ILocalModels, localTargets } from './Connect.Policy'
 
 const here = new Set(['claude/claude-haiku-5-5', 'openai/gpt-x'])
@@ -12,6 +12,23 @@ const models = (over: Partial<ILocalModels> = {}): ILocalModels => ({
 })
 
 describe('Connect.Policy (o documento da origem aqui)', () => {
+  it('🔌 o projeto da origem não leva modelos nem grupos: o que a máquina configurou nunca é sobrescrito pela sincronização', () => {
+    const project = {
+      id: 'logiccus',
+      name: 'Logiccus',
+      models: {
+        modelGroups: [{ id: 'executor-low', name: 'E', steps: [{ provider: 'alibaba', model: 'qwen' }] }],
+        defaultModelGroup: 'executor-low',
+        defaultModel: { provider: 'alibaba', model: 'qwen' },
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+    const document = forLocal(projectDocument(project, []), models())
+    assert.equal('models' in document.body, false)
+    assert.doesNotMatch(document.text, /executor-low|alibaba/)
+  })
+
   it('o modelo que roda aqui fica; o resto vai pelo mapa e, sem mapa, para o padrão daqui', () => {
     const targets = [{ provider: 'claude', models: ['claude-sonnet-5-5', 'claude-haiku-5-5'], sandbox: 'read-only' as never }]
     assert.deepEqual(localTargets(targets, models()), [{ provider: 'claude', models: ['claude-haiku-5-5'], sandbox: 'read-only' }])
@@ -23,11 +40,11 @@ describe('Connect.Policy (o documento da origem aqui)', () => {
     assert.deepEqual(localTargets([{ provider: 'google', models: ['gemini'] }], models({ fallback: undefined })), [])
   })
 
-  it('o agente perde o grupo de modelos e o compartilhamento da origem; o que não muda volta o mesmo', () => {
+  it('🔌 o agente leva só o NOME do grupo de modelos e perde o compartilhamento da origem; o que não muda volta o mesmo', () => {
     const body = { id: 'maya', projectId: 'logiccus', providers: [{ provider: 'claude', models: ['claude-sonnet-5-5'] }], modelGroup: 'rapido', sharedWith: ['outro'] }
     const document = documentFromText('agent', 'maya', 'logiccus', canonicalize(body as never))
     const local = forLocal(document, models())
-    assert.deepEqual(local.body, { id: 'maya', projectId: 'logiccus', providers: [{ provider: 'claude', models: ['claude-haiku-5-5'] }] })
+    assert.deepEqual(local.body, { id: 'maya', projectId: 'logiccus', providers: [{ provider: 'claude', models: ['claude-haiku-5-5'] }], modelGroup: 'rapido' })
     assert.notEqual(local.hash, document.hash)
 
     const skill = documentFromText('skill', 'banco', 'logiccus', canonicalize({ id: 'banco', body: 'x' } as never))

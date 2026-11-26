@@ -24,6 +24,14 @@ describe('agentIssues', () => {
 
   const fields = (issues: Array<{ field: string }>) => issues.map((issue) => issue.field)
 
+  it('🔌 no projeto conectado o grupo é só o nome da origem: o que falta aqui é alerta, não recusa', () => {
+    const strict = { ...rules, allowedTools: [], modelGroupExists: () => false }
+    const lean = agent({ allowedTools: [], projectId: 'logiccus', modelGroup: 'executor-low' })
+    assert.ok(fields(agentIssues(lean, strict)).includes('modelGroup'))
+    assert.ok(!fields(agentIssues(lean, { ...strict, connected: (projectId) => projectId === 'logiccus' })).includes('modelGroup'))
+    assert.ok(fields(agentIssues({ ...lean, projectId: 'outro' }, { ...strict, connected: (projectId) => projectId === 'logiccus' })).includes('modelGroup'))
+  })
+
   it('🔐 agente de projeto só oferece modelo liberado ao projeto; o global não passa por esta regra', () => {
     const released = (projectId: string, provider: string, model: string) => projectId === 'alfa' && `${provider}/${model}` === 'google/gemini-3.7-flash'
     const on = (over: Partial<IAgent>) =>

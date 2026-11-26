@@ -12,7 +12,7 @@ import { usageCaps } from '@domain/Usage.Cap'
 import { ERROR_KINDS, REFUSAL_STATUSES, type TRefusalOrigin } from '@domain/models/ErrorLog.Model'
 import { maskText } from '@domain/Secret.Mask'
 import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
-import { IModelGroup, modelGroupIssues, NO_MODEL_GROUP } from '@domain/Fallback.Policy'
+import { IFallbackStep, IModelGroup, missingGroups, modelGroupIssues, NO_MODEL_GROUP, stepUnavailable, TStepUnavailable } from '@domain/Fallback.Policy'
 import { agentFolderAccess, CAPABILITIES, hasTerminal, hasWatch, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
 import { agentUnavailable, IAvailabilityFacts, TAgentUnavailable, targetUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
 import { clientMetadata } from '@domain/Session.Metadata'
@@ -55,7 +55,7 @@ import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IConversationScope, toSharedConversation } from '@domain/models/Conversation.Model'
 import { base64Bytes, IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
-import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
+import { allowsCaller, IAgentSettings, mergeSettings } from '@domain/models/Settings.Model'
 import { LIMIT_BOUNDS, liveLimit, UNLIMITED } from '@domain/models/Limits.Model'
 import { ICatalogEvents } from '@domain/ports/CatalogEvents.Port'
 import { IConversationEvents, TConversationEvent } from '@domain/ports/ConversationEvents.Port'
@@ -104,7 +104,7 @@ import { audienceRules } from './Caller.Roles'
 import { gatewayAbout } from './Gateway.About'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
-import { administers, adminView, IAdminView, requireAnyAdmin, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
+import { administers, adminView, IAdminView, isConnectedProject, requireAnyAdmin, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
 import { normalizeShares, sharedInto } from '@domain/Share.Policy'
 import { parseBody, replyToOf } from './Request.Parser'
 import {
@@ -647,6 +647,7 @@ export class AgentController {
     builderModel?: string | null
     modelGroups?: IModelGroup[] | null
     defaultModelGroup?: string | null
+    defaultModel?: IFallbackStep | null
   }) {
     const issues: Array<{ field: string; message: string }> = []
     const current = await this.usecases.settings.read()
@@ -672,10 +673,19 @@ export class AgentController {
     )
     const defaultGroup = body.defaultModelGroup === undefined ? current.defaultModelGroup : body.defaultModelGroup || undefined
     if (defaultGroup && !groups.some((group) => group.id === defaultGroup)) issues.push({ field: 'defaultModelGroup', message: `unknown model group: ${defaultGroup}` })
+    // 🎯 O modelo padrão do gateway: um modelo habilitado de um provedor ligado (só confere quando muda).
+    if (body.defaultModel) {
+      const { provider, model } = body.defaultModel
+      if (providers && !providers.get(provider)) issues.push({ field: 'defaultModel', message: `unknown provider: ${provider}` })
+      else if (providers && !providers.get(provider)?.enabled) issues.push({ field: 'defaultModel', message: `${provider}/${model}: provider is disabled` })
+      else if (models && !models.isEnabled(provider, model)) issues.push({ field: 'defaultModel', message: `${provider}/${model}: model is not enabled in the catalog` })
+    }
     for (const agent of this.agents.list())
       if (
         agent.modelGroup &&
         agent.modelGroup !== NO_MODEL_GROUP &&
+        // 🔌 No conectado o grupo é só o nome da origem: o que falta aqui é alerta, não trava.
+        !isConnectedProject(agent.projectId) &&
         !groups.some((group) => group.id === agent.modelGroup) &&
         // 🔁 O grupo do PROJETO do agente não depende dos do gateway.
         !(agent.projectId && this.projectModels(agent.projectId)?.modelGroups?.some((group) => group.id === agent.modelGroup))
@@ -1278,6 +1288,7 @@ export class AgentController {
 
     return {
       knownTools: tools.map((tool) => tool.name),
+      connected: (projectId) => isConnectedProject(projectId),
       modelGroupExists: (id, projectId) =>
         !!settings.modelGroups?.some((group) => group.id === id) || (!!projectId && !!this.projectModels(projectId)?.modelGroups?.some((group) => group.id === id)),
       // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar. E só o do escopo do agente:
@@ -1486,7 +1497,11 @@ export class AgentController {
     await this.respond(res, async () => {
       await requireAnyAdmin(this.usecases.proof, 'getModelGroups')
       const settings = await this.usecases.settings.read()
-      return { groups: settings.modelGroups ?? [], ...(settings.defaultModelGroup ? { defaultModelGroup: settings.defaultModelGroup } : {}) }
+      return {
+        groups: settings.modelGroups ?? [],
+        ...(settings.defaultModelGroup ? { defaultModelGroup: settings.defaultModelGroup } : {}),
+        ...(settings.defaultModel ? { defaultModel: settings.defaultModel } : {}),
+      }
     })
   }
 
@@ -1495,9 +1510,51 @@ export class AgentController {
     await this.respond(res, async () => {
       const id = req.params.id as string
       await requireProjectAdmin(this.usecases.proof, id, 'getProjectModelGroups')
-      const models = this.projectModels(id)
-      return { groups: models?.modelGroups ?? [], ...(models?.defaultModelGroup ? { defaultModelGroup: models.defaultModelGroup } : {}) }
+      return this.projectGroupsView(id, await this.usecases.settings.read())
     })
+  }
+
+  /**
+   * 🔁 Os grupos do projeto como a tela os mostra: os do projeto e o padrão dele, o modelo padrão, o que vale do gateway por
+   * baixo, ⚠️ os grupos que os agentes pedem e que não estão configurados nesta máquina (`requested`) e os passos que não
+   * rodam aqui, com o motivo (`unavailable`: provedor ausente, desligado, modelo desativado).
+   */
+  private projectGroupsView(id: string, settings: IAgentSettings) {
+    const models = this.projectModels(id)
+    const providers = this.usecases.providers
+    const catalog = this.usecases.models
+    const facts = {
+      provider: (provider: string) => (providers ? providers.get(provider) : { enabled: true }),
+      ...(catalog ? { modelEnabled: (provider: string, model: string) => catalog.isEnabled(provider, model) } : {}),
+    }
+    const agents = this.agents.list().filter((agent) => agent.projectId === id)
+    const where = (group: string) =>
+      models?.modelGroups?.some((item) => item.id === group) ? 'project' : settings.modelGroups?.some((item) => item.id === group) ? 'gateway' : undefined
+    const requested = [...new Set(agents.map((agent) => agent.modelGroup).filter((group): group is string => !!group && group !== NO_MODEL_GROUP))]
+      .sort()
+      .map((group) => ({ id: group, agents: agents.filter((agent) => agent.modelGroup === group).map((agent) => agent.id), configured: where(group) ?? null }))
+    const unavailable: Record<string, Array<{ index: number; provider: string; model: string; reason: TStepUnavailable }>> = {}
+    for (const group of models?.modelGroups ?? [])
+      group.steps.forEach((step, index) => {
+        const reason = stepUnavailable(step, facts)
+        if (reason) (unavailable[group.id] ??= []).push({ index, provider: step.provider, model: step.model, reason })
+      })
+    const defaultModelReason = models?.defaultModel ? stepUnavailable(models.defaultModel, facts) : undefined
+    return {
+      groups: models?.modelGroups ?? [],
+      ...(models?.defaultModelGroup ? { defaultModelGroup: models.defaultModelGroup } : {}),
+      ...(models?.defaultModel ? { defaultModel: models.defaultModel } : {}),
+      ...(defaultModelReason ? { defaultModelUnavailable: defaultModelReason } : {}),
+      connected: isConnectedProject(id),
+      gateway: {
+        groups: (settings.modelGroups ?? []).map((group) => ({ id: group.id, name: group.name })),
+        ...(settings.defaultModelGroup ? { defaultModelGroup: settings.defaultModelGroup } : {}),
+        ...(settings.defaultModel ? { defaultModel: settings.defaultModel } : {}),
+      },
+      requested,
+      missing: missingGroups(agents, settings, models),
+      unavailable,
+    }
   }
 
   /**
@@ -1513,17 +1570,28 @@ export class AgentController {
       const providers = this.usecases.providers
       const models = this.usecases.models
       const settings = await this.usecases.settings.read()
-      const saved = this.usecases.projects.setModelGroups(id, { modelGroups: body.groups, ...(body.defaultModelGroup ? { defaultModelGroup: body.defaultModelGroup } : {}) }, by, {
-        known: providers ? (provider) => !!providers.get(provider) : undefined,
-        unusable: (step) => {
-          if (providers && !providers.get(step.provider)?.enabled) return 'provider is disabled'
-          if (models && !models.isEnabled(step.provider, step.model)) return 'model is not enabled in the catalog'
-          return undefined
+      const connected = isConnectedProject(id)
+      this.usecases.projects.setModelGroups(
+        id,
+        {
+          modelGroups: body.groups,
+          ...(body.defaultModelGroup ? { defaultModelGroup: body.defaultModelGroup } : {}),
+          ...(body.defaultModel !== undefined ? { defaultModel: body.defaultModel } : {}),
         },
-        gatewayGroups: (settings.modelGroups ?? []).map((group) => group.id),
-        usedBy: (group) => this.agents.list().find((agent) => agent.projectId === id && agent.modelGroup === group)?.id,
-      })
-      return { groups: saved.models?.modelGroups ?? [], ...(saved.models?.defaultModelGroup ? { defaultModelGroup: saved.models.defaultModelGroup } : {}) }
+        by,
+        {
+          known: providers ? (provider) => !!providers.get(provider) : undefined,
+          unusable: (step) => {
+            if (providers && !providers.get(step.provider)?.enabled) return 'provider is disabled'
+            if (models && !models.isEnabled(step.provider, step.model)) return 'model is not enabled in the catalog'
+            return undefined
+          },
+          gatewayGroups: (settings.modelGroups ?? []).map((group) => group.id),
+          // 🔌 No conectado o grupo que sai e que um agente pede vira alerta ("não configurado nesta máquina"), não recusa.
+          usedBy: connected ? undefined : (group) => this.agents.list().find((agent) => agent.projectId === id && agent.modelGroup === group)?.id,
+        },
+      )
+      return this.projectGroupsView(id, settings)
     })
   }
 

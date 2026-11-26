@@ -47,6 +47,7 @@
   import ShareProjects from './ShareProjects.vue'
   import { scopeLabel, sharedFromOf } from '@/lib/guidance'
   import AgentModelGroup from './AgentModelGroup.vue'
+  import AgentGroupAlert from './AgentGroupAlert.vue'
   import PermissionCategoryTabs from './PermissionCategoryTabs.vue'
   import PermissionRules from './PermissionRules.vue'
   import EnvFilesToggle from './EnvFilesToggle.vue'
@@ -1332,6 +1333,7 @@
       </fieldset>
       <!-- Duas guias: os modelos do agente (o que a pessoa escolhe) e a troca automática (a sequência de modelos quando um falha). -->
       <fieldset v-show="tab === 'modelos'" class="flex flex-col gap-3">
+        <AgentGroupAlert v-if="!creating && agent?.projectId && agent?.modelGroup" :project-id="agent.projectId" :group="agent.modelGroup" />
         <!-- A lite não tem troca automática de modelo: sobra só "Do agente", e as guias somem. -->
         <nav v-if="!lite" class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" role="tablist">
           <button

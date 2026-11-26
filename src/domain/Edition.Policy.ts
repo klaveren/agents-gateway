@@ -56,6 +56,7 @@ export const LITE_HIDDEN_MCP_TOOLS: ReadonlySet<string> = new Set([
   'save_model_group',
   'delete_model_group',
   'set_default_model_group',
+  'set_default_model',
   'catalog_history',
   'list_errors',
 ])

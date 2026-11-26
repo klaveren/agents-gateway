@@ -50,6 +50,11 @@ export interface IAgentRules {
   knownTools: readonly string[]
   /** O grupo de modelos existe nas Configurações. Ausente = não confere. */
   modelGroupExists?(id: string, projectId?: string): boolean
+  /**
+   * 🔌 O projeto é CONECTADO? Lá o grupo do agente é só o NOME que vem da origem: os grupos são de cada máquina, e o que
+   * falta aqui vira alerta (ver `missingGroups`), não recusa. Ausente = nenhum conectado.
+   */
+  connected?(projectId: string): boolean
   /** De qual oficial é um modelo, pelo id. Só vale sem `modelEnabled` (o catálogo é a regra). */
   providerOf?(model: string): EProvider | undefined
   /**
@@ -94,7 +99,8 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
 
   for (const item of permissionIssues(agent.permissions)) issue(item.field, item.message)
   // O grupo de modelos tem de existir (ver `Fallback.Policy`): um id que não existe deixaria o agente sem troca, calado.
-  if (agent.modelGroup && agent.modelGroup !== NO_MODEL_GROUP && rules.modelGroupExists && !rules.modelGroupExists(agent.modelGroup, agent.projectId))
+  const connected = !!agent.projectId && !!rules.connected?.(agent.projectId)
+  if (!connected && agent.modelGroup && agent.modelGroup !== NO_MODEL_GROUP && rules.modelGroupExists && !rules.modelGroupExists(agent.modelGroup, agent.projectId))
     issue('modelGroup', `unknown model group: ${agent.modelGroup} (Configurações → Grupos de modelos)`)
   if (!AGENT_ID_PATTERN.test(agent.id)) issue('id', 'use 2–48 lowercase letters, digits or hyphens')
   else if (rules.takenIds.includes(agent.id)) issue('id', `already exists: ${agent.id}`)

@@ -400,6 +400,8 @@ export interface ISettings {
   modelGroups?: IModelGroup[]
   /** O grupo dos agentes que não escolheram um. Ausente = nenhum. */
   defaultModelGroup?: string
+  /** 🎯 O modelo padrão do gateway: o último recurso quando o agente fica sem modelo que rode. Ausente = nenhum. */
+  defaultModel?: IFallbackStep
   /** 🌿 Esta instalação no git: o nome, o prefixo das branches, a base das worktrees e as branches que só recebem por PR. */
   installationName?: string
   branchPrefix?: string

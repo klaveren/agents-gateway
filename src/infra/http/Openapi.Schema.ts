@@ -445,8 +445,14 @@ const settingsSchema = {
       description:
         'Model of the next-step suggestion — an enabled model of `suggestProvider`. At the end of a turn the person sent from the screen, one short sentence with the message they would probably send next (`suggestion` on the turn, `turn.suggestion` on the live streams).',
     },
-    speechProvider: { type: 'string', description: 'Provider of the voice (text to speech): enabled, OpenAI protocol, with an API key. Together with `speechModel`; absent = no voice.' },
-    speechModel: { type: 'string', description: 'Voice model, free text (they are rarely in the catalog), e.g. `qwen-audio-3.0-tts-plus` (Alibaba) or `gpt-4o-mini-tts` (OpenAI).' },
+    speechProvider: {
+      type: 'string',
+      description: 'Provider of the voice (text to speech): enabled, OpenAI protocol, with an API key. Together with `speechModel`; absent = no voice.',
+    },
+    speechModel: {
+      type: 'string',
+      description: 'Voice model, free text (they are rarely in the catalog), e.g. `qwen-audio-3.0-tts-plus` (Alibaba) or `gpt-4o-mini-tts` (OpenAI).',
+    },
     speechVoice: { type: 'string', description: 'Default voice of the engine, used when the person picked none. Required by Alibaba models; OpenAI falls back to `alloy`.' },
     classifierProvider: { type: 'string', description: 'Provider of the classifier model. Absent: inferred from the model id (official providers only).' },
     builderProvider: { type: 'string', description: 'Provider of the builder (the core agent that drafts skills and commands). Absent: the one of Atlas.' },
@@ -480,6 +486,11 @@ const settingsSchema = {
       },
     },
     defaultModelGroup: { type: 'string', description: 'The group of agents that point to none. Absent = no group: a failing model ends the turn.' },
+    defaultModel: {
+      type: 'object',
+      description: 'The gateway DEFAULT MODEL (`{ provider, model }`): the last resort when an agent has no model that runs (after the project default model). Absent = none.',
+      properties: { provider: { type: 'string' }, model: { type: 'string' } },
+    },
     updatedAt: { type: 'string', format: 'date-time' },
     updatedBy: { type: 'string' },
   },
@@ -1708,7 +1719,11 @@ export const OPENAPI_DOCUMENT = {
         security: [],
         requestBody: {
           required: true,
-          ...json({ type: 'object', properties: { email: { type: 'string' }, name: { type: 'string' }, password: passwordField, keepSignedIn: keepSignedInField }, required: ['email', 'name', 'password'] }),
+          ...json({
+            type: 'object',
+            properties: { email: { type: 'string' }, name: { type: 'string' }, password: passwordField, keepSignedIn: keepSignedInField },
+            required: ['email', 'name', 'password'],
+          }),
         },
         responses: {
           '201': { description: 'Created and signed in', ...json(envelope(authSessionSchema)) },
@@ -4932,7 +4947,9 @@ export const OPENAPI_DOCUMENT = {
         summary: 'The warnings ("sem efeito") of a list of rules not yet saved, e.g. the agent form: network rules aimed at the gateway own HTTP port while agents cannot reach it',
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', properties: { rules: { type: 'array', items: permissionRuleSchema, maxItems: 300 } }, required: ['rules'] } } },
+          content: {
+            'application/json': { schema: { type: 'object', properties: { rules: { type: 'array', items: permissionRuleSchema, maxItems: 300 } }, required: ['rules'] } },
+          },
         },
         responses: {
           '200': {
@@ -6147,19 +6164,32 @@ export const OPENAPI_DOCUMENT = {
           'The fallback groups of the project and its default group (the project default wins over the gateway one; a group id is looked up in the project before the gateway). Project administrators',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
-          '200': { description: 'OK: `{ groups, defaultModelGroup? }`', ...json(envelope({ type: 'object' })) },
+          '200': {
+            description:
+              'OK: `{ groups, defaultModelGroup?, defaultModel?, defaultModelUnavailable?, connected, gateway, requested, missing, unavailable }`. `missing` = the groups agents ask for that are not configured on this machine (with who asks); `unavailable` = the saved steps that do not run here, with the reason (`provider-missing`, `provider-disabled`, `model-disabled`).',
+            ...json(envelope({ type: 'object' })),
+          },
           '404': { description: 'Not an administrator of the project', content: { 'application/json': { schema: failureEnvelope } } },
         },
       },
       put: {
         summary:
-          'Save the fallback groups of the project (`{ groups, defaultModelGroup }`, the whole list). Each step must be a model the project received, with the provider enabled and the model enabled in the catalog; the default may be a project or a gateway group, or `none`; a group an agent of the project uses cannot be removed. Project administrators',
+          'Save the fallback groups of the project (`{ groups, defaultModelGroup }`, the whole list). Each step must be a model the project received, with the provider enabled and the model enabled in the catalog; the default may be a project or a gateway group, or `none`; `defaultModel` is the project default model (null clears it); a group an agent of the project uses cannot be removed (in a CONNECTED project it can: it becomes the "not configured on this machine" alert). Writable in a connected project: the groups and the default model are of this machine. Project administrators',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,
           ...json({
             type: 'object',
-            properties: { groups: { type: 'array', items: { type: 'object' } }, defaultModelGroup: { type: 'string', nullable: true } },
+            properties: {
+              groups: { type: 'array', items: { type: 'object' } },
+              defaultModelGroup: { type: 'string', nullable: true },
+              defaultModel: {
+                type: 'object',
+                nullable: true,
+                description: 'The project default model (`{ provider, model }`, last resort); null clears it, absent keeps it.',
+                properties: { provider: { type: 'string' }, model: { type: 'string' } },
+              },
+            },
             required: ['groups'],
           }),
         },
@@ -6195,7 +6225,8 @@ export const OPENAPI_DOCUMENT = {
     },
     '/messages/{conversationId}': {
       get: {
-        summary: 'The messages of one item of the signed-in person, in order. The path id is an item id: a request id gives the request and the replies to it; a conversation id gives the whole conversation (every item of it) (`from`: agent or person; `turn`: the turn of the conversation when it was sent). Agent messages of level `attention`/`urgent` are requests with `status` (`pending` | `answered` | `resolved`) and `answeredAt`; a person message that answered one has `replyTo` (the request id)',
+        summary:
+          'The messages of one item of the signed-in person, in order. The path id is an item id: a request id gives the request and the replies to it; a conversation id gives the whole conversation (every item of it) (`from`: agent or person; `turn`: the turn of the conversation when it was sent). Agent messages of level `attention`/`urgent` are requests with `status` (`pending` | `answered` | `resolved`) and `answeredAt`; a person message that answered one has `replyTo` (the request id)',
         parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'OK: `{ messages }`', ...json(envelope({ type: 'object' })) },
@@ -6265,17 +6296,35 @@ export const OPENAPI_DOCUMENT = {
         summary:
           'Replies to a thread of the signed-in person: the reply goes to the thread of everyone who received that conversation and ENTERS the conversation as a message from them (even someone else’s conversation: the agent called them), running the turn on the server; the agent’s answer comes back to the thread (unless it wrote with `notify`). With the turn running, the reply joins its queue. 202',
         parameters: [{ name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } }],
-        requestBody: { required: true, ...json({ type: 'object', properties: { message: { type: 'string' }, replyTo: { type: 'string', description: 'The id of the request (an attention/urgent agent message of this thread) being answered: it becomes `answered` and the agent gets the reply labelled with it' } }, required: ['message'] }) },
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: {
+              message: { type: 'string' },
+              replyTo: {
+                type: 'string',
+                description:
+                  'The id of the request (an attention/urgent agent message of this thread) being answered: it becomes `answered` and the agent gets the reply labelled with it',
+              },
+            },
+            required: ['message'],
+          }),
+        },
         responses: {
           '202': { description: 'Sent: `{ queued }`', ...json(envelope({ type: 'object' })) },
           '404': { description: 'No such thread for this person, or the conversation no longer runs', content: { 'application/json': { schema: failureEnvelope } } },
-          '422': { description: 'Empty message, or `replyTo` that is not a request of this thread (field `replyTo`)', content: { 'application/json': { schema: failureEnvelope } } },
+          '422': {
+            description: 'Empty message, or `replyTo` that is not a request of this thread (field `replyTo`)',
+            content: { 'application/json': { schema: failureEnvelope } },
+          },
         },
       },
     },
     '/messages/{conversationId}/{messageId}/status': {
       put: {
-        summary: 'Marks a request (attention/urgent agent message) of a thread of the signed-in person as `resolved` (handled elsewhere) or reopens it as `pending`. Answering with `replyTo` sets `answered` by itself',
+        summary:
+          'Marks a request (attention/urgent agent message) of a thread of the signed-in person as `resolved` (handled elsewhere) or reopens it as `pending`. Answering with `replyTo` sets `answered` by itself',
         parameters: [
           { name: 'conversationId', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'messageId', in: 'path', required: true, schema: { type: 'string' } },
@@ -7089,7 +7138,8 @@ export const OPENAPI_DOCUMENT = {
     },
     '/sessions/{id}/files': {
       delete: {
-        summary: 'Delete a file or folder of the conversation repository (a folder with a secret or .git inside is refused). Only the owner, never while the agent runs a turn, never a secret or .git',
+        summary:
+          'Delete a file or folder of the conversation repository (a folder with a secret or .git inside is refused). Only the owner, never while the agent runs a turn, never a secret or .git',
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
@@ -7102,8 +7152,10 @@ export const OPENAPI_DOCUMENT = {
         },
       },
       get: {
-        summary: "The files of the conversation's repository (tracked and new, by `.gitignore`, without secrets), or one file's content with `path`. Only the owner of the conversation",
-        description: 'Without `path`: `{ files, truncated }` (up to 20 000 paths). With `path`: `{ path, content, size, hash }` for text up to 1 MB, or `{ binary: true }`. Secrets (`.env`, `.credentials/`, keys), `.git` and paths outside the folder answer 404.',
+        summary:
+          "The files of the conversation's repository (tracked and new, by `.gitignore`, without secrets), or one file's content with `path`. Only the owner of the conversation",
+        description:
+          'Without `path`: `{ files, truncated }` (up to 20 000 paths). With `path`: `{ path, content, size, hash }` for text up to 1 MB, or `{ binary: true }`. Secrets (`.env`, `.credentials/`, keys), `.git` and paths outside the folder answer 404.',
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'path', in: 'query', required: false, schema: { type: 'string' } },
@@ -7144,7 +7196,8 @@ export const OPENAPI_DOCUMENT = {
     },
     '/sessions/{id}/files/copy': {
       post: {
-        summary: 'Copy a file or folder of the conversation repository (`from`, `to`). Only the owner, never while the agent runs a turn; never a secret, .git or a folder that holds one',
+        summary:
+          'Copy a file or folder of the conversation repository (`from`, `to`). Only the owner, never while the agent runs a turn; never a secret, .git or a folder that holds one',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json({ type: 'object', required: ['from', 'to'], properties: { from: { type: 'string' }, to: { type: 'string' } } }) },
         responses: {
@@ -7170,7 +7223,8 @@ export const OPENAPI_DOCUMENT = {
     },
     '/sessions/{id}/scm': {
       get: {
-        summary: "Source control of the conversation's repository: branch, ahead/behind its upstream (as the repository already knows; nothing is fetched), staged and unstaged files (without secrets). Only the owner",
+        summary:
+          "Source control of the conversation's repository: branch, ahead/behind its upstream (as the repository already knows; nothing is fetched), staged and unstaged files (without secrets). Only the owner",
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'] },
       },
@@ -7184,22 +7238,32 @@ export const OPENAPI_DOCUMENT = {
           { name: 'staged', in: 'query', required: false, schema: { type: 'boolean' } },
           { name: 'commit', in: 'query', required: false, schema: { type: 'string' } },
         ],
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) },
+          '404': failures['404'],
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
       },
     },
     '/sessions/{id}/lint': {
       get: {
-        summary: "ESLint of the conversation's repository on one file (the repository's own eslint and config), inside the conversation agent's sandbox, no network. Only the owner",
+        summary:
+          "ESLint of the conversation's repository on one file (the repository's own eslint and config), inside the conversation agent's sandbox, no network. Only the owner",
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
         ],
-        responses: { '200': { description: '`status` ok | ignored | unavailable | failed, and `messages`', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+        responses: {
+          '200': { description: '`status` ok | ignored | unavailable | failed, and `messages`', ...json(envelope({ type: 'object', additionalProperties: true })) },
+          '404': failures['404'],
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
       },
     },
     '/sessions/{id}/search': {
       get: {
-        summary: "Search the conversation repository's files (git grep, by .gitignore, without secrets): `q`, `case`, `word`, `regex`, `include` and `exclude` globs (comma separated). Only the owner",
+        summary:
+          "Search the conversation repository's files (git grep, by .gitignore, without secrets): `q`, `case`, `word`, `regex`, `include` and `exclude` globs (comma separated). Only the owner",
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'q', in: 'query', required: true, schema: { type: 'string' } },
@@ -7209,7 +7273,11 @@ export const OPENAPI_DOCUMENT = {
           { name: 'include', in: 'query', required: false, schema: { type: 'string' } },
           { name: 'exclude', in: 'query', required: false, schema: { type: 'string' } },
         ],
-        responses: { '200': { description: 'OK: `files` with `matches` (line, column, text), `total`, `truncated`', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+        responses: {
+          '200': { description: 'OK: `files` with `matches` (line, column, text), `total`, `truncated`', ...json(envelope({ type: 'object', additionalProperties: true })) },
+          '404': failures['404'],
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
       },
     },
     '/sessions/{id}/search/replace': {
@@ -7232,7 +7300,11 @@ export const OPENAPI_DOCUMENT = {
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
         ],
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) },
+          '404': failures['404'],
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
       },
     },
     '/sessions/{id}/scm/blame': {
@@ -7243,12 +7315,17 @@ export const OPENAPI_DOCUMENT = {
           { name: 'path', in: 'query', required: true, schema: { type: 'string' } },
           { name: 'line', in: 'query', required: true, schema: { type: 'integer', minimum: 1 } },
         ],
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) },
+          '404': failures['404'],
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
       },
     },
     '/sessions/{id}/scm/{action}': {
       post: {
-        summary: '`stage` / `unstage` (`paths`) or `commit` (`message`; with nothing staged, commits every change). Only the owner, never while the agent runs a turn; the commit carries the account name and e-mail, runs no hook and never includes a secret',
+        summary:
+          '`stage` / `unstage` (`paths`) or `commit` (`message`; with nothing staged, commits every change). Only the owner, never while the agent runs a turn; the commit carries the account name and e-mail, runs no hook and never includes a secret',
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'action', in: 'path', required: true, schema: { type: 'string', enum: ['stage', 'unstage', 'commit'] } },
@@ -7264,13 +7341,18 @@ export const OPENAPI_DOCUMENT = {
     },
     '/terminal': {
       get: {
-        summary: "The local terminal (the person's own login shell, like opening Terminal on the Mac): whether it exists here and the open ones. Only the gateway admin, from the screen, on the same machine as the gateway",
+        summary:
+          "The local terminal (the person's own login shell, like opening Terminal on the Mac): whether it exists here and the open ones. Only the gateway admin, from the screen, on the same machine as the gateway",
         responses: { '200': { description: 'OK; `available: false` elsewhere', ...json(envelope({ type: 'object', additionalProperties: true })) } },
       },
       post: {
         summary: 'Open a login shell (`$SHELL -l`) with a clean environment (nothing from the gateway process). `conversation`: start in its repository folder',
         requestBody: { required: false, ...json({ type: 'object', properties: { cols: { type: 'integer' }, rows: { type: 'integer' }, conversation: { type: 'string' } } }) },
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) },
+          '404': failures['404'],
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
       },
     },
     '/terminal/{tid}/stream': {
@@ -7288,7 +7370,11 @@ export const OPENAPI_DOCUMENT = {
           { name: 'action', in: 'path', required: true, schema: { type: 'string', enum: ['input', 'resize', 'close'] } },
         ],
         requestBody: { required: false, ...json({ type: 'object', additionalProperties: true }) },
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { done: { type: 'boolean' } } })) }, '404': failures['404'], '422': { description: '`validation_error`', ...json(failureEnvelope) } },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { done: { type: 'boolean' } } })) },
+          '404': failures['404'],
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
+        },
       },
     },
     '/sessions/{id}/browser': {

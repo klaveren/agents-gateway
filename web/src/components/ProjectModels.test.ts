@@ -38,13 +38,16 @@ const flush = async () => {
   await nextTick()
 }
 
+/** A leitura dos grupos do projeto (o teste do conectado troca). */
+let groupsView: Record<string, unknown> = { groups: [] }
+
 function mount(view: unknown, props: { gatewayAdmin: boolean; projectAdmin: boolean }) {
   vi.mocked(api).mockImplementation(async (path: string, init?: { method?: string }) => {
     if (init?.method === 'PUT') return {}
     if (path === '/providers') return PROVIDERS
     if (path === '/providers/claude/models') return MODELS
     if (path === '/providers/alfa--openai/models') return [{ modelId: 'gpt-x', enabled: true, available: true }]
-    if (path === '/projects/alfa/model-groups') return { groups: [] }
+    if (path === '/projects/alfa/model-groups') return groupsView
     if (path === '/model-groups') return { groups: [{ id: 'global', name: 'Global' }] }
     if (path === '/projects/alfa/members')
       return [
@@ -68,7 +71,10 @@ function mount(view: unknown, props: { gatewayAdmin: boolean; projectAdmin: bool
   return host
 }
 
-beforeEach(() => vi.mocked(api).mockReset())
+beforeEach(() => {
+  vi.mocked(api).mockReset()
+  groupsView = { groups: [] }
+})
 afterEach(() => {
   app?.unmount()
   app = undefined
@@ -142,7 +148,69 @@ describe('ProjectModels', () => {
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/model-groups', {
       method: 'PUT',
-      body: { groups: [{ id: 'barato', name: 'Barato', steps: [{ provider: 'claude', model: 'haiku' }] }], defaultModelGroup: 'barato' },
+      body: { groups: [{ id: 'barato', name: 'Barato', steps: [{ provider: 'claude', model: 'haiku' }] }], defaultModelGroup: 'barato', defaultModel: null },
+    })
+  })
+
+  it('🔌 conectado: o alerta do grupo que falta (com quem pede), o passo indisponível com o motivo, e o modelo padrão salvo', async () => {
+    groupsView = {
+      groups: [
+        {
+          id: 'planner-high',
+          name: 'Planner',
+          steps: [
+            { provider: 'alibaba', model: 'qwen' },
+            { provider: 'claude', model: 'opus' },
+          ],
+        },
+      ],
+      connected: true,
+      gateway: { defaultModel: { provider: 'claude', model: 'haiku' } },
+      missing: [{ id: 'executor-low', agents: ['maya', 'zeus'] }],
+      unavailable: { 'planner-high': [{ index: 0, provider: 'alibaba', model: 'qwen', reason: 'provider-missing' }] },
+    }
+    const host = mount(
+      { allowed: ['claude/opus', 'claude/haiku'], byRole: {}, byUser: {}, effective: ['claude/opus', 'claude/haiku'] },
+      { gatewayAdmin: false, projectAdmin: true },
+    )
+    await flush()
+    const section = host.querySelector('[data-test="project-model-groups"]')!
+    expect(section.querySelector('[data-test="project-groups-connected"]')).not.toBeNull()
+    const alert = section.querySelector('[data-test="project-groups-missing"]')!
+    expect(alert.textContent).toContain('Não configurado nesta máquina')
+    expect(alert.textContent).toContain('executor-low')
+    expect(alert.textContent).toContain('maya, zeus')
+    expect([...section.querySelectorAll('[data-test="step-unavailable"]')].map((item) => item.textContent?.trim())).toEqual([
+      'indisponível nesta máquina: provedor ausente nesta máquina',
+    ])
+    expect(section.querySelector('[data-test="project-default-model"] option')?.textContent?.trim()).toBe('O do gateway (claude/haiku)')
+
+    // "Criar grupo" põe o grupo pedido no rascunho, e ele sai do alerta.
+    ;[...alert.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.trim() === 'Criar grupo')!.click()
+    await nextTick()
+    expect(section.querySelector('[data-test="project-groups-missing"]')).toBeNull()
+    const model = section.querySelector<HTMLSelectElement>('[data-test="project-default-model"]')!
+    model.value = 'claude/opus'
+    model.dispatchEvent(new Event('change'))
+    host.querySelector<HTMLButtonElement>('[data-test="project-groups-save"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/model-groups', {
+      method: 'PUT',
+      body: {
+        groups: [
+          {
+            id: 'planner-high',
+            name: 'Planner',
+            steps: [
+              { provider: 'alibaba', model: 'qwen' },
+              { provider: 'claude', model: 'opus' },
+            ],
+          },
+          { id: 'executor-low', name: 'executor-low', steps: [] },
+        ],
+        defaultModelGroup: null,
+        defaultModel: { provider: 'claude', model: 'opus' },
+      },
     })
   })
   it('🔐 providers do projeto: o do projeto aparece com a chave e os modelos, fora da lista do gateway e dentro da base dos papéis', async () => {

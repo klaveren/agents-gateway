@@ -157,6 +157,8 @@ export class ProjectConnectionService {
         autoUpdate: true,
         createdAt: this.now(),
         createdBy: by.email,
+        // 🔌 A conexão nova já nasce com os modelos desta máquina: a manutenção da subida não tem o que limpar nela.
+        modelsLocalAt: this.now(),
       },
       this.deps.box.seal(token, owner(projectId)),
     )
@@ -204,6 +206,12 @@ export class ProjectConnectionService {
     if (issues.length) throw new InvalidProjectError(issues)
     this.deps.repository.update(projectId, { localEnv: env })
     return this.require(projectId)
+  }
+
+  /** 🔌 Marca a conexão como já com os modelos desta máquina (ver `ConnectedModels.Migration`). */
+  markModelsLocal(projectId: string): void {
+    this.require(projectId)
+    this.deps.repository.update(projectId, { modelsLocalAt: this.now() })
   }
 
   /** Desconecta: o projeto fica, como um projeto comum daqui (editável), e o token é esquecido. */

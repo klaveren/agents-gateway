@@ -259,6 +259,7 @@ function modelsJson(models: IProjectModels | undefined): string | null {
     ...(Object.keys(byUser).length ? { byUser } : {}),
     ...(models.modelGroups?.length ? { modelGroups: models.modelGroups } : {}),
     ...(models.defaultModelGroup ? { defaultModelGroup: models.defaultModelGroup } : {}),
+    ...(models.defaultModel ? { defaultModel: models.defaultModel } : {}),
     ...(models.caps && (models.caps.monthlyCostUsd !== undefined || models.caps.monthlyTokens !== undefined) ? { caps: models.caps } : {}),
   }
   return Object.keys(kept).length ? JSON.stringify(kept) : null
@@ -276,6 +277,9 @@ function modelsOf(value: unknown): IProjectModels | undefined {
       ...(Object.keys(map(parsed.byUser)).length ? { byUser: map(parsed.byUser) } : {}),
       ...(Array.isArray(parsed.modelGroups) && parsed.modelGroups.length ? { modelGroups: parsed.modelGroups } : {}),
       ...(typeof parsed.defaultModelGroup === 'string' && parsed.defaultModelGroup ? { defaultModelGroup: parsed.defaultModelGroup } : {}),
+      ...(typeof parsed.defaultModel?.provider === 'string' && typeof parsed.defaultModel.model === 'string'
+        ? { defaultModel: { provider: parsed.defaultModel.provider, model: parsed.defaultModel.model } }
+        : {}),
       ...(parsed.caps && typeof parsed.caps === 'object' ? { caps: capsOf(parsed.caps) } : {}),
     }
     return Object.keys(models).length ? models : undefined

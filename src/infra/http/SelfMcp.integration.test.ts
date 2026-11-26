@@ -204,6 +204,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'save_schedule',
       'set_agent_initial_context',
       'set_agent_resources',
+      'set_default_model',
       'set_default_model_group',
       'set_initial_context',
       'set_model_enabled',
@@ -259,6 +260,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'save_model_group',
       'delete_model_group',
       'set_default_model_group',
+      'set_default_model',
     ])
       assert.ok(listed.includes(tool), tool)
     for (const tool of ['list_providers', 'list_models', 'list_packages', 'search_packages', 'install_package', 'remove_package', 'set_model_enabled', 'set_model_price'])
@@ -368,6 +370,13 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.strictEqual(json(await tool('set_default_model_group', { groupId: 'none' })).defaultModelGroup, 'none')
     assert.strictEqual(json(await tool('set_default_model_group', { groupId: null })).defaultModelGroup, null)
     assert.strictEqual(json(await tool('list_model_groups', {})).effectiveDefaultModelGroup, 'global')
+
+    // 🎯 O modelo padrão do projeto: grava, lista e sai; modelo que não existe é recusado; um sem o outro também.
+    assert.deepStrictEqual(json(await tool('set_default_model', step)).defaultModel, step)
+    assert.deepStrictEqual(json(await tool('list_model_groups', {})).defaultModel, step)
+    assert.strictEqual((await tool('set_default_model', { provider: 'nao-existe', model: 'x' })).isError, true)
+    assert.strictEqual((await tool('set_default_model', { provider: 'claude', model: null })).isError, true)
+    assert.strictEqual(json(await tool('set_default_model', { provider: null, model: null })).defaultModel, null)
 
     // O gateway não foi tocado.
     const settings = (await call('/settings', { token: admin })).result

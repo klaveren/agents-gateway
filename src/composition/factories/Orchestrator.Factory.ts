@@ -1,4 +1,5 @@
 import { IProjectModels, readsEnvFiles } from '@domain/models/Project.Model'
+import { isConnectedProject } from '@infra/http/Project.Access'
 import { conversationModelFilter } from '@domain/ModelAccess.Policy'
 import { projectFixedEnv } from './ProjectVariables.Factory'
 import { markAnswersDelivered } from '@domain/models/ConversationPanel.Model'
@@ -164,11 +165,15 @@ export function makeOrchestrator(): AgentProvider {
     const role = projects.roleOf(projectId, ownerId)
     return conversationModelFilter(projectId, models, { ...(ownerId ? { userId: ownerId } : {}), ...(role ? { role } : {}) }, ownerOf)
   })
+  // 🔌 O projeto conectado resolve os modelos pela cascata desta máquina (ver `resolveConnected`).
+  provider.useConnected((projectId) => isConnectedProject(projectId))
   // 🔁 Os grupos de fallback do projeto da conversa: procurados antes dos do gateway.
   provider.useProjectGroups((projectId) => {
     try {
       const models = makeProjects().get(projectId).models
-      return models?.modelGroups || models?.defaultModelGroup ? { modelGroups: models.modelGroups, defaultModelGroup: models.defaultModelGroup } : undefined
+      return models?.modelGroups || models?.defaultModelGroup || models?.defaultModel
+        ? { modelGroups: models.modelGroups, defaultModelGroup: models.defaultModelGroup, defaultModel: models.defaultModel }
+        : undefined
     } catch {
       return undefined
     }

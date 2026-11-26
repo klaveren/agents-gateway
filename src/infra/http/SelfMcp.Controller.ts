@@ -395,11 +395,11 @@ function withoutLiteHidden(server: McpServer): McpServer {
 async function projectGroups(
   api: TSelfApi,
   projectId: string,
-): Promise<{ ok: true; groups: Array<{ id: string }>; defaultModelGroup?: string } | { ok: false; reply: ISelfReply }> {
+): Promise<{ ok: true; groups: Array<{ id: string }>; defaultModelGroup?: string; view: Record<string, unknown> } | { ok: false; reply: ISelfReply }> {
   const current = await api('GET', `/projects/${encodeURIComponent(projectId)}/model-groups`)
   if (!current.ok) return { ok: false, reply: current }
-  const result = current.result as { groups?: Array<{ id: string }>; defaultModelGroup?: string }
-  return { ok: true, groups: result.groups ?? [], ...(result.defaultModelGroup ? { defaultModelGroup: result.defaultModelGroup } : {}) }
+  const result = current.result as { groups?: Array<{ id: string }>; defaultModelGroup?: string } & Record<string, unknown>
+  return { ok: true, groups: result.groups ?? [], ...(result.defaultModelGroup ? { defaultModelGroup: result.defaultModelGroup } : {}), view: result }
 }
 
 /** Grava as listas inteiras do projeto pela rota da tela (as mesmas travas e validações). */
@@ -619,7 +619,7 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     'list_model_groups',
     {
       description:
-        'The model groups (fallback): ordered steps (provider + model) and when to switch. An agent points to one (`modelGroup`; absent = the default group, `none` = no switching): a conversation opened without a model starts at the first available step, and when a model fails (quota, rate limit, model unavailable…) the conversation moves to the next step and STAYS there. Without `projectId`: the GATEWAY groups and default (gateway administrators). With `projectId`: the groups and default of that PROJECT (its administrators) plus the gateway groups it inherits (`inherited`); a group id is looked up in the project first, and the project default wins over the gateway one. Edit them with save_model_group / delete_model_group / set_default_model_group.',
+        'The model groups (fallback): ordered steps (provider + model) and when to switch. An agent points to one (`modelGroup`; absent = the default group, `none` = no switching): a conversation opened without a model starts at the first available step, and when a model fails (quota, rate limit, model unavailable…) the conversation moves to the next step and STAYS there. Without `projectId`: the GATEWAY groups and default (gateway administrators). With `projectId`: the groups and default of that PROJECT (its administrators) plus the gateway groups it inherits (`inherited`); a group id is looked up in the project first, and the project default wins over the gateway one. In a CONNECTED project (`connected: true`) the groups are of THIS machine: from the origin comes only the group NAME of each agent; `missing` lists the names agents ask for that are not configured here, and `unavailable` the steps that do not run here (provider missing or disabled, model disabled). `defaultModel` is the last resort when nothing else runs. Edit them with save_model_group / delete_model_group / set_default_model_group / set_default_model.',
       inputSchema: { projectId: z.string().trim().min(1).optional().describe('The project; absent = the gateway groups.') },
       annotations: { readOnlyHint: true },
     },
@@ -627,8 +627,8 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
       if (!projectId) {
         if (!access.gateway) return gatewayOnly()
         return reply(await api('GET', '/settings'), (result) => {
-          const settings = result as { modelGroups?: unknown[]; defaultModelGroup?: string }
-          return { defaultModelGroup: settings.defaultModelGroup ?? null, modelGroups: settings.modelGroups ?? [] }
+          const settings = result as { modelGroups?: unknown[]; defaultModelGroup?: string; defaultModel?: unknown }
+          return { defaultModelGroup: settings.defaultModelGroup ?? null, defaultModel: settings.defaultModel ?? null, modelGroups: settings.modelGroups ?? [] }
         })
       }
       const own = await projectGroups(api, projectId)
@@ -644,6 +644,12 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
         effectiveDefaultModelGroup: own.defaultModelGroup ?? inherited.defaultModelGroup ?? null,
         modelGroups: own.groups,
         inherited: (inherited.groups ?? []).filter((group) => !shadowed.has(group.id)).map((group) => ({ ...group, inherited: true })),
+        // 🎯 O modelo padrão (o do projeto vence o do gateway) e, 🔌 no conectado, o que falta configurar nesta máquina.
+        defaultModel: own.view.defaultModel ?? null,
+        gatewayDefaultModel: (own.view.gateway as { defaultModel?: unknown } | undefined)?.defaultModel ?? null,
+        connected: own.view.connected ?? false,
+        missing: own.view.missing ?? [],
+        unavailable: own.view.unavailable ?? {},
       })
     },
   )
@@ -1261,6 +1267,35 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
       return reply(await api('PUT', '/settings', { body: { defaultModelGroup: wanted === NO_MODEL_GROUP ? null : (wanted ?? null) } }), (result) => ({
         defaultModelGroup: (result as { defaultModelGroup?: string }).defaultModelGroup ?? null,
       }))
+    },
+  )
+
+  server.registerTool(
+    'set_default_model',
+    {
+      description:
+        'Set the DEFAULT MODEL: the last resort when an agent has no model that runs (none of its own, no step of a group). Without `projectId`: the gateway default (gateway administrators). With `projectId`: the default of that PROJECT (its administrators), which wins over the gateway one. In a CONNECTED project (a read-only copy of another gateway) the models and groups are of THIS machine: the agent uses its group configured here, else the default group, else this default model; without any, its conversations do not open. `provider` + `model` = an enabled model of an enabled provider; both null = no default.',
+      inputSchema: {
+        projectId: z.string().trim().min(1).optional().describe('The project; absent = the gateway default.'),
+        provider: z.string().trim().min(1).max(100).nullable().describe('The provider id, or null to clear.'),
+        model: z.string().trim().min(1).max(200).nullable().describe('The model id, or null to clear.'),
+      },
+    },
+    async ({ projectId, provider, model }) => {
+      if (!!provider !== !!model) return { ...text({ status: 422, code: 'validation_error', message: 'send provider and model together (or both null)' }), isError: true }
+      const defaultModel = provider && model ? { provider, model } : null
+      if (projectId) {
+        const own = await projectGroups(api, projectId)
+        if (!own.ok) return reply(own.reply)
+        return reply(
+          await api('PUT', `/projects/${encodeURIComponent(projectId)}/model-groups`, {
+            body: { groups: own.groups, defaultModelGroup: own.defaultModelGroup ?? null, defaultModel },
+          }),
+          (result) => ({ projectId, defaultModel: (result as { defaultModel?: unknown }).defaultModel ?? null }),
+        )
+      }
+      if (!access.gateway) return gatewayOnly()
+      return reply(await api('PUT', '/settings', { body: { defaultModel } }), (result) => ({ defaultModel: (result as { defaultModel?: unknown }).defaultModel ?? null }))
     },
   )
 

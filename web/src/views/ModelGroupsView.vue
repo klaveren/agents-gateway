@@ -56,6 +56,23 @@
   )
   /** ⚖️ Passo que não serve (modelo desabilitado, provedor desligado): marcado na lista e tirado ao salvar. */
   const stale = (step: IFallbackStep) => stepServes(step, providers.list, (id) => providers.catalogs.get(id)) === false
+  /** 🎯 O modelo padrão do gateway (ver `IAgentSettings.defaultModel`): grava na hora, sozinho. */
+  const keyOf = (step: IFallbackStep) => `${step.provider}/${step.model}`
+  const defaultModelKey = computed(() => (settings.current?.defaultModel ? keyOf(settings.current.defaultModel) : ''))
+  const savingDefaultModel = ref(false)
+  const defaultModelError = ref<string>()
+  async function saveDefaultModel(value: string) {
+    savingDefaultModel.value = true
+    defaultModelError.value = undefined
+    try {
+      const slash = value.indexOf('/')
+      await settings.save({ defaultModel: value ? { provider: value.slice(0, slash), model: value.slice(slash + 1) } : null })
+    } catch (failure) {
+      defaultModelError.value = failure instanceof Error ? failure.message : String(failure)
+    } finally {
+      savingDefaultModel.value = false
+    }
+  }
   const stepOptions = computed<IFallbackStep[]>(() =>
     runnableProviders.value.flatMap((provider: IProviderStatus) =>
       (providers.catalogs.get(provider.id) ?? [])
@@ -174,6 +191,22 @@
         </RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Modelos em ordem: se o da conversa falha, o agente segue no próximo e fica nele.</p>
+      <label class="mx-4 mb-3 flex flex-col gap-1 text-sm text-zinc-300">
+        Modelo padrão do gateway
+        <select
+          :value="defaultModelKey"
+          class="h-9 rounded-lg bg-zinc-800 px-2 text-sm text-zinc-100"
+          data-test="gateway-default-model"
+          :disabled="savingDefaultModel"
+          @change="saveDefaultModel(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">Nenhum</option>
+          <option v-if="defaultModelKey && !stepOptions.some((step) => keyOf(step) === defaultModelKey)" :value="defaultModelKey">{{ defaultModelKey }} (indisponível)</option>
+          <option v-for="step in stepOptions" :key="keyOf(step)" :value="keyOf(step)">{{ keyOf(step) }}</option>
+        </select>
+        <small class="text-xs text-zinc-500">O último recurso: vale quando o agente fica sem nenhum modelo que rode (nem dele, nem de grupo, nem o padrão do projeto).</small>
+        <small v-if="defaultModelError" class="text-xs text-rose-300">{{ defaultModelError }}</small>
+      </label>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <p v-else-if="settings.current && !groups.length" class="px-4 text-sm text-zinc-500">Nenhuma sequência ainda. Sem sequência, o agente não troca de modelo quando um falha.</p>
       <RouterLink

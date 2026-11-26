@@ -105,6 +105,11 @@ export interface IAgentSettings {
   modelGroups?: IModelGroup[]
   /** O grupo dos agentes que não apontam para um. Ausente = nenhum: sem grupo, o modelo que falha encerra o turno. */
   defaultModelGroup?: string
+  /**
+   * 🎯 O MODELO PADRÃO do gateway: o último recurso quando o agente fica sem modelo que rode (nem dele, nem de grupo, nem o
+   * padrão do projeto). Ausente = nenhum (ver `defaultModelOf`).
+   */
+  defaultModel?: IFallbackStep
 
   /**
    * 🌿 ESTA INSTALAÇÃO no git (ver `Git.Guard`): o nome (o gateway da .4, o de um dev), o prefixo das branches que ela
@@ -261,6 +266,7 @@ const EDITABLE = [
   'limits',
   'modelGroups',
   'defaultModelGroup',
+  'defaultModel',
   'installationName',
   'branchPrefix',
   'baseBranch',
