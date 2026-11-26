@@ -93,6 +93,16 @@ afterEach(() => {
 })
 
 describe('ModelGroupsView', () => {
+  it('🎯 o modelo padrão do gateway: lista os modelos ativos e grava sozinho; "Nenhum" tira', async () => {
+    const { host, calls } = await mount('/model-groups')
+    const select = host.querySelector<HTMLSelectElement>('[data-test="gateway-default-model"]')!
+    expect([...select.options].map((option) => option.value)).toEqual(['', 'claude/sonnet', 'claude/haiku', 'openai/mini'])
+    select.value = 'claude/haiku'
+    select.dispatchEvent(new Event('change'))
+    await flush()
+    expect(putOf(calls)?.init?.body).toEqual({ defaultModel: { provider: 'claude', model: 'haiku' } })
+  })
+
   it('lista o nome, o id, os passos, o selo de padrão e quantos agentes usam o grupo', async () => {
     const { host } = await mount('/model-groups')
     const text = host.textContent ?? ''

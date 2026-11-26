@@ -235,6 +235,22 @@ export class AgentWithoutModelError extends DomainError {
   }
 }
 
+/**
+ * 🔌 O agente do projeto CONECTADO não tem com o que rodar nesta máquina: nem o grupo dele, nem grupo padrão, nem modelo
+ * padrão configurados aqui (ver `resolveConnected`). A conversa não abre, e a mensagem diz onde resolver.
+ */
+export class ModelNotConfiguredError extends DomainError {
+  constructor(
+    public readonly agentId: string,
+    public readonly projectId: string,
+    public readonly modelGroup?: string,
+  ) {
+    super(
+      `O agente ${agentId} não tem modelo nesta máquina${modelGroup ? ` (o grupo "${modelGroup}" não está configurado aqui)` : ''}: configure um grupo ou um modelo padrão em Projeto → Configurações (projeto ${projectId}).`,
+    )
+  }
+}
+
 /** O que se pediu trocar numa sessão viva não vale (modelo fora do agente, nível fora do protocolo). */
 export class InvalidSessionChangeError extends DomainError {
   constructor(public readonly issues: Array<{ field: string; message: string }>) {

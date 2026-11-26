@@ -43,6 +43,11 @@ export const MODEL_GROUP_ID = /^[a-z0-9][a-z0-9-]{1,47}$/
 export interface IModelGroupSettings {
   modelGroups?: IModelGroup[]
   defaultModelGroup?: string
+  /**
+   * 🎯 O MODELO PADRÃO: o último recurso quando o agente fica sem modelo que rode (nenhum dele, nenhum passo de grupo). Dois
+   * níveis, o do projeto antes do do gateway. Ausente = nenhum: sem modelo, a conversa não abre (o erro de sempre).
+   */
+  defaultModel?: IFallbackStep
 }
 
 /**
@@ -54,6 +59,108 @@ export function groupOf(agent: Pick<IAgent, 'modelGroup'>, settings: IModelGroup
   const id = agent.modelGroup ?? project?.defaultModelGroup ?? settings?.defaultModelGroup
   if (!id || id === NO_MODEL_GROUP) return undefined
   return project?.modelGroups?.find((group) => group.id === id) ?? settings?.modelGroups?.find((group) => group.id === id)
+}
+
+/** De onde veio o que roda no projeto conectado (ver `resolveConnected`): a tela e o log dizem. */
+export type TModelSource = 'agent-group' | 'project-default-group' | 'gateway-default-group' | 'project-default-model' | 'gateway-default-model'
+
+export interface IModelResolution {
+  group?: IModelGroup
+  defaultModel?: IFallbackStep
+  source?: TModelSource
+}
+
+/** O grupo pelo id: o do projeto antes do do gateway (o mesmo id no gateway fica por baixo). */
+function findGroup(id: string | undefined, settings: IModelGroupSettings | undefined, project: IModelGroupSettings | undefined): IModelGroup | undefined {
+  if (!id || id === NO_MODEL_GROUP) return undefined
+  return project?.modelGroups?.find((group) => group.id === id) ?? settings?.modelGroups?.find((group) => group.id === id)
+}
+
+/** O modelo padrão que roda aqui: o do projeto, senão o do gateway. */
+export function defaultModelOf(
+  settings: IModelGroupSettings | undefined,
+  project: IModelGroupSettings | undefined,
+  usable: (step: IFallbackStep) => boolean = () => true,
+): { step: IFallbackStep; source: TModelSource } | undefined {
+  if (project?.defaultModel && usable(project.defaultModel)) return { step: project.defaultModel, source: 'project-default-model' }
+  if (settings?.defaultModel && usable(settings.defaultModel)) return { step: settings.defaultModel, source: 'gateway-default-model' }
+  return undefined
+}
+
+/**
+ * 🔌 A CASCATA DO PROJETO CONECTADO: da origem vem só o NOME do grupo do agente; os passos, os grupos e os modelos são desta
+ * máquina. Vale o primeiro que tem passo que roda aqui:
+ *  1. o grupo do agente, configurado aqui (no projeto, senão no gateway);
+ *  2. o grupo padrão do projeto, depois o do gateway;
+ *  3. o modelo padrão do projeto, depois o do gateway;
+ *  4. nada: a conversa não abre e diz onde configurar (ver `ModelNotConfiguredError`).
+ * ⚖️ O grupo sem nenhum passo que rode aqui não conta como configurado: cai para o próximo nível, nunca em silêncio.
+ * `none` não é grupo: segue para o próximo nível (no conectado não há "não troca" que deixe o agente sem modelo).
+ */
+export function resolveConnected(
+  agent: Pick<IAgent, 'modelGroup'>,
+  settings: IModelGroupSettings | undefined,
+  project: IModelGroupSettings | undefined,
+  usable: (step: IFallbackStep) => boolean = () => true,
+): IModelResolution {
+  const levels: Array<[string | undefined, TModelSource]> = [
+    [agent.modelGroup, 'agent-group'],
+    [project?.defaultModelGroup, 'project-default-group'],
+    [settings?.defaultModelGroup, 'gateway-default-group'],
+  ]
+  for (const [id, source] of levels) {
+    const group = findGroup(id, settings, project)
+    if (group?.steps.some(usable)) return { group, source }
+  }
+  const fallback = defaultModelOf(settings, project, usable)
+  return fallback ? { defaultModel: fallback.step, source: fallback.source } : {}
+}
+
+/**
+ * 🔌 O AGENTE CONECTADO COM OS MODELOS DESTA MÁQUINA: os alvos da origem (`providers`) não rodam aqui. Ficam os da camada
+ * local (`local`, o que a máquina escolheu para o agente) e os passos do grupo resolvido; sem nenhum, o modelo padrão. O
+ * sandbox e a rede continuam os do alvo padrão da origem (a intenção do agente, não do provedor).
+ */
+export function connectedTargets(agent: IAgent, local: readonly IAgentTarget[], resolution: IModelResolution, usable: (step: IFallbackStep) => boolean): IAgentTarget[] {
+  const base = agent.providers[0]
+  const shaped = { ...agent, providers: local.map((target) => ({ ...target, models: [...target.models] })) }
+  const group = resolution.group && { ...resolution.group, steps: resolution.group.steps.filter(usable) }
+  const providers = withGroupTargets(shaped, group, base).providers
+  if (!providers.length && resolution.defaultModel) return withGroupTargets(shaped, { id: 'default', name: 'default', steps: [resolution.defaultModel] }, base).providers
+  return providers
+}
+
+/**
+ * ⚠️ O alerta "não configurado nesta máquina": os grupos que os agentes pedem e que não existem aqui (nem no projeto, nem no
+ * gateway), com quem pede. `none` e agente sem grupo não pedem nada.
+ */
+export function missingGroups(
+  agents: ReadonlyArray<Pick<IAgent, 'id' | 'modelGroup'>>,
+  settings: IModelGroupSettings | undefined,
+  project: IModelGroupSettings | undefined,
+): Array<{ id: string; agents: string[] }> {
+  const out = new Map<string, string[]>()
+  for (const agent of agents) {
+    const id = agent.modelGroup
+    if (!id || id === NO_MODEL_GROUP || findGroup(id, settings, project)) continue
+    out.set(id, [...(out.get(id) ?? []), agent.id])
+  }
+  return [...out].map(([id, list]) => ({ id, agents: list.sort() })).sort((a, b) => (a.id < b.id ? -1 : 1))
+}
+
+/** Por que um passo não roda nesta máquina. */
+export type TStepUnavailable = 'provider-missing' | 'provider-disabled' | 'model-disabled'
+
+/** O motivo de o passo não rodar aqui (`undefined` = roda). Os fatos vêm de quem os conhece. */
+export function stepUnavailable(
+  step: IFallbackStep,
+  facts: { provider(id: string): { enabled: boolean } | undefined; modelEnabled?(provider: string, model: string): boolean },
+): TStepUnavailable | undefined {
+  const provider = facts.provider(step.provider)
+  if (!provider) return 'provider-missing'
+  if (!provider.enabled) return 'provider-disabled'
+  if (facts.modelEnabled && !facts.modelEnabled(step.provider, step.model)) return 'model-disabled'
+  return undefined
 }
 
 /** Os passos do grupo, sem repetir. */
@@ -72,10 +179,9 @@ export function switchesOn(group: IModelGroup | undefined, kind: TProviderFailur
  * novo herda o sandbox e a rede do alvo PADRÃO do agente — o sandbox é a intenção do agente, não do provedor. Os alvos
  * entram no fim: o padrão (o primeiro) continua o do agente.
  */
-export function withGroupTargets(agent: IAgent, group: IModelGroup | undefined): IAgent {
+export function withGroupTargets(agent: IAgent, group: IModelGroup | undefined, base: IAgentTarget | undefined = agent.providers[0]): IAgent {
   const steps = fallbackChain(group)
   if (!steps.length) return agent
-  const base = agent.providers[0]
   const providers: IAgentTarget[] = agent.providers.map((target) => ({ ...target, models: [...target.models] }))
   for (const step of steps) {
     const target = providers.find((candidate) => candidate.provider === step.provider)

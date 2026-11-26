@@ -64,12 +64,16 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
     if (!columns.some((column) => column.name === 'local_mcp_env')) this.db.exec("ALTER TABLE project_connections ADD COLUMN local_mcp_env TEXT NOT NULL DEFAULT '[]'")
     // 🔄 A atualização automática: ligada também nas conexões que já existiam (ver `IProjectConnection.autoUpdate`).
     if (!columns.some((column) => column.name === 'auto_update')) this.db.exec('ALTER TABLE project_connections ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 1')
+    // 🔌 Desde quando os modelos são desta máquina (ver `IProjectConnection.modelsLocalAt`): as que já existiam ficam sem, para a manutenção.
+    if (!columns.some((column) => column.name === 'models_local_at')) this.db.exec('ALTER TABLE project_connections ADD COLUMN models_local_at TEXT')
     if (!columns.some((column) => column.name === 'last_update')) this.db.exec('ALTER TABLE project_connections ADD COLUMN last_update TEXT')
   }
 
   insert(connection: IProjectConnection, tokenSealed: string): void {
     this.db
-      .prepare('INSERT INTO project_connections (project_id, url, remote_project_id, token_sealed, created_at, created_by, model_map) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .prepare(
+        'INSERT INTO project_connections (project_id, url, remote_project_id, token_sealed, created_at, created_by, model_map, models_local_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      )
       .run(
         connection.projectId,
         connection.url,
@@ -78,6 +82,7 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
         connection.createdAt.toISOString(),
         connection.createdBy,
         JSON.stringify(connection.modelMap),
+        connection.modelsLocalAt?.toISOString() ?? null,
       )
   }
 
@@ -116,6 +121,7 @@ export class SqliteProjectConnectionRepository implements IProjectConnectionRepo
     set('last_checked_at', patch.lastCheckedAt?.toISOString())
     set('last_synced_at', patch.lastSyncedAt?.toISOString())
     set('usage_sent_at', patch.usageSentAt?.toISOString())
+    set('models_local_at', patch.modelsLocalAt?.toISOString())
     if (patch.autoUpdate !== undefined) columns.push(['auto_update', patch.autoUpdate ? 1 : 0])
     if ('lastUpdate' in patch) columns.push(['last_update', patch.lastUpdate ? JSON.stringify(patch.lastUpdate) : null])
     if (!columns.length) return
@@ -185,6 +191,7 @@ function toConnection(row: TRow): IProjectConnection {
   const lastCheckedAt = date(row.last_checked_at)
   const lastSyncedAt = date(row.last_synced_at)
   const usageSentAt = date(row.usage_sent_at)
+  const modelsLocalAt = date(row.models_local_at)
   const localEnv = json<Record<string, string>>(row.local_env, {})
   const localMcpEnv = json<IProjectMcpVar[]>(row.local_mcp_env, [])
   const lastUpdate = json<IConnectionUpdate | undefined>(row.last_update, undefined)
@@ -210,5 +217,6 @@ function toConnection(row: TRow): IProjectConnection {
     ...(lastCheckedAt ? { lastCheckedAt } : {}),
     ...(lastSyncedAt ? { lastSyncedAt } : {}),
     ...(usageSentAt ? { usageSentAt } : {}),
+    ...(modelsLocalAt ? { modelsLocalAt } : {}),
   }
 }

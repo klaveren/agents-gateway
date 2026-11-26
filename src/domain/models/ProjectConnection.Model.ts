@@ -84,6 +84,11 @@ export interface IProjectConnection {
   createdBy: string
   lastCheckedAt?: Date
   lastSyncedAt?: Date
+  /**
+   * 🔌 Desde quando os modelos e os grupos do projeto são DESTA MÁQUINA (ver `ConnectedModels.Migration`). Ausente = a conexão
+   * é de antes: a manutenção da subida ainda não limpou o que veio da origem.
+   */
+  modelsLocalAt?: Date
   /** Até quando o uso daqui já foi mandado à origem (reenvia os últimos dias: o de hoje ainda cresce). */
   usageSentAt?: Date
 }

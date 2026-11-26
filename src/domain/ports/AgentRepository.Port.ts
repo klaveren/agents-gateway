@@ -54,4 +54,6 @@ export interface IAgentDirectory {
   isTargetRunnable?(agent: IAgent, target: IAgentTarget): boolean
   /** O modelo está ativo no catálogo do provider (o passo de um grupo de modelos só entra assim). Ausente: todos. */
   isModelUsable?(provider: string, model: string): boolean
+  /** 🔌 Os modelos que ESTA MÁQUINA escolheu para o agente (a camada local, só os ativos); `undefined` = nenhum. */
+  localTargetsOf?(agentId: string): IAgentTarget[] | undefined
 }

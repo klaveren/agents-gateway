@@ -30,7 +30,8 @@ import {
 } from '@composition/factories/Controller.Factory'
 import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
 import { persistInstalls } from '@infra/packages/Persistent.Installs'
-import { migrateToProjects } from '@composition/factories/Projects.Factory'
+import { makeProjects, migrateToProjects } from '@composition/factories/Projects.Factory'
+import { ConnectedModelsMigration } from '@application/ConnectedModels.Migration'
 import { makeProjectVariablesController, migrateMcpEnvToProjects } from '@composition/factories/ProjectVariables.Factory'
 import { makeSpeechController } from '@composition/factories/Speech.Factory'
 import { makeAgentProjectLayerController } from '@composition/factories/AgentProjectLayers.Factory'
@@ -153,6 +154,8 @@ async function bootstrap() {
   agentsReachGatewayApiOn()
   makeScheduleRunner().start()
   makeWatchRunner().start()
+  // 🔌 A manutenção dos projetos conectados de antes (modelos e grupos passam a ser desta máquina), antes do vigia.
+  new ConnectedModelsMigration({ connections: makeProjectConnections(), projects: makeProjects() }).run()
   // 🔌 O vigia dos projetos conectados: o aviso de atualização (a conexão sai daqui; a origem não nos alcança).
   makeProjectConnections().start()
 }

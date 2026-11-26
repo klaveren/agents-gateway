@@ -87,6 +87,34 @@ describe('ProjectsService', () => {
     assert.deepStrictEqual(service.setModelGroups('alfa', { modelGroups: [] }, 'root', { usedBy, gatewayGroups: ['barato'] }).models?.modelGroups, undefined)
   })
 
+  it('🎯 o modelo padrão do projeto: liberado e que roda aqui; ausente fica, null tira; os grupos não o apagam', () => {
+    const { service } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    service.setAllowedModels('alfa', ['claude/haiku'], 'root')
+    const haiku = { provider: 'claude', model: 'haiku' }
+    assert.deepStrictEqual(service.setModelGroups('alfa', { modelGroups: [], defaultModel: haiku }, 'root').models?.defaultModel, haiku)
+    assert.deepStrictEqual(service.setModelGroups('alfa', { modelGroups: [] }, 'root').models?.defaultModel, haiku)
+    assert.throws(() => service.setModelGroups('alfa', { modelGroups: [], defaultModel: { provider: 'claude', model: 'opus' } }, 'root'), /not released to this project/)
+    assert.throws(() => service.setModelGroups('alfa', { modelGroups: [], defaultModel: haiku }, 'root', { unusable: () => 'model is not enabled in the catalog' }), /not enabled/)
+    assert.throws(
+      () => service.setModelGroups('alfa', { modelGroups: [], defaultModel: { provider: 'nada', model: 'x' } }, 'root', { known: (id) => id === 'claude' }),
+      /unknown provider/,
+    )
+    assert.strictEqual(service.setModelGroups('alfa', { modelGroups: [], defaultModel: null }, 'root').models?.defaultModel, undefined)
+  })
+
+  it('🔌 a manutenção do conectado tira só os grupos e o grupo padrão; o liberado e o teto ficam; de novo, nada', () => {
+    const { service } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    service.setAllowedModels('alfa', ['claude/haiku'], 'root')
+    const group = { id: 'barato', name: 'Barato', steps: [{ provider: 'claude', model: 'haiku' }] }
+    service.setModelGroups('alfa', { modelGroups: [group], defaultModelGroup: 'barato' }, 'root')
+    service.setCaps('alfa', { monthlyTokens: 1000 }, 'root')
+    assert.deepStrictEqual(service.forgetModelGroups('alfa', 'manutenção'), ['grupo barato', 'grupo padrão barato'])
+    assert.deepStrictEqual(service.get('alfa').models, { allowed: ['claude/haiku'], caps: { monthlyTokens: 1000 } })
+    assert.deepStrictEqual(service.forgetModelGroups('alfa', 'manutenção'), [])
+  })
+
   it('💰 o teto do projeto: gravado sem mexer nas outras listas; vazio tira; número inválido é recusado', () => {
     const { service } = build()
     service.create({ id: 'alfa', name: 'Alfa' }, 'root')

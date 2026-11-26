@@ -8,7 +8,8 @@ import { IAgentTarget } from './models/Agent.Model'
  * - os MODELOS: o alvo cujo modelo está ativo aqui fica; o resto vai pelo mapa de modelos da conexão (`provider/modelo`
  *   da origem → `provider/modelo` daqui) e, sem mapa, para o modelo padrão desta instalação. Sem nenhum, o agente fica
  *   com o que veio (o plano diz o porquê e ele não entra);
- * - o GRUPO DE MODELOS da origem não existe aqui: sai (vale o padrão daqui);
+ * - do GRUPO DE MODELOS vem só o NOME (`modelGroup`): os passos são desta máquina (Projeto → Configurações → Grupos de
+ *   modelos), e o grupo que falta aqui é alerta, nunca o LLM da origem (ver `resolveConnected`);
  * - o COMPARTILHAMENTO com outros projetos da origem (`sharedWith`) não tem sentido aqui: sai.
  */
 export interface ILocalModels {
@@ -57,10 +58,6 @@ export function forLocal(document: ICatalogDocument, models: ILocalModels): ICat
     changed = true
   }
   if (document.kind === 'agent') {
-    if (body.modelGroup !== undefined) {
-      delete body.modelGroup
-      changed = true
-    }
     const targets = Array.isArray(body.providers) ? (body.providers as IAgentTarget[]) : []
     const local = localTargets(targets, models)
     if (local.length && JSON.stringify(local) !== JSON.stringify(targets)) {

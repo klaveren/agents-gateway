@@ -160,6 +160,18 @@ export class AgentCatalog implements IAgentDirectory {
     return { ...agent, providers: agent.providers.map((target) => ({ ...target, models: target.models.filter((model) => this.usable!(target.provider, model)) })) }
   }
 
+  /** 🔌 Os modelos da camada local do agente (ver `IAgentDirectory.localTargetsOf`), só os ativos. */
+  localTargetsOf(id: string): IAgentTarget[] | undefined {
+    const stored = this.entry(id)?.agent
+    const providers = stored && this.layerOf?.(stored)?.providers
+    if (!providers?.length) return undefined
+    const usable = this.usable
+    const out = providers
+      .map((target) => ({ ...target, models: usable ? target.models.filter((model) => usable(target.provider, model)) : [...target.models] }))
+      .filter((target) => target.models.length)
+    return out.length ? out : undefined
+  }
+
   /** O agente como gravado, para editar: os modelos desligados aparecem (ver `unusableModels`). */
   entry(id: string): IAgentEntry | undefined {
     return this.rawEntries().find((entry) => entry.agent.id === id)

@@ -18,13 +18,16 @@ import { agentFolderAccess, hasTerminal, hasWatch, resolveCapabilities } from '@
 import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
 import {
   benchKeyOf,
+  connectedTargets,
   DEFAULT_COOLDOWN_MINUTES,
+  defaultModelOf,
   fallbackChain,
   groupOf,
   IFallbackStep,
   IModelGroup,
   IModelGroupSettings,
   nextStep,
+  resolveConnected,
   stepKey,
   switchesOn,
   withGroupTargets,
@@ -45,6 +48,7 @@ import {
   AgentNotFoundError,
   AgentUnavailableError,
   AgentWithoutModelError,
+  ModelNotConfiguredError,
   ConversationNotResumableError,
   InvalidSessionChangeError,
   ProviderNotOfferedError,
@@ -634,8 +638,32 @@ export class AgentProvider implements IAgentProvider {
 
   /** O grupo de modelos da conversa: o do agente, senão o padrão (ver `Fallback.Policy`). */
   private groupFor(record: Pick<ISessionRecord, 'agentId' | 'metadata'>): IModelGroup | undefined {
-    const project = projectOf(record.metadata)
-    return groupOf(this.agents.get(record.agentId) ?? {}, this.current, this.projectGroupsOf(project))
+    const agent = this.agents.get(record.agentId)
+    return this.groupIn(agent ?? {}, projectOf(record.metadata) ?? agent?.projectId)
+  }
+
+  /** 🔌 O grupo do agente no projeto: no CONECTADO, a cascata desta máquina (ver `resolveConnected`); fora dele, o de sempre. */
+  private groupIn(agent: Pick<IAgent, 'modelGroup'>, projectId: string | undefined): IModelGroup | undefined {
+    const project = this.projectGroupsOf(projectId)
+    if (!this.isConnected(projectId)) return groupOf(agent, this.current, project)
+    return resolveConnected(agent, this.current, project, (step) => this.runsHere(step)).group
+  }
+
+  /** 🔌 O passo roda nesta máquina: provedor configurado e ligado, modelo ativo no catálogo. */
+  private runsHere(step: IFallbackStep): boolean {
+    if (this.providers ? !this.providers.get(step.provider)?.enabled : !Object.values(EProvider).some((value) => value === step.provider)) return false
+    return this.agents.isModelUsable?.(step.provider, step.model) ?? true
+  }
+
+  /** 🔌 Quem diz se o projeto é conectado (a cópia do de outro gateway). Ligado na composição; ausente = nenhum. */
+  useConnected(connected: (projectId: string) => boolean): void {
+    this.connected = connected
+  }
+
+  private connected?: (projectId: string) => boolean
+
+  private isConnected(projectId: string | undefined): projectId is string {
+    return !!projectId && !!this.connected?.(projectId)
   }
 
   /** 🔁 Os grupos de fallback do projeto da conversa (ver `IProjectModels.modelGroups`). Ligados na composição. */
@@ -1010,7 +1038,7 @@ export class AgentProvider implements IAgentProvider {
     const asked = input.provider || input.model
     // ⚖️ Sem escolha, com grupo de modelos: o primeiro passo dele que pode rodar agora (fora da reserva, modelo ativo).
     if (!asked) {
-      const step = fallbackChain(groupOf(agent, settings, this.projectGroupsOf(projectId))).find((candidate) => {
+      const step = fallbackChain(this.groupIn(agent, projectId ?? agent.projectId)).find((candidate) => {
         if (this.isStepBenched(candidate)) return false
         const target = agent.providers.find((item) => item.provider === candidate.provider)
         return !!target && target.models.includes(candidate.model) && (this.agents.isTargetRunnable?.(agent, { ...target, models: [candidate.model] }) ?? true)
@@ -1023,6 +1051,9 @@ export class AgentProvider implements IAgentProvider {
       ? targetFor(agent, input.provider, input.model)
       : (targetFor(agent, settings.provider, settings.model, runnable) ?? targetFor(agent, settings.provider, settings.model))
     // Os modelos do agente já vêm filtrados pelo catálogo: sem nenhum ativado, não há com o que conversar.
+    // 🔌 No projeto conectado, o que falta é configuração DESTA máquina: a mensagem diz onde.
+    const scope = projectId ?? agent.projectId
+    if (!choice && this.isConnected(scope)) throw new ModelNotConfiguredError(agent.id, scope, agent.modelGroup)
     if (!choice) throw new AgentWithoutModelError(agent.id)
     return choice
   }
@@ -1065,15 +1096,39 @@ export class AgentProvider implements IAgentProvider {
     // ⚖️ Os passos do grupo de modelos entram como alvos do agente (só os modelos ativos): é o que a troca e a conversa
     // sem escolha usam, com o sandbox do agente (ver `withGroupTargets`).
     const allows = this.modelAccess?.(projectId, ownerId)
-    const group = groupOf(agent, this.current, this.projectGroupsOf(projectId))
     const usable = (step: IFallbackStep) => (this.agents.isModelUsable?.(step.provider, step.model) ?? true) && (!allows || allows(step.provider, step.model))
+    const scope = projectId ?? agent.projectId
+    const project = this.projectGroupsOf(scope)
+    // 🔌 O agente de projeto CONECTADO nunca roda o modelo da origem: os alvos dele são os desta máquina (ver `connectedTargets`).
+    if (this.isConnected(scope)) {
+      const here = (step: IFallbackStep) => usable(step) && this.runsHere(step)
+      const resolution = resolveConnected(agent, this.current, project, here)
+      const local = (this.agents.localTargetsOf?.(agent.id) ?? []).map((target) => ({
+        ...target,
+        models: target.models.filter((model) => !allows || allows(target.provider, model)),
+      }))
+      return {
+        ...agent,
+        providers: connectedTargets(
+          agent,
+          local.filter((target) => target.models.length),
+          resolution,
+          here,
+        ),
+      }
+    }
+    const group = groupOf(agent, this.current, project)
     const withGroup = withGroupTargets(agent, group && { ...group, steps: group.steps.filter(usable) })
-    if (!allows) return withGroup
-    // ⛔ O que o projeto ou a pessoa não podem usar sai dos alvos: o agente fica só com o permitido (sem nenhum, o erro de sempre).
-    const providers = withGroup.providers
-      .map((target) => ({ ...target, models: target.models.filter((model) => allows(target.provider, model)) }))
-      .filter((target) => target.models.length)
-    return { ...withGroup, providers }
+    // ⛔ O que o projeto ou a pessoa não podem usar sai dos alvos: o agente fica só com o permitido.
+    const providers = allows
+      ? withGroup.providers.map((target) => ({ ...target, models: target.models.filter((model) => allows(target.provider, model)) })).filter((target) => target.models.length)
+      : withGroup.providers
+    // 🎯 Sem nenhum modelo que rode, o modelo padrão (do projeto, senão do gateway) é o último recurso antes do erro.
+    if (!providers.some((target) => target.models.length)) {
+      const fallback = defaultModelOf(this.current, project, usable)
+      if (fallback) return withGroupTargets({ ...withGroup, providers: [] }, { id: 'default', name: 'default', steps: [fallback.step] }, agent.providers[0])
+    }
+    return allows ? { ...withGroup, providers } : withGroup
   }
 
   /**

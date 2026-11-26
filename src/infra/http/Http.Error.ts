@@ -5,6 +5,7 @@ import {
   AgentUnavailableError,
   UsageCapReachedError,
   AgentWithoutModelError,
+  ModelNotConfiguredError,
   InvalidAgentError,
   InvalidModelError,
   InvalidSessionChangeError,
@@ -86,6 +87,7 @@ export type TErrorCode =
   | 'provider_not_offered'
   | 'upstream_error'
   | 'agent_without_model'
+  | 'model_not_configured'
   | 'invalid_credentials'
   | 'login_locked'
   | 'session_not_found'
@@ -244,6 +246,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
      * fazer a seguir.
      */
     return { status: 403, code: 'agent_unavailable', message: error.message }
+  }
+
+  if (error instanceof ModelNotConfiguredError) {
+    return { status: 422, code: 'model_not_configured', message: error.message }
   }
 
   if (error instanceof AgentWithoutModelError) {

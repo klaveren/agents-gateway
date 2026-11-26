@@ -210,7 +210,7 @@ export class ProjectsService {
    */
   setModelGroups(
     id: string,
-    change: { modelGroups: IModelGroup[]; defaultModelGroup?: string },
+    change: { modelGroups: IModelGroup[]; defaultModelGroup?: string; defaultModel?: IFallbackStep | null },
     by: string,
     rules: {
       known?: (provider: string) => boolean
@@ -232,14 +232,41 @@ export class ProjectsService {
       const agent = rules.usedBy?.(old.id)
       if (agent) issues.push({ field: 'groups', message: `${old.id} is used by agent ${agent}` })
     }
+    // 🎯 O modelo padrão do projeto: um modelo que roda aqui e que o projeto recebeu. `undefined` = fica o que estava; `null` = tira.
+    const defaultModel = change.defaultModel === undefined ? project.models?.defaultModel : (change.defaultModel ?? undefined)
+    if (defaultModel && change.defaultModel !== undefined) {
+      const at = `${defaultModel.provider}/${defaultModel.model}`
+      if (rules.known && !rules.known(defaultModel.provider)) issues.push({ field: 'defaultModel', message: `unknown provider: ${defaultModel.provider}` })
+      else if (allowed && !allowed.includes(at) && !defaultModel.provider.startsWith(`${id}--`))
+        issues.push({ field: 'defaultModel', message: `${at}: not released to this project` })
+      else {
+        const reason = rules.unusable?.(defaultModel)
+        if (reason) issues.push({ field: 'defaultModel', message: `${at}: ${reason}` })
+      }
+    }
     if (issues.length) throw new InvalidProjectError(issues)
-    const { modelGroups: _groups, defaultModelGroup: _default, ...rest } = project.models ?? {}
+    const { modelGroups: _groups, defaultModelGroup: _default, defaultModel: _model, ...rest } = project.models ?? {}
     const models: IProjectModels = {
       ...rest,
       ...(change.modelGroups.length ? { modelGroups: change.modelGroups } : {}),
       ...(change.defaultModelGroup ? { defaultModelGroup: change.defaultModelGroup } : {}),
+      ...(defaultModel ? { defaultModel: { provider: defaultModel.provider, model: defaultModel.model } } : {}),
     }
     return this.projects.update(id, { models, updatedAt: this.now(), updatedBy: by })!
+  }
+
+  /**
+   * 🔌 A MANUTENÇÃO DO PROJETO CONECTADO (ver `ConnectedModels.Migration`): tira os grupos de modelos e o grupo padrão que
+   * estavam no projeto antes de eles passarem a ser desta máquina. O resto dos modelos (o liberado, o de cada papel, o teto)
+   * é decisão daqui e fica. Devolve o que saiu (nada = não gravou).
+   */
+  forgetModelGroups(id: string, by: string): string[] {
+    const project = this.get(id)
+    const { modelGroups, defaultModelGroup, ...rest } = project.models ?? {}
+    const removed = [...(modelGroups ?? []).map((group) => `grupo ${group.id}`), ...(defaultModelGroup ? [`grupo padrão ${defaultModelGroup}`] : [])]
+    if (!removed.length) return []
+    this.projects.update(id, { models: Object.keys(rest).length ? rest : undefined, updatedAt: this.now(), updatedBy: by })
+    return removed
   }
 
   /** 💰 O teto do mês do projeto (`undefined` em um campo = sem esse teto). Quem administra o projeto. */

@@ -110,6 +110,8 @@ export const modelGroup = z.object({
 export const projectModelGroupsSchema = z.object({
   groups: z.array(modelGroup).max(MODEL_GROUP_BOUNDS.groups),
   defaultModelGroup: z.string().max(48).nullable().optional(),
+  /** 🎯 O modelo padrão do projeto; `null` tira. */
+  defaultModel: fallbackStep.nullable().optional(),
 })
 
 /**
@@ -163,6 +165,8 @@ export const updateSettingsSchema = z.object({
   modelGroups: z.array(modelGroup).max(MODEL_GROUP_BOUNDS.groups).nullable().optional(),
   /** O grupo dos agentes que não apontam para um; `null` = nenhum. */
   defaultModelGroup: modelGroupRef.nullable().optional(),
+  /** 🎯 O modelo padrão do gateway (o último recurso); `null` = nenhum. */
+  defaultModel: fallbackStep.nullable().optional(),
   /** 🌿 Esta instalação no git (ver `Git.Guard`); `null` volta ao padrão. */
   installationName: z.string().max(60).nullable().optional(),
   branchPrefix: z

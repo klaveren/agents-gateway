@@ -1,5 +1,5 @@
 import { IAgenticScope } from '@domain/Import.Scope'
-import type { IModelGroup } from '@domain/Fallback.Policy'
+import type { IFallbackStep, IModelGroup } from '@domain/Fallback.Policy'
 
 /**
  * Um PROJETO: agentes, conversas e (depois) skills, rules e specs vivem dentro de um, com a sua pasta
@@ -67,6 +67,8 @@ export interface IProjectModels {
   modelGroups?: IModelGroup[]
   /** O grupo padrão do projeto (vence o do gateway); `none` = não troca. Ausente = o do gateway. */
   defaultModelGroup?: string
+  /** 🎯 O modelo padrão do projeto (vence o do gateway): o último recurso quando o agente fica sem modelo (ver `defaultModelOf`). */
+  defaultModel?: IFallbackStep
   /** 💰 O teto do MÊS do projeto (todas as conversas dele, com qualquer chave). Ausente = sem teto. Ver `projectCapReached`. */
   caps?: { monthlyCostUsd?: number; monthlyTokens?: number }
 }
