@@ -25,6 +25,9 @@
     rect: { x: number; y: number; width: number; height: number }
   }
 
+  /** ⏱️ Quanto um pedido de entrada pode demorar antes de a fila seguir sem ele. */
+  const INPUT_TIMEOUT_MS = 5000
+
   const live = ref<boolean>()
   /** 🗂️ As abas do navegador do agente; clicar mostra outra (o agente segue na dele). */
   const tabs = ref<Array<{ id: string; title: string; url: string }>>([])
@@ -104,16 +107,29 @@
     if (screen.value) observer.observe(screen.value)
   })
 
-  // 🖱️ A entrada vai em fila: a ordem do clique e das teclas é a da pessoa.
+  /**
+   * 🖱️ A entrada vai em fila: a ordem do clique e das teclas é a da pessoa. ⏱️ Cada pedido tem tempo limite: um que não
+   * volta é cancelado e a fila segue — nenhum evento isolado trava a interação.
+   */
   let queue = Promise.resolve()
   function send(event: Record<string, unknown>, then?: (result: { editable?: boolean } | undefined) => void) {
     if (!props.interactive || !live.value) return
-    queue = queue.then(() =>
-      api<{ editable?: boolean }>(`${base()}/input`, { method: 'POST', body: event }).then(
+    queue = queue.then(() => {
+      if (event === pendingWheel) pendingWheel = undefined
+      const controller = new AbortController()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const expired = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          controller.abort()
+          resolve()
+        }, INPUT_TIMEOUT_MS)
+      })
+      const request = api<{ editable?: boolean }>(`${base()}/input`, { method: 'POST', body: event, signal: controller.signal }).then(
         (result) => then?.(result),
         () => undefined,
-      ),
-    )
+      )
+      return Promise.race([request, expired]).finally(() => clearTimeout(timer))
+    })
   }
 
   /**
@@ -260,6 +276,8 @@
     if (at) send({ type: 'move', ...at })
   }
 
+  /** 🛞 A rolagem que ainda espera a vez na fila: a próxima soma nela em vez de entrar atrás. */
+  let pendingWheel: { type: 'wheel'; x: number; y: number; deltaX: number; deltaY: number } | undefined
   let wheel = { x: 0, y: 0, dx: 0, dy: 0 }
   let wheelTimer: ReturnType<typeof setTimeout> | undefined
   function onWheel(event: WheelEvent) {
@@ -274,7 +292,15 @@
     if (wheelTimer) return
     wheelTimer = setTimeout(() => {
       wheelTimer = undefined
-      send({ type: 'wheel', x: wheel.x, y: wheel.y, deltaX: wheel.dx, deltaY: wheel.dy })
+      if (pendingWheel) {
+        pendingWheel.x = wheel.x
+        pendingWheel.y = wheel.y
+        pendingWheel.deltaX += wheel.dx
+        pendingWheel.deltaY += wheel.dy
+      } else if (props.interactive && live.value) {
+        pendingWheel = { type: 'wheel', x: wheel.x, y: wheel.y, deltaX: wheel.dx, deltaY: wheel.dy }
+        send(pendingWheel)
+      }
       wheel = { x: 0, y: 0, dx: 0, dy: 0 }
     }, 50)
   }
