@@ -12,7 +12,7 @@ export interface IPanelAccess {
 }
 import { DELEGATE_TOOL_NAME, DELEGATED_BY, delegatesOf } from '@domain/models/Delegation.Model'
 import { offers, targetFor } from '@domain/Agent.Policy'
-import { conversationNote, IAmbient, IAmbientSecrets, mcpDownNote, secretNamesOf, secretsChangedNote } from '@domain/Ambient.Policy'
+import { conversationNote, IAmbient, IAmbientSecrets, mcpBackNote, mcpDownNote, secretNamesOf, secretsChangedNote } from '@domain/Ambient.Policy'
 import { agentFolderAccess, hasTerminal, hasWatch, resolveCapabilities } from '@domain/Capability.Catalog'
 import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
 import {
@@ -272,7 +272,9 @@ export class AgentProvider implements IAgentProvider {
     if (delivered.length) await this.panels?.markDelivered?.(record.id, delivered).catch(() => undefined)
     // ⚖️ Os servidores MCP do agente tentam conectar agora (ver `ToolCatalog.wakeMcp`); o que segue fora vira aviso, ao
     // agente (na entrada do modelo) e à pessoa (no turno).
-    const mcpDown = this.mcpWake ? await this.mcpWake(agent.allowedTools, conversationProject).catch(() => []) : []
+    const mcpDown = this.mcpWake ? await this.mcpWake(agent.allowedTools, conversationProject, sessionId).catch(() => []) : []
+    // ⚖️ O que esta conversa viu fora e já voltou: o agente fica sabendo, uma vez — sem isto seguia preso no "indisponível".
+    const mcpBack = (this.mcpRecovered?.(sessionId) ?? []).filter((id) => !mcpDown.includes(id))
     // ⚠️ O projeto liberou a leitura dos `.env` para este agente: os valores entram na máscara da conversa já no começo do turno — a leitura
     // nativa do Claude e do Codex não passa pelo terminal do gateway (que também registra, a cada comando).
     if (this.envMask && conversationProject) {
@@ -283,7 +285,7 @@ export class AgentProvider implements IAgentProvider {
     const secretsNow = this.secrets ? secretNamesOf(this.secrets.ambientFor(agent, conversationProject)) : undefined
     const secretsNote = secretsNow ? secretsChangedNote(record.secretNames, secretsNow) : ''
     if (secretsNow) record.secretNames = secretsNow
-    const lead = [panelNote, mcpDown.length ? mcpDownNote(mcpDown) : '', secretsNote].filter(Boolean).join('\n\n')
+    const lead = [panelNote, mcpDown.length ? mcpDownNote(mcpDown) : '', mcpBack.length ? mcpBackNote(mcpBack) : '', secretsNote].filter(Boolean).join('\n\n')
     const message = lead ? { ...asked, text: `${lead}\n\n${asked.text}` } : asked
     let panelTouched = false
     // ⚖️ O id da conversa vai UMA VEZ por histórico do modelo: no primeiro turno e quando ele recomeça (repasse, compactação,
@@ -701,11 +703,18 @@ export class AgentProvider implements IAgentProvider {
   private envMask?: (sessionId: string, projectId: string, agentId: string, dir: string) => Promise<void>
 
   /** Acorda os servidores MCP do agente no começo do turno; devolve os que seguem fora (ver `ToolCatalog.wakeMcp`). */
-  useMcpWake(wake: (allowedTools: readonly string[], projectId?: string) => Promise<string[]>): void {
+  useMcpWake(wake: (allowedTools: readonly string[], projectId?: string, sessionId?: string) => Promise<string[]>): void {
     this.mcpWake = wake
   }
 
-  private mcpWake?: (allowedTools: readonly string[], projectId?: string) => Promise<string[]>
+  private mcpWake?: (allowedTools: readonly string[], projectId?: string, sessionId?: string) => Promise<string[]>
+
+  /** Os MCPs que a conversa viu fora e já voltaram (consumidos: cada volta, um aviso). */
+  useMcpRecovered(recovered: (sessionId: string) => string[]): void {
+    this.mcpRecovered = recovered
+  }
+
+  private mcpRecovered?: (sessionId: string) => string[]
 
   private panels?: IPanelAccess
 

@@ -118,6 +118,9 @@ describe('AgentProvider — painel da conversa', () => {
     let down = ['tickets']
     const asked: Array<readonly string[]> = []
     provider.useMcpWake(async (allowed) => (asked.push(allowed), down))
+    // O registro devolve cada volta uma vez (ver `McpRegistry.takeRecovered`).
+    const back: string[] = []
+    provider.useMcpRecovered(() => back.splice(0))
     await new Promise((resolve) => setImmediate(resolve))
     const session = await provider.createSession({ agentId: 'maya' })
     const run = async (text: string) => {
@@ -131,7 +134,11 @@ describe('AgentProvider — painel da conversa', () => {
     assert.ok(events.some((event) => event.type === 'warning' && /MCP fora do ar neste turno: tickets/.test(String(event.payload?.message))))
     assert.ok(asked[0].includes('mcp:tickets/ticket_get'))
     down = []
+    back.push('tickets')
     await run('de novo')
     assert.doesNotMatch(seen[1], /fora do ar/)
+    assert.match(seen[1], /O MCP `tickets` voltou; pode usar as ferramentas dele de novo\.[\s\S]*de novo$/)
+    await run('e agora')
+    assert.doesNotMatch(seen[2], /voltou/, 'o aviso de volta vai uma vez')
   })
 })

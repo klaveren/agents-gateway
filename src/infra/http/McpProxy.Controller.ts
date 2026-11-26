@@ -107,9 +107,12 @@ export class McpProxyController {
         const client = await this.deps.registry.clientFor(serverId, sessionId)
         if (!client) return { content: [{ type: 'text', text: `MCP server unavailable: ${serverId}` }], isError: true }
         const result = (await client.callToolRaw(request.params.name, request.params.arguments ?? {}, context)) as Record<string, unknown>
+        // A conexão caiu nesta chamada: a conversa é avisada quando o servidor voltar (ver `McpRegistry.noteOutage`).
+        if (result.isError && !client.isConnected()) this.deps.registry.noteOutage(serverId, sessionId)
         const mask = this.deps.mask
         return (mask ? maskToolResult(result, (text) => mask(text, sessionId)) : result) as never
       } catch (error: unknown) {
+        this.deps.registry.noteOutage(serverId, sessionId)
         return { content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }], isError: true }
       }
     })

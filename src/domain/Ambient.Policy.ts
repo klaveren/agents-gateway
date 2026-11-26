@@ -168,6 +168,16 @@ export function mcpDownNote(servers: readonly string[]): string {
 }
 
 /**
+ * ⚖️ O MCP QUE VOLTOU: esta conversa o viu fora (uma ferramenta falhou, ou o aviso acima num turno anterior). Sem isto o
+ * agente seguia acreditando no "indisponível" que registrou. Uma vez por volta.
+ */
+export function mcpBackNote(servers: readonly string[]): string {
+  const list = servers.map((id) => `\`${id}\``).join(', ')
+  const one = servers.length === 1
+  return `<contexto>${one ? 'O MCP' : 'Os MCPs'} ${list} ${one ? 'voltou' : 'voltaram'}; pode usar as ferramentas ${one ? 'dele' : 'deles'} de novo.</contexto>`
+}
+
+/**
  * ⛔ A pasta PRIVADA do agente, como ele a recebe: é dele, persistente e só dele (nenhum outro agente a alcança), e vale
  * em todas as conversas dele, de qualquer pessoa. Grava só com Escrever arquivos (`write`).
  */
