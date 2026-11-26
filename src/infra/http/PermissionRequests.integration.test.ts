@@ -324,6 +324,14 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
     )
     assert.strictEqual(makeAgents().entry('theo')?.agent.role, 'subagent')
     const keys = pending.widenings.map((item: { key: string }) => item.key)
+    // ⚖️ O lote e a origem na lista da tela: a chamada que gerou o pedido, quem pediu, e — pelo histórico do catálogo — que o
+    // agente já foi assim (sem `role`) numa revisão anterior: é restauração.
+    const listed = (await call('/permission-requests', { headers: screen() })).body.result.find((item: { id: string }) => item.id === pending.id)
+    assert.strictEqual(listed.batchId, pending.id)
+    assert.strictEqual(listed.agentId, 'theo')
+    assert.strictEqual(listed.requestedBy.agentId, 'theo')
+    assert.strictEqual(listed.origin, 'restoration')
+    assert.ok(Number.isInteger(listed.restoredRevision))
     assert.strictEqual((await call(`/permission-requests/${pending.id}/approve`, { method: 'POST', headers: bearer(accessToken), body: { confirm: keys } })).status, 403)
     assert.strictEqual((await call(`/permission-requests/${pending.id}/approve`, { method: 'POST', headers: screen(), body: { confirm: keys } })).status, 200)
     assert.strictEqual(makeAgents().entry('theo')?.agent.role, undefined)

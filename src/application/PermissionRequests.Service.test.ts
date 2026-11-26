@@ -11,6 +11,7 @@ import {
   PermissionRequestForbiddenError,
   ProjectNotFoundError,
 } from '@domain/errors/Domain.Error'
+import { agentDocument, projectPermissionsDocument } from '@domain/Catalog.Document'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IPermissionRule } from '@domain/Permission.Policy'
 import { ICatalogChanged } from '@domain/ports/CatalogEvents.Port'
@@ -205,8 +206,9 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
     service.reject(pending![0].id, { by: 'root@x.test' })
     assert.ok(rulesOf().some((rule) => rule.pattern === 'docs/**'))
     assert.ok(!rulesOf().some((rule) => rule.pattern === 'npm test'))
-    // Um item só não tem lote.
-    assert.strictEqual(service.change(theoRef, { add: [allow('read', 'lib/**')], reason: 'y' }, asker).pending![0].batchId, undefined)
+    // ⚖️ Um item só também tem lote (o dele): a tela agrupa pela chamada que gerou o pedido.
+    const single = service.change(theoRef, { add: [allow('read', 'lib/**')], reason: 'y' }, asker).pending![0]
+    assert.strictEqual(single.batchId, single.id)
   })
 
   it('recusar: nada muda no agente; decidido não se decide de novo', async () => {
@@ -446,6 +448,116 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
         (error: unknown) => error instanceof InvalidPermissionsError && /too many open requests/.test(JSON.stringify(error.issues)),
       )
       assert.strictEqual(service.list({ agentId: 'theo' }).length, 100)
+    })
+  })
+
+  describe('⚖️ lote e origem (incidente de 26/11): restauração do que o alvo já teve, ou ampliação nova', () => {
+    let history: Array<{ revision: number; document?: string; projectId?: string }>
+    const NO_LINKS = { resources: { skills: [], commands: [] }, initialContext: [] }
+    const remember = (agent: IAgent) => history.push({ revision: history.length + 1, document: agentDocument(agent, NO_LINKS).text, projectId: agent.projectId })
+
+    beforeEach(() => {
+      history = []
+      let next = 0
+      service = new PermissionRequestsService({
+        repository: new SqlitePermissionRequestRepository(':memory:'),
+        agents,
+        projects: {
+          exists: (id) => id === 'alfa',
+          name: () => 'Alfa',
+          rules: () => projectRules,
+          save: (_id, rules) => (projectRules = rules),
+        },
+        history: { revisions: (kind, itemId) => (kind === 'agent' && itemId === 'theo' ? history : kind === 'project-permissions' && itemId === 'alfa' ? projectHistory : []) },
+        now: () => now,
+        newId: () => `pr-${++next}`,
+        secrets: { save: () => undefined, exists: (scope, id) => scope === 'agent' && id === 'theo' },
+      })
+      service.useAgentValidation(async () => ({ rules: agentRules, issues: () => [] }))
+      projectHistory = []
+    })
+    let projectHistory: Array<{ revision: number; document?: string; projectId?: string }>
+
+    it('a gravação errada: o que o agente já teve é `restoration` (com a revisão), o que nunca teve é `new`; todos no mesmo lote, com quem pediu e a conversa', async () => {
+      remember({ ...theo, allowedTools: ['read_doc', 'cap:terminal'] })
+      // A gravação errada tirou a ferramenta (tirar vale já) — e agora o agente pede de volta, junto com o que nunca teve.
+      const now = { ...theo, allowedTools: ['read_doc'] }
+      agents.save(now, { rules: agentRules, by: 'ana@x.test', creating: false })
+      remember(now)
+      const result = await service.patchAgent('theo', { patch: { allowedTools: ['read_doc', 'cap:terminal', 'cap:web.fetch'] }, reason: 'restaurar' }, asker)
+      const byEntry = new Map(result.pending!.map((item) => [item.entries!.add[0], item]))
+      assert.deepStrictEqual([byEntry.get('cap:terminal')!.origin, byEntry.get('cap:terminal')!.restoredRevision], ['restoration', 1])
+      assert.strictEqual(byEntry.get('cap:web.fetch')!.origin, 'new')
+      assert.strictEqual(byEntry.get('cap:web.fetch')!.restoredRevision, undefined)
+      const listed = service.list()
+      assert.strictEqual(new Set(listed.map((item) => item.batchId)).size, 1)
+      for (const item of listed) {
+        assert.strictEqual(item.agentId, 'theo')
+        assert.deepStrictEqual(item.requestedBy, asker)
+      }
+      assert.deepStrictEqual(listed.map((item) => item.origin).sort(), ['new', 'restoration'])
+    })
+
+    it('cada chamada é um lote próprio', async () => {
+      const first = service.change(theoRef, { add: [allow('terminal', 'npm test')], reason: 'a' }, asker).pending![0]
+      const second = service.change(theoRef, { add: [allow('terminal', 'npm run lint')], reason: 'b' }, asker).pending![0]
+      assert.notStrictEqual(first.batchId, second.batchId)
+    })
+
+    it('regra do agente e do projeto: a que já esteve lá é `restoration`; a mais ampla que a de antes é `new`', () => {
+      remember({ ...theo, permissions: [...theo.permissions!, allow('terminal', 'npm *')] })
+      remember(theo)
+      const [narrower, wider] = service.change(theoRef, { add: [allow('terminal', 'npm test'), allow('terminal', '*')], reason: 'x' }, asker).pending!
+      assert.strictEqual(narrower.origin, 'restoration')
+      assert.strictEqual(wider.origin, 'new')
+
+      projectHistory.push({
+        revision: 1,
+        document: projectPermissionsDocument('alfa', [allow('network', 'api.github.com'), allow('network', 'registry.npmjs.org')]).text,
+        projectId: 'alfa',
+      })
+      const [registry, evil] = service.change({ projectId: 'alfa' }, { add: [allow('network', 'registry.npmjs.org'), allow('network', 'evil.com')], reason: 'y' }, asker).pending!
+      assert.deepStrictEqual([registry.origin, evil.origin], ['restoration', 'new'])
+    })
+
+    it('sem histórico do alvo, é `new` (na dúvida, trava); a variável secreta é sempre `new`, num lote só dela', () => {
+      assert.strictEqual(service.change(theoRef, { add: [allow('terminal', 'npm test')], reason: 'x' }, asker).pending![0].origin, 'new')
+      const secret = service.requestSecret({ scope: 'agent', scopeId: 'theo', name: 'GITLAB_TOKEN', reason: 'gitlab' }, asker)
+      assert.deepStrictEqual([secret.origin, secret.batchId], ['new', secret.id])
+    })
+
+    it('o histórico que falha não derruba a leitura: o pedido fica `new`', () => {
+      service = new PermissionRequestsService({
+        repository: new SqlitePermissionRequestRepository(':memory:'),
+        agents,
+        history: {
+          revisions: () => {
+            throw new Error('banco fora')
+          },
+        },
+      })
+      assert.strictEqual(service.change(theoRef, { add: [allow('terminal', 'npm test')], reason: 'x' }, asker).pending![0].origin, 'new')
+    })
+
+    it('pedido antigo, sem `batchId`, continua aparecendo', () => {
+      const repository = new SqlitePermissionRequestRepository(':memory:')
+      repository.create({
+        id: 'old-1',
+        kind: 'agent-rules',
+        agentId: 'theo',
+        add: [allow('terminal', 'npm test')],
+        remove: [],
+        widenings: [],
+        reason: 'antigo',
+        requestedBy: { by: 'root@x.test' },
+        baseHash: '',
+        createdAt: now,
+        status: 'pending',
+      })
+      const old = new PermissionRequestsService({ repository, agents, now: () => now }).list()
+      assert.strictEqual(old.length, 1)
+      assert.strictEqual(old[0].batchId, undefined)
+      assert.strictEqual(old[0].origin, 'new')
     })
   })
 })

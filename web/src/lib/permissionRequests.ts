@@ -34,8 +34,15 @@ export interface IPermissionRequest {
   /** As regras do agente mudaram desde o pedido: `widenings` foi recalculado. */
   changed: boolean
   reason: string
-  /** Os pedidos da mesma chamada do agente dividem o lote (cada pedido leva um item só); sem ele, o pedido é sozinho. */
+  /** O LOTE: a chamada do agente que gerou o pedido (cada pedido leva um item só). Sem ele, o pedido é antigo: lote "sem origem". */
   batchId?: string
+  /**
+   * Só no aberto: `restoration` — o alvo já teve tudo o que o pedido abre, numa revisão anterior do catálogo — ou `new`
+   * (nunca teve). ⛔ Só `restoration` entra no "Aprovar este lote"; ausente conta como `new`.
+   */
+  origin?: 'restoration' | 'new'
+  /** `restoration`: a revisão do catálogo em que o alvo já tinha isso. */
+  restoredRevision?: number
   /** `agentId` e `conversationId` são rótulo (de onde veio), não credencial. */
   requestedBy: { by: string; agentId?: string; conversationId?: string }
   createdAt: string
@@ -144,3 +151,12 @@ export function secretLine(secret: NonNullable<IPermissionRequest['secret']>): s
 export function secretProjectLine(secret: NonNullable<IPermissionRequest['secret']>, nameOf: (id: string) => string | undefined): string | undefined {
   return secret.project ? `valor do projeto ${nameOf(secret.project) ?? secret.project}` : undefined
 }
+
+/** ⛔ Na dúvida, nova: o pedido sem `origin` (servidor antigo) nunca entra no lote de restaurações. */
+export const isRestoration = (request: Pick<IPermissionRequest, 'origin'>): boolean => request.origin === 'restoration'
+
+/** "restauração" / "ampliação nova" — o rótulo de cada item. */
+export const originLabel = (request: Pick<IPermissionRequest, 'origin'>): string => (isRestoration(request) ? 'restauração' : 'ampliação nova')
+
+/** O lote do pedido: a chamada que o gerou, ou `''` (o lote "sem origem", dos pedidos antigos). */
+export const batchKey = (request: Pick<IPermissionRequest, 'batchId'>): string => request.batchId ?? ''
