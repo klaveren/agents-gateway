@@ -50,7 +50,8 @@ export function buildOpenAIMcpServers(remotes: readonly IAgentMcpServer[] = [], 
     const headers = mcpHeaders(remote, token)
     const options = {
       url: remote.config.url,
-      name: `mcp_${remote.config.id}`,
+      // O id puro: com nomes repetidos, o SDK põe o servidor na frente (`mcp_<id>__<ferramenta>`), sem `mcp_` duplicado.
+      name: remote.config.id,
       cacheToolsList: true,
       // `undefined` = todas (`mcp:<id>/*`); senão, só as escolhidas no agente.
       ...(remote.tools ? { toolFilter: { allowedToolNames: remote.tools } } : {}),
