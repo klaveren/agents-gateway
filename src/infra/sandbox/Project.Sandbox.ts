@@ -1134,6 +1134,7 @@ export function ensureGitProxyAuth(home: string): void {
  * `.claude`, `node_modules/.bin`… na pasta onde roda) cria um arquivo vazio, ou uma pasta, para cada caminho negado que não
  * existe, como destino do bind de /dev/null. Se o processo cai ou reinicia no meio, o ponto fica: o `package.json` vazio
  * quebrava a resolução de módulos de tudo abaixo ("Invalid package config"). Esta é a lista EXATA do que se varre.
+ * ⚖️ O modo do CLI que cercava assim saiu (ver `CLI_PROCESS_ENV`): a lista dele fica para varrer o que sobrou de antes.
  */
 export const MOUNT_POINT_FILES: readonly string[] = [
   '.env',

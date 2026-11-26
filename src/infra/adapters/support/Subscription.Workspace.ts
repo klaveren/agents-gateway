@@ -91,6 +91,7 @@ export const CONVERSATIONS_DIR = join('.tmp', 'conversations')
  * de projeto sem repositório. O sandbox do CLI cria no `cwd` arquivos vazios para negar (`package.json`, `.env*`, `.npmrc`…); na
  * raiz do projeto eles quebravam o build de quem morava abaixo (o `package.json` vazio, lido subindo a árvore). Aqui ficam só
  * desta conversa, e a pasta sai no fim do turno se ficou vazia (ver `releaseConversationWorkspace`).
+ * ⚖️ Esse modo do CLI agora vai desligado (ver `CLI_PROCESS_ENV`); a pasta por conversa fica, e mantém a raiz limpa.
  */
 export function conversationWorkspace(projectId: string, sessionId: string, env: NodeJS.ProcessEnv = process.env): string {
   const dir = join(projectWorkspace(projectId, env), CONVERSATIONS_DIR, sessionId.replace(/[^a-zA-Z0-9_-]/g, '_') || 'sem-conversa')

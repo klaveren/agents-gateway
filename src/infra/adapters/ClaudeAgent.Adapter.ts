@@ -276,7 +276,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // As variáveis do agente e a identidade de quem chama vão para o terminal do CLI (o Bash nativo) — ver `Agent.Identity`.
       // ⚖️ Sempre, também sem conexão montada (aí o ambiente é o do gateway, como o SDK já faria): o CLI espera os MCPs
       // antes do 1.º turno, com teto (ver `McpConnection.Policy`).
-      env: cliTerminalEnv(agent.env, { ...(env ?? process.env), ...mcpWaitEnv() }, context),
+      env: cliTerminalEnv(agent.env, { ...(env ?? process.env), ...mcpWaitEnv(), ...CLI_PROCESS_ENV }, context),
       // Toda lane num diretório por conversa (ou no repositório dela): o `cwd` do processo é a pasta do gateway (`.env`, banco).
       cwd: cliDir,
     }
@@ -661,7 +661,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       CLAUDE_CODE_OAUTH_TOKEN: connection?.key,
       CLAUDE_CONFIG_DIR: connection?.key ? claudeConfigDir() : undefined,
       ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
-      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
+      ...CLI_PROCESS_ENV,
     })
   }
 
@@ -724,6 +724,22 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 }
 
 /**
+ * ⛔ O que o processo do CLI sempre leva, com e sem conexão montada.
+ *
+ * - `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '0'`: o modo de limpeza do CLI DESLIGADO (explícito: no entrypoint `local-agent` ele
+ *   liga sozinho). Ele tirava a credencial do CLI do ambiente dos subprocessos, mas, no Linux, também cercava o `cwd` e o HOME
+ *   com bwrap: `package.json`, lockfiles, `.npmrc`, `node_modules/.bin`… viravam device ilegível dentro do comando e arquivo
+ *   vazio no host — o Vitest e o esbuild, que sobem as pastas lendo `package.json`, abortavam. O que ele garantia, o gateway
+ *   garante: o Bash nativo do CLI é sempre recusado (o terminal do agente é o `run_bash`, que roda no gateway, no cerco, com o
+ *   ambiente de `terminalEnv` — sem nada do processo do CLI), os MCPs remotos são HTTP (nada é lançado), e a pasta de
+ *   configuração do CLI (`claudeConfigDir`, nos dados do gateway; ou o `~/.claude`) fica no `denyRead` do cerco.
+ * - `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1'`: o CLI não roda `git status` no `cwd` ao começar. Era o único programa que ele
+ *   lançava sozinho, no host e fora do cerco — e o git executa o que o `.git/config` da pasta mandar (`core.fsmonitor`), agora
+ *   com a credencial do CLI no ambiente.
+ */
+export const CLI_PROCESS_ENV = { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '0', CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1' } as const
+
+/**
  * O ambiente do subprocesso do CLI para uma conexão.
  *
  * ⚖️ OFICIAL: `ANTHROPIC_API_KEY`. COMPATÍVEL (OpenRouter e afins): `ANTHROPIC_BASE_URL` mais a chave
@@ -736,8 +752,7 @@ export function cliEnv(connection: { key: string; baseUrl?: string; compatible: 
   // ⚖️ `CLAUDE_CONFIG_DIR` no volume de dados: as conversas do CLI sobrevivem ao reinício (no pod o HOME é só
   // leitura) — é o que deixa a retomada continuar com a memória dele —, e ele não lê a configuração pessoal do
   // `~/.claude` de quem roda o gateway (MCPs, CLAUDE.md).
-  // ⛔ `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`: o CLI tira as credenciais dele (chave da API, token OAuth) do ambiente dos subprocessos (Bash).
-  const base = subscriptionEnv({ HOME: process.env.HOME, CLAUDE_CONFIG_DIR: claudeConfigDir(), ENABLE_CLAUDEAI_MCP_SERVERS: 'false', CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' })
+  const base = subscriptionEnv({ HOME: process.env.HOME, CLAUDE_CONFIG_DIR: claudeConfigDir(), ENABLE_CLAUDEAI_MCP_SERVERS: 'false', ...CLI_PROCESS_ENV })
   if (!connection.compatible) return { ...base, ANTHROPIC_API_KEY: connection.key }
 
   return { ...base, ANTHROPIC_BASE_URL: connection.baseUrl, ANTHROPIC_AUTH_TOKEN: connection.key, ANTHROPIC_API_KEY: '' }
