@@ -118,6 +118,13 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
     assert.match(notice, /Não diga que o acesso foi liberado/)
   })
 
+  it('⚠️ a regra de terminal que nunca libera o que parece querer vai com aviso no resultado (o pedido segue)', () => {
+    const result = service.change(theoRef, { add: [allow('terminal', 'ssh * 10.10.0.4 bash *')], reason: 'release' }, asker)
+    assert.match(result.notice, /⚠️ Sem efeito: `ssh \* 10\.10\.0\.4 bash \*` nunca libera script por stdin/)
+    assert.strictEqual(result.warnings?.length, 1)
+    assert.strictEqual(service.change(theoRef, { add: [allow('terminal', 'ssh * 10.10.0.4 bash -s')], reason: 'release' }, asker).warnings, undefined)
+  })
+
   it('sem ampliação, nenhum pedido; a troca que não muda nada não grava revisão', () => {
     const only = service.change(theoRef, { add: [deny('write', '**/*.lock')], reason: 'proteger' }, asker)
     assert.strictEqual(only.pending, undefined)

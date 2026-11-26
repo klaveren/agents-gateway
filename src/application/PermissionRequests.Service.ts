@@ -26,6 +26,7 @@ import {
   TPermissionRequestStatus,
 } from '@domain/models/PermissionRequest.Model'
 import { IPermissionRule } from '@domain/Permission.Policy'
+import { terminalRuleWarning } from '@domain/TerminalRule.Policy'
 import { applyRuleChange, IRuleChange, requestExpiresAt, requestStatus, requestWidenings, ruleChangeIssues, rulesHash, splitRuleChange } from '@domain/PermissionRequest.Policy'
 import { ICatalogEvents } from '@domain/ports/CatalogEvents.Port'
 import { IPermissionRequestRepository } from '@domain/ports/PermissionRequestRepository.Port'
@@ -85,6 +86,8 @@ export interface IPermissionChangeResult {
   rules: IPermissionRule[]
   /** O que o agente diz à pessoa (pt-BR, com o caminho da tela). */
   notice: string
+  /** As regras de terminal que nunca liberam o que parecem querer (ver `terminalRuleWarning`). */
+  warnings?: string[]
 }
 
 export interface IAgentPatchResult {
@@ -265,13 +268,16 @@ export class PermissionRequestsService {
         )
       : undefined
     const done = [...applied.add.map((rule) => `+ ${ruleText(rule)}`), ...applied.remove.map((rule) => `- ${ruleText(rule)}`)]
+    // ⚠️ A regra de terminal que nunca libera o que parece querer: aviso no pedido, para o agente pedir a certa.
+    const warnings = change.add.flatMap((rule) => (rule.category === 'terminal' && rule.decision === 'allow' ? (terminalRuleWarning(rule.pattern) ?? []) : []))
     return {
       ...(target.agentId ? { agentId: target.agentId } : {}),
       ...(target.projectId && !target.agentId ? { projectId: target.projectId } : {}),
       applied,
       ...(pending ? { pending } : {}),
       rules: split.rules,
-      notice: notice(target.screen, done, pending),
+      notice: notice(target.screen, done, pending) + warnings.map((line) => `\n⚠️ Sem efeito: ${line}.`).join(''),
+      ...(warnings.length ? { warnings } : {}),
     }
   }
 

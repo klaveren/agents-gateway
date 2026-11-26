@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { PermissionsService } from '@application/Permissions.Service'
 import { IPermissionSubject, PERMISSION_CATEGORIES, SYSTEM_RULES, TPermissionCategory } from '@domain/Permission.Policy'
 import { PERMISSION_DECISIONS_KEPT } from '@domain/ports/PermissionRepository.Port'
+import { terminalRuleWarning } from '@domain/TerminalRule.Policy'
 import { gatewayReachOn, gatewayRuleReason } from '@infra/permissions/Gateway.Reach'
 import { analyzeShell, opaqueRefusal } from '@infra/permissions/Shell.Parse'
 import { ICallerProof } from './Caller.Proof'
@@ -34,13 +35,21 @@ const testSchema = z.object({
   value: z.string().min(1).max(4000),
 })
 
-/** Os avisos das regras que não valem: as de rede que miram a porta HTTP do gateway com o alcance desligado. */
+/**
+ * Os avisos das regras que não valem: as de rede que miram a porta HTTP do gateway com o alcance desligado, e as de terminal que
+ * nunca liberam o que parecem querer (ver `terminalRuleWarning`).
+ */
 export function ruleWarnings(
   rules: ReadonlyArray<{ category: string; pattern: string; decision: string }>,
 ): Array<{ category: string; pattern: string; code: string; message: string }> {
-  if (gatewayReachOn()) return []
+  const reach = gatewayReachOn()
   return rules.flatMap((rule) => {
-    const reason = rule.category === 'network' && rule.decision === 'allow' ? gatewayRuleReason(rule.pattern) : undefined
+    if (rule.decision !== 'allow') return []
+    if (rule.category === 'terminal') {
+      const reason = terminalRuleWarning(rule.pattern)
+      return reason ? [{ category: rule.category, pattern: rule.pattern, code: 'terminal_rule_no_effect', message: reason }] : []
+    }
+    const reason = rule.category === 'network' && !reach ? gatewayRuleReason(rule.pattern) : undefined
     return reason ? [{ category: rule.category, pattern: rule.pattern, code: 'gateway_port_off', message: reason }] : []
   })
 }

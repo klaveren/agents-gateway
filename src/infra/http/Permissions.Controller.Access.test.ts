@@ -7,7 +7,7 @@ import { identityFromToken, withCaller } from '@infra/mcp/Caller.Identity'
 import { PermissionsService } from '@application/Permissions.Service'
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
 import { gatewayHttpPort, setGatewayReach } from '@infra/permissions/Gateway.Reach'
-import { PermissionsController } from './Permissions.Controller'
+import { PermissionsController, ruleWarnings } from './Permissions.Controller'
 import { useProjectAccess } from './Project.Access'
 
 /**
@@ -93,6 +93,18 @@ describe('Permissões do projeto: o admin do projeto, só o projeto dele', () =>
       setGatewayReach(() => false)
       await call(ANA, 'save', { params: { projectId: 'alfa' }, body: rules })
     }
+  })
+
+  it('⚠️ regra de terminal que nunca libera o script por stdin: aviso "sem efeito", a regra é aceita', () => {
+    const warnings = ruleWarnings([
+      { category: 'terminal', pattern: 'ssh * 10.10.0.4 bash *', decision: 'allow' },
+      { category: 'terminal', pattern: 'ssh * 10.10.0.4 bash -s', decision: 'allow' },
+      { category: 'terminal', pattern: 'ssh * 10.10.0.4 bash *', decision: 'deny' },
+    ])
+    assert.deepStrictEqual(
+      warnings.map((warning) => [warning.pattern, warning.code]),
+      [['ssh * 10.10.0.4 bash *', 'terminal_rule_no_effect']],
+    )
   })
 
   it('🔌 os avisos de regras ainda não salvas (o formulário do agente): qualquer pessoa autenticada, sem gravar', async () => {
