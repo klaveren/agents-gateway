@@ -144,14 +144,18 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     // Conexão MCP POR TURNO. O adapter é singleton; um slot compartilhado fazia o turno de um
     // usuário fechar as tools de outro no meio do stream, e vazava a conexão de quem perdia a corrida.
     const mcpServers = await this.openMcpServers(context, agent.allowedTools)
+    const collide = (await toolNamesCollide(mcpServers)).length > 0
 
     const oaiAgent = new Agent({
       name: agent.name,
-      instructions: record.systemPrompt,
+      instructions: collide
+        ? `${record.systemPrompt}\n\n## Ferramentas com o mesmo nome em dois servidores\nAs ferramentas MCP vêm com o servidor no nome (\`mcp_<servidor>__<ferramenta>\`): escolha a do servidor certo.`
+        : record.systemPrompt,
       model,
       modelSettings,
       tools: [...buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? [], context), ...hosted],
       mcpServers,
+      ...(collide ? { mcpConfig: { includeServerInToolNames: true } } : {}),
     })
 
     const items: AgentInputItem[] = [...history, user(this.buildUserContent(input))]
@@ -267,7 +271,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
         }
       }),
     )
-    return withoutDuplicateTools(opened.filter((server): server is MCPServer => !!server))
+    return opened.filter((server): server is MCPServer => !!server)
   }
 
   private async closeMcpServers(servers: MCPServer[]): Promise<void> {
@@ -373,25 +377,21 @@ export function hostedName(name: string): string {
 }
 
 /**
- * ⛔ UM NOME, UM SERVIDOR: o SDK da OpenAI recusa o turno inteiro ("Duplicate tool names found across MCP servers") quando
- * dois servidores trazem a mesma ferramenta — caso real: o gateway local e o da origem (projeto conectado), ambos com as
- * ferramentas do gateway, num agente no Qwen (26/11). O Claude e o Codex separam por servidor e não sentem. Fica a do
- * PRIMEIRO servidor (a ordem do agente); nos seguintes ela sai pelo filtro, e o turno roda.
+ * ⛔ A MESMA FERRAMENTA EM DOIS SERVIDORES: o SDK da OpenAI recusa o turno inteiro ("Duplicate tool names found across MCP
+ * servers"). Caso real (26/11): a Maya opera os DOIS gateways, o local e o da origem, com as mesmas ferramentas. As duas
+ * ficam: com nome repetido, o SDK põe o servidor no nome (`mcp_<servidor>__<ferramenta>`, `includeServerInToolNames`) e
+ * chama a original no servidor certo — como o Claude e o Codex já fazem. Sem repetição, os nomes seguem como sempre.
  */
-export async function withoutDuplicateTools(servers: MCPServer[]): Promise<MCPServer[]> {
+export async function toolNamesCollide(servers: readonly MCPServer[]): Promise<string[]> {
   const seen = new Set<string>()
+  const repeated = new Set<string>()
   for (const server of servers) {
     if (typeof server.listTools !== 'function') continue
-    const names = (await server.listTools().catch(() => [])).map((tool) => tool.name)
     const filter = server.toolFilter && typeof server.toolFilter === 'object' ? server.toolFilter : undefined
-    const visible = names.filter((name) => (!filter?.allowedToolNames || filter.allowedToolNames.includes(name)) && !filter?.blockedToolNames?.includes(name))
-    const repeated = visible.filter((name) => seen.has(name))
-    for (const name of visible) seen.add(name)
-    if (!repeated.length) continue
-    console.warn(
-      `[OpenAIAgent] ${server.name}: ${repeated.length} ferramenta(s) com o mesmo nome de outro servidor ficam de fora (${repeated.slice(0, 5).join(', ')}${repeated.length > 5 ? '…' : ''})`,
-    )
-    server.toolFilter = { ...(filter ?? {}), blockedToolNames: [...(filter?.blockedToolNames ?? []), ...repeated] }
+    const names = (await server.listTools().catch(() => []))
+      .map((tool) => tool.name)
+      .filter((name) => (!filter?.allowedToolNames?.length || filter.allowedToolNames.includes(name)) && !filter?.blockedToolNames?.includes(name))
+    for (const name of names) (seen.has(name) ? repeated : seen).add(name)
   }
-  return servers
+  return [...repeated]
 }
