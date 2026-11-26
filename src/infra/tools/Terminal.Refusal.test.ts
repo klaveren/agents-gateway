@@ -4,6 +4,7 @@ import type { IPermissionChecker } from '@application/Permissions.Service'
 import { decide, type IPermissionRule } from '@domain/Permission.Policy'
 import { analyzeShell } from '@infra/permissions/Shell.Parse'
 import { transportRefusal } from './Bash.Guard'
+import { lockRefusal } from './Lock.Guard'
 import { looseRemoteHint, readOnlyNote, terminalRefusal } from './Local.Tools'
 
 const rule = (pattern: string, decision: IPermissionRule['decision']): IPermissionRule => ({ category: 'terminal', pattern, decision })
@@ -295,7 +296,7 @@ describe('a recusa da política diz a saída', () => {
       policyRefusal('privilege escalation', "ssh 10.10.0.1 'sudo ls /var/lib'"),
       /^Refused by the gateway tool policy: privilege escalation\. No host remoto.*save_permission_rules/,
     )
-    assert.match(policyRefusal('privilege escalation', 'sudo ls'), /Local, isso nunca roda no cerco\.$/)
+    assert.match(policyRefusal('privilege escalation', 'sudo ls'), /Local, só com uma regra de terminal exata que o cite/)
     assert.strictEqual(policyRefusal('recursive force delete', 'rm -rf x'), 'Refused by the gateway tool policy: recursive force delete.')
   })
 
@@ -442,5 +443,76 @@ describe('recusa do sudo remoto — o comando remoto solto', () => {
     const quoted = await analyzeShell(`ssh 10.10.0.2 "sudo grub-set-default 'gnulinux-advanced-x>gnulinux-6.17-x'"`)
     assert.strictEqual(looseRemoteHint(quoted.commands), '')
     assert.strictEqual(looseRemoteHint((await analyzeShell('ssh h sudo update-grub')).commands), '', 'palavras simples soltas passam como estão')
+  })
+})
+
+describe('regra exata libera — as travas cedem à regra do admin que casa e cita', () => {
+  const stdin = 'ssh -o BatchMode=yes -o ConnectTimeout=7 -o ServerAliveInterval=30 10.10.0.4 "bash -s" < rel3.sh > out'
+  const loose = 'ssh -o BatchMode=yes 10.10.0.4 bash -s < arq'
+  const exact = rule('ssh * 10.10.0.4 bash -s', 'allow')
+  const files = [{ category: 'read', pattern: '**', decision: 'allow' } as IPermissionRule, { category: 'write', pattern: '**', decision: 'allow' } as IPermissionRule]
+
+  it('✅ o caso de 26/11: `ssh … "bash -s" < script` passa com `ssh * 10.10.0.4 bash -s`, nas duas formas, e nas duas travas', async () => {
+    for (const command of [stdin, loose]) {
+      assert.strictEqual(await lockRefusal(command, checker([exact]), {}), undefined, command)
+      assert.strictEqual(await refusal(command, [exact, ...files]), undefined, command)
+    }
+    assert.strictEqual(await lockRefusal(stdin, checker([rule('ssh * 10.10.0.4 "bash -s"', 'allow')]), {}), undefined, 'aspas na regra não contam')
+  })
+
+  it('⛔ sem a regra, recusado: a mensagem diz o motivo real e a regra exata que libera', async () => {
+    const message = (await lockRefusal(stdin, checker([]), {})) ?? ''
+    assert.match(message, /script por stdin no host remoto \(o gateway não vê o conteúdo\): só passa com regra exata, ex\. `ssh \* 10\.10\.0\.4 bash -s`/)
+    assert.doesNotMatch(message, /sem regra/)
+    assert.ok(await refusal(stdin, files))
+  })
+
+  it('⛔ curinga na parte remota não libera a linha opaca, e a recusa diz por que a regra não cobre', async () => {
+    for (const pattern of ['ssh * 10.10.0.4 *', 'ssh *', '*', 'ssh * 10.10.0.4 bash *', 'ssh * 10.10.0.4 bash -s*']) {
+      const message = (await lockRefusal(loose, checker([rule(pattern, 'allow')]), {})) ?? ''
+      assert.match(message, /privilege escalation/, pattern)
+      if (pattern.startsWith('ssh')) assert.match(message, /não cobre: com a linha opaca, a parte remota da regra tem de ser IGUAL/, pattern)
+    }
+    assert.ok(await lockRefusal('ssh 10.10.0.5 bash -s < arq', checker([exact]), {}), 'outro host')
+    assert.ok(await lockRefusal('ssh 10.10.0.4 bash -s -x < arq', checker([exact]), {}), 'outra linha')
+    assert.ok(await lockRefusal('x=bash; ssh 10.10.0.4 "$x -s" < arq', checker([exact, rule('ssh * 10.10.0.4 $x -s', 'allow')]), {}), 'montada pelo shell local')
+  })
+
+  it('⛔ deny vence a regra exata', async () => {
+    const rules = [exact, rule('ssh * 10.10.0.4 bash *', 'deny'), ...files]
+    assert.ok(await refusal(loose, rules))
+    const zeus = [rule('ssh * sudo *', 'allow'), rule('ssh * sudo k3s kubectl * get secret*', 'deny')]
+    assert.strictEqual(await lockRefusal('ssh 10.10.0.1 "sudo k3s kubectl get secret x"', checker(zeus), {}), undefined, 'a trava cede ao allow...')
+    assert.ok(await refusal('ssh 10.10.0.1 "sudo k3s kubectl get secret x"', zeus), '...e o terminal aplica o deny')
+  })
+
+  it('✅ trava de texto: `rm -rf /x` passa com a regra `rm -rf /x`; ⛔ não com `rm *`, `*` nem `bash *`', async () => {
+    assert.strictEqual(await lockRefusal('rm -rf /x', checker([rule('rm -rf /x', 'allow')]), {}), undefined)
+    assert.strictEqual(await lockRefusal('rm -rf build/out', checker([rule('rm -rf build/*', 'allow')]), {}), undefined)
+    assert.strictEqual(await lockRefusal('mkfs.ext4 /dev/sdb1', checker([rule('mkfs.ext4 /dev/sdb1', 'allow')]), {}), undefined)
+    for (const pattern of ['rm *', '*', 'rm -*']) {
+      const message = (await lockRefusal('rm -rf /x', checker([rule(pattern, 'allow')]), {})) ?? ''
+      assert.match(message, /^recursive force delete em `rm -rf \/x` — .*casa, mas não cita a parte travada.*ex\. `rm -rf \/x`/, pattern)
+    }
+    for (const pattern of ['bash *', 'rm -r *']) assert.ok(await lockRefusal('rm -rf /x', checker([rule(pattern, 'allow')]), {}), pattern)
+    assert.match((await lockRefusal('rm -rf /x', checker([]), {})) ?? '', /só passa com regra exata que a cite, ex\. `rm -rf \/x`/)
+    assert.ok(await lockRefusal('rm -rf /x; rm -rf /y', checker([rule('rm -rf /x', 'allow')]), {}), 'cada trecho travado precisa da sua regra')
+    assert.match((await lockRefusal('rm -rf /x', checker([rule('rm -rf /x', 'allow'), rule('rm -rf *', 'deny')]), {})) ?? '', /recursive force delete/, 'deny vence')
+  })
+
+  it('✅ remoto: `ssh h "rm -rf /x"` passa com a regra que cita o comando remoto; o sudo LOCAL, com a regra que o cita', async () => {
+    assert.strictEqual(await lockRefusal('ssh h "rm -rf /x"', checker([rule('ssh * h rm -rf /x', 'allow')]), {}), undefined)
+    assert.ok(await lockRefusal('ssh h "rm -rf /x; rm -rf /"', checker([rule('ssh * h rm -rf /x', 'allow')]), {}))
+    assert.strictEqual(await lockRefusal('sudo systemctl restart nginx', checker([rule('sudo systemctl restart nginx', 'allow')]), {}), undefined)
+    assert.strictEqual(await lockRefusal('sudo rm -rf /x', checker([rule('sudo rm -rf /x', 'allow')]), {}), undefined)
+    assert.strictEqual(await refusal('sudo rm -rf /x', [rule('sudo rm -rf /x', 'allow')]), undefined, 'o de dentro do sudo fica com a regra do de fora')
+    assert.ok(await refusal('sudo rm -rf /x', [rule('sudo rm -rf /x', 'allow'), rule('rm *', 'deny')]), 'a negação do de dentro vence')
+    assert.ok(await lockRefusal('sudo rm -rf /', checker([rule('sudo *', 'allow')]), {}), '`sudo *` não cita o rm -rf')
+    for (const pattern of ['*', '* id']) assert.match((await lockRefusal('sudo id', checker([rule(pattern, 'allow')]), {})) ?? '', /não cita `sudo`/, pattern)
+    assert.strictEqual(
+      await lockRefusal('sudo id', checker([rule('sudo id', 'allow')]), {}, { localPrivilege: false }),
+      'privilege escalation',
+      'agente de máquina: o cartão da pessoa',
+    )
   })
 })

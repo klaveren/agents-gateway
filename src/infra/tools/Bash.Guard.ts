@@ -63,6 +63,22 @@ export function deniedReasons(command: string): string[] {
   return DENIED.filter((rule) => rule.pattern.test(trimmed)).map((rule) => rule.reason)
 }
 
+/** A trava de texto pelo motivo: o padrão dela. */
+const lockOf = (reason: string) => DENIED.find((rule) => rule.reason === reason)?.pattern
+
+/** O trecho (o texto de um comando, ou a linha inteira) dispara esta trava de texto. */
+export function textLockHits(reason: string, text: string): boolean {
+  return lockOf(reason)?.test(text.trim()) ?? false
+}
+
+/**
+ * ⚖️ A regra CITA a trava de texto: o próprio padrão da regra dispara a trava (`rm -rf /x`, `rm -rf *`, `mkfs.ext4 /dev/sdb1`).
+ * `rm *`, `*` e `bash *` não citam: o curinga genérico nunca libera o que a trava segura.
+ */
+export function textLockCited(reason: string, pattern: string): boolean {
+  return textLockHits(reason, pattern)
+}
+
 /** Os motivos que o texto acusa mas só valem se o COMANDO roda (o sudo, o reboot): a palavra num grep ou num texto não conta. */
 export const COMMAND_REASONS: ReadonlySet<string> = new Set([PRIVILEGE_ESCALATION, HOST_POWER])
 
@@ -134,6 +150,10 @@ export interface IRemote {
   line: string
   /** O que a análise não vê por inteiro (expansão no nome do comando, `eval`, erro de sintaxe…) ou o que o shell local monta antes. */
   opaque: boolean
+  /** Opaca porque o shell LOCAL monta a linha (`$x`, `$(…)`): o texto não é o que o ssh recebe, e nem a regra exata cobre. */
+  dynamic: boolean
+  /** Os motivos da análise da linha remota (`shell-stdin` para o `bash -s`). */
+  reasons: string[]
   commands: IShellCommand[]
   /** Os comandos privilegiados da linha remota. */
   privileged: Array<{ command: IShellCommand; kind: IPrivileged }>
@@ -158,7 +178,7 @@ export async function remoteOf(ssh: IShellCommand, full: string = ssh.text): Pro
     const kind = privilegedOf(command)
     return kind ? [{ command, kind }] : []
   })
-  return { line, opaque: dynamic || analysis.opaque.length > 0, commands, privileged }
+  return { line, opaque: dynamic || analysis.opaque.length > 0, dynamic, reasons: [...analysis.opaque], commands, privileged }
 }
 
 /**

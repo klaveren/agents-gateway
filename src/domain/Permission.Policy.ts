@@ -134,8 +134,33 @@ export const ENV_FILE_PATTERNS: readonly string[] = SECRETS.filter((secret) => s
  * (a pasta de dados do gateway, em caminho absoluto), somadas às fixas.
  */
 export function decide(subject: IPermissionSubject, layers: IPermissionLayers, system: readonly IPermissionRule[] = []): IPermissionVerdict {
-  const floor = [...SYSTEM_RULES, ...system].find((rule) => rule.decision === 'deny' && !opened(rule, layers) && matches(rule, subject))
+  const ruled = layered(subject, layers)
+  const allows = [...(layers.agent ?? []), ...(layers.project ?? [])].filter((rule) => rule.decision === 'allow' && rule.category === subject.category && matches(rule, subject))
+  const floor = [...SYSTEM_RULES, ...system].find(
+    (rule) => rule.decision === 'deny' && !opened(rule, layers) && matches(rule, subject) && !(ruled?.allowed && allows.some((allow) => citedBy(rule, allow))),
+  )
   if (floor) return { allowed: false, layer: 'system', rule: floor, reason: `negado pelo sistema (${floor.pattern}${floor.note ? ` — ${floor.note}` : ''})` }
+  if (ruled) return ruled
+  if (layers.machine && MACHINE_OPEN.includes(subject.category))
+    return { allowed: true, layer: 'default', reason: `permitido: agente de máquina, sem regra de ${CATEGORY_LABEL[subject.category]} que negue` }
+  if (OPEN_BY_DEFAULT.includes(subject.category) || (subject.category === 'delegate' && gatewayEdition() === 'lite'))
+    return { allowed: true, layer: 'default', reason: `permitido: sem regra, ${CATEGORY_LABEL[subject.category]} do projeto vale para os agentes dele` }
+  return { allowed: false, layer: 'default', reason: `negado: nenhuma regra de ${CATEGORY_LABEL[subject.category]} permite "${subject.value}"` }
+}
+
+/**
+ * ⚖️ REGRA EXATA LIBERA: a trava de terminal do sistema (`sudo *`, `rm -rf /*`, `mkfs*`…) cede à regra do agente ou do projeto que
+ * LIBERA o comando e a CITA — o próprio padrão da regra cai na trava (`sudo systemctl restart nginx`, `rm -rf /x`). O curinga
+ * genérico (`*`, `bash *`, `rm *`) não cita e não libera; a negação das camadas vence como sempre. As de segredo (leitura e
+ * escrita) não cedem por aqui.
+ */
+function citedBy(floor: ISystemRule, rule: IPermissionRule): boolean {
+  if (floor.category !== 'terminal' || rule.category !== 'terminal') return false
+  return denyCommandMatches(floor.pattern, rule.pattern.trim().split(/\s+/))
+}
+
+/** A decisão das camadas do agente e do projeto, ou nada se nenhuma regra delas casa. */
+function layered(subject: IPermissionSubject, layers: IPermissionLayers): IPermissionVerdict | undefined {
   for (const layer of ['agent', 'project'] as const) {
     const hit = (layers[layer] ?? []).filter((rule) => matches(rule, subject))
     if (!hit.length) continue
@@ -157,11 +182,7 @@ export function decide(subject: IPermissionSubject, layers: IPermissionLayers, s
     const where = from === 'agent' ? 'do agente' : 'do projeto'
     return { allowed: rule.decision === 'allow', layer: from, rule, reason: `${rule.decision === 'allow' ? 'permitido' : 'negado'} pela regra ${where} "${rule.pattern}"` }
   }
-  if (layers.machine && MACHINE_OPEN.includes(subject.category))
-    return { allowed: true, layer: 'default', reason: `permitido: agente de máquina, sem regra de ${CATEGORY_LABEL[subject.category]} que negue` }
-  if (OPEN_BY_DEFAULT.includes(subject.category) || (subject.category === 'delegate' && gatewayEdition() === 'lite'))
-    return { allowed: true, layer: 'default', reason: `permitido: sem regra, ${CATEGORY_LABEL[subject.category]} do projeto vale para os agentes dele` }
-  return { allowed: false, layer: 'default', reason: `negado: nenhuma regra de ${CATEGORY_LABEL[subject.category]} permite "${subject.value}"` }
+  return undefined
 }
 
 /**

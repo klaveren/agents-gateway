@@ -336,6 +336,24 @@ describe('LocalTools', () => {
       assert.strictEqual((await run('git status && git log -1')).status, 'success')
     })
 
+    it('⚖️ regra exata libera: o script por stdin no host remoto roda com `ssh * 10.10.0.4 bash -s`; sem ela, a recusa diz a regra', async () => {
+      const command = 'ssh -o BatchMode=yes -o ConnectTimeout=7 10.10.0.4 "bash -s" < rel3.sh > out.txt'
+      const files = [rule('read', '**'), rule('write', '**')]
+      const refused = await setup(files).run(command)
+      assert.strictEqual(refused.status, 'error')
+      assert.match(refused.result, /script por stdin no host remoto .*só passa com regra exata, ex\. `ssh \* 10\.10\.0\.4 bash -s`.*save_permission_rules/)
+      const { seen, run } = setup([rule('terminal', 'ssh * 10.10.0.4 bash -s'), ...files])
+      const ok = await run(command)
+      assert.strictEqual(ok.status, 'success', ok.result)
+      assert.deepStrictEqual(seen.ran, [`cercado(${command})`])
+      assert.strictEqual((await setup([rule('terminal', 'ssh * 10.10.0.4 *'), ...files]).run(command)).status, 'error', 'curinga na parte remota não libera')
+    })
+
+    it('⚖️ regra exata libera a trava de texto: `rm -rf ./lixo` com a regra `rm -rf ./lixo`; não com `rm *`', async () => {
+      assert.strictEqual((await setup([rule('terminal', 'rm -rf ./lixo')]).run('rm -rf ./lixo')).status, 'success')
+      assert.match((await setup([rule('terminal', 'rm *')]).run('rm -rf ./lixo')).result, /Refused by the gateway tool policy: recursive force delete .*não cita a parte travada/)
+    })
+
     it('o que não dá para analisar é negado, mesmo com o terminal liberado', async () => {
       const { seen, run } = setup([rule('terminal', '*')])
       assert.match((await run('eval "$CMD"')).result, /não dá para analisar/)
@@ -887,7 +905,7 @@ describe('remoteSudoAllowed', () => {
     assert.strictEqual(await remoteSudoAllowed("ssh 10.10.0.4 'reboot; sudo id'", checker(reboot), asker), false)
   })
 
-  it('⛔ o sudo local segue recusado, mesmo com a regra', async () => {
+  it('o sudo local não é assunto desta conferência (só o remoto; o local cede à regra exata no `lockRefusal`)', async () => {
     const rules: IPermissionRule[] = [{ category: 'terminal', pattern: '* sudo*', decision: 'allow' }]
     for (const command of ['sudo ssh 10.10.0.1 "sudo id"', 'ssh 10.10.0.1 "sudo id"; sudo id', 'echo sudo'])
       assert.strictEqual(await remoteSudoAllowed(command, checker(rules), asker), false, command)
