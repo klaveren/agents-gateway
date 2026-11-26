@@ -19,4 +19,33 @@ describe('OpenAI.ToolBridge', () => {
     ]) as Array<{ strict: boolean }>
     assert.deepEqual([strict!.strict, loose!.strict], [true, false])
   })
+
+  it('⛔ oneOf (e outras palavras que o estrito recusa) vai sem estrito, em vez de derrubar o turno; anyOf segue estrito', () => {
+    const withOneOf = {
+      type: 'object',
+      properties: { status: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] } },
+      required: [],
+      additionalProperties: false,
+    }
+    const withAnyOf = {
+      type: 'object',
+      properties: { status: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] } },
+      required: [],
+      additionalProperties: false,
+    }
+    assert.equal(strictable(withOneOf), false)
+    assert.equal(strictable(withAnyOf), true)
+    const execute = async () => ({ status: 'success' as const, result: 'ok' })
+    const tools = buildOpenAITools([{ name: 'com_oneof', description: 'x', origin: 'local', inputSchema: withOneOf as IToolSchema, execute }]) as Array<{ strict: boolean }>
+    assert.equal(tools[0]!.strict, false)
+  })
+
+  it('o board (o caso real): todas as ferramentas locais, com o board, montam no estrito sem lançar erro', async () => {
+    const { makeLocalTools } = await import('../Local.Tools')
+    const all = makeLocalTools({ panels: {} as never })
+    assert.ok(all.some((item) => item.name === 'board'))
+    assert.doesNotThrow(() => buildOpenAITools(all))
+    const board = (buildOpenAITools(all.filter((item) => item.name === 'board')) as Array<{ strict: boolean }>)[0]!
+    assert.equal(board.strict, true)
+  })
 })

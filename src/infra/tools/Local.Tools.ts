@@ -1076,7 +1076,8 @@ function boardTool(panels: NonNullable<ILocalToolDeps['panels']>, name: string =
         title: { type: 'string', description: 'add/update: the request, short.' },
         detail: { type: 'string', description: 'add/update: more of what was asked.' },
         status: {
-          oneOf: [
+          // `anyOf`, não `oneOf`: o modo estrito da OpenAI só aceita `anyOf` (com `oneOf` o SDK recusava e o turno caía).
+          anyOf: [
             { type: 'string', enum: [...PANEL_ITEM_STATUSES] },
             { type: 'array', items: { type: 'string', enum: [...PANEL_ITEM_STATUSES] } },
           ],
