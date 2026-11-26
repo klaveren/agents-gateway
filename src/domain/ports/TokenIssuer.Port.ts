@@ -14,12 +14,16 @@ export interface ISessionClaims {
    */
   via?: 'agw'
   tid?: string
+  /** "Manter conectado": a sessão de login que dura 30 dias e desliza com o uso. ⛔ Nunca junto com `via`. */
+  keep?: boolean
 }
 
 /** Emite e confere o token da sessão. Conferir é só a assinatura e o prazo — a conta é com a prova. */
 export interface ITokenIssuer {
-  issue(claims: ISessionClaims): { token: string; expiresAt: Date }
-  verify(token: string): (ISessionClaims & { exp: number }) | undefined
+  /** `ttlMs`: a validade deste token (o "Manter conectado"); ausente, a de sempre. */
+  issue(claims: ISessionClaims, ttlMs?: number): { token: string; expiresAt: Date }
+  /** `iat`: quando o token nasceu (segundos) — decide se já é hora de renovar. */
+  verify(token: string): (ISessionClaims & { exp: number; iat: number }) | undefined
   /** O token é deste emissor? Decide se a prova local responde por ele, sem conferir nada. */
   owns(token: string): boolean
 }

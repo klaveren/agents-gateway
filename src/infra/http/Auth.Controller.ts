@@ -1,7 +1,9 @@
 import { caller } from '@infra/mcp/Caller.Identity'
 import { clientIp } from './Security.Middleware'
 import { gatewayEdition } from '@domain/Edition.Policy'
-import { clearSessionCookie, setSessionCookie, wantsCookieOnly } from './Session.Cookie'
+import { cameViaSessionCookie, clearSessionCookie, setSessionCookie, wantsCookieOnly } from './Session.Cookie'
+import { deviceLabel } from '@domain/LoginSession.Policy'
+import { ILoginSession } from '@domain/models/LoginSession.Model'
 import { identityFromToken, tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
 import { AccessTokensService } from '@application/AccessTokens.Service'
 import { AccountsService, ISession } from '@application/Accounts.Service'
@@ -70,11 +72,33 @@ export class AuthController {
       'listTokens',
       'createToken',
       'revokeToken',
+      'listSessions',
+      'endSession',
+      'endOtherSessions',
     ] as const) {
       this[name] = this[name].bind(this)
     }
     this.accessTokenGate = this.accessTokenGate.bind(this)
     this.provenBeforeBody = this.provenBeforeBody.bind(this)
+    this.sessionKeepAlive = this.sessionKeepAlive.bind(this)
+  }
+
+  /**
+   * A cada pedido da TELA (sessão no cookie): anota o último uso e, no "Manter conectado", renova o cookie (30 dias de
+   * novo, no máximo uma vez por hora; ver `AccountsService.keepAlive`). ⛔ Só o cookie: o que chega pelo cabeçalho (agente,
+   * MCP, `agw_`, curl) não renova nem conta como uso do aparelho. Nunca barra o pedido: quem decide acesso é a prova.
+   */
+  sessionKeepAlive(req: Request, res: Response, next: NextFunction) {
+    const token = cameViaSessionCookie(res) ? tokenFromHeader(req.headers[CALLER_HEADER]) : undefined
+    if (token && this.deps.accounts && !isAccessToken(token)) {
+      try {
+        const renewed = this.deps.accounts.keepAlive(token)
+        if (renewed) setSessionCookie(req, res, renewed)
+      } catch (error: unknown) {
+        console.warn('[AuthController] sessão não renovada:', error instanceof Error ? error.message : String(error))
+      }
+    }
+    next()
   }
 
   /**
@@ -164,8 +188,8 @@ export class AuthController {
     await this.respond(
       res,
       async () => {
-        const { code, ...body } = parseBody(setupSchema, req.body)
-        return this.session(req, res, this.accounts.setup(body, code))
+        const { code, keepSignedIn, ...body } = parseBody(setupSchema, req.body)
+        return this.session(req, res, this.accounts.setup(body, code, { keep: keepSignedIn === true, device: deviceLabel(req.headers['user-agent']) }))
       },
       { status: 201, message: 'Administrator created' },
     )
@@ -175,7 +199,8 @@ export class AuthController {
     await this.respond(res, async () => {
       const body = parseBody(loginSchema, req.body)
       // A origem: o socket, ou o IP real que um proxy CONFIÁVEL (`TRUST_PROXY`) informou.
-      return this.session(req, res, await this.accounts.login(body.email, body.password, clientIp(req)))
+      const start = { keep: body.keepSignedIn === true, device: deviceLabel(req.headers['user-agent']) }
+      return this.session(req, res, await this.accounts.login(body.email, body.password, clientIp(req), start))
     })
   }
 
@@ -208,13 +233,40 @@ export class AuthController {
         const id = await this.requireSelf()
         const body = parseBody(changePasswordSchema, req.body)
         // Volta a sessão nova: esta continua, as outras caem.
-        const session = await this.accounts.changeOwnPassword(id, body.current, body.password, clientIp(req))
+        const session = await this.accounts.changeOwnPassword(id, body.current, body.password, clientIp(req), caller()?.token)
         // ⛔ Quem trocou a senha por desconfiar de alguém quer os `agw_` dele fora também.
         this.deps.accessTokens?.revokeAll(id)
         return this.session(req, res, session)
       },
       { message: 'Password changed' },
     )
+  }
+
+  /** As sessões de login abertas da conta (aparelho, último uso; `current` = esta). ⛔ Só por sessão de login. */
+  async listSessions(_req: Request, res: Response) {
+    await this.respond(res, async () => this.accounts.listSessions(await this.requireSession(res), caller()?.token).map(toLoginSessionDto))
+  }
+
+  /** Encerra uma sessão da conta. A desta tela também: aí é o mesmo que sair. */
+  async endSession(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const id = await this.requireSession(res)
+        const sid = req.params.id as string
+        this.accounts.endSession(id, sid)
+        if (this.deps.accounts?.isSessionOf(caller()?.token, sid)) clearSessionCookie(req, res)
+        return null
+      },
+      { message: 'Session ended' },
+    )
+  }
+
+  /** Encerra todas as outras sessões; esta continua, com o token novo (no cookie e, fora da tela, no corpo). */
+  async endOtherSessions(req: Request, res: Response) {
+    await this.respond(res, async () => this.session(req, res, this.accounts.endOtherSessions(await this.requireSession(res), caller()?.token)), {
+      message: 'Other sessions ended',
+    })
   }
 
   /**
@@ -373,6 +425,19 @@ function toTokenDto(token: IAccessToken) {
     lastUsedAt: token.lastUsedAt,
     revokedAt: token.revokedAt,
     ...(token.projectId ? { projectId: token.projectId } : {}),
+  }
+}
+
+/** Lista explícita: nunca o token, só o aparelho e as datas. */
+function toLoginSessionDto(session: ILoginSession & { current: boolean }) {
+  return {
+    id: session.id,
+    device: session.device,
+    keepSignedIn: session.keep,
+    createdAt: session.createdAt,
+    lastUsedAt: session.lastUsedAt,
+    expiresAt: session.expiresAt,
+    current: session.current,
   }
 }
 

@@ -1,9 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { USER_ROLES, TUserRole } from '@domain/models/User.Model'
 import { ISessionClaims, ITokenIssuer } from '@domain/ports/TokenIssuer.Port'
+import { sessionTtlMs } from '@domain/LoginSession.Policy'
 
 export const LOCAL_ISSUER = 'agents-gateway'
-const DEFAULT_TTL_HOURS = 12
 
 const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url')
 
@@ -26,19 +26,21 @@ function decode(part: string | undefined): Record<string, unknown> | undefined {
 export class HmacTokenIssuer implements ITokenIssuer {
   constructor(
     private readonly secret: string,
-    private readonly ttlMs = ttlFromEnv(),
+    private readonly ttlMs = sessionTtlMs(),
     private readonly now: () => number = Date.now,
   ) {}
 
-  issue(claims: ISessionClaims): { token: string; expiresAt: Date } {
+  issue(claims: ISessionClaims, ttlMs = this.ttlMs): { token: string; expiresAt: Date } {
     const iat = Math.floor(this.now() / 1000)
-    const exp = iat + Math.floor(this.ttlMs / 1000)
-    const body = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ iss: LOCAL_ISSUER, sub: claims.sub, email: claims.email, role: claims.role, ver: claims.ver, ...(claims.sid ? { sid: claims.sid } : {}), ...(claims.via === 'agw' && claims.tid ? { via: claims.via, tid: claims.tid } : {}), iat, exp })}`
+    const exp = iat + Math.floor(ttlMs / 1000)
+    // ⛔ `keep` só na sessão de login: a derivada de um `agw_` nunca dura mais nem renova.
+    const keep = claims.keep === true && claims.via !== 'agw' ? { keep: true } : {}
+    const body = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ iss: LOCAL_ISSUER, sub: claims.sub, email: claims.email, role: claims.role, ver: claims.ver, ...(claims.sid ? { sid: claims.sid } : {}), ...(claims.via === 'agw' && claims.tid ? { via: claims.via, tid: claims.tid } : {}), ...keep, iat, exp })}`
 
     return { token: `${body}.${this.sign(body)}`, expiresAt: new Date(exp * 1000) }
   }
 
-  verify(token: string): (ISessionClaims & { exp: number }) | undefined {
+  verify(token: string): (ISessionClaims & { exp: number; iat: number }) | undefined {
     const [header, payload, signature] = token.split('.')
     if (!header || !payload || !signature) return undefined
     if (decode(header)?.alg !== 'HS256') return undefined
@@ -59,7 +61,9 @@ export class HmacTokenIssuer implements ITokenIssuer {
     if (!derived) return undefined
 
     const sid = typeof claims.sid === 'string' && claims.sid ? { sid: claims.sid } : {}
-    return { sub: claims.sub, email: claims.email, role: claims.role as TUserRole, ver: claims.ver, ...sid, ...derived, exp: claims.exp }
+    const keep = claims.keep === true && !('via' in derived) ? { keep: true } : {}
+    const iat = typeof claims.iat === 'number' ? claims.iat : claims.exp
+    return { sub: claims.sub, email: claims.email, role: claims.role as TUserRole, ver: claims.ver, ...sid, ...derived, ...keep, exp: claims.exp, iat }
   }
 
   owns(token: string): boolean {
@@ -69,9 +73,4 @@ export class HmacTokenIssuer implements ITokenIssuer {
   private sign(body: string): string {
     return createHmac('sha256', this.secret).update(body).digest('base64url')
   }
-}
-
-function ttlFromEnv(): number {
-  const hours = Number(process.env.AUTH_TOKEN_TTL_HOURS)
-  return (Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_TTL_HOURS) * 3_600_000
 }

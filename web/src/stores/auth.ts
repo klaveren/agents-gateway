@@ -160,11 +160,12 @@ export const useAuthStore = defineStore('auth', () => {
     await probe()
   }
 
-  async function login(email: string, password: string): Promise<void> {
-    await start(await api<ISession>('/auth/login', { method: 'POST', body: { email, password } }))
+  /** `keepSignedIn`: "Manter conectado" — 30 dias que se renovam enquanto a tela é usada. Sem ele, 12 h. */
+  async function login(email: string, password: string, keepSignedIn = true): Promise<void> {
+    await start(await api<ISession>('/auth/login', { method: 'POST', body: { email, password, keepSignedIn } }))
   }
 
-  async function setup(input: { email: string; name: string; password: string; code: string }): Promise<void> {
+  async function setup(input: { email: string; name: string; password: string; code: string; keepSignedIn?: boolean }): Promise<void> {
     await start(await api<ISession>('/auth/setup', { method: 'POST', body: input }))
   }
 
