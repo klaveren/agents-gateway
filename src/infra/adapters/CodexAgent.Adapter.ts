@@ -318,6 +318,11 @@ export function codexMcpServers(remotes: readonly IAgentMcpServer[], token?: str
       url: remote.config.url,
       ...(headers ? { http_headers: headers } : {}),
       ...(remote.tools ? { enabled_tools: remote.tools } : {}),
+      // ⛔ Sem a aprovação do Codex, como no servidor das ferramentas do gateway: com `approvalPolicy: never`, toda chamada que
+      // o Codex julga precisar de aprovação era recusada ("MCP tool call requires approval, but approval policy is never")
+      // e o agente só descrevia o que faria (gpt-6.1, 25/11). Quem decide é o gateway: `enabled_tools` já é a lista que as
+      // permissões do agente liberam (ver `Tool.Catalog.visibleOf`).
+      default_tools_approval_mode: 'approve',
     }
   }
   return servers
