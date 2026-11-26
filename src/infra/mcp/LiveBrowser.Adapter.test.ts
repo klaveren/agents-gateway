@@ -1,6 +1,16 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { argsForEndpoint, argsForOutputDir, isPlaywrightMcp, LiveBrowsers, liveBrowserEnabled, takesExternalBrowser, TLiveBrowserListener } from './LiveBrowser.Adapter'
+import {
+  argsForEndpoint,
+  argsForOutputDir,
+  INPUT_TIMEOUT_MS,
+  isPlaywrightMcp,
+  LiveBrowser,
+  LiveBrowsers,
+  liveBrowserEnabled,
+  takesExternalBrowser,
+  TLiveBrowserListener,
+} from './LiveBrowser.Adapter'
 
 describe('LiveBrowser — o navegador da conversa que a tela vê', () => {
   it('reconhece o Playwright MCP, com ou sem versão', () => {
@@ -50,5 +60,65 @@ describe('argsForOutputDir — capturas na pasta de rascunho do projeto', () => 
     assert.deepEqual(argsForOutputDir(['--caps', 'vision'], '/p/.tmp'), ['--caps', 'vision', '--output-dir', '/p/.tmp'])
     assert.deepEqual(argsForOutputDir(['--output-dir=/x'], '/p/.tmp'), ['--output-dir=/x'])
     assert.deepEqual(argsForOutputDir(['--output-dir', '/x'], '/p/.tmp'), ['--output-dir', '/x'])
+  })
+})
+
+describe('LiveBrowser.input — nenhum evento trava a entrada da tela', () => {
+  /** Um navegador ligado a um CDP falso que anota os comandos e só responde a quem `answer` deixar. */
+  function fakeBrowser(answer: (method: string, params: Record<string, unknown>) => boolean) {
+    const sent: Array<{ method: string; params: Record<string, unknown> }> = []
+    const browser = new (LiveBrowser as unknown as new (child: unknown, endpoint: string) => LiveBrowser)({ exitCode: 0 }, 'http://127.0.0.1:0')
+    const inner = browser as unknown as { ws: unknown; attached: unknown; calls: Map<number, unknown>; onMessage(raw: string): void }
+    inner.ws = {
+      readyState: WebSocket.OPEN,
+      send(raw: string) {
+        const message = JSON.parse(raw) as { id: number; method: string; params: Record<string, unknown> }
+        sent.push(message)
+        if (answer(message.method, message.params)) queueMicrotask(() => inner.onMessage(JSON.stringify({ id: message.id, result: {} })))
+      },
+    }
+    inner.attached = { targetId: 't1', sessionId: 's1' }
+    return { browser, sent, calls: inner.calls }
+  }
+
+  it('a rolagem responde na hora, mesmo que a aba nunca confirme', async () => {
+    const { browser, sent } = fakeBrowser((_method, params) => params.type !== 'mouseWheel')
+    const started = Date.now()
+    await browser.input({ type: 'wheel', x: 10, y: 20, deltaX: 0, deltaY: 300 })
+    assert.ok(Date.now() - started < 100)
+    assert.deepStrictEqual(
+      sent.map((one) => one.params.type),
+      ['mouseWheel'],
+    )
+    // A entrada seguinte não espera a rolagem.
+    await browser.input({ type: 'move', x: 1, y: 2 })
+    assert.deepStrictEqual(
+      sent.map((one) => one.params.type),
+      ['mouseWheel', 'mouseMoved'],
+    )
+  })
+
+  it('comando de entrada sem resposta rejeita no tempo limite e libera o id', async (context) => {
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    const { browser, calls } = fakeBrowser(() => false)
+    const pending = browser.input({ type: 'text', text: 'oi' })
+    const outcome = pending.then(
+      () => 'resolved',
+      (error: Error) => error.message,
+    )
+    assert.strictEqual(calls.size, 1)
+    context.mock.timers.tick(INPUT_TIMEOUT_MS)
+    assert.match(await outcome, /Input.insertText did not answer/)
+    assert.strictEqual(calls.size, 0)
+  })
+
+  it('a rolagem sem resposta também não deixa promessa pendente', async (context) => {
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    const { browser, calls } = fakeBrowser(() => false)
+    await browser.input({ type: 'wheel', x: 0, y: 0, deltaX: 0, deltaY: 100 })
+    assert.strictEqual(calls.size, 1)
+    context.mock.timers.tick(INPUT_TIMEOUT_MS)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.strictEqual(calls.size, 0)
   })
 })

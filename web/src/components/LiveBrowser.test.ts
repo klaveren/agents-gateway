@@ -269,3 +269,78 @@ describe('LiveBrowser — no celular o teclado só abre quando a pessoa pede', (
     expect(document.activeElement).toBe(host.querySelector('[data-test="live-browser-typing"]'))
   })
 })
+
+describe('LiveBrowser — a fila de entrada não trava', () => {
+  async function mountWithFrame() {
+    vi.mocked(openStream).mockResolvedValue(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          const frame = JSON.stringify({ data: 'AAAA', url: 'https://x.test', width: 400, height: 800 })
+          controller.enqueue(new TextEncoder().encode(`event: browser.state\ndata: {"live":true}\n\nevent: browser.frame\ndata: ${frame}\n\n`))
+        },
+      }),
+    )
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    app = createApp({ render: () => h(LiveBrowser, { sessionId: 's1', interactive: true }) }).use(createPinia())
+    app.mount(host)
+    await flush()
+    const image = host.querySelector<HTMLImageElement>('[data-test="live-browser-frame"]')!
+    image.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 800, right: 400, bottom: 800, x: 0, y: 0, toJSON: () => ({}) })
+    return { host, image }
+  }
+  const inputs = () =>
+    vi
+      .mocked(api)
+      .mock.calls.filter(([path]) => path === '/sessions/s1/browser/input')
+      .map(([, options]) => options as { body: { type: string; deltaY?: number }; signal?: AbortSignal })
+
+  it('um pedido que nunca volta é cancelado no tempo limite e a próxima tecla segue', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      // A rolagem pendura (como no CDP); o resto responde.
+      vi.mocked(api).mockImplementation(((path: string, options?: { body?: { type?: string } }) =>
+        path.endsWith('/input') && options?.body?.type === 'wheel' ? new Promise(() => undefined) : Promise.resolve({})) as never)
+      const { host, image } = await mountWithFrame()
+      image.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 10, clientY: 10, deltaY: 120 }))
+      await vi.advanceTimersByTimeAsync(60)
+      const field = host.querySelector<HTMLTextAreaElement>('[data-test="live-browser-typing"]')!
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }))
+      await flush()
+      expect(inputs().map((one) => one.body.type)).toEqual(['wheel'])
+      await vi.advanceTimersByTimeAsync(5000)
+      await flush()
+      const sent = inputs()
+      expect(sent.map((one) => one.body.type)).toEqual(['wheel', 'key'])
+      expect(sent[0].signal?.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rolagens que esperam a vez somam os deltas num pedido só', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let release: () => void = () => undefined
+      vi.mocked(api).mockImplementation(((path: string, options?: { body?: { type?: string } }) =>
+        path.endsWith('/input') && options?.body?.type === 'move'
+          ? new Promise((resolve) => {
+              release = () => resolve({})
+            })
+          : Promise.resolve({})) as never)
+      const { image } = await mountWithFrame()
+      image.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 5, clientY: 5 }))
+      for (const deltaY of [100, 50, 25]) {
+        image.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 10, clientY: 10, deltaY }))
+        await vi.advanceTimersByTimeAsync(60)
+      }
+      expect(inputs().map((one) => one.body.type)).toEqual(['move'])
+      release()
+      await flush()
+      const wheels = inputs().filter((one) => one.body.type === 'wheel')
+      expect(wheels.map((one) => one.body.deltaY)).toEqual([175])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

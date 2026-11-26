@@ -78,6 +78,10 @@ interface ITarget {
 }
 
 const START_TIMEOUT_MS = 15_000
+/** ⏱️ Nenhum comando CDP espera para sempre: sem resposta, rejeita e libera o id. */
+const CALL_TIMEOUT_MS = 30_000
+/** ⏱️ A entrada da pessoa (clique, tecla, rolagem) é curta: passou disto, a tela segue para o próximo evento. */
+export const INPUT_TIMEOUT_MS = 4_000
 const SCREENCAST = { format: 'jpeg', quality: 85, maxWidth: 1280, maxHeight: 900, everyNthFrame: 1 }
 
 /** O pacote é o Playwright MCP (`@playwright/mcp`, com ou sem versão). */
@@ -248,12 +252,31 @@ export class LiveBrowser {
     })
   }
 
-  private send(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<Record<string, unknown>> {
+  private send(method: string, params: Record<string, unknown> = {}, sessionId?: string, timeoutMs = CALL_TIMEOUT_MS): Promise<Record<string, unknown>> {
     const ws = this.ws
     if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error('browser closed'))
     const id = (this.nextId += 1)
-    ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
-    return new Promise((resolve, reject) => this.calls.set(id, { resolve, reject }))
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this.calls.delete(id)) return
+        reject(new Error(`${method} did not answer in ${timeoutMs} ms`))
+      }, timeoutMs)
+      timer.unref?.()
+      const settle =
+        <T>(done: (value: T) => void) =>
+        (value: T) => {
+          clearTimeout(timer)
+          done(value)
+        }
+      this.calls.set(id, { resolve: settle(resolve), reject: settle(reject) })
+      try {
+        ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
+      } catch (error) {
+        this.calls.delete(id)
+        clearTimeout(timer)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
   }
 
   private onMessage(raw: string): void {
@@ -369,7 +392,8 @@ export class LiveBrowser {
   private async focusedEditable(sid: string): Promise<boolean> {
     const expression =
       "(() => { let e = document.activeElement; while (e && e.shadowRoot && e.shadowRoot.activeElement) e = e.shadowRoot.activeElement; if (!e) return false; if (e.isContentEditable) return true; if (e.tagName === 'TEXTAREA') return !e.readOnly && !e.disabled; if (e.tagName !== 'INPUT') return false; return !e.readOnly && !e.disabled && !/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/i.test(e.type) })()"
-    const result = (await this.send('Runtime.evaluate', { expression, returnByValue: true }, sid).catch(() => undefined)) as { result?: { value?: unknown } } | undefined
+    const result = (await this.send('Runtime.evaluate', { expression, returnByValue: true }, sid, INPUT_TIMEOUT_MS).catch(() => undefined)) as
+      { result?: { value?: unknown } } | undefined
     return result?.result?.value === true
   }
 
@@ -378,22 +402,24 @@ export class LiveBrowser {
     // As abas não dependem da aba à mostra.
     if (event.type === 'tab-select') {
       if (!this.pages.has(event.targetId)) throw new Error('tab not found')
-      await this.send('Target.activateTarget', { targetId: event.targetId }).catch(() => undefined)
+      await this.send('Target.activateTarget', { targetId: event.targetId }, undefined, INPUT_TIMEOUT_MS).catch(() => undefined)
       return this.focus(event.targetId)
     }
     if (event.type === 'tab-new') {
-      await this.send('Target.createTarget', { url: event.url ?? 'about:blank' })
+      await this.send('Target.createTarget', { url: event.url ?? 'about:blank' }, undefined, INPUT_TIMEOUT_MS)
       return
     }
     if (event.type === 'tab-close') {
       if (!this.pages.has(event.targetId)) throw new Error('tab not found')
-      await this.send('Target.closeTarget', { targetId: event.targetId })
+      await this.send('Target.closeTarget', { targetId: event.targetId }, undefined, INPUT_TIMEOUT_MS)
       return
     }
     const target = this.attached
     if (!target) throw new Error('nobody is watching this browser')
     const sid = target.sessionId
-    const mouse = (params: Record<string, unknown>) => this.send('Input.dispatchMouseEvent', params, sid)
+    // ⏱️ Cada comando de entrada com tempo limite curto: um evento que a aba não confirma não trava os seguintes.
+    const command = (method: string, params: Record<string, unknown>) => this.send(method, params, sid, INPUT_TIMEOUT_MS)
+    const mouse = (params: Record<string, unknown>) => command('Input.dispatchMouseEvent', params)
     switch (event.type) {
       case 'move':
         await mouse({ type: 'mouseMoved', x: event.x, y: event.y })
@@ -408,32 +434,36 @@ export class LiveBrowser {
         return { editable: await this.focusedEditable(sid) }
       }
       case 'wheel':
-        await mouse({ type: 'mouseWheel', x: event.x, y: event.y, deltaX: event.deltaX, deltaY: event.deltaY })
+        // 🛞 Sem esperar: o CDP só confirma a rolagem depois que o compositor a desenha, e a aba sem desenhar (em segundo
+        // plano) nunca confirma. A rolagem é disparada e a resposta sai na hora; erro só no log.
+        void mouse({ type: 'mouseWheel', x: event.x, y: event.y, deltaX: event.deltaX, deltaY: event.deltaY }).catch((error: unknown) =>
+          console.warn('[LiveBrowser] wheel:', error instanceof Error ? error.message : error),
+        )
         return
       case 'text':
-        await this.send('Input.insertText', { text: event.text }, sid)
+        await command('Input.insertText', { text: event.text })
         return
       case 'reload':
-        await this.send('Page.reload', {}, sid)
+        await command('Page.reload', {})
         return
       case 'navigate':
-        await this.send('Page.navigate', { url: event.url }, sid)
+        await command('Page.navigate', { url: event.url })
         return
       case 'back':
       case 'forward': {
-        const history = (await this.send('Page.getNavigationHistory', {}, sid)) as { currentIndex: number; entries: Array<{ id: number }> }
+        const history = (await command('Page.getNavigationHistory', {})) as { currentIndex: number; entries: Array<{ id: number }> }
         const entry = history.entries[history.currentIndex + (event.type === 'back' ? -1 : 1)]
-        if (entry) await this.send('Page.navigateToHistoryEntry', { entryId: entry.id }, sid)
+        if (entry) await command('Page.navigateToHistoryEntry', { entryId: entry.id })
         return
       }
       case 'key': {
         const base = { key: event.key, code: event.code, windowsVirtualKeyCode: event.keyCode, nativeVirtualKeyCode: event.keyCode, modifiers: event.modifiers ?? 0 }
-        await this.send(
-          'Input.dispatchKeyEvent',
-          { ...base, type: event.text ? 'keyDown' : 'rawKeyDown', ...(event.text ? { text: event.text, unmodifiedText: event.text } : {}) },
-          sid,
-        )
-        await this.send('Input.dispatchKeyEvent', { ...base, type: 'keyUp' }, sid)
+        await command('Input.dispatchKeyEvent', {
+          ...base,
+          type: event.text ? 'keyDown' : 'rawKeyDown',
+          ...(event.text ? { text: event.text, unmodifiedText: event.text } : {}),
+        })
+        await command('Input.dispatchKeyEvent', { ...base, type: 'keyUp' })
         return
       }
     }
