@@ -67,9 +67,9 @@ export type IAgentEvent =
   | { type: 'message.started'; sessionId: string; timestamp: Date; payload?: never }
   | { type: 'text.delta'; sessionId: string; timestamp: Date; payload: { text: string } }
   | { type: 'reasoning.delta'; sessionId: string; timestamp: Date; payload: { text: string } }
-  | { type: 'tool.started'; sessionId: string; timestamp: Date; payload: { tool: string; args: Record<string, unknown> } }
-  | { type: 'tool.result'; sessionId: string; timestamp: Date; payload: { tool: string; result: unknown } }
-  | { type: 'tool.error'; sessionId: string; timestamp: Date; payload: { tool: string; message: string } }
+  | { type: 'tool.started'; sessionId: string; timestamp: Date; payload: { tool: string; args: Record<string, unknown>; callId?: string } }
+  | { type: 'tool.result'; sessionId: string; timestamp: Date; payload: { tool: string; result: unknown; callId?: string } }
+  | { type: 'tool.error'; sessionId: string; timestamp: Date; payload: { tool: string; message: string; callId?: string } }
   | { type: 'usage'; sessionId: string; timestamp: Date; payload: IUsage }
   | { type: 'warning'; sessionId: string; timestamp: Date; payload: { message: string } }
   | { type: 'message.completed'; sessionId: string; timestamp: Date; payload?: never }

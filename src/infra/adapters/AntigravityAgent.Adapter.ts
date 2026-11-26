@@ -254,10 +254,13 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
       for await (const line of createInterface({ input: child.stdout! })) {
         for (const event of antigravityEvents(line, sessionId, state)) {
           yield event
-          if (event.type === 'error') return { stop: true }
+          if (event.type === 'error') {
+            yield* closeOpenSteps(sessionId, state)
+            return { stop: true }
+          }
           // Só a ferramenta que FECHOU a rodada conta: com texto ou um resultado depois dela, o modelo seguiu.
           if (event.type === 'tool.started') last = { tool: event.payload.tool }
-          else if (event.type === 'tool.error' && last) last.error = event.payload.message
+          else if (event.type === 'tool.error' && last) last.error = event.payload.message.split('\n')[0]
           else if (event.type === 'tool.result' || (event.type === 'text.delta' && event.payload.text.trim())) last = undefined
           if (event.type === 'text.delta' && event.payload.text.trim()) spoke = true
           else if (event.type === 'warning' && event.payload.message.startsWith(SANDBOX_DENIED))
@@ -266,9 +269,18 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
         const limit = maxToolTurns()
         if (limit !== undefined && state.turns > limit) {
           child.kill('SIGTERM')
+          yield* closeOpenSteps(sessionId, state, 'interrompida: o turno passou do teto de passos')
           yield { type: 'error', sessionId, timestamp: now(), payload: { message: `Antigravity passed ${limit} tool steps.` } }
           return { stop: true }
         }
+      }
+      // ⛔ O passo que a rodada deixou aberto (o `agy` saiu no `--print-timeout` com a ferramenta rodando) fecha AQUI, com o
+      // motivo: no registro, a chamada fica com o desfecho, e o resumo do turno diz por que parou.
+      // Negado pelo sandbox do CLI (o `result` lista a ação), o passo nunca fecha: o motivo é a negação.
+      const reason = abort.signal.aborted ? 'interrompida: o turno foi cancelado' : denied ? `negado pelo sandbox do Antigravity (${denied})` : UNFINISHED_STEP_MESSAGE
+      for (const event of closeOpenSteps(sessionId, state, reason)) {
+        yield event
+        if (last && !last.error) last.error = event.payload.message
       }
       const code = await exited
       if (abort.signal.aborted) {
@@ -300,13 +312,55 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
-      execute: (args, callContext) => box.invoke(tool.name, args, callContext),
+      execute: (args, callContext) => withToolDeadline(tool.name, args, (bounded) => box.invoke(tool.name, bounded, callContext)),
     }))
   }
 
   private nativeOf(record: ISessionRecord): IAntigravityNative {
     if (!record.native) record.native = {}
     return record.native as IAntigravityNative
+  }
+}
+
+/**
+ * ⏱️ O `agy` desiste de uma chamada de MCP aos 3 min ("timed out after 3m0s") e o modelo fica só com isso. O gateway
+ * responde ANTES, sempre: o `run_bash` roda no máximo `ANTIGRAVITY_BASH_MAX_S` (o pedido maior é cortado, com o aviso), e
+ * qualquer ferramenta que não respondeu em `ANTIGRAVITY_TOOL_DEADLINE_MS` volta como erro com o motivo e o caminho.
+ */
+export const ANTIGRAVITY_TOOL_DEADLINE_MS = 170_000
+export const ANTIGRAVITY_BASH_MAX_S = 150
+
+type TToolOutcome = Awaited<ReturnType<ITurnTool['execute']>>
+
+export async function withToolDeadline(
+  name: string,
+  args: Record<string, unknown>,
+  run: (args: Record<string, unknown>) => Promise<TToolOutcome>,
+  deadlineMs = ANTIGRAVITY_TOOL_DEADLINE_MS,
+): Promise<TToolOutcome> {
+  const asked = Number(args.timeoutSeconds)
+  const capped = name === 'run_bash' && Number.isFinite(asked) && asked > ANTIGRAVITY_BASH_MAX_S
+  const bounded = capped ? { ...args, timeoutSeconds: ANTIGRAVITY_BASH_MAX_S } : args
+  const notice = capped
+    ? `Aviso: o Antigravity espera no máximo 3 min por ferramenta; o comando rodou com ${ANTIGRAVITY_BASH_MAX_S}s (você pediu ${asked}s). Para comando longo, use bash_start e acompanhe com bash_logs.\n`
+    : ''
+  let timer: NodeJS.Timeout | undefined
+  const late = new Promise<TToolOutcome>((resolve) => {
+    timer = setTimeout(
+      () =>
+        resolve({
+          status: 'error',
+          result: `Sem resposta do gateway em ${Math.round(deadlineMs / 1000)}s (${name}): o servidor está ocupado ou o comando não terminou. Tente de novo; para comando longo, use bash_start e acompanhe com bash_logs.`,
+        }),
+      deadlineMs,
+    )
+    timer.unref?.()
+  })
+  try {
+    const outcome = await Promise.race([run(bounded), late])
+    return notice ? { ...outcome, result: `${notice}${outcome.result}` } : outcome
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -416,10 +470,12 @@ type IAntigravityRound =
       failure?: ITurnFailure
     }
 
-interface IAntigravityTurn {
+export interface IAntigravityTurn {
   native: IAntigravityNative
   /** Os passos de ferramenta já anunciados (o `agy` manda o mesmo passo como ACTIVE e depois DONE). */
   toolSteps: Set<number>
+  /** Os passos anunciados que ainda não fecharam (DONE, ERROR ou cancelado), com a ferramenta: o fim da rodada os fecha. */
+  openSteps?: Map<number, string>
   sawResult: boolean
   turns: number
 }
@@ -435,7 +491,8 @@ interface IAgyLine {
     text_delta?: string
     thinking_delta?: string
     tool_name?: string
-    tool_info?: { parameters?: Record<string, unknown>; result?: unknown; error?: { message?: string } }
+    /** `output`: o texto que a ferramenta devolveu (verificado no `agy` 1.4.9; `result` nunca veio). */
+    tool_info?: { parameters?: Record<string, unknown>; output?: unknown; result?: unknown; error?: { message?: string } }
   }
   result?: {
     status?: string
@@ -444,6 +501,27 @@ interface IAgyLine {
     usage?: { input_tokens?: number; output_tokens?: number; thinking_tokens?: number; cache_read_tokens?: number }
     denied_actions?: Array<{ action?: string; display_name?: string }>
   }
+}
+
+/** O passo que o `agy` encerrou sem resultado (o fim da rodada pelo `--print-timeout`, um cancelamento). */
+const CANCELED_STEP = /CANCEL|ABORT|INTERRUPT|HALT/i
+const CANCELED_STEP_MESSAGE = 'interrompida: o Antigravity encerrou o passo antes do resultado'
+/** A rodada acabou com o passo ainda aberto: o processo do `agy` saiu (o teto da rodada, `--print-timeout`) antes do resultado. */
+export const UNFINISHED_STEP_MESSAGE = `sem resultado: o Antigravity encerrou a rodada (teto de ${TURN_TIMEOUT_S / 60} min) antes de a ferramenta responder`
+
+/** O id da chamada: o passo, na conversa do `agy` (os passos seguem contando quando a conversa é retomada). */
+function stepCallId(state: IAntigravityTurn, index: number): string {
+  return `${state.native.conversationId ?? 'agy'}:${index}`
+}
+
+/** Os passos que a rodada deixou abertos, fechados com o motivo: nenhuma chamada fica sem desfecho no registro. */
+export function closeOpenSteps(sessionId: string, state: IAntigravityTurn, message = UNFINISHED_STEP_MESSAGE): Array<Extract<IAgentEvent, { type: 'tool.error' }>> {
+  const open = state.openSteps
+  if (!open?.size) return []
+  const timestamp = new Date()
+  const events = [...open].map(([index, tool]) => ({ type: 'tool.error' as const, sessionId, timestamp, payload: { tool, message, callId: stepCallId(state, index) } }))
+  open.clear()
+  return events
 }
 
 /** Uma linha do NDJSON do `agy` nos eventos do gateway. Linha que não é JSON é ignorada. */
@@ -471,15 +549,30 @@ export function antigravityEvents(line: string, sessionId: string, state: IAntig
     }
     if (step.step_type === 'tool' && step.tool_name) {
       const index = step.step_index ?? -1
+      const tool = step.tool_name
+      // ⛔ O resultado vai para a chamada do MESMO passo (o id), nunca para a "mais antiga em aberto" da ferramenta: um passo
+      // cancelado (sem DONE) empurrava cada resultado seguinte do `run_bash` para a chamada de antes (26/11).
+      const callId = stepCallId(state, index)
+      const open = (state.openSteps ??= new Map())
       const events: IAgentEvent[] = []
       if (!state.toolSteps.has(index)) {
         state.toolSteps.add(index)
         state.turns += 1
-        events.push({ type: 'tool.started', sessionId, timestamp, payload: { tool: step.tool_name, args: step.tool_info?.parameters ?? {} } })
+        open.set(index, tool)
+        events.push({ type: 'tool.started', sessionId, timestamp, payload: { tool, args: step.tool_info?.parameters ?? {}, callId } })
       }
-      if (step.state === 'DONE') events.push({ type: 'tool.result', sessionId, timestamp, payload: { tool: step.tool_name, result: step.tool_info?.result ?? null } })
-      if (step.state === 'ERROR')
-        events.push({ type: 'tool.error', sessionId, timestamp, payload: { tool: step.tool_name, message: step.tool_info?.error?.message?.split('\n')[0] ?? 'tool failed' } })
+      // Um passo fecha uma vez só: o `agy` pode repetir o estado final.
+      const closing = open.has(index)
+      if (closing && step.state === 'DONE') {
+        open.delete(index)
+        events.push({ type: 'tool.result', sessionId, timestamp, payload: { tool, result: step.tool_info?.output ?? step.tool_info?.result ?? null, callId } })
+      } else if (closing && step.state === 'ERROR') {
+        open.delete(index)
+        events.push({ type: 'tool.error', sessionId, timestamp, payload: { tool, message: step.tool_info?.error?.message?.trim() || 'tool failed', callId } })
+      } else if (closing && step.state && CANCELED_STEP.test(step.state)) {
+        open.delete(index)
+        events.push({ type: 'tool.error', sessionId, timestamp, payload: { tool, message: CANCELED_STEP_MESSAGE, callId } })
+      }
       return events
     }
     return []

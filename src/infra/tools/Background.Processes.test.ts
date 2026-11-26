@@ -7,7 +7,7 @@ import { after, describe, it } from 'node:test'
 import { decide, IPermissionRule } from '@domain/Permission.Policy'
 import { IPermissionChecker } from '@application/Permissions.Service'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
-import { BackgroundProcesses, clipOutput, descendantsOf, killGroup, startCommand } from './Background.Processes'
+import { BackgroundProcesses, clipOutput, descendantsOf, killGroup, PIPE_GRACE_MS, startCommand } from './Background.Processes'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { SecretMasker } from '@infra/secrets/Secret.Masker'
 import { randomBytes } from 'node:crypto'
@@ -36,6 +36,29 @@ describe('Background.Processes (o terminal longo)', () => {
     assert.ok(clipped.endsWith('ERRO NO FIM'))
     assert.match(clipped, /caracteres omitidos; bash_logs id x/)
     assert.ok(!clipped.includes('MEIO'))
+  })
+
+  it('⛔ o neto que sai do grupo e segura a saída aberta não prende a resposta: saiu o comando, ela vem com o que chegou', async () => {
+    // `setpgrp`: o neto vai para outro grupo (o tempo esgotado não o alcança) e herda o stdout — o `close` nunca vinha.
+    const marker = `sleep 79${process.pid % 10}`
+    const started = Date.now()
+    const result = await startCommand(`perl -e 'setpgrp(0,0); exec "${marker}"' & echo pronto`, {
+      cwd: root,
+      env: { PATH: process.env.PATH! },
+      shell: '/bin/bash',
+      timeoutMs: 60_000,
+    }).done
+    try {
+      assert.ok(Date.now() - started < PIPE_GRACE_MS + 3000, `levou ${Date.now() - started} ms`)
+      assert.strictEqual(result.code, 0)
+      assert.match(result.output, /pronto/)
+    } finally {
+      try {
+        execFileSync('pkill', ['-f', marker], { stdio: 'ignore' })
+      } catch {
+        // já saiu
+      }
+    }
   })
 
   it('⛔ tempo estourado mata o GRUPO: o neto (um sleep) não sobra', async () => {
