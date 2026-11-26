@@ -1,6 +1,7 @@
 import { PermissionsService } from '@application/Permissions.Service'
 import { ConnectController } from './Connect.Controller'
 import { requestScope } from './Request.Scope'
+import { applyServerTimeouts } from './Server.Timeouts'
 import { ProjectConnectionsController } from './ProjectConnections.Controller'
 import { ProjectVariablesController } from './ProjectVariables.Controller'
 import { AgentProjectLayerController } from './AgentProjectLayer.Controller'
@@ -377,9 +378,11 @@ export class HttpServer {
 
   /** Devolve o servidor para quem sobe poder derrubar — é o que torna o teste de integração possível. */
   start(port: number): Server {
-    return this.app.listen(port, host(), () => {
-      console.log(`Gateway API listening on http://${host()}:${port}${API_PREFIX}`)
-    })
+    return applyServerTimeouts(
+      this.app.listen(port, host(), () => {
+        console.log(`Gateway API listening on http://${host()}:${port}${API_PREFIX}`)
+      }),
+    )
   }
 }
 

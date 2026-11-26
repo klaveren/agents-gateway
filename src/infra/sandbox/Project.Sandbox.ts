@@ -396,7 +396,7 @@ export class ProjectSandbox implements IProjectSandbox {
     const wantsTcp = process.platform === 'linux' && (place.tcp || place.machine)
     if (wantsTcp) mkdirSync(own, { recursive: true, mode: 0o700 })
     if (existsSync(own)) planned.readAllow.push(own)
-    const cerco = this.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir)) : planned
+    const cerco = this.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir, [dirname(own)])) : planned
     for (const dir of writeFolders(cerco, root)) mkdirSync(dir, { recursive: true, mode: 0o700 })
     if (place.gitCommonDir) ensureEmptyAttributes(place.gitCommonDir)
     const scratch = (name: string) => {
@@ -626,15 +626,22 @@ export class ProjectSandbox implements IProjectSandbox {
  * - a pasta fechada que CONTÉM a raiz (os dados do gateway, com o projeto dentro) vira o fechamento de cada vizinho no
  *   caminho até a raiz — o que é reaberto (as ferramentas) fica de fora.
  * Leitura parcial com escrita DENTRO do que é lido continua só leitura no Linux: falha fechada.
+ *
+ * ⛔ `sealed`: pastas fechadas INTEIRAS mesmo com algo reaberto dentro (só leitura; o runtime remonta o reaberto por cima do
+ * tmpfs). É o caso de `run/commands`: quebrada em vizinhos, cada pasta de OUTRO comando entrava no plano; se aquele comando
+ * acabava entre o plano e a subida do bwrap, a pasta sumia e o bwrap tentava criá-la no pai só leitura
+ * ("bwrap: Can't mkdir …/run/commands/<token>: Read-only file system").
  */
-export function forBubblewrap(plan: ICercoPlan, root: string, list: (dir: string) => string[]): ICercoPlan {
+export function forBubblewrap(plan: ICercoPlan, root: string, list: (dir: string) => string[], sealed: readonly string[] = []): ICercoPlan {
   const bare = (path: string) => path.replace(/\/\*\*$/, '') || '/'
   const whole = plan.readAllow.some((path) => bare(path) === root)
   const readAllow = whole ? plan.readAllow.filter((path) => bare(path) !== root) : plan.readAllow
   const keep = [root, ...readAllow.map(bare)]
+  // Só a pasta sem a raiz dentro: com escrita lá, fechar e reabrir mataria a escrita (ver acima).
+  const closed = sealed.filter((dir) => !isAtOrUnder(root, dir))
   const readDeny = plan.readDeny.flatMap((path) => {
     if (whole && path === root) return []
-    return path !== root && isAtOrUnder(root, path) ? denyAllBut(path, keep, list) : [path]
+    return path !== root && isAtOrUnder(root, path) ? denyAllBut(path, keep, list, closed) : [path]
   })
   return { ...plan, readAllow, readDeny: [...new Set(readDeny)] }
 }
@@ -746,11 +753,12 @@ function existing(dirs: readonly string[]): string[] {
 const KERNEL_DIRS = new Set(['/proc', '/dev', '/sys'])
 
 /** Fecha tudo dentro de `dir` menos o que leva ao que fica aberto (`keep`). */
-function denyAllBut(dir: string, keep: readonly string[], list: (dir: string) => string[]): string[] {
+function denyAllBut(dir: string, keep: readonly string[], list: (dir: string) => string[], sealed: readonly string[] = []): string[] {
   return list(dir).flatMap((name) => {
     const child = join(dir, name)
     if (keep.includes(child) || KERNEL_DIRS.has(child)) return []
-    return keep.some((path) => isAtOrUnder(path, child)) ? denyAllBut(child, keep, list) : [child]
+    if (sealed.includes(child)) return [child]
+    return keep.some((path) => isAtOrUnder(path, child)) ? denyAllBut(child, keep, list, sealed) : [child]
   })
 }
 

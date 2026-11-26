@@ -10,7 +10,17 @@ import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { SessionStore } from '@infra/session/Session.Store'
 import { TurnGrants } from '@infra/tools/Turn.Grants'
-import { AntigravityAgentAdapter, allowTurnTools, antigravityArgs, antigravityFailure, antigravityInput, turnToolsPluginDir } from './AntigravityAgent.Adapter'
+import { execFileSync } from 'node:child_process'
+import {
+  ANTIGRAVITY_FOLLOW_UPS,
+  AntigravityAgentAdapter,
+  allowTurnTools,
+  antigravityArgs,
+  antigravityFailure,
+  antigravityInput,
+  turnToolsPluginDir,
+  writeTurnToolsPlugin,
+} from './AntigravityAgent.Adapter'
 
 interface ISpawned {
   command: string
@@ -58,15 +68,15 @@ async function collect(stream: AsyncIterable<IAgentEvent>): Promise<IAgentEvent[
 
 const turn = (n: number) => [
   JSON.stringify({ event: 'init', conversation_id: 'conv-1' }),
-  JSON.stringify({ event: 'step_update', step_update: { step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: `oi ${n}` } }),
   JSON.stringify({
     event: 'step_update',
-    step_update: { step_index: 2, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: { parameters: { CommandLine: 'ls /' } } },
+    step_update: { step_index: 1, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: { parameters: { CommandLine: 'ls /' } } },
   }),
   JSON.stringify({
     event: 'step_update',
-    step_update: { step_index: 2, state: 'ERROR', step_type: 'tool', tool_name: 'run_command', tool_info: { error: { message: 'permission check failed\nmais' } } },
+    step_update: { step_index: 1, state: 'ERROR', step_type: 'tool', tool_name: 'run_command', tool_info: { error: { message: 'permission check failed\nmais' } } },
   }),
+  JSON.stringify({ event: 'step_update', step_update: { step_index: 2, state: 'ACTIVE', step_type: 'agent_response', text_delta: `oi ${n}` } }),
   'linha que não é json',
   JSON.stringify({
     event: 'result',
@@ -135,7 +145,7 @@ describe('AntigravityAgentAdapter', () => {
 
     assert.deepStrictEqual(
       events.map((event) => event.type),
-      ['message.started', 'text.delta', 'tool.started', 'tool.error', 'usage', 'warning', 'message.completed'],
+      ['message.started', 'tool.started', 'tool.error', 'text.delta', 'usage', 'warning', 'message.completed'],
     )
     assert.deepStrictEqual(events.find((event) => event.type === 'tool.error')?.payload, { tool: 'run_command', message: 'permission check failed' })
     assert.deepStrictEqual(events.find((event) => event.type === 'usage')?.payload, { inputTokens: 50, cacheReadTokens: 10, outputTokens: 5, reasoningTokens: 2 })
@@ -249,5 +259,71 @@ describe('AntigravityAgentAdapter', () => {
     assert.strictEqual(registered, 0)
     assert.ok(!existsSync(turnToolsPluginDir(calls[0].options.cwd!)))
     assert.match(JSON.stringify(events.find((event) => event.type === 'warning')), /não chegam ao Antigravity/)
+  })
+
+  // O que a .4 gravou: o Gemini chama o `run_command` nativo, o sandbox do CLI nega (sem resultado do passo) e o turno acaba mudo.
+  const deniedNative = [
+    JSON.stringify({ event: 'init', conversation_id: 'conv-1' }),
+    JSON.stringify({
+      event: 'step_update',
+      step_update: { step_index: 1, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: { parameters: { CommandLine: 'git status' } } },
+    }),
+    JSON.stringify({ event: 'result', result: { status: 'SUCCESS', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } }),
+  ]
+  const answered = [
+    JSON.stringify({ event: 'step_update', step_update: { step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'Feito pelo run_bash.' } }),
+    JSON.stringify({ event: 'result', result: { status: 'SUCCESS' } }),
+  ]
+
+  it('⚖️ turno que acaba mudo depois do terminal nativo negado: o gateway segue UMA vez, na mesma conversa, com o motivo', async () => {
+    const calls: ISpawned[] = []
+    const adapter = new AntigravityAgentAdapter({ store: new SessionStore(), spawn: fakeSpawn(calls, (n) => (n === 1 ? deniedNative : answered)), home: () => '/h' })
+    const session = await adapter.createSession(agent, {})
+    const events = await collect(adapter.sendMessage(agent, session.id, { text: 'rode git status' }, {}))
+
+    assert.strictEqual(calls.length, 2)
+    assert.deepStrictEqual(calls[1].args.slice(-2), ['--conversation', 'conv-1'])
+    const followUp = (JSON.parse(calls[1].input) as { message: { content: string } }).message.content
+    assert.match(followUp, /run_command: negado pelo sandbox do Antigravity \(RunCommand\)/)
+    assert.match(followUp, /run_bash/)
+    assert.strictEqual(events.filter((event) => event.type === 'message.completed').length, 1)
+    assert.strictEqual(events.at(-1)?.type, 'message.completed')
+    assert.ok(events.some((event) => event.type === 'text.delta' && event.payload.text === 'Feito pelo run_bash.'))
+    assert.ok(events.some((event) => event.type === 'warning' && /seguiu o turno/.test(event.payload.message)))
+  })
+
+  it('⛔ o teto: falhou de novo depois da continuação, o turno acaba (sem laço)', async () => {
+    const calls: ISpawned[] = []
+    const adapter = new AntigravityAgentAdapter({ store: new SessionStore(), spawn: fakeSpawn(calls, () => deniedNative), home: () => '/h' })
+    const session = await adapter.createSession(agent, {})
+    const events = await collect(adapter.sendMessage(agent, session.id, { text: 'olá' }, {}))
+    assert.strictEqual(calls.length, 1 + ANTIGRAVITY_FOLLOW_UPS)
+    assert.strictEqual(events.at(-1)?.type, 'message.completed')
+  })
+
+  it('ferramenta que falhou e o modelo respondeu depois: nada de continuação', async () => {
+    const calls: ISpawned[] = []
+    const adapter = new AntigravityAgentAdapter({ store: new SessionStore(), spawn: fakeSpawn(calls, turn), home: () => '/h' })
+    const session = await adapter.createSession(agent, {})
+    await collect(adapter.sendMessage(agent, session.id, { text: 'olá' }, {}))
+    assert.strictEqual(calls.length, 1)
+  })
+
+  it('⛔ o plugin diz que o terminal é o do gateway e recusa o `run_command` nativo com o motivo (o gancho roda e decide)', () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'agy-ws-'))
+    const dir = writeTurnToolsPlugin(workspace, 'http://x', { 'X-Turn-Grant': 'g' }, ['run_bash', 'read_file'])
+    assert.match(readFileSync(join(dir, 'rules', 'AGENTS.md'), 'utf8'), /run_command\) está DESLIGADO.*run_bash do servidor gateway_tools/)
+    const hooks = JSON.parse(readFileSync(join(dir, 'hooks.json'), 'utf8')) as Record<string, { PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }> }>
+    const group = hooks['gateway-terminal'].PreToolUse[0]
+    assert.strictEqual(group.matcher, 'run_command')
+    const out = execFileSync('sh', ['-c', group.hooks[0].command], {
+      input: JSON.stringify({ toolCall: { name: 'run_command', args: { CommandLine: "echo 'x'" } } }),
+      cwd: dir,
+    }).toString()
+    const decision = JSON.parse(out) as { decision: string; reason: string }
+    assert.strictEqual(decision.decision, 'deny')
+    assert.match(decision.reason, /run_bash/)
+    const none = writeTurnToolsPlugin(mkdtempSync(join(tmpdir(), 'agy-ws-')), 'http://x', {}, ['read_file'])
+    assert.match(readFileSync(join(none, 'rules', 'AGENTS.md'), 'utf8'), /não tem terminal/)
   })
 })
