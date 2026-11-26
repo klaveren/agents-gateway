@@ -28,6 +28,7 @@ import {
   switchesOn,
   withGroupTargets,
 } from '@domain/Fallback.Policy'
+import { readBudgetChars } from '@domain/Reading.Policy'
 import { HANDOFF_MAX_CHARS, handoffText, ITranscriptTurn } from '@domain/Handoff.Policy'
 import type { TProviderFailure } from '@domain/Provider.Failure'
 import { INTERJECTION_QUEUE_MAX, interjectionRound } from '@domain/Interjection.Policy'
@@ -360,6 +361,7 @@ export class AgentProvider implements IAgentProvider {
         // O global (não o compartilhado, que roda "como global") vê os MCPs do projeto da conversa: a camada pode dar um.
         ...(conversationProject && !this.agents.get(record.agentId)?.projectId ? { mcpProjectId: conversationProject } : {}),
         ...(workFolder ? { workFolder } : {}),
+        readBudgetChars: readBudgetChars(this.contextOf?.(record.provider, record.model)),
       }
       // ⛔ As variáveis secretas do turno (ver `ResourceSecret.Model`), para os terminais nativos: já entram na máscara.
       const secretEnv = this.secrets?.envFor(record.agentId, sessionId, conversationProject).env

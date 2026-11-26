@@ -14,6 +14,7 @@ import {
   mimeOf,
 } from '@domain/models/ConversationFile.Model'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+import { pagedText, readBudgetChars } from '@domain/Reading.Policy'
 import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
 import { ILocalTool, IToolResult } from './Tool.Types'
 import { agentFolderOwner, globalResourcesDir, isResourceFilePath } from '@infra/workspace/Resource.Files'
@@ -55,7 +56,6 @@ export interface IOwnFolder {
   write: boolean
 }
 
-const READ_WHOLE_MAX_BYTES = 256 * 1024
 const READ_SLICE_MAX_BYTES = 5 * 1024 * 1024
 const DEFAULT_LINE_LIMIT = 2000
 const WRITE_MAX_BYTES = 1024 * 1024
@@ -332,13 +332,13 @@ function readFileTool(deps: IFileToolDeps): ILocalTool {
     origin: 'local',
     name: 'read_file',
     description:
-      'Reads a text file from the project folder and returns its lines numbered. Large files (over 256 KB) need offset/limit. Binary files are refused. Paths are relative to the project folder.',
+      'Reads a text file from the project folder and returns its lines numbered. Without limit it returns the whole file (from offset), split in parts, up to a reading ceiling; past it, the answer says the offset to continue from. Binary files are refused. Paths are relative to the project folder.',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'File path, relative to the project folder' },
         offset: { type: 'number', description: 'First line to read (1-based). Default: 1' },
-        limit: { type: 'number', description: `How many lines to read. Default: ${DEFAULT_LINE_LIMIT}` },
+        limit: { type: 'number', description: 'How many lines to read. Default: all (up to the reading ceiling)' },
       },
       required: ['path'],
       additionalProperties: false,
@@ -351,9 +351,7 @@ function readFileTool(deps: IFileToolDeps): ILocalTool {
         const { handle, size } = await openChecked(checked.abs, fsc.O_RDONLY)
         let text: string
         try {
-          const sliced = args.offset !== undefined || args.limit !== undefined
-          if (size > (sliced ? READ_SLICE_MAX_BYTES : READ_WHOLE_MAX_BYTES))
-            return fail(sliced ? 'file is larger than 5 MB' : `file is larger than 256 KB (${size} bytes): pass offset and limit to read part of it`)
+          if (size > READ_SLICE_MAX_BYTES) return fail('file is larger than 5 MB')
           if (await isBinary(handle)) return fail('binary file: cannot be read as text')
           text = await handle.readFile('utf8')
         } finally {
@@ -361,8 +359,17 @@ function readFileTool(deps: IFileToolDeps): ILocalTool {
         }
         const lines = text.split('\n')
         const offset = Math.max(1, Math.floor(Number(args.offset)) || 1)
-        const limit = Math.max(1, Math.floor(Number(args.limit)) || DEFAULT_LINE_LIMIT)
         if (offset > lines.length) return fail(`offset ${offset} is past the end of the file (${lines.length} lines)`)
+        // 📖 Sem `limit`: o arquivo inteiro a partir do `offset`, em partes, até o teto da leitura (ver `Reading.Policy`).
+        if (args.limit === undefined) {
+          const paged = pagedText(
+            numbered(lines.slice(offset - 1), offset),
+            context?.readBudgetChars ?? readBudgetChars(),
+            (line) => `Continue com read_file (path: ${String(args.path)}, offset: ${offset + line - 1}).`,
+          )
+          return { status: 'success', result: paged.text }
+        }
+        const limit = Math.max(1, Math.floor(Number(args.limit)) || DEFAULT_LINE_LIMIT)
         const slice = lines.slice(offset - 1, offset - 1 + limit)
         const more = offset - 1 + limit < lines.length ? `\n… ${lines.length - (offset - 1 + limit)} more lines` : ''
         return { status: 'success', result: numbered(slice, offset) + more }

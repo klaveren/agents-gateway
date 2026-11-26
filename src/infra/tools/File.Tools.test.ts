@@ -1,3 +1,4 @@
+import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -13,10 +14,10 @@ describe('File.Tools', () => {
   let outside: string
 
   const tools = () => makeFileTools({ rootFor: () => dir })
-  const run = (name: string, args: Record<string, unknown>) =>
+  const run = (name: string, args: Record<string, unknown>, context?: IExecutionContext) =>
     tools()
       .find((tool) => tool.name === name)!
-      .execute(args)
+      .execute(args, context)
 
   before(() => {
     base = mkdtempSync(join(tmpdir(), 'file-tools-'))
@@ -33,7 +34,7 @@ describe('File.Tools', () => {
     writeFileSync(join(dir, 'node_modules', 'x', 'i.ts'), 'const foo = 9')
     writeFileSync(join(dir, '.env'), 'KEY=1')
     writeFileSync(join(dir, 'x.pem'), 'pem')
-    writeFileSync(join(dir, 'big.txt'), 'a'.repeat(300 * 1024))
+    writeFileSync(join(dir, 'big.txt'), `${'a'.repeat(99)}\n`.repeat(3 * 1024))
     writeFileSync(join(dir, 'bin.dat'), Buffer.from([1, 2, 0, 3]))
     symlinkSync(outside, join(dir, 'link'))
   })
@@ -157,10 +158,11 @@ describe('File.Tools', () => {
     assert.equal(deniedPath(join(dir, 'a.txt'), dir), undefined)
   })
 
-  it('refuses a large file without offset/limit, reads it with them', async () => {
-    const whole = await run('read_file', { path: 'big.txt' })
-    assert.equal(whole.status, 'error')
-    assert.match(whole.result, /256 KB/)
+  it('📖 arquivo grande sem limit vem em partes até o teto, com o offset para continuar; com limit, só o pedido', async () => {
+    const whole = await run('read_file', { path: 'big.txt' }, { readBudgetChars: 40_000 })
+    assert.equal(whole.status, 'success')
+    assert.match(whole.result, /── Parte 1\/\d+ ──/)
+    assert.match(whole.result, /Continue com read_file \(path: big\.txt, offset: \d+\)/)
     const part = await run('read_file', { path: 'big.txt', offset: 1, limit: 1 })
     assert.equal(part.status, 'success')
   })

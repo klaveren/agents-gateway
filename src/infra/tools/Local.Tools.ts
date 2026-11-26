@@ -17,6 +17,7 @@ import type { IPermissionAsker, IPermissionChecker } from '@application/Permissi
 import { cercoPlan, machinePlan } from '@domain/Cerco.Plan'
 import { commandMatches, definesGitAlias, ENV_FILE_PATTERNS, hasGitDeny, pathMatches, type IPermissionRule, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+import { pagedText, plainFileRead, readBudgetChars as defaultReadBudget } from '@domain/Reading.Policy'
 import { exec } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -468,6 +469,12 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const result = await startCommand(prepared.line, { cwd: prepared.root, env: prepared.env, shell: SANDBOX_SHELL, timeoutMs, logFile, onExit: prepared.release }).done
     // Mascarado ANTES do corte: um segredo partido no limite escaparia.
     const raw = masked(result.output, context) || (result.timedOut ? '' : 'Command executed successfully with no output.')
+    // 📖 Só LER um arquivo (`cat spec.md`): vai inteiro, em partes, até o teto da leitura (ver `Reading.Policy`).
+    const reading = !result.timedOut && result.code === 0 ? fileReadOf(command) : undefined
+    if (reading) {
+      rmSync(logFile, { force: true })
+      return { status: 'success', result: prepared.notes + pagedText(raw, readBudgetChars(context), reading).text + readOnlyNote(raw) }
+    }
     const long = raw.length > limits.maxOutputChars
     if (long && context?.sessionId)
       processes.remember({ id, sessionId: context.sessionId, name: command.slice(0, 80), command, startedAt: new Date(), code: result.code, timedOut: result.timedOut, logFile })
@@ -1808,4 +1815,22 @@ const HARMLESS_BUILTINS: ReadonlySet<string> = new Set(['echo', 'printf', 'pwd',
 function explicitlyDenied(permissions: IPermissionChecker, asker: IPermissionAsker, part: { text: string; argv: readonly string[] }): boolean {
   const verdict = permissions.check(asker, { category: 'terminal', value: part.text, argv: [...part.argv] }, { log: false })
   return !verdict.allowed && !!verdict.rule && verdict.rule.decision === 'deny'
+}
+
+/** O teto da leitura do turno (ver `Reading.Policy`). */
+function readBudgetChars(context: IExecutionContext | undefined): number {
+  return context?.readBudgetChars ?? defaultReadBudget()
+}
+
+/**
+ * 📖 O comando que só lê um arquivo, com o jeito de continuar depois do teto: o `read_file` a partir da linha certa (no
+ * `sed -n 'a,bp'`, contada do `a`). `undefined` = não é leitura simples, a saída segue o corte do terminal.
+ */
+function fileReadOf(command: string): ((line: number) => string) | undefined {
+  const path = plainFileRead(command)
+  if (!path) return undefined
+  const first = /^\s*sed\s+-n\s+['"]?(\d+)/.exec(command)
+  const shift = first ? Number(first[1]) - 1 : 0
+  const plain = /^\s*(cat|sed)\b/.test(command)
+  return (line) => (plain ? `Continue com read_file (path: ${path}, offset: ${line + shift}).` : `Continue com read_file (path: ${path}) a partir de onde parou.`)
 }
