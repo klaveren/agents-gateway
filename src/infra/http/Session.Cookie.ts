@@ -80,6 +80,20 @@ function readCookie(req: Request, name: string): string | undefined {
 const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS']
 
 /**
+ * Quanto falta para o token vencer, lido do payload SEM conferir — só para o prazo do cookie do CSRF acompanhar o da
+ * sessão (o "Manter conectado" dura 30 dias). Ilegível: 12 h, o prazo de antes.
+ */
+function remainingSeconds(token: string): number {
+  try {
+    const exp = (JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8')) as { exp?: unknown }).exp
+    if (typeof exp === 'number') return Math.max(0, Math.min(exp - Math.floor(Date.now() / 1000), 400 * 86_400))
+  } catch {
+    // cai no prazo de antes
+  }
+  return 12 * 60 * 60
+}
+
+/**
  * O cookie vira a credencial de sempre: sem `X-Tool-Authorization` no pedido, o token do cookie entra no
  * lugar dele — e daí para frente (prova, dono, repasse às tools) nada muda.
  *
@@ -102,7 +116,7 @@ export function cookieCredential(): RequestHandler {
     res.locals[VIA_SESSION_COOKIE] = browserProof(req, token)
     // Sessão aberta antes do CSRF existir: o cookie dele nasce no próximo pedido seguro (a tela o lê dali).
     if (SAFE_METHODS.includes(req.method) && !readCookie(req, csrfCookieName())) {
-      res.append('Set-Cookie', serialize(csrfCookieName(), csrfOf(token), { maxAge: 12 * 60 * 60, secure: secure(req), httpOnly: false }))
+      res.append('Set-Cookie', serialize(csrfCookieName(), csrfOf(token), { maxAge: remainingSeconds(token), secure: secure(req), httpOnly: false }))
     }
     next()
   }

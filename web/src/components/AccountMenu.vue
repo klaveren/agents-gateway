@@ -100,6 +100,16 @@ import { useSpeechStore } from '@/stores/speech'
         Perfil
       </RouterLink>
       <RouterLink
+        :to="{ path: '/profile', hash: '#sessions' }"
+        role="menuitem"
+        class="flex items-center gap-2.5 px-3 py-2.5 text-zinc-200 hover:bg-zinc-800"
+        data-test="sessions-item"
+        @click="open = false"
+      >
+        <Icon name="shield" class="h-4 w-4 text-zinc-400" />
+        Sessões abertas
+      </RouterLink>
+      <RouterLink
         v-if="projects.managesAny"
         to="/notifications"
         role="menuitem"

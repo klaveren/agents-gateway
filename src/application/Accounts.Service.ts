@@ -1,5 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { InvalidCredentialsError, InvalidUserError, LoginLockedError, SetupUnavailableError, UserNotFoundError } from '@domain/errors/Domain.Error'
+import { InvalidCredentialsError, InvalidUserError, LoginLockedError, SessionNotFoundError, SetupUnavailableError, UserNotFoundError } from '@domain/errors/Domain.Error'
+import { keepSignedInTtlMs, sessionRenewIntervalMs } from '@domain/LoginSession.Policy'
+import { ILoginSession } from '@domain/models/LoginSession.Model'
 import { IUser, TUserRole, toUser } from '@domain/models/User.Model'
 import { IPasswordHasher } from '@domain/ports/PasswordHasher.Port'
 import { ITokenIssuer } from '@domain/ports/TokenIssuer.Port'
@@ -26,6 +28,23 @@ export interface ISession {
   expiresAt: Date
   user: IUser
 }
+
+/** Como a sessão nasce: "Manter conectado" e o aparelho (já resumido do user-agent). */
+export interface ISessionStart {
+  keep?: boolean
+  device?: string
+}
+
+/** As durações da sessão de login (ver `LoginSession.Policy`). */
+export interface ISessionDurations {
+  /** A validade do "Manter conectado", que volta a valer inteira a cada renovação. */
+  keepTtlMs: number
+  /** Renova no máximo uma vez neste intervalo. */
+  renewAfterMs: number
+}
+
+/** O último uso é anotado no máximo uma vez por minuto: a lista não precisa de mais, e o banco não grava a cada pedido. */
+const TOUCH_GAP_MS = 60_000
 
 export interface INewUser {
   email: string
@@ -61,6 +80,7 @@ export class AccountsService {
     private readonly tokens: ITokenIssuer,
     private readonly now: () => number = Date.now,
     setupCode: string = process.env.SETUP_CODE?.trim() || newSetupCode(),
+    private readonly durations: ISessionDurations = { keepTtlMs: keepSignedInTtlMs(), renewAfterMs: sessionRenewIntervalMs() },
   ) {
     this.decoy = hasher.hash(randomBytes(16).toString('hex'))
     this.setupCode = setupCode
@@ -87,21 +107,21 @@ export class AccountsService {
    * recém-instalado e exposto viraria dono dele. Antes a prova era "veio de loopback" — e um proxy na
    * mesma máquina que não põe `X-Forwarded-For` entregava o admin a qualquer um.
    */
-  setup(input: Omit<INewUser, 'role'>, code: string | undefined): ISession {
+  setup(input: Omit<INewUser, 'role'>, code: string | undefined, start: ISessionStart = {}): ISession {
     if (!this.setupRequired() || !sameCode(code, this.setupCode)) throw new SetupUnavailableError()
 
     const user = this.insert({ ...input, role: 'admin' }, 'setup')
     for (const hook of this.setupHooks) hook(user)
     // O setup já entra: conta como o primeiro acesso.
     this.users.update(user.id, { lastLoginAt: new Date(this.now()) })
-    return this.sessionFor(user.id)
+    return this.openSession(user.id, start)
   }
 
   /**
    * ⚠️ ASSÍNCRONO: o scrypt custa dezenas de milissegundos de CPU, e a versão síncrona travava o processo
    * inteiro (todas as rotas, todos os streams) enquanto alguém disparava logins em paralelo.
    */
-  async login(email: string, password: string, origin = ''): Promise<ISession> {
+  async login(email: string, password: string, origin = '', start: ISessionStart = {}): Promise<ISession> {
     const user = this.users.findByEmail(normalizeEmail(email))
     const key = `${normalizeEmail(email)}\u0000${origin}`
     this.reserveAttempt(key)
@@ -116,7 +136,7 @@ export class AccountsService {
 
     this.failures.delete(key)
     this.users.update(user.id, { lastLoginAt: new Date(this.now()) })
-    return this.sessionFor(user.id)
+    return this.openSession(user.id, start)
   }
 
   /**
@@ -179,7 +199,7 @@ export class AccountsService {
    * ⚖️ As OUTRAS sessões caem (quem troca a senha por desconfiar de alguém quer exatamente isso), e
    * esta continua: volta uma sessão nova, já na geração nova.
    */
-  async changeOwnPassword(id: string, current: string, next: string, origin = ''): Promise<ISession> {
+  async changeOwnPassword(id: string, current: string, next: string, origin = '', token?: string): Promise<ISession> {
     // ⛔ Mesma trava de falhas do login (por conta e origem) e scrypt assíncrono: a rota é um oráculo de senha para quem roubou a sessão.
     const key = `password\u0000${id}\u0000${origin}`
     this.reserveAttempt(key)
@@ -187,11 +207,12 @@ export class AccountsService {
     const matches = user ? (this.hasher.verifyAsync ? await this.hasher.verifyAsync(current, user.passwordHash) : this.hasher.verify(current, user.passwordHash)) : false
     if (!user || !matches) throw new InvalidUserError([{ field: 'current', message: 'current password does not match' }])
     this.failures.delete(key)
+    // A sessão desta tela continua como era ("Manter conectado" e aparelho), já na geração nova.
+    const was = this.ownSession(id, token)
     this.setPassword(id, next, user.email)
-    return this.sessionFor(id)
+    return this.openSession(id, { keep: was?.keep, device: was?.device })
   }
 
-  /** Sair: encerra TODAS as sessões da conta, não só a deste navegador — uma cópia do token não sobra. */
   /**
    * Sai DESTE navegador: encerra só a sessão do token apresentado. Token de antes (sem sessão própria) não dá para
    * encerrar sozinho: aí saem todas, como antes. `all`: sai de todos os aparelhos.
@@ -199,8 +220,87 @@ export class AccountsService {
    */
   logout(id: string, token?: string, all = false): void {
     const claims = token ? this.tokens.verify(token) : undefined
-    if (!all && claims?.sub === id && claims.sid) return this.users.revokeSession(claims.sid, new Date(claims.exp * 1000))
+    if (!all && claims?.sub === id && claims.sid) return this.endSessionById(claims.sid, new Date(claims.exp * 1000))
     this.revoke(id)
+  }
+
+  /**
+   * As sessões de login abertas da conta (aparelho, último uso), com `current` na desta tela. Só as da geração de agora:
+   * as de antes de sair de todos ou de trocar a senha já caíram.
+   */
+  listSessions(id: string, token?: string): Array<ILoginSession & { current: boolean }> {
+    const user = this.users.findById(id)
+    if (!user) throw new UserNotFoundError(id)
+    const current = this.tokens.verify(token ?? '')?.sid
+    return this.users
+      .listSessions(id, new Date(this.now()))
+      .filter((session) => session.ver === user.sessionVersion && !this.users.sessionRevoked(session.id))
+      .map((session) => ({ ...session, current: session.id === current }))
+  }
+
+  /** Encerra UMA sessão da conta (outro aparelho). Sessão de outra conta é a mesma recusa de inexistente. */
+  endSession(id: string, sid: string): void {
+    const session = this.users.findSession(sid)
+    if (!session || session.userId !== id) throw new SessionNotFoundError(sid)
+    this.endSessionById(sid)
+  }
+
+  /**
+   * Encerra todas as OUTRAS sessões: avança a geração (cai tudo, inclusive cópias e sessões de antes da lista existir) e
+   * devolve esta mesma sessão (mesmo `sid`, mesmo "Manter conectado") já na geração nova.
+   */
+  endOtherSessions(id: string, token?: string): ISession {
+    const claims = this.tokens.verify(token ?? '')
+    if (!claims || claims.sub !== id || !claims.sid || claims.via) throw new SessionNotFoundError('current')
+    const was = this.users.findSession(claims.sid)
+    this.revoke(id)
+    return this.openSession(id, { keep: claims.keep, device: was?.device }, { sid: claims.sid, createdAt: was?.createdAt })
+  }
+
+  /**
+   * A cada pedido da tela (cookie): anota o último uso e, no "Manter conectado", RENOVA — mais 30 dias a partir de agora,
+   * no máximo uma vez por hora. Devolve a sessão nova só quando renovou.
+   *
+   * ⛔ Só renova o que a prova aceitaria agora: sessão de login (não a derivada de `agw_`), da conta ativa, com o mesmo
+   * e-mail e papel, da geração de agora, não encerrada e ainda listada. Vencida não chega aqui (a assinatura e o prazo
+   * já recusam). Encerrar apaga a linha: cópia antiga do token não renova.
+   */
+  keepAlive(token: string): ISession | undefined {
+    const claims = this.tokens.verify(token)
+    if (!claims?.sid || claims.via) return undefined
+    const session = this.users.findSession(claims.sid)
+    if (!session || session.userId !== claims.sub) return undefined
+    const user = this.users.findById(claims.sub)
+    if (!user || user.disabled || user.email !== claims.email || user.role !== claims.role) return undefined
+    if (user.sessionVersion !== claims.ver || session.ver !== claims.ver || this.users.sessionRevoked(claims.sid)) return undefined
+
+    const now = this.now()
+    this.users.touchSession(claims.sid, new Date(now), TOUCH_GAP_MS)
+    if (!claims.keep || now - claims.iat * 1000 < this.durations.renewAfterMs) return undefined
+    return this.openSession(user.id, { keep: true, device: session.device }, { sid: claims.sid, createdAt: session.createdAt })
+  }
+
+  /**
+   * ⚖️ A revogação vale até o token MAIS NOVO desta sessão vencer (o da linha, que a renovação empurra), e a linha sai:
+   * uma cópia antiga do token não volta a renovar.
+   */
+  private endSessionById(sid: string, tokenExpiry = new Date(0)): void {
+    const session = this.users.findSession(sid)
+    const until = new Date(Math.max(tokenExpiry.getTime(), session?.expiresAt.getTime() ?? 0, this.now() + this.durations.keepTtlMs))
+    this.users.revokeSession(sid, until)
+    this.users.deleteSession(sid)
+  }
+
+  /** O token é da sessão `sid`? (Encerrar a própria sessão pela lista também limpa o cookie.) */
+  isSessionOf(token: string | undefined, sid: string): boolean {
+    return !!token && this.tokens.verify(token)?.sid === sid
+  }
+
+  /** A sessão de login deste token, se for desta conta. */
+  private ownSession(id: string, token?: string): ILoginSession | undefined {
+    const sid = this.tokens.verify(token ?? '')?.sid
+    const session = sid ? this.users.findSession(sid) : undefined
+    return session?.userId === id ? session : undefined
   }
 
   /** O admin encerra as sessões de uma conta (aparelho perdido, acesso que deveria ter acabado). */
@@ -265,6 +365,25 @@ export class AccountsService {
     const user = this.me(id)
     const ver = this.users.findById(id)?.sessionVersion ?? 0
     const { token, expiresAt } = this.tokens.issue({ sub: user.id, email: user.email, role: user.role, ver, sid: randomBytes(12).toString('base64url') })
+
+    return { token, expiresAt, user }
+  }
+
+  /**
+   * A sessão de LOGIN de pessoa: emite o token (30 dias no "Manter conectado"; o de sempre sem ele) e grava a linha que a
+   * lista "Sessões abertas" mostra. `keep.sid`: renova a mesma sessão em vez de abrir outra.
+   */
+  private openSession(id: string, start: ISessionStart, same?: { sid: string; createdAt?: Date }): ISession {
+    const user = this.me(id)
+    const ver = this.users.findById(id)?.sessionVersion ?? 0
+    const keep = start.keep === true
+    const sid = same?.sid ?? randomBytes(12).toString('base64url')
+    const { token, expiresAt } = this.tokens.issue(
+      { sub: user.id, email: user.email, role: user.role, ver, sid, ...(keep ? { keep } : {}) },
+      keep ? this.durations.keepTtlMs : undefined,
+    )
+    const now = new Date(this.now())
+    this.users.saveSession({ id: sid, userId: user.id, ver, keep, device: start.device ?? 'Desconhecido', createdAt: same?.createdAt ?? now, lastUsedAt: now, expiresAt })
 
     return { token, expiresAt, user }
   }

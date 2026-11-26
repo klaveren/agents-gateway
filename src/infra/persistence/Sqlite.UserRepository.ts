@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { ILoginSession } from '@domain/models/LoginSession.Model'
 import { IStoredUser, TUserRole } from '@domain/models/User.Model'
 import { IUserRepository, TUserPatch } from '@domain/ports/UserRepository.Port'
 
@@ -29,6 +30,18 @@ const SCHEMA = `
     sid         TEXT    NOT NULL PRIMARY KEY,
     expires_at  TEXT    NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS login_sessions (
+    sid           TEXT    NOT NULL PRIMARY KEY,
+    user_id       TEXT    NOT NULL,
+    ver           INTEGER NOT NULL,
+    keep          INTEGER NOT NULL DEFAULT 0,
+    device        TEXT    NOT NULL,
+    created_at    TEXT    NOT NULL,
+    last_used_at  TEXT    NOT NULL,
+    expires_at    TEXT    NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS login_sessions_user ON login_sessions (user_id);
 
   CREATE TABLE IF NOT EXISTS auth_secret (
     id      INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
@@ -68,6 +81,46 @@ export class SqliteUserRepository implements IUserRepository {
 
   sessionRevoked(sid: string): boolean {
     return !!this.db.prepare('SELECT 1 FROM revoked_sessions WHERE sid = ?').get(sid)
+  }
+
+  saveSession(session: ILoginSession): void {
+    // As vencidas saem aqui (pelo relógio de quem grava): a lista só mostra o que ainda vale.
+    this.db.prepare('DELETE FROM login_sessions WHERE expires_at <= ?').run(session.lastUsedAt.toISOString())
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO login_sessions (sid, user_id, ver, keep, device, created_at, last_used_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        session.id,
+        session.userId,
+        session.ver,
+        session.keep ? 1 : 0,
+        session.device,
+        session.createdAt.toISOString(),
+        session.lastUsedAt.toISOString(),
+        session.expiresAt.toISOString(),
+      )
+  }
+
+  findSession(sid: string): ILoginSession | undefined {
+    const row = this.db.prepare('SELECT * FROM login_sessions WHERE sid = ?').get(sid) as TRow | undefined
+    return row ? toSession(row) : undefined
+  }
+
+  listSessions(userId: string, now: Date): ILoginSession[] {
+    return (this.db.prepare('SELECT * FROM login_sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_used_at DESC, sid ASC').all(userId, now.toISOString()) as TRow[]).map(
+      toSession,
+    )
+  }
+
+  touchSession(sid: string, at: Date, minGapMs: number): void {
+    // ⚖️ O `WHERE` faz a escrita só quando o último uso anotado já ficou para trás: no resto, nenhuma página muda.
+    this.db.prepare('UPDATE login_sessions SET last_used_at = ? WHERE sid = ? AND last_used_at < ?').run(at.toISOString(), sid, new Date(at.getTime() - minGapMs).toISOString())
+  }
+
+  deleteSession(sid: string): void {
+    this.db.prepare('DELETE FROM login_sessions WHERE sid = ?').run(sid)
   }
 
   count(): number {
@@ -148,5 +201,18 @@ function toUser(row: TRow): IStoredUser {
     updatedBy: typeof row.updated_by === 'string' ? row.updated_by : undefined,
     lastLoginAt: typeof row.last_login_at === 'string' ? new Date(row.last_login_at) : undefined,
     sessionVersion: Number(row.session_version ?? 0),
+  }
+}
+
+function toSession(row: TRow): ILoginSession {
+  return {
+    id: String(row.sid),
+    userId: String(row.user_id),
+    ver: Number(row.ver),
+    keep: Number(row.keep) === 1,
+    device: String(row.device),
+    createdAt: new Date(String(row.created_at)),
+    lastUsedAt: new Date(String(row.last_used_at)),
+    expiresAt: new Date(String(row.expires_at)),
   }
 }

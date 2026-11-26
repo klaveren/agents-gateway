@@ -195,6 +195,8 @@ export class HttpServer {
     // A sessão da tela chega no cookie HttpOnly; daqui em diante é a mesma credencial do cabeçalho.
     // ⛔ ANTES dos parsers: o teto do corpo depende de saber se há credencial (o cookie só vira header aqui).
     this.app.use(cookieCredential())
+    // "Manter conectado": o uso pela tela renova a sessão longa (no máximo 1×/hora) e anota o último uso.
+    this.app.use(this.auth.sessionKeepAlive)
     const isLarge = (path: string) => MESSAGE_ROUTE.test(path) || CONTENT_ROUTES.some((route) => route.test(path))
     this.app.use((req, res, next) => {
       if (HOOK_ROUTE.test(req.path)) return raw(req, res, next)
@@ -622,6 +624,9 @@ function buildRoutes(
     { method: 'get', path: '/auth/tokens', handler: auth.listTokens },
     { method: 'post', path: '/auth/tokens', handler: auth.createToken },
     { method: 'delete', path: '/auth/tokens/:id', handler: auth.revokeToken },
+    { method: 'get', path: '/auth/sessions', handler: auth.listSessions },
+    { method: 'delete', path: '/auth/sessions', handler: auth.endOtherSessions },
+    { method: 'delete', path: '/auth/sessions/:id', handler: auth.endSession },
     { method: 'get', path: '/users', handler: auth.listUsers },
     { method: 'post', path: '/users', handler: auth.createUser },
     { method: 'put', path: '/users/:id', handler: auth.updateUser },

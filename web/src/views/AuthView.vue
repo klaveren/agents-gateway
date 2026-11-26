@@ -22,6 +22,8 @@ const password = ref('')
 // O código pode vir no endereço (`/setup?code=…`): o app do Mac abre o setup com o código da própria instalação.
 const code = ref(typeof route.query.code === 'string' ? route.query.code : '')
 const confirm = ref('')
+// "Manter conectado": já marcada. Sem ela, a sessão dura 12 h, como antes.
+const keepSignedIn = ref(true)
 const error = ref<string>()
 const issues = ref<Record<string, string[]>>({})
 const busy = ref(false)
@@ -36,8 +38,8 @@ async function submit() {
 
   busy.value = true
   try {
-    if (isSetup.value) await auth.setup({ name: name.value, email: email.value, password: password.value, code: code.value.trim() })
-    else await auth.login(email.value, password.value)
+    if (isSetup.value) await auth.setup({ name: name.value, email: email.value, password: password.value, code: code.value.trim(), keepSignedIn: keepSignedIn.value })
+    else await auth.login(email.value, password.value, keepSignedIn.value)
 
     // Outra pessoa: lista, agentes e assinatura ao vivo recomeçam com a credencial nova.
     // O papel no projeto vem da lista de projetos, que o login acaba de refazer.
@@ -96,6 +98,14 @@ async function submit() {
         Confirmar senha
         <input v-model="confirm" type="password" required autocomplete="new-password" class="input" />
         <small v-for="message in issues.confirm" :key="message" class="error">{{ message }}</small>
+      </label>
+
+      <label class="mb-4 flex items-start gap-2 text-sm text-zinc-300" title="Continua conectado por 30 dias, renovados enquanto você usa. Desmarque em computador compartilhado.">
+        <input v-model="keepSignedIn" type="checkbox" class="mt-0.5 accent-emerald-500" data-test="keep-signed-in" />
+        <span>
+          Manter conectado
+          <small class="hint block">30 dias, renovados enquanto você usa. Desmarque em computador compartilhado.</small>
+        </span>
       </label>
 
       <p v-if="error" class="mb-3 text-sm text-rose-300">{{ error }}</p>

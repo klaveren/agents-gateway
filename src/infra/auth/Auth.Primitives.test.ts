@@ -31,7 +31,7 @@ describe('HmacTokenIssuer', () => {
     const issuer = new HmacTokenIssuer('segredo')
     const { token } = issuer.issue(claims)
 
-    assert.deepStrictEqual({ ...issuer.verify(token), exp: undefined }, { ...claims, exp: undefined })
+    assert.deepStrictEqual({ ...issuer.verify(token), exp: undefined, iat: undefined }, { ...claims, exp: undefined, iat: undefined })
     assert.strictEqual(issuer.owns(token), true)
   })
 
