@@ -27,6 +27,25 @@ describe('Cerco.Plan', () => {
     assert.ok(!plan.readAllow.some((path) => path === '/w/p/repositories/abc'), 'o checkout principal fica fora')
   })
 
+  it('⚖️ worktree: lê as entradas do repositório principal (o package.json da raiz), sem gravar; as negações de leitura valem nele', () => {
+    const dir = '/w/p/repositories/abc'
+    const tree = `${dir}/_worktrees/EP-1`
+    const entries = [`${dir}/package.json`, `${dir}/node_modules`, `${dir}/packages`, `${dir}/.env`, `${dir}/.env.local`, `${dir}/segredos`]
+    const plan = cercoPlan(
+      { agent: [rule('read', '**'), rule('write', '**')], project: [rule('read', 'repositories/abc/segredos/**', 'deny')] },
+      { ...base, root: tree, projectRoot: '/w/p', gitCommonDir: `${dir}/.git`, worktreeGitDir: `${dir}/.git/worktrees/EP-1`, checkout: { dir, entries } },
+    )
+    for (const path of [`${dir}/package.json`, `${dir}/node_modules`, `${dir}/packages`]) assert.ok(plan.readAllow.includes(path), path)
+    // ⛔ O segredo da raiz não se reabre (no Linux o runtime só casa `**/.env` abaixo da pasta), nem o que a regra do projeto nega.
+    for (const path of [`${dir}/.env`, `${dir}/.env.local`, `${dir}/segredos`]) assert.ok(!plan.readAllow.includes(path), path)
+    assert.ok(plan.readDeny.includes(`${dir}/**/.env`) && plan.readDeny.includes(`${dir}/segredos/**`))
+    // Só leitura: nada do repositório principal na escrita.
+    assert.ok(!plan.writeAllow.some((path) => path === dir || entries.includes(path) || path.startsWith(`${dir}/packages`)))
+    // Sem worktree, nada muda.
+    const plain = cercoPlan({ agent: [rule('read', '**')] }, { ...base, root: dir })
+    assert.ok(!plain.readAllow.includes(`${dir}/package.json`))
+  })
+
   it('⛔ o que diz onde está o git (e o que roda no git de fora) nunca se grava: comum, modules, atributos e, na worktree, .git/commondir/gitdir', () => {
     const common = '/w/p/repositories/abc/.git'
     const tree = '/w/p/repositories/abc/_worktrees/EP-1'

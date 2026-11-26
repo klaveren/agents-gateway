@@ -348,6 +348,7 @@ export class ProjectSandbox implements IProjectSandbox {
       ...(place.gitCommonDir ? { gitCommonDir: place.gitCommonDir } : {}),
       ...(place.gitCommonDir && place.worktreeGitDir ? { worktreeGitDir: place.worktreeGitDir } : {}),
       ...(place.repositories?.length ? { repositories: place.repositories } : {}),
+      ...(place.gitCommonDir && place.worktreeGitDir && !place.machine ? { checkout: mainCheckout(dirname(place.gitCommonDir), root) } : {}),
       // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.
       alwaysRead: [join(dataDir(this.env), 'tools'), dirname(dirname(process.execPath)), ...runtimeHelpers()],
       // ⛔ As pastas privadas dos OUTROS agentes: fechadas para ler e gravar, mesmo com regra que as cubra (`**`).
@@ -1042,6 +1043,29 @@ export function hostSocketDirs(platform: NodeJS.Platform = process.platform): st
 /** A ponte do proxy mora no `/tmp` do host, que o cerco fecha: só os sockets dela voltam (sem eles, a rede cai). */
 function bridgeSockets(manager: ISandboxManager): string[] {
   return [...new Set([manager.getLinuxHttpSocketPath?.(), manager.getLinuxSocksSocketPath?.()].filter((path): path is string => !!path))]
+}
+
+/**
+ * ⚖️ O repositório principal que a worktree `root` lê (ver `ICercoBase.checkout`): as entradas dele, menos o `.git` e a pasta
+ * que contém a worktree. ⛔ Sem link simbólico: o bind seguiria o alvo, que pode morar fora do repositório.
+ */
+export function mainCheckout(
+  dir: string,
+  root: string,
+  entries: (dir: string) => Array<{ name: string; link: boolean }> = listEntriesWithLinks,
+): { dir: string; entries: string[] } {
+  const paths = entries(dir)
+    .filter((entry) => entry.name !== '.git' && !entry.link && !isAtOrUnder(root, join(dir, entry.name)))
+    .map((entry) => join(dir, entry.name))
+  return { dir, entries: paths }
+}
+
+function listEntriesWithLinks(dir: string): Array<{ name: string; link: boolean }> {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).map((entry) => ({ name: entry.name, link: entry.isSymbolicLink() }))
+  } catch {
+    return []
+  }
 }
 
 function listDir(dir: string): string[] {

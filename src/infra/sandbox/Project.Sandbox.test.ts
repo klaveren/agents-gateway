@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -8,6 +8,7 @@ import { cercoPlan } from '@domain/Cerco.Plan'
 import { commandDirOf } from '@infra/accounts/Ssh.Kit'
 import { deniedGatewayPorts, gatewayHttpPort, setGatewayReach } from '@infra/permissions/Gateway.Reach'
 import {
+  mainCheckout,
   DEV_HMR_PORTS,
   ensureEmptyAttributes,
   cleanLegacyScratch,
@@ -1079,5 +1080,23 @@ describe('sweepCommandLogs', () => {
     // Sem a pasta (instalação nova): não falha.
     sweepCommandLogs({ CONVERSATIONS_DB: join(data, 'nao-existe', 'gateway.db') } as NodeJS.ProcessEnv)
     rmSync(data, { recursive: true, force: true })
+  })
+})
+
+describe('mainCheckout — o repositório principal que a worktree lê', () => {
+  it('⛔ as entradas, menos o .git, a pasta que contém a worktree e os links simbólicos', () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gw-checkout-')))
+    try {
+      writeFileSync(join(dir, 'package.json'), '{}')
+      mkdirSync(join(dir, '.git'))
+      mkdirSync(join(dir, 'node_modules'))
+      mkdirSync(join(dir, '_worktrees', 'EP-1'), { recursive: true })
+      symlinkSync('/etc', join(dir, 'fora'))
+      const got = mainCheckout(dir, join(dir, '_worktrees', 'EP-1'))
+      assert.strictEqual(got.dir, dir)
+      assert.deepStrictEqual([...got.entries].sort(), [join(dir, 'node_modules'), join(dir, 'package.json')])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
