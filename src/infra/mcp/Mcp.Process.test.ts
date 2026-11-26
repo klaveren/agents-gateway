@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -10,6 +10,7 @@ import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRe
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { installDir, installPackage, installStatus, resolveCommand } from './Mcp.Install'
 import { McpRegistry } from './Mcp.Registry'
+import { projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 
 /** Um MCP de verdade, pelo stdio: `whoami` devolve o pid, o cwd e a variável `FIXTURE_TOKEN`. */
 const SERVER_SOURCE = `
@@ -106,6 +107,43 @@ describe('MCP processo local', () => {
     } finally {
       process.env.HOME = previousHome
       await registry.closeInstances()
+    }
+  })
+
+  it('📸 Playwright MCP com projeto: o cwd é o `.tmp` do projeto (o `./x.png` cai lá), que fica; o HOME é a temporária, que vai', async () => {
+    const readOnly = join(root, 'home-ro-pw')
+    mkdirSync(readOnly, { mode: 0o500 })
+    const previous = { home: process.env.HOME, live: process.env.GATEWAY_LIVE_BROWSER }
+    process.env.HOME = readOnly
+    process.env.GATEWAY_LIVE_BROWSER = '0'
+    // O "pacote" instalado é o fixture (com shebang), que devolve o HOME e os argumentos.
+    const dir = installDir('fx')
+    const bin = join(root, 'pw-fixture.cjs')
+    writeFileSync(bin, `#!${process.execPath}\n${SERVER_SOURCE.replace('process.env.FIXTURE_TOKEN', 'JSON.stringify({ home: process.env.HOME, argv: process.argv.slice(2) })')}`)
+    chmodSync(bin, 0o755)
+    mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true })
+    mkdirSync(join(dir, 'node_modules', '@playwright', 'mcp'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', '@playwright', 'mcp', 'package.json'), JSON.stringify({ name: '@playwright/mcp', version: '1.0.0', bin: { mcp: 'cli.js' } }))
+    symlinkSync(bin, join(dir, 'node_modules', '.bin', 'mcp'))
+    writeFileSync(join(dir, 'gateway-install.json'), JSON.stringify({ spec: '@playwright/mcp', name: '@playwright/mcp', version: '1.0.0', installedAt: new Date().toISOString() }))
+    const registry = registryWith({ package: '@playwright/mcp', command: undefined, args: ['--headless'] })
+    const output = join(projectWorkspacePath('alfa'), '.tmp')
+    try {
+      const seen = await whoami(registry, 's-pw')
+      const { home, argv } = JSON.parse(seen.token ?? '{}') as { home: string; argv: string[] }
+      assert.strictEqual(realpathSync(seen.cwd), realpathSync(output))
+      assert.deepStrictEqual(argv.slice(-2), ['--output-dir', output])
+      // ⛔ O HOME do pod (só leitura) não vira o `.tmp` do projeto: é a pasta temporária do processo.
+      assert.notStrictEqual(realpathSync(home), realpathSync(output))
+      await registry.closeInstances()
+      assert.strictEqual(existsSync(output), true)
+      assert.strictEqual(existsSync(home), false)
+    } finally {
+      process.env.HOME = previous.home
+      if (previous.live === undefined) delete process.env.GATEWAY_LIVE_BROWSER
+      else process.env.GATEWAY_LIVE_BROWSER = previous.live
+      await registry.closeInstances()
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 

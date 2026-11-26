@@ -11,6 +11,10 @@ import { useProjectsStore } from './stores/projects'
 import { useAuthStore } from './stores/auth'
 import { useConversationsStore } from './stores/conversations'
 import { useProtocolsStore } from './stores/protocols'
+import { useMessagesStore } from './stores/messages'
+import PullIndicator from './components/PullIndicator.vue'
+import { usePullToRefresh } from './composables/usePullToRefresh'
+import { runRefresh, setRefreshAlways, setRefreshFallback } from './lib/pullRefresh'
 
 const auth = useAuthStore()
 const agents = useAgentsStore()
@@ -56,6 +60,17 @@ async function loadAgents() {
   }
 }
 
+/**
+ * 🔄 Puxar para atualizar (só no toque): relê os dados da tela aberta (ver `lib/pullRefresh`), sem recarregar a página.
+ * Em qualquer tela, antes, reabre o stream ao vivo se ele caiu. Tela sem releitura própria: os dados globais.
+ */
+const main = ref<HTMLElement>()
+setRefreshAlways(() => conversations.reconnect())
+setRefreshFallback(() =>
+  Promise.allSettled([projects.load(), agents.load(), conversations.load(projects.seesAll), auth.signedIn ? useMessagesStore().load() : undefined]),
+)
+const pull = usePullToRefresh(main, runRefresh)
+
 onMounted(async () => {
   // ⚖️ Tudo o que não depende de outra resposta sai junto: o gateway pode estar longe (~220 ms de ida e volta), e
   // cada espera em fila soma isso. Sem sessão, estas falham como antes (a tela de login refaz o escopo ao entrar).
@@ -78,11 +93,12 @@ onMounted(async () => {
   <RouterView v-if="route.meta.bare" />
   <component :is="layout" v-else>
     <!-- No celular a navegação é uma barra fixa embaixo: o conteúdo para antes dela. -->
-    <main class="relative min-h-0 min-w-0 flex-1 pb-[calc(4rem+var(--safe-bottom))] md:pb-0">
+    <main ref="main" class="relative min-h-0 min-w-0 flex-1 pb-[calc(4rem+var(--safe-bottom))] md:pb-0">
       <div v-if="agentsError" role="alert" class="absolute inset-x-0 top-0 z-40 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rose-500/30 bg-rose-950 px-4 py-2 text-sm text-rose-200">
         <span class="min-w-0 flex-1">Não consegui carregar os agentes: {{ agentsError }}</span>
         <button type="button" :disabled="retrying" class="shrink-0 rounded-full bg-rose-500/20 px-3 py-1 text-xs font-medium hover:bg-rose-500/30 disabled:opacity-50" @click="loadAgents">{{ retrying ? 'Tentando…' : 'Tentar de novo' }}</button>
       </div>
+      <PullIndicator :distance="pull.distance.value" :state="pull.state.value" />
       <RouterView v-if="auth.checked" />
       <!-- 🔌 O aviso dos projetos conectados: só para quem administra algo (o membro não atualiza). -->
       <ConnectionNotice v-if="auth.checked && auth.signedIn && (auth.isAdmin || projects.managesAny)" />

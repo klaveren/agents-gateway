@@ -1,7 +1,7 @@
 import type { IImportProblem } from '@domain/models/ImportProblem.Model'
 import type { IResourceFile } from '@domain/models/ResourceFile.Model'
 import type { IPermissionRule } from '@domain/Permission.Policy'
-import { IAgent, IAgentDiagnostics, IAgentTerminal, IAgentTrigger } from '@domain/models/Agent.Model'
+import { IAgent, IAgentBrowser, IAgentDiagnostics, IAgentTerminal, IAgentTrigger } from '@domain/models/Agent.Model'
 import { IModelPrice, MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IModelReasoning, modelReasoningLevels } from '@domain/models/ModelCatalog.Model'
@@ -91,6 +91,8 @@ export interface IAgentDetailDto extends IAgentDto {
   permissions?: IPermissionRule[]
   terminal?: IAgentTerminal
   diagnostics?: IAgentDiagnostics
+  /** O navegador do agente (guardar o login entre conversas). */
+  browser?: IAgentBrowser
   /** Os triggers do agente (o corpo também): só para quem administra, como o prompt. */
   triggers?: IAgentTrigger[]
   /** O grupo de modelos (ausente = o padrão; `none` = não troca). */
@@ -168,6 +170,7 @@ export function toAgentDetailDto(
     ...(entry.agent.permissions?.length ? { permissions: entry.agent.permissions } : {}),
     ...(entry.agent.terminal ? { terminal: entry.agent.terminal } : {}),
     ...(entry.agent.diagnostics ? { diagnostics: entry.agent.diagnostics } : {}),
+    ...(entry.agent.browser ? { browser: entry.agent.browser } : {}),
     ...(entry.agent.triggers?.length ? { triggers: entry.agent.triggers } : {}),
     ...(entry.agent.modelGroup ? { modelGroup: entry.agent.modelGroup } : {}),
     ...(entry.agent.env && Object.keys(entry.agent.env).length ? { env: entry.agent.env } : {}),

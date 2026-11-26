@@ -75,6 +75,18 @@ describe('ProjectsService', () => {
     assert.strictEqual(service.setMemberModels('alfa', { byRole: { member: ['claude/haiku'] } }, 'root').models?.defaultModelGroup, 'global')
   })
 
+  it('🔁 o grupo do projeto que um agente usa não sai (a não ser que o gateway tenha o mesmo id); os que ficam não são conferidos', () => {
+    const { service } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    const group = { id: 'barato', name: 'Barato', steps: [{ provider: 'claude', model: 'haiku' }] }
+    const other = { ...group, id: 'outro' }
+    service.setModelGroups('alfa', { modelGroups: [group, other] }, 'root')
+    const usedBy = (id: string) => (id === 'barato' ? 'zeus' : undefined)
+    assert.throws(() => service.setModelGroups('alfa', { modelGroups: [other] }, 'root', { usedBy }), /barato is used by agent zeus/)
+    assert.deepStrictEqual(service.setModelGroups('alfa', { modelGroups: [group] }, 'root', { usedBy }).models?.modelGroups, [group])
+    assert.deepStrictEqual(service.setModelGroups('alfa', { modelGroups: [] }, 'root', { usedBy, gatewayGroups: ['barato'] }).models?.modelGroups, undefined)
+  })
+
   it('💰 o teto do projeto: gravado sem mexer nas outras listas; vazio tira; número inválido é recusado', () => {
     const { service } = build()
     service.create({ id: 'alfa', name: 'Alfa' }, 'root')

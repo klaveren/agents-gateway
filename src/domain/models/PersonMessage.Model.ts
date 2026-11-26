@@ -52,6 +52,14 @@ export interface IPersonMessage {
   answeredAt?: Date
   /** Na resposta da pessoa: o id do pedido a que ela responde. */
   replyTo?: string
+  /** 📎 Na resposta da pessoa: os anexos que foram com ela para a conversa (só o nome, o tipo e o tamanho; o conteúdo vai ao turno). */
+  files?: IPersonMessageFile[]
+}
+
+export interface IPersonMessageFile {
+  name: string
+  mimeType: string
+  size: number
 }
 
 /**
@@ -80,6 +88,11 @@ export interface IPersonThread {
   unread: number
   /** Quantos pedidos do item ainda estão pendentes (0 ou 1 no item de pedido). */
   pending: number
+  /**
+   * Quantos pedidos do item ainda estão em aberto: `pending` ou `answered` (respondido, mas não dado por resolvido).
+   * Pedido com 0 aqui está resolvido. Opcional: o item de uma origem antiga (projeto conectado) vem sem.
+   */
+  open?: number
   archived: boolean
   /** 🔌 Só na lista local: o item é de um projeto conectado e mora na origem (`stale`: a origem não respondeu, é a última lista). */
   origin?: { projectId: string; url: string; stale?: boolean }

@@ -624,4 +624,64 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       assert.strictEqual(first.costUsd, 1.1)
     })
   })
+  describe('GET /conversations/:id/files/:fileId/view — o conteúdo do visualizador', () => {
+    /** A resposta crua (cabeçalhos e bytes), além do envelope de erro. */
+    const raw = async (identity: object, controller: AgentController, params: Record<string, string>) => {
+      const out = { status: 200, headers: {} as Record<string, string>, data: undefined as Buffer | undefined, body: undefined as IBody | undefined }
+      const res = {
+        status(code: number) {
+          out.status = code
+          return this
+        },
+        json(data: IBody) {
+          out.body = data
+          return this
+        },
+        setHeader(name: string, value: string) {
+          out.headers[name.toLowerCase()] = value
+          return this
+        },
+        send(data: Buffer) {
+          out.data = data
+          return this
+        },
+      } as unknown as Response
+      await withCaller(identity, () => controller.viewConversationFile(request({ params }), res))
+      return out
+    }
+
+    const withFile = async () => {
+      const built = await setup()
+      const file = { id: 'f_ab12', conversationId: 'a1', name: 'página.html', mime: 'text/html', size: 25, createdAt: new Date() }
+      await built.conversations.saveFile(file, Buffer.from('<script>alert(1)</script>'))
+      return built
+    }
+
+    it('responde o tipo real, inline, sem sniff e com a CSP em sandbox', async () => {
+      const { controller } = await withFile()
+      const out = await raw(ALICE, controller, { id: 'a1', fileId: 'f_ab12' })
+
+      assert.strictEqual(out.status, 200)
+      assert.strictEqual(out.headers['content-type'], 'text/html')
+      assert.strictEqual(out.headers['x-content-type-options'], 'nosniff')
+      assert.strictEqual(out.headers['content-security-policy'], "sandbox; default-src 'none'")
+      assert.match(out.headers['content-disposition'] ?? '', /^inline; filename="p_gina.html"; filename\*=UTF-8''p%C3%A1gina.html$/)
+      assert.strictEqual(out.data?.toString(), '<script>alert(1)</script>')
+    })
+
+    it('⛔ quem não vê a conversa não lê o arquivo', async () => {
+      const { controller } = await withFile()
+      const out = await raw(BOB, controller, { id: 'a1', fileId: 'f_ab12' })
+
+      assert.ok(out.status === 403 || out.status === 404, String(out.status))
+      assert.strictEqual(out.data, undefined)
+    })
+
+    it('arquivo de outra conversa é 404', async () => {
+      const { controller } = await withFile()
+      const out = await raw(BOB, controller, { id: 'b1', fileId: 'f_ab12' })
+
+      assert.strictEqual(out.status, 404)
+    })
+  })
 })

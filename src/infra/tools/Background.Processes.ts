@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { createWriteStream, mkdirSync, openSync, readSync, closeSync, rmSync, statSync, type WriteStream } from 'node:fs'
+import { createWriteStream, mkdirSync, openSync, readSync, readdirSync, readFileSync, closeSync, rmSync, statSync, type WriteStream } from 'node:fs'
 import { join } from 'node:path'
 
 /** O que um comando deixou: a saída (inteira até o teto em memória), o código e se estourou o tempo. */
@@ -37,20 +37,109 @@ function positiveInt(raw: string | undefined, fallback: number): number {
 /** Depois do SIGTERM, quanto se espera antes do SIGKILL. */
 const KILL_GRACE_MS = 5000
 
-/** ⛔ O GRUPO INTEIRO: matar só o filho deixava o `sleep` neto (e o servidor que ele subiu) vivo. */
+/**
+ * Os pares `pid → ppid` da máquina. Linux: o `/proc` (o pod não tem `ps`). macOS: `ps -A -o pid=,ppid=`.
+ * Falhou a leitura: vazio (sobra matar o grupo, como antes).
+ */
+export function processTable(): Map<number, number> {
+  const table = new Map<number, number>()
+  try {
+    for (const name of readdirSync('/proc')) {
+      if (!/^\d+$/.test(name)) continue
+      try {
+        const stat = readFileSync(`/proc/${name}/stat`, 'utf8')
+        // `pid (nome) estado ppid …`: o nome pode ter espaço e parêntese; o ppid vem depois do ÚLTIMO `)`.
+        const ppid = Number.parseInt(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1] ?? '', 10)
+        if (Number.isFinite(ppid)) table.set(Number(name), ppid)
+      } catch {
+        /* saiu no meio da leitura */
+      }
+    }
+    if (table.size > 0) return table
+  } catch {
+    /* sem `/proc`: macOS */
+  }
+  try {
+    for (const line of execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8', timeout: 5000 }).split('\n')) {
+      const [pid, ppid] = line
+        .trim()
+        .split(/\s+/)
+        .map((part) => Number.parseInt(part, 10))
+      if (Number.isFinite(pid) && Number.isFinite(ppid)) table.set(pid, ppid)
+    }
+  } catch {
+    /* sem `ps` */
+  }
+  return table
+}
+
+/** Os descendentes (filhos, netos…) das raízes, sem as raízes. */
+export function descendantsOf(roots: Iterable<number>, table: Map<number, number> = processTable()): number[] {
+  const children = new Map<number, number[]>()
+  for (const [pid, ppid] of table) if (pid !== ppid) children.set(ppid, [...(children.get(ppid) ?? []), pid])
+  const seen = new Set<number>(roots)
+  const queue = [...seen]
+  const found: number[] = []
+  while (queue.length > 0) {
+    for (const child of children.get(queue.shift()!) ?? []) {
+      if (seen.has(child)) continue
+      seen.add(child)
+      found.push(child)
+      queue.push(child)
+    }
+  }
+  return found
+}
+
+function signal(target: number, sig: NodeJS.Signals): boolean {
+  try {
+    process.kill(target, sig)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * ⛔ A ÁRVORE CONGELADA: lida com tudo andando, um processo que cria um filho no meio da leitura deixa o filho de fora — e
+ * ele escapa, órfão, quando o pai morre. Congela (SIGSTOP) o grupo e cada descendente visto e relê até a árvore parar de
+ * crescer: parado, ninguém cria filho novo. Quem chama manda o SIGTERM e depois o SIGCONT.
+ */
+function frozenTree(pid: number): number[] {
+  signal(-pid, 'SIGSTOP')
+  signal(pid, 'SIGSTOP')
+  const frozen = new Set<number>()
+  for (let round = 0; round < 10; round += 1) {
+    const fresh = descendantsOf([pid]).filter((child) => !frozen.has(child))
+    if (fresh.length === 0) break
+    for (const child of fresh) {
+      signal(child, 'SIGSTOP')
+      frozen.add(child)
+    }
+  }
+  return [...frozen]
+}
+
+/**
+ * ⛔ O GRUPO E A ÁRVORE: matar só o filho deixava o `sleep` neto vivo; matar só o grupo deixava quem abriu grupo ou
+ * sessão própria (`setsid`, `detached` — o `validate-all.mjs` do `pnpm validate` seguiu 1 h). A árvore é lida ANTES do
+ * SIGTERM: morto o pai, o neto vai para o `init` e some dela. No fim da graça, SIGKILL no grupo, em quem foi visto e em
+ * quem esses abriram depois. ⚖️ Nada fora da árvore do pid.
+ */
 export function killGroup(pid: number | undefined): void {
   if (!pid) return
-  try {
-    process.kill(-pid, 'SIGTERM')
-  } catch {
-    return
-  }
+  const tree = frozenTree(pid)
+  const group = signal(-pid, 'SIGTERM')
+  const leader = group || signal(pid, 'SIGTERM')
+  for (const child of tree) signal(child, 'SIGTERM')
+  // Congelados, não tratavam o SIGTERM: voltam a andar só agora, já com ele pendente.
+  signal(-pid, 'SIGCONT')
+  for (const child of tree) signal(child, 'SIGCONT')
+  if (!leader && tree.length === 0) return
   setTimeout(() => {
-    try {
-      process.kill(-pid, 'SIGKILL')
-    } catch {
-      /* já saiu */
-    }
+    // O pid só entra se o grupo dele ainda existe: saído, o número pode ter ido para outro processo.
+    const known = signal(-pid, 'SIGKILL') ? [pid, ...tree] : tree
+    for (const target of new Set([...tree, ...descendantsOf(known)])) signal(target, 'SIGKILL')
   }, KILL_GRACE_MS).unref()
 }
 

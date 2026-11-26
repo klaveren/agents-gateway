@@ -95,7 +95,8 @@ export const API_PREFIX = '/v1'
  * Rota pública nova entra aqui — e só aqui, de propósito.
  */
 /** A mensagem de uma conversa: leva anexo, por isso o teto de corpo grande. */
-const MESSAGE_ROUTE = /^\/v1\/sessions\/[^/]+\/messages\/?$/
+/** A mensagem da conversa e a resposta pela caixa de Mensagens: as duas levam anexos (📎). */
+const MESSAGE_ROUTE = /^\/v1\/(sessions\/[^/]+\/messages|messages\/[^/]+\/reply)\/?$/
 /**
  * ⚖️ As rotas que gravam CONTEÚDO, cujo tamanho é de quem escreve (o sistema não impõe teto): o agente (prompt, soul,
  * triggers), os hooks e agendamentos dele (o prompt), rules, documentos, skills/commands e o complemento dos protocolos.
@@ -194,6 +195,8 @@ export class HttpServer {
     // A sessão da tela chega no cookie HttpOnly; daqui em diante é a mesma credencial do cabeçalho.
     // ⛔ ANTES dos parsers: o teto do corpo depende de saber se há credencial (o cookie só vira header aqui).
     this.app.use(cookieCredential())
+    // "Manter conectado": o uso pela tela renova a sessão longa (no máximo 1×/hora) e anota o último uso.
+    this.app.use(this.auth.sessionKeepAlive)
     const isLarge = (path: string) => MESSAGE_ROUTE.test(path) || CONTENT_ROUTES.some((route) => route.test(path))
     this.app.use((req, res, next) => {
       if (HOOK_ROUTE.test(req.path)) return raw(req, res, next)
@@ -621,6 +624,9 @@ function buildRoutes(
     { method: 'get', path: '/auth/tokens', handler: auth.listTokens },
     { method: 'post', path: '/auth/tokens', handler: auth.createToken },
     { method: 'delete', path: '/auth/tokens/:id', handler: auth.revokeToken },
+    { method: 'get', path: '/auth/sessions', handler: auth.listSessions },
+    { method: 'delete', path: '/auth/sessions', handler: auth.endOtherSessions },
+    { method: 'delete', path: '/auth/sessions/:id', handler: auth.endSession },
     { method: 'get', path: '/users', handler: auth.listUsers },
     { method: 'post', path: '/users', handler: auth.createUser },
     { method: 'put', path: '/users/:id', handler: auth.updateUser },
@@ -633,6 +639,7 @@ function buildRoutes(
     { method: 'get', path: '/agents/:agentId/commands', handler: controller.getAgentCommands },
     { method: 'put', path: '/agents/:agentId', handler: controller.updateAgent },
     { method: 'delete', path: '/agents/:agentId', handler: controller.deleteAgent },
+    { method: 'post', path: '/agents/:agentId/browser/clear', handler: controller.browserClear },
     { method: 'post', path: '/agents/:agentId/import-issues/resolve', handler: controller.resolveAgentImportIssue },
     { method: 'put', path: '/agents/:agentId/shares', handler: controller.shareAgent },
     { method: 'get', path: '/agents/:agentId/tools', handler: controller.getAgentTools },
@@ -675,6 +682,7 @@ function buildRoutes(
     // Os arquivos que o agente entregou (ver `ConversationFile.Model`): a lista e o download, para quem vê a conversa.
     { method: 'get', path: '/conversations/:id/files', handler: controller.listConversationFiles },
     { method: 'get', path: '/conversations/:id/files/:fileId', handler: controller.downloadConversationFile },
+    { method: 'get', path: '/conversations/:id/files/:fileId/view', handler: controller.viewConversationFile },
     // O registro de erros (só admin): ferramentas que falharam, turnos com erro, interrompidos.
     { method: 'get', path: '/errors', handler: controller.listErrors },
     { method: 'get', path: '/shared/:id', handler: controller.getSharedConversation },

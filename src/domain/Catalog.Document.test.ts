@@ -124,6 +124,7 @@ const fullAgent: Required<IAgent> = {
   ],
   terminal: { timeoutSeconds: 60, maxOutputChars: 5000 },
   diagnostics: { typecheck: true, lint: false, format: true, timeoutSeconds: 30 },
+  browser: { keepLogin: true },
   triggers: [
     { id: 'deploy', when: 'Ao subir', body: 'Rode o deploy.' },
     { id: 'abrir-pr', when: 'Ao abrir PR', body: 'Abra o PR.' },

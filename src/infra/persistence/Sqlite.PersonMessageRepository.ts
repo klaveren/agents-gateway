@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { IPersonMessage, IPersonThread, isRequestKey, messageKeyOf, TPersonMessageLevel, TPersonMessageStatus } from '@domain/models/PersonMessage.Model'
+import { IPersonMessage, IPersonMessageFile, IPersonThread, isRequestKey, messageKeyOf, TPersonMessageLevel, TPersonMessageStatus } from '@domain/models/PersonMessage.Model'
 import { IPersonMessageRepository } from '@domain/ports/PersonMessageRepository.Port'
 
 const SCHEMA = `
@@ -49,6 +49,7 @@ export class SqlitePersonMessageRepository implements IPersonMessageRepository {
       ['status', 'TEXT'],
       ['answered_at', 'TEXT'],
       ['reply_to', 'TEXT'],
+      ['files', 'TEXT'],
     ] as const) {
       if (!columns.has(name)) this.db.exec(`ALTER TABLE person_messages ADD COLUMN ${name} ${type}`)
     }
@@ -63,7 +64,7 @@ export class SqlitePersonMessageRepository implements IPersonMessageRepository {
   insert(message: IPersonMessage): void {
     this.db
       .prepare(
-        'INSERT INTO person_messages (id, recipient_id, conversation_id, project_id, agent_id, sender, author_id, title, body, level, turn, created_at, read_at, archived_at, status, answered_at, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)',
+        'INSERT INTO person_messages (id, recipient_id, conversation_id, project_id, agent_id, sender, author_id, title, body, level, turn, created_at, read_at, archived_at, status, answered_at, reply_to, files) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)',
       )
       .run(
         message.id,
@@ -82,6 +83,7 @@ export class SqlitePersonMessageRepository implements IPersonMessageRepository {
         message.status ?? null,
         message.answeredAt?.toISOString() ?? null,
         message.replyTo ?? null,
+        message.files?.length ? JSON.stringify(message.files) : null,
       )
     // Mensagem nova reabre o item arquivado: quem arquivou volta a vê-lo.
     this.update(message.recipientId, messageKeyOf(message), 'archived_at = NULL', [])
@@ -104,11 +106,13 @@ export class SqlitePersonMessageRepository implements IPersonMessageRepository {
           last: message,
           unread: message.from === 'agent' && !message.readAt ? 1 : 0,
           pending: message.status === 'pending' ? 1 : 0,
+          open: isOpen(message) ? 1 : 0,
           archived: !!message.archivedAt,
         })
       } else {
         if (message.from === 'agent' && !message.readAt) current.unread += 1
         if (message.status === 'pending') current.pending += 1
+        if (isOpen(message)) current.open = (current.open ?? 0) + 1
       }
       const thread = threads.get(key)!
       // O assunto do item: o título mais recente que o agente deu (no pedido, o dele).
@@ -199,5 +203,26 @@ function toMessage(row: TRow): IPersonMessage {
     ...(row.status === 'pending' || row.status === 'answered' || row.status === 'resolved' ? { status: row.status } : {}),
     ...(date(row.answered_at) ? { answeredAt: date(row.answered_at) } : {}),
     ...(typeof row.reply_to === 'string' ? { replyTo: row.reply_to } : {}),
+    ...filesOf(row.files),
   }
+}
+
+/** 📎 Os anexos gravados (JSON); o que não for lista de arquivos some. */
+function filesOf(value: unknown): { files?: IPersonMessageFile[] } {
+  if (typeof value !== 'string') return {}
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!Array.isArray(parsed)) return {}
+    const files = parsed
+      .filter((file): file is IPersonMessageFile => !!file && typeof file.name === 'string' && typeof file.mimeType === 'string' && typeof file.size === 'number')
+      .map(({ name, mimeType, size }) => ({ name, mimeType, size }))
+    return files.length ? { files } : {}
+  } catch {
+    return {}
+  }
+}
+
+/** Pedido ainda em aberto: pendente ou respondido sem ter sido dado por resolvido. */
+function isOpen(message: IPersonMessage): boolean {
+  return message.status === 'pending' || message.status === 'answered'
 }

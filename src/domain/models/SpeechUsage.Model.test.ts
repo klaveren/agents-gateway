@@ -22,7 +22,10 @@ describe('SpeechUsage.Model (a voz nos relatórios de uso)', () => {
     const rows = speechUsageRows([entry(), entry(), entry({ projectId: undefined })], query({ groupBy: 'project' }))
     assert.equal(rows.length, 2)
     const [withProject] = rows
-    assert.deepEqual([withProject!.agentId, withProject!.title, withProject!.conversationId, withProject!.group, withProject!.turns], [SPEECH_USAGE_AGENT_ID, 'Voz (mensagens)', 'speech:u_ana', 'logiccus', 2])
+    assert.deepEqual(
+      [withProject!.agentId, withProject!.title, withProject!.conversationId, withProject!.group, withProject!.turns],
+      [SPEECH_USAGE_AGENT_ID, 'Voz (mensagens)', 'speech:u_ana', 'logiccus', 2],
+    )
     assert.deepEqual([withProject!.usage.inputTokens, withProject!.usage.outputTokens, withProject!.usage.totalTokens], [20, 40, 60])
     assert.equal(rows[1]!.group, undefined)
   })

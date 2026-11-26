@@ -208,6 +208,21 @@ describe('Permission.Policy', () => {
     assert.strictEqual(decide({ category: 'network', value: 'api.github.com:443' }, { agent }).rule?.pattern, '*')
   })
 
+  it('⚖️ o curinga do AGENTE não esconde a regra exata do PROJETO (o Argos com `network *` e o SSH exato no projeto)', () => {
+    const agent: IPermissionRule[] = [{ category: 'network', pattern: '*', decision: 'allow' }]
+    const project: IPermissionRule[] = [{ category: 'network', pattern: '10.10.0.1:22', decision: 'allow' }]
+    const ssh = decide({ category: 'network', value: '10.10.0.1:22' }, { agent, project })
+    assert.ok(ssh.allowed)
+    assert.strictEqual(ssh.rule?.pattern, '10.10.0.1:22')
+    assert.strictEqual(ssh.layer, 'project')
+    assert.strictEqual(decide({ category: 'network', value: 'api.github.com:443' }, { agent, project }).rule?.pattern, '*')
+    // Negar do projeto não passa por cima do agente: o curinga dele segue decidindo.
+    const denied = [...project, { category: 'network' as const, pattern: '10.10.0.1', decision: 'deny' as const }]
+    const kept = decide({ category: 'network', value: '10.10.0.1:22' }, { agent, project: denied })
+    assert.strictEqual(kept.rule?.pattern, '*')
+    assert.strictEqual(kept.layer, 'agent')
+  })
+
   it('na lite, delegar sem regra é liberado (marcar o agente basta); na PRO, segue pedindo regra; negar vence nas duas', () => {
     assert.ok(!decide({ category: 'delegate', value: 'pesquisa' }, {}).allowed)
     process.env.GATEWAY_EDITION = 'lite'

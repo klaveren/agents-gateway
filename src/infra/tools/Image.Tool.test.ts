@@ -53,7 +53,11 @@ describe('generate_image: o uso', () => {
     const { deliveries } = store()
     const recorded: unknown[] = []
     const usage = { inputTokens: 12, outputTokens: 1056, totalTokens: 1068 }
-    const tool = generateImageTool(deliveries, setup((...args) => recorded.push(args)), async () => ({ data: PNG, mime: 'image/png', usage }))
+    const tool = generateImageTool(
+      deliveries,
+      setup((...args) => recorded.push(args)),
+      async () => ({ data: PNG, mime: 'image/png', usage }),
+    )
     assert.strictEqual((await tool.execute({ prompt: 'um farol' }, context)).status, 'success')
     assert.deepStrictEqual(recorded, [['gw_1', { agentId: 'atena', projectId: 'alfa', provider: 'openai', model: 'gpt-image-1', usage }]])
   })
@@ -61,9 +65,17 @@ describe('generate_image: o uso', () => {
   it('não anota quando falha (provider, tamanho, limite de arquivos) nem quando é recusada', async () => {
     const { deliveries } = store()
     const recorded: unknown[] = []
-    const boom = generateImageTool(deliveries, setup((...args) => recorded.push(args)), async () => Promise.reject(new Error('quota')))
+    const boom = generateImageTool(
+      deliveries,
+      setup((...args) => recorded.push(args)),
+      async () => Promise.reject(new Error('quota')),
+    )
     assert.strictEqual((await boom.execute({ prompt: 'x' }, context)).status, 'error')
-    const big = generateImageTool(deliveries, setup((...args) => recorded.push(args)), async () => ({ data: Buffer.alloc(21 * 1024 * 1024), mime: 'image/png' }))
+    const big = generateImageTool(
+      deliveries,
+      setup((...args) => recorded.push(args)),
+      async () => ({ data: Buffer.alloc(21 * 1024 * 1024), mime: 'image/png' }),
+    )
     assert.strictEqual((await big.execute({ prompt: 'x' }, context)).status, 'error')
     const refused = generateImageTool(deliveries, { ...setup((...args) => recorded.push(args)), allows: () => false }, async () => assert.fail('não devia gerar'))
     assert.strictEqual((await refused.execute({ prompt: 'x' }, context)).status, 'error')
@@ -89,7 +101,13 @@ describe('Image.Generator: tokens', () => {
   const b64 = PNG.toString('base64')
 
   it('OpenAI (images): usage {input_tokens, output_tokens, total_tokens}', async () => {
-    const image = await generateImage(connection, 'gpt-image-1', 'gato', '1024x1024', answer({ data: [{ b64_json: b64 }], usage: { input_tokens: 10, output_tokens: 100, total_tokens: 110 } }))
+    const image = await generateImage(
+      connection,
+      'gpt-image-1',
+      'gato',
+      '1024x1024',
+      answer({ data: [{ b64_json: b64 }], usage: { input_tokens: 10, output_tokens: 100, total_tokens: 110 } }),
+    )
     assert.deepStrictEqual(image.usage, { inputTokens: 10, outputTokens: 100, totalTokens: 110 })
   })
 
@@ -110,7 +128,10 @@ describe('Image.Generator: tokens', () => {
       'gemini-2.5-flash-image',
       'gato',
       '1024x1024',
-      answer({ candidates: [{ content: { parts: [{ inlineData: { data: b64, mimeType: 'image/png' } }] } }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 1290, totalTokenCount: 1295 } }),
+      answer({
+        candidates: [{ content: { parts: [{ inlineData: { data: b64, mimeType: 'image/png' } }] } }],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 1290, totalTokenCount: 1295 },
+      }),
     )
     assert.deepStrictEqual(image.usage, { inputTokens: 5, outputTokens: 1290, totalTokens: 1295 })
   })

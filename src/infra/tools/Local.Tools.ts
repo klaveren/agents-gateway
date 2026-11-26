@@ -386,7 +386,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       .map((line) => `${line}\n`)
       .join('')
     const gate = networkGate()
-    let wrapped = false
+    let wrapped: string | undefined
     let released = false
     const token = gate.register((host, port) => {
       // O portão quer o PADRÃO que liberou: rede local só passa com regra exata (sem `*`).
@@ -404,7 +404,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       released = true
       gate.release(token)
       removeSshKit(privateDir)
-      if (wrapped) sandbox.done?.()
+      if (wrapped !== undefined) sandbox.done?.(wrapped)
     }
     try {
       // ⛔ A chave SSH do comando numa pasta PRIVADA do servidor (a de dados, que nenhum comando lê; só este recebe leitura
@@ -420,7 +420,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         tcpPorts,
         ...(machine ? { machine } : {}),
       })
-      wrapped = true
+      wrapped = line
       // As variáveis do agente por baixo, a identidade de quem chama por cima (ver `Agent.Identity`); as contas do projeto vêm depois.
       // ⛔ As variáveis secretas por cima das contas (a do recurso é mais específica), lidas AGORA: a skill carregada no meio
       // do turno já vale aqui. A máscara as recebe antes do processo nascer.
@@ -659,7 +659,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       if (context?.projectId && failure.stderr) return { status: 'error', result: truncate(`Exit code ${failure.code ?? 1}: ${failure.stderr.trim()}`, policy.maxOutputChars) }
       return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
     } finally {
-      if (line !== command) sandbox.done?.()
+      if (line !== command) sandbox.done?.(line)
     }
   }
   // ⚖️ A conferência da vigia é o MESMO terminal do agente, no limite dela e já mascarada (ver `Watch.Tools`).
@@ -1083,7 +1083,8 @@ function boardTool(panels: NonNullable<ILocalToolDeps['panels']>, name: string =
         title: { type: 'string', description: 'add/update: the request, short.' },
         detail: { type: 'string', description: 'add/update: more of what was asked.' },
         status: {
-          oneOf: [
+          // `anyOf`, não `oneOf`: o modo estrito da OpenAI só aceita `anyOf` (com `oneOf` o SDK recusava e o turno caía).
+          anyOf: [
             { type: 'string', enum: [...PANEL_ITEM_STATUSES] },
             { type: 'array', items: { type: 'string', enum: [...PANEL_ITEM_STATUSES] } },
           ],

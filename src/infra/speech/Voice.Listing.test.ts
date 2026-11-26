@@ -4,7 +4,10 @@ import { listAccountVoices } from './Voice.Listing'
 
 const KEY = 'sk-chave-secreta-9999'
 const conn = { baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', key: KEY }
-const reply = (body: unknown, status = 200) => async () => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status })
+const reply =
+  (body: unknown, status = 200) =>
+  async () =>
+    new Response(typeof body === 'string' ? body : JSON.stringify(body), { status })
 
 describe('listAccountVoices', () => {
   it('🎙️ pede list_voice em voice-enrollment, com a chave só no cabeçalho, e lê id + modelo', async () => {
@@ -14,12 +17,7 @@ describe('listAccountVoices', () => {
       return new Response(
         JSON.stringify({
           output: {
-            voice_list: [
-              { voice_id: 'v1', target_model: 'm1', status: 'OK' },
-              { voice_id: 'v2' },
-              { voice_id: 'v3', target_model: 'm1', status: 'DEPLOYING' },
-              { nope: 1 },
-            ],
+            voice_list: [{ voice_id: 'v1', target_model: 'm1', status: 'OK' }, { voice_id: 'v2' }, { voice_id: 'v3', target_model: 'm1', status: 'DEPLOYING' }, { nope: 1 }],
           },
         }),
       )

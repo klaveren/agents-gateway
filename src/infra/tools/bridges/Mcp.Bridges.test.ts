@@ -58,9 +58,9 @@ describe('pontes MCP com vários servidores', () => {
     assert.deepStrictEqual(
       servers.map((server) => [server.name, server.constructor.name]),
       [
-        ['mcp_crm', 'MCPServerStreamableHttp'],
-        ['mcp_docs-int', 'MCPServerSSE'],
-        ['mcp_aberto', 'MCPServerStreamableHttp'],
+        ['crm', 'MCPServerStreamableHttp'],
+        ['docs-int', 'MCPServerSSE'],
+        ['aberto', 'MCPServerStreamableHttp'],
       ],
     )
   })

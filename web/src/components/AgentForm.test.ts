@@ -248,3 +248,46 @@ describe('AgentForm — regra de rede "sem efeito"', () => {
     expect(marks[0].textContent).toContain('porta do próprio gateway')
   })
 })
+
+describe('AgentForm — navegador (manter o login)', () => {
+  const put = (calls: Array<{ path: string; init?: { method?: string; body?: unknown } }>) =>
+    calls.find((call) => call.init?.method === 'PUT')?.init?.body as { browser?: { keepLogin?: boolean } | null }
+
+  it('a chave liga e desliga o `browser.keepLogin` no que vai salvo', async () => {
+    const first = await mount(AGENT)
+    const toggle = first.host.querySelector<HTMLInputElement>('[data-test="agent-browser-keep-login"]')!
+    expect(toggle.checked).toBe(false)
+    toggle.click()
+    await flush()
+    await saveWith(first.host, '')
+    expect(put(first.calls).browser).toEqual({ keepLogin: true })
+    app?.unmount()
+    document.body.innerHTML = ''
+    const second = await mount({ ...AGENT, browser: { keepLogin: true } })
+    const on = second.host.querySelector<HTMLInputElement>('[data-test="agent-browser-keep-login"]')!
+    expect(on.checked).toBe(true)
+    on.click()
+    await flush()
+    await saveWith(second.host, '')
+    expect(put(second.calls).browser).toBeNull()
+  })
+
+  it('limpar pede confirmação e chama a rota; com o navegador aberto, diz em português', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const { ApiError } = await import('@/lib/api')
+    let inUse = false
+    const { host, calls } = await mount(AGENT, (path) => {
+      if (path !== '/agents/a1/browser/clear') return undefined
+      if (inUse) throw new ApiError(409, 'browser_in_use', 'in use')
+      return { cleared: true }
+    })
+    await click(host.querySelector('[data-test="agent-browser-clear"]'))
+    expect(calls.find((call) => call.path === '/agents/a1/browser/clear')?.init).toEqual({ method: 'POST', body: { projectId: null } })
+    expect(host.textContent).toContain('Sessões apagadas.')
+    inUse = true
+    await click(host.querySelector('[data-test="agent-browser-clear-all"]'))
+    expect(calls.filter((call) => call.path === '/agents/a1/browser/clear').at(-1)?.init).toEqual({ method: 'POST', body: { all: true } })
+    expect(host.textContent).toContain('O navegador está aberto numa conversa')
+    confirm.mockRestore()
+  })
+})

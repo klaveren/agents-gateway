@@ -71,7 +71,7 @@ import { projectWorkspace, projectWorkspacePath } from '@infra/adapters/support/
 import { currentBranch, resolveWorkFolder } from '@infra/workspace/Work.Folder'
 import { IContextWorkFolder, IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { caller } from '@infra/mcp/Caller.Identity'
-import { IMessageInput } from '@domain/models/MessageInput.Model'
+import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { INativeSnapshot, IStoredUsage } from '@domain/models/Conversation.Model'
 import { ISession, usageKey } from '@domain/models/Session.Model'
 import { IAgentProvider, IResumeInput, ISessionChange } from '@domain/ports/AgentProvider.Port'
@@ -307,6 +307,8 @@ export class AgentProvider implements IAgentProvider {
     const interjections: string[] = []
     const unannounced: string[] = []
     const take = (): string[] => {
+      // 📎 Anexo na fila: nada entra no meio da chamada (a lane leva só texto ali); tudo vai na rodada seguinte, com ele.
+      if (record.queuedFiles?.length) return []
       const texts = record.queued ?? []
       record.queued = undefined
       interjections.push(...texts)
@@ -319,6 +321,7 @@ export class AgentProvider implements IAgentProvider {
     const discard = (why: string): IAgentEvent[] => {
       const left = record.queued?.length ?? 0
       record.queued = undefined
+      record.queuedFiles = undefined
       return left ? [{ type: 'warning', sessionId, timestamp: new Date(), payload: { message: `${left} mensagem(ns) que esperavam o turno não entraram: ${why}.` } }] : []
     }
 
@@ -499,10 +502,12 @@ export class AgentProvider implements IAgentProvider {
             break
           }
           // ⚖️ O modelo terminou com mensagem na fila: mais uma rodada no MESMO turno, com elas como a próxima fala.
+          const files = record.queuedFiles
+          record.queuedFiles = undefined
           const rest = take()
           if (rest.length) {
             yield* announce()
-            sent = { text: interjectionRound(rest) }
+            sent = { text: interjectionRound(rest), ...(files?.length ? { files } : {}) }
             extraRound = true
             continue
           }
@@ -526,6 +531,7 @@ export class AgentProvider implements IAgentProvider {
       if (this.panels) record.panelSkipped = !panelTouched && !!asked.text.trim()
       record.status = 'idle'
       record.queued = undefined
+      record.queuedFiles = undefined
       this.loops?.close(sessionId)
       // ⚖️ O turno entra na transcrição mesmo interrompido (o que saiu, saiu).
       if (turn.text || turn.tools.length) {
@@ -563,12 +569,13 @@ export class AgentProvider implements IAgentProvider {
    * A mensagem para o turno que está rodando (ver `Interjection.Policy`): a posição dela na fila, ou nada quando a conversa
    * não está rodando (aí quem chamou manda como um turno normal).
    */
-  enqueue(sessionId: string, text: string): number | undefined {
+  enqueue(sessionId: string, text: string, files?: IFileAttachment[]): number | undefined {
     const record = this.requireSession(sessionId)
     if (record.status !== 'running') return undefined
     const queue = (record.queued ??= [])
     if (queue.length >= INTERJECTION_QUEUE_MAX) throw new InterjectionQueueFullError(sessionId, INTERJECTION_QUEUE_MAX)
     queue.push(text)
+    if (files?.length) (record.queuedFiles ??= []).push(...files)
     return queue.length
   }
 

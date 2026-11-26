@@ -153,6 +153,8 @@ export const useConversationsStore = defineStore('conversations', () => {
 
   let all: IConversation[] = []
   let stream: AbortController | undefined
+  /** Com que escopo a última assinatura abriu (o `reconnect` reabre igual). */
+  let subscribedAdmin = false
   /**
    * O id do stream aberto (o primeiro evento) e a conversa que ele acompanha ao vivo. ⚖️ No MESMO stream, e não num
    * segundo: o navegador abre no máximo seis conexões por host, e duas permanentes por aba travavam tudo com três abas.
@@ -327,6 +329,7 @@ export const useConversationsStore = defineStore('conversations', () => {
    * entregue a ninguém, e só a releitura fecha esse buraco.
    */
   function subscribe(admin: boolean): void {
+    subscribedAdmin = admin
     stream?.abort()
     const controller = new AbortController()
     stream = controller
@@ -477,6 +480,16 @@ export const useConversationsStore = defineStore('conversations', () => {
     return () => turnListeners.delete(listener)
   }
 
+  /**
+   * 🔄 O stream caiu (o celular dormiu, a rede trocou): reabre agora, sem esperar a próxima tentativa. Já ao vivo, ou sem
+   * assinatura (logout), não faz nada. Ao reconectar, `subscribe` já relê a lista e o selo de Mensagens.
+   */
+  function reconnect(): boolean {
+    if (!stream || live.value) return false
+    subscribe(subscribedAdmin)
+    return true
+  }
+
   function unsubscribe(): void {
     stream?.abort()
     stream = undefined
@@ -588,6 +601,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     apply,
     select,
     subscribe,
+    reconnect,
     unsubscribe,
     reset,
     find,

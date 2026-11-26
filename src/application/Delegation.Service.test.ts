@@ -5,6 +5,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { ISession } from '@domain/models/Session.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { ITurnLive, TLiveTurnSignal } from '@domain/ports/TurnLive.Port'
 import { NullConversationRepository } from '@infra/persistence/Null.ConversationRepository'
 import { CreateSessionUseCase } from './CreateSession.Usecase'
 import { DelegationService, IStoredConversation, ownIssue } from './Delegation.Service'
@@ -331,6 +332,134 @@ describe('DelegationService', () => {
       assert.match(JSON.stringify(await service.status(['tradutor'], 'gravada', { sessionId: 'pai' })), /not allowed to talk to integra/)
       assert.match(JSON.stringify(await service.status(['integra'], 'sumiu', { sessionId: 'pai' })), /was deleted or does not exist/)
       assert.match(JSON.stringify(await service.status(['integra'], 'gravada', {})), /needs the calling conversation/)
+    })
+  })
+
+  describe('⚖️ destino ocupado: a mensagem entra na fila e a resposta volta sozinha', () => {
+    /** O turno ao vivo de mentira: o teste diz o que o destino faz (a mensagem entra, o texto sai, o turno acaba). */
+    const fakeLive = () => {
+      const listeners = new Map<string, Set<(signal: TLiveTurnSignal) => void>>()
+      const live = {
+        subscribe: (id: string, listener: (signal: TLiveTurnSignal) => void) => {
+          const set = listeners.get(id) ?? new Set()
+          listeners.set(id, set.add(listener))
+          return () => void set.delete(listener)
+        },
+      } as unknown as ITurnLive
+      const emit = (id: string, signal: TLiveTurnSignal) => [...(listeners.get(id) ?? [])].forEach((listener) => listener(signal))
+      const event = (id: string, type: string, payload: Record<string, unknown>) =>
+        emit(id, { type: 'turn.event', event: { type, sessionId: id, timestamp: new Date(), payload } as never })
+      return { live, emit, event, watching: (id: string) => listeners.get(id)?.size ?? 0 }
+    }
+
+    const busy = () => {
+      const { service, sessions } = build()
+      const provider = (service as unknown as { provider: IAgentProvider }).provider
+      const queued: Array<{ id: string; text: string }> = []
+      provider.enqueue = (id, text) => {
+        if (sessions.get(id)?.status !== 'running') return undefined
+        queued.push({ id, text })
+        return queued.filter((item) => item.id === id).length
+      }
+      sessions.set('ocupada', { ...session('ocupada', 'tradutor', { owner: { id: 'ana' }, delegatedBy: 'pai' }), status: 'running' })
+      const late: Array<{ parent: string; text: string }> = []
+      service.useLateDelivery((parent, text) => void late.push({ parent, text }))
+      const fake = fakeLive()
+      service.useLive(fake.live)
+      return { service, sessions, queued, late, ...fake }
+    }
+    const tick = () => new Promise((resolve) => setImmediate(resolve))
+
+    it('não recusa: enfileira e devolve na hora; a resposta ao que entrou vira um turno novo da mãe parada', async () => {
+      const { service, sessions, queued, late, event, emit } = busy()
+      const result = await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'ocupada', message: 'traduza oi' }, { sessionId: 'pai' })
+      assert.deepStrictEqual(result, { ok: true, agentId: 'tradutor', sessionId: 'ocupada', reply: '', pending: true, queued: true })
+      assert.deepStrictEqual(queued, [{ id: 'ocupada', text: 'traduza oi' }])
+
+      event('ocupada', 'text.delta', { text: 'antes, de outro pedido. ' })
+      event('ocupada', 'message.injected', { text: 'traduza oi' })
+      event('ocupada', 'text.delta', { text: 'hello' })
+      sessions.get('ocupada')!.status = 'idle'
+      emit('ocupada', { type: 'turn.finished' })
+      await tick()
+      assert.strictEqual(late.length, 1)
+      assert.strictEqual(late[0].parent, 'pai')
+      assert.match(late[0].text, /^\[Resposta de tradutor \(conversation ocupada\), à mensagem que entrou na fila dele[^\]]*\]\n\nhello$/)
+    })
+
+    it('com a mãe rodando, a resposta entra no turno dela (a fila da mãe)', async () => {
+      const { service, sessions, queued, late, event, emit } = busy()
+      sessions.get('pai')!.status = 'running'
+      await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'ocupada', message: 'um' }, { sessionId: 'pai' })
+      event('ocupada', 'message.injected', { text: 'um' })
+      event('ocupada', 'text.delta', { text: 'one' })
+      emit('ocupada', { type: 'turn.finished' })
+      await tick()
+      assert.deepStrictEqual(late, [])
+      assert.strictEqual(queued[1].id, 'pai')
+      assert.match(queued[1].text, /Resposta de tradutor[\s\S]*\n\none$/)
+    })
+
+    it('duas mensagens para o mesmo destino seguem a ordem da fila; cada uma chega', async () => {
+      const { service, queued, late, event, emit } = busy()
+      await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'ocupada', message: 'primeira' }, { sessionId: 'pai' })
+      await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'ocupada', message: 'segunda' }, { sessionId: 'pai' })
+      assert.deepStrictEqual(
+        queued.map((item) => item.text),
+        ['primeira', 'segunda'],
+      )
+      event('ocupada', 'message.injected', { text: 'primeira' })
+      event('ocupada', 'message.injected', { text: 'segunda' })
+      event('ocupada', 'text.delta', { text: 'as duas' })
+      emit('ocupada', { type: 'turn.finished' })
+      await tick()
+      assert.strictEqual(late.length, 2)
+      assert.ok(late.every((item) => item.text.endsWith('as duas')))
+    })
+
+    it('o turno acabou sem ela entrar (parou): vai como turno novo, como com o destino parado', async () => {
+      const { service, sessions, late, emit, watching } = busy()
+      await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'ocupada', message: 'de novo' }, { sessionId: 'pai' })
+      assert.strictEqual(watching('ocupada'), 1)
+      sessions.get('ocupada')!.status = 'idle'
+      emit('ocupada', { type: 'turn.finished' })
+      await tick()
+      await tick()
+      assert.strictEqual(watching('ocupada'), 0)
+      assert.strictEqual(late.length, 1)
+      assert.match(late[0].text, /\n\n\[tradutor\] de novo$/)
+    })
+
+    it('parado: igual a antes (espera e devolve a resposta), sem fila', async () => {
+      const { service, sessions, queued } = busy()
+      sessions.get('ocupada')!.status = 'idle'
+      const result = await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'ocupada', message: 'oi' }, { sessionId: 'pai' })
+      assert.deepStrictEqual(result, { ok: true, agentId: 'tradutor', sessionId: 'ocupada', reply: '[tradutor] oi' })
+      assert.deepStrictEqual(queued, [])
+    })
+
+    it('⛔ as travas valem antes da fila: fora da lista, ciclo, profundidade e a conversa de outra pessoa', async () => {
+      const { service, sessions, queued } = busy()
+      assert.match(JSON.stringify(await service.delegate({ allowed: ['outro'], agentId: 'tradutor', sessionId: 'ocupada', message: 'x' }, { sessionId: 'pai' })), /not allowed/)
+      assert.match(JSON.stringify(await service.delegate({ allowed: ['redator'], agentId: 'redator', sessionId: 'ocupada', message: 'x' }, { sessionId: 'pai' })), /no cycles/)
+      sessions.get('pai')!.metadata = { owner: { id: 'ana' }, delegationDepth: 2 }
+      assert.match(JSON.stringify(await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'ocupada', message: 'x' }, { sessionId: 'pai' })), /depth limit/)
+      sessions.get('pai')!.metadata = { owner: { id: 'ana' }, project: 'bh' }
+      sessions.set('da-bia', { ...session('da-bia', 'tradutor', { owner: { id: 'bia' }, project: 'bh' }), status: 'running' })
+      assert.match(
+        JSON.stringify(await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'da-bia', message: 'x' }, { sessionId: 'pai' })),
+        /another person/,
+      )
+      assert.deepStrictEqual(queued, [])
+    })
+
+    it('a conversa da pessoa ocupada: entra na fila com o cabeçalho de quem manda', async () => {
+      const { service, sessions, queued } = busy()
+      sessions.get('pai')!.metadata = { owner: { id: 'ana' }, project: 'bh' }
+      sessions.set('da-ana', { ...session('da-ana', 'integra', { owner: { id: 'ana' }, project: 'bh' }), status: 'running' })
+      const result = await service.delegate({ allowed: ['integra'], agentId: 'integra', sessionId: 'da-ana', message: 'oi' }, { sessionId: 'pai' })
+      assert.ok(result.ok && result.queued)
+      assert.match(queued[0].text, /^\[Mensagem do agente redator \(conversa pai\), em nome da mesma pessoa[\s\S]*\n\noi$/)
     })
   })
 })

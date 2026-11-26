@@ -228,7 +228,7 @@ describe('CodexAgentAdapter', () => {
     assert.strictEqual(calls.length, 1)
   })
 
-  it('os MCPs do agente viram `mcp_servers`, com a credencial de quem conversa e o filtro de ferramentas', () => {
+  it('⛔ os MCPs do agente viram `mcp_servers` com a credencial, o filtro (o que as permissões liberam) e SEM a aprovação do Codex (antes: "requires approval, but approval policy is never")', () => {
     const servers = codexMcpServers(
       [
         { config: { id: 'gateway', url: 'http://127.0.0.1:3100/v1/mcp', auth: 'caller' } as never, tools: ['list_agents'], callerHeader: 'X-Tool-Authorization' },
@@ -237,8 +237,13 @@ describe('CodexAgentAdapter', () => {
       'tok',
     )
     assert.deepStrictEqual(servers, {
-      gateway: { url: 'http://127.0.0.1:3100/v1/mcp', http_headers: { 'X-Tool-Authorization': 'Bearer tok' }, enabled_tools: ['list_agents'] },
-      docs: { url: 'http://docs/mcp' },
+      gateway: {
+        url: 'http://127.0.0.1:3100/v1/mcp',
+        http_headers: { 'X-Tool-Authorization': 'Bearer tok' },
+        enabled_tools: ['list_agents'],
+        default_tools_approval_mode: 'approve',
+      },
+      docs: { url: 'http://docs/mcp', default_tools_approval_mode: 'approve' },
     })
   })
 

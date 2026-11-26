@@ -204,6 +204,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'save_schedule',
       'set_agent_initial_context',
       'set_agent_resources',
+      'set_default_model_group',
       'set_initial_context',
       'set_model_enabled',
       'set_model_price',
@@ -246,20 +247,21 @@ describe('MCP do próprio gateway (integração)', () => {
     makeProjects().create({ id: 'beta-mcp', name: 'Beta' }, 'teste', 'api', biaId)
     const bia = (await call('/auth/login', { method: 'POST', body: { email: 'bia@x.test', password: PASSWORD } })).result.token
     const listed = await names(bia)
-    for (const tool of ['list_errors', 'usage_by_key', 'save_agent', 'save_permission_rules', 'save_hook', 'list_secret_names']) assert.ok(listed.includes(tool), tool)
+    // 🔁 Os grupos de modelos ficam: com `projectId`, os do projeto que ela administra.
     for (const tool of [
-      'list_providers',
-      'list_models',
+      'list_errors',
+      'usage_by_key',
+      'save_agent',
+      'save_permission_rules',
+      'save_hook',
+      'list_secret_names',
       'list_model_groups',
-      'list_packages',
-      'search_packages',
-      'install_package',
-      'remove_package',
-      'set_model_enabled',
-      'set_model_price',
       'save_model_group',
       'delete_model_group',
+      'set_default_model_group',
     ])
+      assert.ok(listed.includes(tool), tool)
+    for (const tool of ['list_providers', 'list_models', 'list_packages', 'search_packages', 'install_package', 'remove_package', 'set_model_enabled', 'set_model_price'])
       assert.ok(!listed.includes(tool), tool)
     assert.ok((await names(admin)).includes('list_providers'))
   })
@@ -317,8 +319,71 @@ describe('MCP do próprio gateway (integração)', () => {
       ['grupo-a'],
     )
 
-    // Quem não é admin do gateway nem vê a ferramenta.
+    // O padrão do gateway: um grupo, e `none`/vazio = sem padrão.
+    assert.strictEqual(json(await client.callTool({ name: 'set_default_model_group', arguments: { groupId: 'none' } })).defaultModelGroup, null)
+    assert.strictEqual(json(await client.callTool({ name: 'set_default_model_group', arguments: { groupId: 'grupo-a' } })).defaultModelGroup, 'grupo-a')
+    assert.strictEqual((await client.callTool({ name: 'set_default_model_group', arguments: { groupId: 'zzz-nao' } })).isError, true)
+
+    // Quem não é admin de nada nem vê a ferramenta.
     assert.ok(!(await names(member)).includes('save_model_group'))
+    await call('/settings', { method: 'PUT', token: admin, body: { defaultModelGroup: null, modelGroups: null } })
+  })
+
+  it('🔁 com projectId: os grupos do projeto salvam, listam (com os herdados do gateway) e saem sem tocar no gateway; quem não administra é recusado', async () => {
+    const step = { provider: 'claude', model: 'claude-sonnet-5' }
+    await call('/settings', { method: 'PUT', token: admin, body: { modelGroups: [{ id: 'global', name: 'Global', steps: [step] }], defaultModelGroup: 'global' } })
+    const caioId = (await call('/users', { method: 'POST', token: admin, body: { email: 'caio@x.test', name: 'Caio', password: PASSWORD } })).result.id
+    makeProjects().create({ id: 'gama-mcp', name: 'Gama' }, 'teste', 'api', caioId)
+    const caio = await connect((await call('/auth/login', { method: 'POST', body: { email: 'caio@x.test', password: PASSWORD } })).result.token)
+    const tool = async (name: string, args: Record<string, unknown>) => caio.callTool({ name, arguments: { projectId: 'gama-mcp', ...args } })
+
+    const saved = json(await tool('save_model_group', { id: 'local', name: 'Local', steps: [step] }))
+    assert.deepStrictEqual([saved.projectId, saved.modelGroups.map((group: { id: string }) => group.id)], ['gama-mcp', ['local']])
+    await tool('save_model_group', { id: 'global', name: 'Sombra', steps: [step] })
+    assert.strictEqual(json(await tool('set_default_model_group', { groupId: 'local' })).defaultModelGroup, 'local')
+    // Salvar outro grupo não limpa o padrão do projeto.
+    await tool('save_model_group', { id: 'extra', name: 'Extra', steps: [step, step] })
+    const listed = json(await tool('list_model_groups', {}))
+    assert.deepStrictEqual(
+      [listed.defaultModelGroup, listed.gatewayDefaultModelGroup, listed.effectiveDefaultModelGroup, listed.modelGroups.map((group: { id: string }) => group.id), listed.inherited],
+      ['local', 'global', 'local', ['local', 'global', 'extra'], []],
+    )
+    const bad = await tool('save_model_group', { id: 'ruim', name: 'Ruim', steps: [{ provider: 'nao-existe', model: 'x' }] })
+    assert.strictEqual(bad.isError, true)
+
+    // O padrão não sai; a que não existe é recusada; a livre sai.
+    assert.strictEqual((await tool('delete_model_group', { id: 'local' })).isError, true)
+    assert.strictEqual((await tool('delete_model_group', { id: 'zzz-nao' })).isError, true)
+    assert.deepStrictEqual(
+      json(await tool('delete_model_group', { id: 'global' })).modelGroups.map((group: { id: string }) => group.id),
+      ['local', 'extra'],
+    )
+    // O herdado aparece quando o projeto não tem o mesmo id.
+    assert.deepStrictEqual(
+      json(await tool('list_model_groups', {})).inherited.map((group: { id: string; inherited: boolean }) => [group.id, group.inherited]),
+      [['global', true]],
+    )
+
+    // `none` = não troca no projeto; vazio = volta ao do gateway.
+    assert.strictEqual(json(await tool('set_default_model_group', { groupId: 'none' })).defaultModelGroup, 'none')
+    assert.strictEqual(json(await tool('set_default_model_group', { groupId: null })).defaultModelGroup, null)
+    assert.strictEqual(json(await tool('list_model_groups', {})).effectiveDefaultModelGroup, 'global')
+
+    // O gateway não foi tocado.
+    const settings = (await call('/settings', { token: admin })).result
+    assert.deepStrictEqual(
+      [settings.modelGroups.map((group: { id: string; name: string }) => [group.id, group.name]), settings.defaultModelGroup],
+      [[['global', 'Global']], 'global'],
+    )
+
+    // Sem projectId, quem só administra projeto é recusado (e nada muda); outro projeto também.
+    assert.strictEqual((await caio.callTool({ name: 'save_model_group', arguments: { id: 'xx', name: 'X', steps: [step] } })).isError, true)
+    assert.strictEqual((await caio.callTool({ name: 'set_default_model_group', arguments: { groupId: null } })).isError, true)
+    assert.strictEqual((await caio.callTool({ name: 'list_model_groups', arguments: {} })).isError, true)
+    makeProjects().create({ id: 'delta-mcp', name: 'Delta' }, 'teste', 'api')
+    assert.strictEqual((await caio.callTool({ name: 'save_model_group', arguments: { projectId: 'delta-mcp', id: 'xx', name: 'X', steps: [step] } })).isError, true)
+    assert.strictEqual((await caio.callTool({ name: 'list_model_groups', arguments: { projectId: 'delta-mcp' } })).isError, true)
+    assert.strictEqual((await call('/settings', { token: admin })).result.defaultModelGroup, 'global')
     await call('/settings', { method: 'PUT', token: admin, body: { defaultModelGroup: null, modelGroups: null } })
   })
 

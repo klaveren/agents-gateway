@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import AccessTokens from '@/components/AccessTokens.vue'
+import OpenSessions from '@/components/OpenSessions.vue'
 import { ApiError } from '@/lib/api'
 import type { TVoiceLevel } from '@/lib/speech'
 import { KNOWN_SPEECH_MODELS } from '@/lib/speechCatalog'
@@ -189,6 +190,8 @@ async function changePassword() {
             </div>
           </form>
         </section>
+
+        <OpenSessions />
 
         <AccessTokens />
       </template>

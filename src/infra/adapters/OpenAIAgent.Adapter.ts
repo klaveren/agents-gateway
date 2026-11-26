@@ -144,14 +144,18 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     // Conexão MCP POR TURNO. O adapter é singleton; um slot compartilhado fazia o turno de um
     // usuário fechar as tools de outro no meio do stream, e vazava a conexão de quem perdia a corrida.
     const mcpServers = await this.openMcpServers(context, agent.allowedTools)
+    const collide = (await toolNamesCollide(mcpServers)).length > 0
 
     const oaiAgent = new Agent({
       name: agent.name,
-      instructions: record.systemPrompt,
+      instructions: collide
+        ? `${record.systemPrompt}\n\n## Ferramentas com o mesmo nome em dois servidores\nAs ferramentas MCP vêm com o servidor no nome (\`mcp_<servidor>__<ferramenta>\`): escolha a do servidor certo.`
+        : record.systemPrompt,
       model,
       modelSettings,
       tools: [...buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? [], context), ...hosted],
       mcpServers,
+      ...(collide ? { mcpConfig: { includeServerInToolNames: true } } : {}),
     })
 
     const items: AgentInputItem[] = [...history, user(this.buildUserContent(input))]
@@ -370,4 +374,24 @@ function hostedTool(name: string): Tool | undefined {
 export function hostedName(name: string): string {
   const base = name.replace(/_call$/, '')
   return NATIVE_TOOLS.some((tool) => tool.protocol === EProvider.OPENAI && tool.sdkName === base) ? base : name
+}
+
+/**
+ * ⛔ A MESMA FERRAMENTA EM DOIS SERVIDORES: o SDK da OpenAI recusa o turno inteiro ("Duplicate tool names found across MCP
+ * servers"). Caso real (26/11): a Maya opera os DOIS gateways, o local e o da origem, com as mesmas ferramentas. As duas
+ * ficam: com nome repetido, o SDK põe o servidor no nome (`mcp_<servidor>__<ferramenta>`, `includeServerInToolNames`) e
+ * chama a original no servidor certo — como o Claude e o Codex já fazem. Sem repetição, os nomes seguem como sempre.
+ */
+export async function toolNamesCollide(servers: readonly MCPServer[]): Promise<string[]> {
+  const seen = new Set<string>()
+  const repeated = new Set<string>()
+  for (const server of servers) {
+    if (typeof server.listTools !== 'function') continue
+    const filter = server.toolFilter && typeof server.toolFilter === 'object' ? server.toolFilter : undefined
+    const names = (await server.listTools().catch(() => []))
+      .map((tool) => tool.name)
+      .filter((name) => (!filter?.allowedToolNames?.length || filter.allowedToolNames.includes(name)) && !filter?.blockedToolNames?.includes(name))
+    for (const name of names) (seen.has(name) ? repeated : seen).add(name)
+  }
+  return [...repeated]
 }

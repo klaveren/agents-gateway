@@ -1,6 +1,6 @@
 {
   "name": "agents-gateway",
-  "version": "1.0.0-alpha.45",
+  "version": "1.0.0-alpha.52",
   "description": "Gateway that runs Claude, GPT and Gemini in two lanes: chat (plain SDK) and agent (official Agents SDK).",
   "main": "dist/main.js",
   "engines": {
@@ -15,8 +15,8 @@
     "dev:web": "pnpm --dir web dev",
     "test:web": "pnpm --dir web test",
     "test": "CONVERSATIONS_DB=:memory: node --test --import tsx 'src/**/*.test.ts'",
-    "lint": "eslint src/**/*.ts",
-    "lint:fix": "eslint src/**/*.ts --fix",
+    "lint": "eslint 'src/**/*.ts'",
+    "lint:fix": "eslint 'src/**/*.ts' --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "catalog": "tsx scripts/catalog.ts"
   },

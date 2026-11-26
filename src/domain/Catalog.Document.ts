@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { IFallbackStep, IModelGroup } from './Fallback.Policy'
-import type { IAgent, IAgentDiagnostics, IAgentTarget, IAgentTerminal, IAgentTrigger } from './models/Agent.Model'
+import type { IAgent, IAgentBrowser, IAgentDiagnostics, IAgentTarget, IAgentTerminal, IAgentTrigger } from './models/Agent.Model'
 import type { IImportProblem } from './models/ImportProblem.Model'
 import type { IMcpContainer, IMcpProcess, IMcpServerConfig } from './models/McpServer.Model'
 import type { IProject } from './models/Project.Model'
@@ -91,6 +91,8 @@ export const TERMINAL_SHAPE: TShape<IAgentTerminal> = { timeoutSeconds: 'value',
 
 export const DIAGNOSTICS_SHAPE: TShape<IAgentDiagnostics> = { typecheck: 'value', lint: 'value', format: 'value', timeoutSeconds: 'value' }
 
+export const BROWSER_SHAPE: TShape<IAgentBrowser> = { keepLogin: 'value' }
+
 export const TRIGGER_SHAPE: TShape<IAgentTrigger> = { id: 'value', when: 'value', body: 'value' }
 
 export const FALLBACK_STEP_SHAPE: TShape<IFallbackStep> = { provider: 'value', model: 'value' }
@@ -145,6 +147,7 @@ export const AGENT_SHAPE: TShape<IAgent> = {
   permissions: { list: PERMISSION_RULE_SHAPE },
   terminal: { object: TERMINAL_SHAPE },
   diagnostics: { object: DIAGNOSTICS_SHAPE },
+  browser: { object: BROWSER_SHAPE },
   // A ordem é a do índice "## Triggers" no prompt.
   triggers: { list: TRIGGER_SHAPE },
   modelGroup: 'value',

@@ -33,6 +33,8 @@
   const frame = ref<{ src: string; url?: string; title?: string; width?: number; height?: number }>()
   const error = ref<string>()
   const screen = ref<HTMLElement>()
+  /** ⌨️ O campo invisível que recebe o foco da tela: é nele que o sistema compõe acento, ç, til e IME. */
+  const typing = ref<HTMLTextAreaElement>()
   const focused = ref(false)
   let abort: AbortController | undefined
   let retry: ReturnType<typeof setTimeout> | undefined
@@ -104,24 +106,38 @@
 
   // 🖱️ A entrada vai em fila: a ordem do clique e das teclas é a da pessoa.
   let queue = Promise.resolve()
-  function send(event: Record<string, unknown>) {
+  function send(event: Record<string, unknown>, then?: (result: { editable?: boolean } | undefined) => void) {
     if (!props.interactive || !live.value) return
     queue = queue.then(() =>
-      api(`${base()}/input`, { method: 'POST', body: event }).then(
-        () => undefined,
+      api<{ editable?: boolean }>(`${base()}/input`, { method: 'POST', body: event }).then(
+        (result) => then?.(result),
         () => undefined,
       ),
     )
   }
 
+  /**
+   * ⌨️ NO TOQUE (celular), o teclado só abre quando a pessoa pede: o iPhone abre o teclado a cada foco num campo, e o
+   * foco ia para o campo invisível a cada clique — até num botão. O botão do teclado acende quando o clique caiu num campo
+   * de texto da página; no computador, nada muda (o clique segue focando o campo).
+   */
+  const touchOnly = typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+  const wantsKeyboard = ref(false)
+  function openKeyboard() {
+    wantsKeyboard.value = false
+    typing.value?.focus()
+  }
+
   /** Do ponto na imagem para o pixel da aba (a imagem pode estar menor que a aba enquanto a gaveta muda de tamanho). */
   function point(event: MouseEvent): { x: number; y: number } | undefined {
-    const image = event.currentTarget as HTMLElement
+    return pointAt(event.currentTarget as HTMLElement, event.clientX, event.clientY)
+  }
+  function pointAt(image: HTMLElement, clientX: number, clientY: number): { x: number; y: number } | undefined {
     const box = image.getBoundingClientRect()
     if (!box.width || !box.height) return undefined
     const width = frame.value?.width ?? box.width
     const height = frame.value?.height ?? box.height
-    return { x: ((event.clientX - box.left) * width) / box.width, y: ((event.clientY - box.top) * height) / box.height }
+    return { x: ((clientX - box.left) * width) / box.width, y: ((clientY - box.top) * height) / box.height }
   }
 
   const modifiers = (event: KeyboardEvent | MouseEvent) => (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0)
@@ -211,17 +227,27 @@
   }
 
   function onClick(event: MouseEvent) {
+    if (dragged) {
+      dragged = false
+      return
+    }
     if (picking.value) return void choose(event)
-    screen.value?.focus()
+    if (touchOnly) typing.value?.blur()
+    else typing.value?.focus()
     const at = point(event)
     if (at)
-      send({
-        type: 'click',
-        ...at,
-        button: event.button === 2 ? 'right' : event.button === 1 ? 'middle' : 'left',
-        clickCount: Math.min(3, event.detail || 1),
-        modifiers: modifiers(event),
-      })
+      send(
+        {
+          type: 'click',
+          ...at,
+          button: event.button === 2 ? 'right' : event.button === 1 ? 'middle' : 'left',
+          clickCount: Math.min(3, event.detail || 1),
+          modifiers: modifiers(event),
+        },
+        (result) => {
+          if (touchOnly) wantsKeyboard.value = !!result?.editable
+        },
+      )
   }
 
   let lastMove = 0
@@ -241,7 +267,10 @@
     event.preventDefault()
     const at = point(event)
     if (!at) return
-    wheel = { x: at.x, y: at.y, dx: wheel.dx + event.deltaX, dy: wheel.dy + event.deltaY }
+    scroll(at, event.deltaX, event.deltaY)
+  }
+  function scroll(at: { x: number; y: number }, deltaX: number, deltaY: number) {
+    wheel = { x: at.x, y: at.y, dx: wheel.dx + deltaX, dy: wheel.dy + deltaY }
     if (wheelTimer) return
     wheelTimer = setTimeout(() => {
       wheelTimer = undefined
@@ -250,19 +279,76 @@
     }, 50)
   }
 
+  /**
+   * 👆 ROLAR COM O DEDO (celular): a imagem não rola sozinha (`touch-none`); arrastar vira a roda do mouse na aba, no
+   * sentido do dedo (subir o dedo desce a página). Um toque sem arrastar segue como clique; depois de arrastar, o clique
+   * que o navegador gera no fim do toque é ignorado.
+   */
+  let touch: { x: number; y: number; moved: boolean } | undefined
+  let dragged = false
+  function onTouchStart(event: TouchEvent) {
+    const finger = event.touches[0]
+    touch = event.touches.length === 1 && finger ? { x: finger.clientX, y: finger.clientY, moved: false } : undefined
+    dragged = false
+  }
+  function onTouchMove(event: TouchEvent) {
+    const finger = event.touches[0]
+    if (!touch || !finger || !props.interactive || !live.value) return
+    const dx = touch.x - finger.clientX
+    const dy = touch.y - finger.clientY
+    if (!touch.moved && Math.abs(dx) < 6 && Math.abs(dy) < 6) return
+    touch.moved = true
+    event.preventDefault()
+    const image = event.currentTarget as HTMLElement
+    const at = pointAt(image, finger.clientX, finger.clientY)
+    if (!at) return
+    const box = image.getBoundingClientRect()
+    const ratio = box.width ? (frame.value?.width ?? box.width) / box.width : 1
+    scroll(at, dx * ratio, dy * ratio)
+    touch = { x: finger.clientX, y: finger.clientY, moved: true }
+  }
+  function onTouchEnd() {
+    dragged = !!touch?.moved
+    touch = undefined
+  }
+
+  let composing = false
+  /**
+   * ⌨️ Só as teclas que não escrevem (Enter, apagar, setas...) e os atalhos com Ctrl/Cmd vão como tecla. O que escreve fica
+   * para o campo invisível (`onInput`): tecla morta, Option no Mac e IME só viram texto lá — por tecla, o acento se perdia e o
+   * ç ia com Alt, como atalho.
+   */
   function onKey(event: KeyboardEvent) {
     if (!props.interactive || !live.value) return
+    if (event.isComposing || composing) return
     if (picking.value && event.key === 'Escape') {
       event.preventDefault()
       return togglePick()
     }
     // Colar: o evento `paste` traz o texto.
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') return
-    const printable = event.key.length === 1 && !event.metaKey && !event.ctrlKey
-    if (!printable && !isControlKey(event.key) && !event.metaKey && !event.ctrlKey) return
+    if (!isControlKey(event.key) && !event.metaKey && !event.ctrlKey) return
     event.preventDefault()
     const keyCode = keyCodeOf(event)
-    send({ type: 'key', key: event.key, code: event.code, keyCode, text: printable ? event.key : event.key === 'Enter' ? '\r' : undefined, modifiers: modifiers(event) })
+    const text = event.metaKey || event.ctrlKey ? undefined : event.key === 'Enter' ? '\r' : undefined
+    send({ type: 'key', key: event.key, code: event.code, keyCode, text, modifiers: modifiers(event) })
+  }
+
+  // ✍️ O texto do campo invisível vai inteiro para a aba (`Input.insertText`); durante a composição, espera o fim.
+  function flushTyping() {
+    const field = typing.value
+    if (!field || !field.value) return
+    const text = field.value
+    field.value = ''
+    if (props.interactive && live.value) send({ type: 'text', text })
+  }
+  function onInput(event: Event) {
+    if (composing || (event as InputEvent).isComposing) return
+    flushTyping()
+  }
+  function onCompositionEnd() {
+    composing = false
+    flushTyping()
   }
   function onPaste(event: ClipboardEvent) {
     if (!props.interactive || !live.value) return
@@ -290,7 +376,7 @@
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col" data-test="live-browser">
+  <div class="flex h-full min-h-0 flex-col" data-test="live-browser" data-no-pull>
     <div v-if="tabs.length" class="mk-tabs flex h-8 shrink-0" data-test="live-browser-tabs">
       <div class="flex min-w-0 flex-1 overflow-x-auto" role="tablist">
         <div
@@ -370,30 +456,61 @@
       >
         <Icon name="pick" class="h-4 w-4" />
       </button>
+      <button
+        v-if="touchOnly && interactive"
+        type="button"
+        class="bar-btn"
+        :class="{ 'animate-pulse bg-emerald-500/20 text-emerald-300': wantsKeyboard }"
+        title="Abrir o teclado para digitar na página"
+        aria-label="Abrir o teclado"
+        :disabled="!live"
+        data-test="live-browser-keyboard"
+        @click="openKeyboard"
+      >
+        <Icon name="keyboard" class="h-4 w-4" />
+      </button>
     </div>
     <div
       ref="screen"
-      :tabindex="interactive ? 0 : undefined"
       class="relative min-h-0 flex-1 overflow-hidden border-t bg-zinc-900/50 outline-none"
       :class="focused && interactive && live ? 'border-emerald-500' : 'border-zinc-800'"
       data-test="live-browser-screen"
-      @focus="focused = true"
-      @blur="focused = false"
-      @keydown="onKey"
-      @paste="onPaste"
     >
+      <textarea
+        v-if="interactive"
+        ref="typing"
+        class="pointer-events-none absolute top-0 left-0 h-px w-px resize-none overflow-hidden border-0 bg-transparent p-0 text-transparent caret-transparent opacity-0 outline-none"
+        aria-label="Digitar no navegador"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
+        tabindex="0"
+        data-test="live-browser-typing"
+        @focus="focused = true"
+        @blur="focused = false"
+        @keydown="onKey"
+        @paste="onPaste"
+        @input="onInput"
+        @compositionstart="composing = true"
+        @compositionend="onCompositionEnd"
+      />
       <img
         v-if="frame"
         :src="frame.src"
         :alt="frame.title ?? 'Tela do navegador'"
         draggable="false"
-        class="block w-full select-none"
+        class="block w-full touch-none select-none"
         :class="[{ 'opacity-50': live === false }, picking ? 'cursor-crosshair' : interactive && live ? 'cursor-pointer' : '']"
         data-test="live-browser-frame"
         @click="onClick"
         @contextmenu.prevent="onClick"
         @mousemove="onMove"
         @wheel="onWheel"
+        @touchstart="onTouchStart"
+        @touchmove="onTouchMove"
+        @touchend="onTouchEnd"
+        @touchcancel="onTouchEnd"
         @mouseleave="hover = undefined"
       />
       <div

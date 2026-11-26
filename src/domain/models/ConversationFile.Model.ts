@@ -5,8 +5,9 @@ import { extname } from 'node:path'
  * da conversa é temporária e a pessoa não a alcança; o gateway guarda uma CÓPIA, presa à conversa, que dura enquanto ela
  * existir (apagar a conversa apaga os arquivos).
  *
- * ⛔ Baixa quem vê a conversa (a mesma regra dela). O arquivo vai sempre como anexo, nunca aberto na página do gateway: um
- * HTML entregue não roda com a sessão de quem o baixa.
+ * ⛔ Baixa quem vê a conversa (a mesma regra dela). O arquivo nunca abre na página do gateway: um HTML entregue não roda
+ * com a sessão de quem o baixa. O download vai como anexo; a tela VÊ pelo `/view` (o mesmo `nosniff` e a CSP em
+ * `sandbox`), buscando com `fetch` e montando um blob, e nunca executa o conteúdo (ver `web/src/lib/fileViewer.ts`).
  */
 export const DELIVER_FILE_TOOL = 'deliver_file'
 
@@ -31,12 +32,15 @@ const MIME: Record<string, string> = {
   '.md': 'text/markdown',
   '.json': 'application/json',
   '.xml': 'application/xml',
+  '.yaml': 'application/yaml',
+  '.yml': 'application/yaml',
   '.html': 'text/html',
   '.pdf': 'application/pdf',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.zip': 'application/zip',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

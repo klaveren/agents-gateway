@@ -11,9 +11,12 @@
   import { renderMarkdown } from '@/lib/markdown'
   import type { ITurn } from '@/lib/types'
   import { readDraft, writeDraft } from '@/lib/draftStorage'
+  import { usePopover } from '@/lib/popover'
+  import { useAttachments } from '@/composables/useAttachments'
   import { useAgentsStore } from '@/stores/agents'
   import { useSpeechStore } from '@/stores/speech'
-  import { useMessagesStore, type IPersonMessage, type IPersonThread } from '@/stores/messages'
+  import { useRefreshHandler } from '@/lib/pullRefresh'
+  import { isResolved, useMessagesStore, type IOutgoingReply, type IPersonMessage, type IPersonThread } from '@/stores/messages'
 
   /**
    * 💬 MENSAGENS: o que os agentes escreveram para a pessoa (`notify`), num fio por conversa — como um app de mensagens. A
@@ -30,8 +33,6 @@
 
   const error = ref<string>()
   const draft = ref('')
-  const sending = ref(false)
-  const sentNote = ref<string>()
   const search = ref('')
 
   // 📱 O aviso no aparelho (Web Push): ligado por um toque, aparelho a aparelho.
@@ -63,6 +64,18 @@
   const requestLabel = (message: IPersonMessage) => (message.title || message.body.replace(/\s+/g, ' ').trim()).slice(0, 60)
   const replyTarget = ref<string>()
   const composer = ref<HTMLTextAreaElement>()
+
+  // 🔄 Puxar para atualizar: a lista e o item aberto (com o contexto da conversa). O rascunho fica.
+  useRefreshHandler(async () => {
+    error.value = undefined
+    try {
+      await messages.load()
+      if (props.id) await messages.openThread(props.id)
+      await loadContext()
+    } catch (failure) {
+      error.value = failure instanceof Error ? failure.message : String(failure)
+    }
+  })
 
   onMounted(() => {
     void pushState()
@@ -147,7 +160,6 @@
   watch(
     () => props.id,
     async (id) => {
-      sentNote.value = undefined
       // ⚖️ A resposta em escrita fica guardada por mensagem: trocou de tela e voltou, ela está ali.
       draft.value = id ? readDraft(`message:${id}`) : ''
       replyTarget.value = undefined
@@ -182,23 +194,47 @@
     await loadContext()
   }
 
-  async function send() {
+  // 📎 Anexar na resposta: o clipe, colar e arrastar, como na caixa da conversa (ver `useAttachments`).
+  const attachments = useAttachments()
+  const { files: replyFiles, dragging } = attachments
+  const picker = ref<HTMLInputElement>()
+  // Outro item: os anexos não vão junto.
+  watch(
+    () => props.id,
+    () => (attachments.files.value = []),
+  )
+
+  /** As respostas deste item a caminho (ver `messages.outbox`): a que o fio já trouxe usa a bolha de lá. */
+  const outgoing = computed(() => messages.outbox.filter((item) => item.key === props.id))
+  /** Os três pontos: a resposta foi e o agente ainda não respondeu no item. */
+  const awaiting = computed(() => outgoing.value.some((item) => item.state === 'sent' && item.agentsBefore !== undefined))
+  const outgoingTarget = (item: IOutgoingReply) => (item.replyTo ? fio.value.find((candidate) => candidate.id === item.replyTo) : undefined)
+
+  /**
+   * ⚖️ Otimista: a resposta entra no fio NA HORA, a caixa limpa e libera. Falhou, a bolha fica marcada com o erro e o texto
+   * volta para a caixa (se a pessoa não digitou outra coisa por cima); noutro item, volta para o rascunho do item dela.
+   */
+  function send() {
     const text = draft.value.trim()
-    if (!text || !props.id || sending.value) return
-    sending.value = true
+    const key = props.id
+    const sentFiles = attachments.files.value
+    if ((!text && !sentFiles.length) || !key) return
+    const target = replyTarget.value
     error.value = undefined
-    try {
-      const result = await messages.reply(props.id, text, replyTarget.value)
-      draft.value = ''
-      replyTarget.value = undefined
-      sentNote.value = result.queued
-        ? 'Enviado: a conversa está rodando, sua resposta entra no turno atual. A resposta do agente aparece aqui.'
-        : 'Enviado para a conversa. A resposta do agente aparece aqui.'
-    } catch (failure) {
-      error.value = failure instanceof Error ? failure.message : String(failure)
-    } finally {
-      sending.value = false
-    }
+    draft.value = ''
+    attachments.files.value = []
+    replyTarget.value = undefined
+    void nextTick(() => document.querySelector('[data-test="message-end"]')?.scrollIntoView?.({ block: 'end' }))
+    messages.reply(key, text, target, sentFiles).catch(() => {
+      if (props.id !== key) {
+        if (!readDraft(`message:${key}`).trim()) writeDraft(`message:${key}`, text)
+        return
+      }
+      if (draft.value.trim() || attachments.files.value.length) return
+      draft.value = text
+      attachments.files.value = sentFiles
+      replyTarget.value = target
+    })
   }
 
   function onKey(event: KeyboardEvent) {
@@ -220,17 +256,35 @@
     if (key === props.id) await router.push('/messages')
   }
 
-  /** As lidas da caixa, de uma vez: o que ainda precisa de você (não lida) fica. */
-  const readThreads = computed(() => (messages.archived ? [] : shown.value.filter((thread) => !thread.unread)))
-  const archivingRead = ref(false)
-  async function archiveRead() {
-    archivingRead.value = true
+  /** 📌 Dá o pedido por resolvido (ou o reabre) direto da lista, pelo menu da linha. */
+  async function setThreadStatus(key: string, status: 'resolved' | 'pending') {
+    const thread = messages.threads.find((candidate) => candidate.id === key)
+    if (!thread?.requestId) return
     try {
-      for (const thread of readThreads.value) await messages.archive(thread.id, true)
+      await messages.setStatus(key, thread.requestId, status)
+    } catch (failure) {
+      error.value = failure instanceof Error ? failure.message : String(failure)
+    }
+  }
+
+  /** As resolvidas da caixa, de uma vez: pedido ainda em aberto (pendente ou só respondido) e aviso não lido ficam. */
+  const resolvedThreads = computed(() => (messages.archived ? [] : shown.value.filter(isResolved)))
+  const archivingResolved = ref(false)
+  async function archiveResolved() {
+    archivingResolved.value = true
+    try {
+      for (const thread of resolvedThreads.value) await messages.archive(thread.id, true)
       if (props.id && !messages.threads.some((thread) => thread.id === props.id)) await router.push('/messages')
     } finally {
-      archivingRead.value = false
+      archivingResolved.value = false
     }
+  }
+
+  /** O menu de três pontos ao lado da busca, no desenho do de Conversas: arquivar as resolvidas e as arquivadas. */
+  const { open: menuOpen, root: menuRoot } = usePopover()
+  function pick(action: () => unknown) {
+    menuOpen.value = false
+    void action()
   }
 
   const snippet = (text: string) => text.replace(/\s+/g, ' ').slice(0, 140)
@@ -241,23 +295,8 @@
     <template #list>
       <section class="flex h-full flex-col" data-test="messages-list">
         <header class="flex items-center gap-2 px-4 pt-4 pb-2">
-          <h1 class="text-xl font-semibold">Mensagens</h1>
+          <h1 class="text-xl font-semibold">{{ messages.archived ? 'Arquivadas' : 'Mensagens' }}</h1>
           <span v-if="messages.unread" class="rounded-full bg-emerald-500 px-1.5 text-xs font-semibold text-zinc-950">{{ messages.unread }}</span>
-          <button
-            v-if="readThreads.length"
-            type="button"
-            class="btn btn-sm btn-ghost ml-auto"
-            :disabled="archivingRead"
-            title="Arquivar as conversas já lidas"
-            data-test="archive-read"
-            @click="archiveRead"
-          >
-            <Icon name="archive" class="h-4 w-4" />
-            Arquivar lidas
-          </button>
-          <button type="button" class="btn btn-sm btn-ghost" :class="readThreads.length ? '' : 'ml-auto'" @click="messages.showArchived(!messages.archived)">
-            {{ messages.archived ? 'Caixa de entrada' : 'Arquivadas' }}
-          </button>
         </header>
         <div class="flex items-center gap-2 px-4 pb-2 text-xs" data-test="push">
           <template v-if="push === 'on'">
@@ -273,13 +312,62 @@
           <span v-else-if="push === 'denied'" class="text-zinc-500">Notificações bloqueadas para este site nos ajustes do navegador.</span>
           <span v-if="pushError" class="text-rose-300">{{ pushError }}</span>
         </div>
-        <div class="px-4 pb-2">
+        <!-- A busca e o menu de três pontos: arquivar as resolvidas e ver as arquivadas. -->
+        <div class="flex items-center gap-1.5 px-4 pb-2">
           <input
             v-model="search"
             type="search"
-            class="h-9 w-full rounded-full bg-zinc-900 px-4 text-sm outline-none placeholder:text-zinc-500"
+            class="h-9 min-w-0 flex-1 rounded-full bg-zinc-900 px-4 text-sm outline-none placeholder:text-zinc-500"
             placeholder="Buscar por agente ou assunto…"
           />
+          <div ref="menuRoot" class="relative shrink-0">
+            <button
+              type="button"
+              class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800"
+              :class="menuOpen || messages.archived ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400'"
+              title="Mais opções"
+              aria-label="Mais opções"
+              aria-haspopup="menu"
+              :aria-expanded="menuOpen"
+              data-test="messages-menu"
+              @click="menuOpen = !menuOpen"
+            >
+              <Icon name="more" class="h-5 w-5" />
+            </button>
+            <div v-if="menuOpen" role="menu" class="absolute top-full right-0 z-50 mt-1 w-64 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40">
+              <div class="border-b border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-500">Mensagens</div>
+              <button
+                v-if="resolvedThreads.length"
+                type="button"
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                :disabled="archivingResolved"
+                data-test="archive-resolved"
+                @click="pick(archiveResolved)"
+              >
+                <Icon name="check" class="h-4 w-4 shrink-0 text-zinc-400" />
+                <span class="min-w-0 flex-1">
+                  <span class="block">Arquivar resolvidas</span>
+                  <span class="block truncate text-xs text-zinc-500">Pedidos resolvidos e avisos já lidos</span>
+                </span>
+                <span class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400" data-test="resolved-count">{{ resolvedThreads.length }}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-zinc-800"
+                :class="messages.archived ? 'text-emerald-300' : 'text-zinc-200'"
+                data-test="archived-toggle"
+                @click="pick(() => messages.showArchived(!messages.archived))"
+              >
+                <Icon name="archive" class="h-4 w-4 shrink-0 text-zinc-400" />
+                <span class="min-w-0 flex-1">
+                  <span class="block">{{ messages.archived ? 'Voltar à caixa de entrada' : 'Arquivadas' }}</span>
+                  <span class="block truncate text-xs text-zinc-500">{{ messages.archived ? 'As mensagens em aberto' : 'As mensagens que você guardou' }}</span>
+                </span>
+              </button>
+            </div>
+          </div>
         </div>
         <p v-if="messages.loaded && !shown.length" class="px-4 py-8 text-center text-sm text-zinc-500">
           {{ messages.archived ? 'Nenhuma mensagem arquivada.' : 'Nenhuma mensagem. Quando um agente precisar de você, ela aparece aqui.' }}
@@ -294,6 +382,7 @@
               :provider="agentProvider(thread.agentId)"
               :speaking="speech.current?.thread === thread.id"
               @archive="archiveThread"
+              @status="setThreadStatus"
             />
           </li>
         </ul>
@@ -417,15 +506,58 @@
                 <button v-if="requestOf(message)" type="button" class="text-[11px] text-zinc-500 hover:text-zinc-300" data-test="message-in-reply-to" @click="goToRequest(message.replyTo!)">
                   ↳ em resposta a {{ requestLabel(requestOf(message)!) }}
                 </button>
-                <div class="rounded-2xl rounded-br-md bg-violet-600/80 px-3.5 py-2 text-sm whitespace-pre-wrap text-white">{{ message.body }}</div>
+                <div v-if="message.body" class="rounded-2xl rounded-br-md bg-violet-600/80 px-3.5 py-2 text-sm whitespace-pre-wrap text-white">{{ message.body }}</div>
+                <div v-if="message.files?.length" class="flex flex-wrap justify-end gap-1.5" data-test="message-person-files">
+                  <span v-for="(file, index) in message.files" :key="index" class="flex items-center gap-1 rounded-full bg-violet-600/30 px-2.5 py-1 text-xs text-violet-100">
+                    <Icon name="clip" class="h-3.5 w-3.5" />
+                    {{ file.name }}
+                  </span>
+                </div>
                 <span class="text-[11px] text-zinc-500">{{ shortTime(message.createdAt) }}</span>
               </div>
             </template>
-            <p v-if="sentNote" class="self-end text-xs text-zinc-500">{{ sentNote }}</p>
+            <!-- A resposta a caminho: na hora, antes de o servidor responder; a que o fio já trouxe usa a bolha de lá. -->
+            <template v-for="item in outgoing" :key="item.id">
+              <div v-if="!item.confirmed" class="flex max-w-[85%] flex-col items-end gap-1 self-end" data-test="message-outgoing" :data-state="item.state">
+                <span v-if="outgoingTarget(item)" class="text-[11px] text-zinc-500">↳ em resposta a {{ requestLabel(outgoingTarget(item)!) }}</span>
+                <div
+                  v-if="item.body"
+                  class="rounded-2xl rounded-br-md px-3.5 py-2 text-sm whitespace-pre-wrap text-white"
+                  :class="item.state === 'failed' ? 'bg-violet-600/40 ring-1 ring-rose-500/60' : item.state === 'sending' ? 'bg-violet-600/60' : 'bg-violet-600/80'"
+                >
+                  {{ item.body }}
+                </div>
+                <div v-if="item.files?.length" class="flex flex-wrap justify-end gap-1.5" data-test="message-outgoing-files">
+                  <span v-for="(name, index) in item.files" :key="index" class="flex items-center gap-1 rounded-full bg-violet-600/30 px-2.5 py-1 text-xs text-violet-100">
+                    <Icon name="clip" class="h-3.5 w-3.5" />
+                    {{ name }}
+                  </span>
+                </div>
+                <span v-if="item.state === 'sending'" class="text-[11px] text-zinc-500">Enviando…</span>
+                <span v-else-if="item.state === 'sent'" class="text-[11px] text-zinc-500">{{ item.queued ? 'Enviada · entra no turno em andamento' : 'Enviada' }}</span>
+                <span v-else class="flex items-center gap-2 text-[11px] text-rose-300" data-test="message-outgoing-error">
+                  Não enviada: {{ item.error }}
+                  <button type="button" class="text-zinc-400 hover:text-zinc-100" title="Tirar da tela" aria-label="Tirar a mensagem não enviada" @click="messages.dismissOutgoing(item.id)">×</button>
+                </span>
+              </div>
+            </template>
+            <div v-if="awaiting" class="flex h-9 items-center gap-1 self-start rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5" aria-label="Aguardando a resposta do agente" data-test="message-awaiting">
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.3s]" />
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.15s]" />
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400" />
+            </div>
             <div data-test="message-end" />
           </div>
         </div>
-        <form class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3" @submit.prevent="send">
+        <form
+          class="border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3"
+          :class="dragging ? 'bg-emerald-500/10 outline-2 -outline-offset-2 outline-emerald-500/60 outline-dashed' : ''"
+          data-test="message-reply-form"
+          @submit.prevent="send"
+          @dragover="attachments.onDragOver"
+          @dragleave="attachments.onDragLeave"
+          @drop="attachments.onDrop"
+        >
           <p v-if="error" class="mb-2 text-sm text-rose-300">{{ error }}</p>
           <div v-if="targetMessage" class="mx-auto mb-2 flex max-w-3xl items-center gap-2 text-xs" data-test="reply-target">
             <span class="min-w-0 truncate rounded-full bg-emerald-500/15 px-3 py-1 text-emerald-300">Respondendo: {{ requestLabel(targetMessage) }}</span>
@@ -433,7 +565,26 @@
               ×
             </button>
           </div>
+          <div v-if="replyFiles.length" class="mx-auto mb-2 flex max-w-3xl flex-wrap gap-1.5" data-test="message-reply-files">
+            <span v-for="(file, index) in replyFiles" :key="index" class="flex items-center gap-1 rounded-full bg-zinc-800 px-2.5 py-1 text-xs">
+              {{ file.name }}
+              <button type="button" class="text-zinc-400 hover:text-white" :aria-label="`Tirar ${file.name}`" @click="replyFiles.splice(index, 1)">
+                <Icon name="x" class="h-3.5 w-3.5" />
+              </button>
+            </span>
+          </div>
           <div class="mx-auto flex max-w-3xl items-end gap-2">
+            <button
+              type="button"
+              class="grid h-10 w-10 shrink-0 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+              title="Anexar"
+              aria-label="Anexar"
+              data-test="message-reply-attach"
+              @click="picker?.click()"
+            >
+              <Icon name="clip" class="h-5 w-5" />
+            </button>
+            <input ref="picker" type="file" multiple class="hidden" data-test="message-reply-picker" @change="attachments.attach" />
             <textarea
               ref="composer"
               v-model="draft"
@@ -442,11 +593,12 @@
               :placeholder="targetMessage ? 'Responder a este pedido…' : current ? `Responder a ${agentName(current.agentId)} (vai para a conversa)` : 'Responder'"
               data-test="message-reply"
               @keydown="onKey"
+              @paste="attachments.onPaste"
             />
             <button
               type="submit"
               class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400 disabled:opacity-40"
-              :disabled="sending || !draft.trim()"
+              :disabled="!draft.trim() && !replyFiles.length"
               title="Enviar"
             >
               <Icon name="send" class="h-5 w-5" />

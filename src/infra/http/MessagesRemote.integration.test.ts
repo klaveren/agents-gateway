@@ -164,6 +164,14 @@ describe('Mensagens de projeto conectado (integração)', () => {
     const replied = await call('/messages/m_remoto/reply', { method: 'POST', token: ana, body: { message: 'Pode' } })
     assert.deepStrictEqual([replied.status, replied.body.result], [202, { queued: true }])
     assert.strictEqual((await call('/messages/m_remoto/reply', { method: 'POST', token: ana, body: { message: ' ' } })).status, 422)
+    // 📎 Anexo ainda não vai a projeto conectado: 422, sem chamar a origem.
+    const calledBefore = calls.length
+    const attached = await call('/messages/m_remoto/reply', {
+      method: 'POST',
+      token: ana,
+      body: { message: 'Pode', files: [{ name: 'a.txt', mimeType: 'text/plain', data: 'YQ==' }] },
+    })
+    assert.deepStrictEqual([attached.status, calls.slice(calledBefore).filter((entry) => entry.startsWith('reply:'))], [422, []])
     for (const key of ['m_remoto', 'm_desconhecido']) {
       const before = calls.length
       if (key === 'm_remoto') {

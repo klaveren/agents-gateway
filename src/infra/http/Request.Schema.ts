@@ -77,6 +77,14 @@ export const sendMessageSchema = z
     path: ['message'],
   })
 
+/** `POST /messages/:key/reply`: a resposta pela caixa, com os anexos nas regras da mensagem da conversa. O `replyTo` sai à parte. */
+export const replyMessageSchema = z
+  .object({
+    message: z.string().default(''),
+    files: z.array(fileSchema).max(MAX_FILES).optional(),
+  })
+  .passthrough()
+
 /**
  * Campo opcional que aceita `null` (ou texto vazio) como pedido de voltar ao padrão.
  *
@@ -276,15 +284,21 @@ export const agentBodySchema = z.object({
     })
     .nullable()
     .optional(),
+  /** O navegador do agente (guardar o login entre conversas). Ausente na edição = mantém; `null` desliga. */
+  browser: z.object({ keepLogin: z.boolean().optional() }).nullable().optional(),
 })
+
+/** Limpar as sessões guardadas do navegador do agente: as do projeto (ausente = sem projeto) ou, com `all`, todas. */
+export const browserClearSchema = z.object({ projectId: z.string().max(200).nullable().optional(), all: z.boolean().optional() })
 
 /**
  * Contas. ⚠️ A senha só tem teto aqui (o hash custa CPU por caractere); o mínimo é regra do domínio
  * (`passwordIssue`), que devolve o problema campo a campo junto dos outros.
  */
 const password = z.string().max(500)
-export const setupSchema = z.object({ email: z.string().max(200), name: z.string().max(200), password, code: z.string().max(100).optional() })
-export const loginSchema = z.object({ email: z.string().max(200), password })
+export const setupSchema = z.object({ email: z.string().max(200), name: z.string().max(200), password, code: z.string().max(100).optional(), keepSignedIn: z.boolean().optional() })
+/** `keepSignedIn`: "Manter conectado" — 30 dias que deslizam com o uso. Ausente = a sessão curta de sempre. */
+export const loginSchema = z.object({ email: z.string().max(200), password, keepSignedIn: z.boolean().optional() })
 export const createUserSchema = z.object({ email: z.string().max(200), name: z.string().max(200), password, role: z.enum(['admin', 'member']).default('member') })
 export const updateUserSchema = z.object({ name: z.string().max(200).optional(), role: z.enum(['admin', 'member']).optional(), disabled: z.boolean().optional() })
 export const resetPasswordSchema = z.object({ password })

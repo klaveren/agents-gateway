@@ -106,7 +106,7 @@ describe('AgentProvider — o ambiente e o id da conversa', () => {
     return events
   }
 
-  it('Claude Agent SDK: "## Ambiente" com o projeto e a MESMA pasta do `cwd`; o id da conversa só no primeiro turno', async () => {
+  it('Claude Agent SDK: "## Ambiente" com a pasta do projeto, e o `cwd` numa pasta só da conversa dentro dela; o id da conversa só no primeiro turno', async () => {
     const { provider, store, queries } = setup()
     const session = await provider.createSession({ agentId: 'dev', mode: EMode.AGENT, metadata: { project: 'alfa' } })
     await run(provider.sendMessage(session.id, { text: 'oi' }))
@@ -117,7 +117,8 @@ describe('AgentProvider — o ambiente e o id da conversa', () => {
       queries[0].options?.systemPrompt,
       `Você escreve código.\n\n## Ambiente\n- Agente: dev.\n- Projeto: Alfa (projectId "alfa").\n- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.\n${waitLine({})}`,
     )
-    assert.strictEqual(queries[0].options?.cwd, directory, 'o diretório dito é o `cwd` da lane')
+    // ⛔ O `cwd` do CLI nunca é a raiz do projeto: o sandbox dele cria ali `package.json`/`.env*` vazios (ver `conversationWorkspace`).
+    assert.strictEqual(queries[0].options?.cwd, join(directory, '.tmp', 'conversations', session.id.replace(/[^a-zA-Z0-9_-]/g, '_')))
     assert.strictEqual(await promptText(queries[0].prompt), `<contexto>id desta conversa: ${session.id}</contexto>\n\noi`)
     assert.strictEqual(await promptText(queries[1].prompt), 'e agora?', 'o id vai uma vez por histórico')
     assert.deepStrictEqual(

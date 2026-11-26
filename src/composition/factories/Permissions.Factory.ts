@@ -17,14 +17,14 @@ let repository: SqlitePermissionRepository | undefined
 
 /**
  * ⛔ O que mora na pasta de dados do gateway e nenhum agente lê nem escreve: o banco, a chave-mestra, os backups e os
- * logins das assinaturas. As pastas de projeto e de ferramentas, que também ficam lá, não entram.
+ * logins das assinaturas e os perfis guardados do navegador (cookies valem login). As pastas de projeto e de ferramentas, que também ficam lá, não entram.
  */
 export function installationRules(): IPermissionRule[] {
   const data = dataDir().replace(/\/+$/, '')
   // 🖥️ A configuração do app no Mac (o `config.env`) e o LaunchAgent dele: o agente de máquina alcança a casa inteira.
   const mac =
     process.platform === 'darwin' ? [`${homedir()}/Library/Application Support/Agents Gateway/**`, `${homedir()}/Library/LaunchAgents/com.agents-gateway.server.plist`] : []
-  return [`${data}/*.db`, `${data}/*.db-*`, `${data}/secrets*`, `${data}/backup*/**`, `${data}/*-home/**`, ...mac].flatMap((pattern) => [
+  return [`${data}/*.db`, `${data}/*.db-*`, `${data}/secrets*`, `${data}/backup*/**`, `${data}/*-home/**`, `${data}/browser-profiles/**`, ...mac].flatMap((pattern) => [
     { category: 'read' as const, pattern, decision: 'deny' as const, note: 'dados do gateway' },
     { category: 'write' as const, pattern, decision: 'deny' as const, note: 'dados do gateway' },
   ])

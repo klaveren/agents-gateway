@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import {
   IPersonMessage,
+  IPersonMessageFile,
   IPersonThread,
   isRequestKey,
   isRequestLevel,
   messageKeyOf,
+  NOTIFY_TOOL,
   PERSON_MESSAGE_LEVELS,
   PERSON_MESSAGE_LIMITS,
   TPersonMessageLevel,
@@ -176,9 +178,16 @@ export class PersonMessagesService {
    * quem respondeu e o quê) — lida para quem escreveu. Devolve o texto que entra na conversa, com quem respondeu e sobre o
    * quê, para o agente saber de onde veio. ⛔ Só quem tem o fio responde.
    */
-  reply(recipientId: string, key: string, text: string, authorName: string, replyTo?: string): { input: string; agentId: string; conversationId: string } {
+  reply(
+    recipientId: string,
+    key: string,
+    text: string,
+    authorName: string,
+    replyTo?: string,
+    files?: IPersonMessageFile[],
+  ): { input: string; agentId: string; conversationId: string; requestId?: string } {
     const body = text?.trim() ?? ''
-    if (!body) throw new PersonMessageError('message is required')
+    if (!body && !files?.length) throw new PersonMessageError('message is required')
     if (body.length > PERSON_MESSAGE_LIMITS.body) throw new PersonMessageError(`message is longer than ${PERSON_MESSAGE_LIMITS.body} characters`)
     const found = this.resolve(recipientId, key)
     if (!found) throw new PersonMessageError('no such thread')
@@ -202,6 +211,7 @@ export class PersonMessagesService {
         body,
         level: 'info',
         ...(target ? this.copyOf(target, recipient, recipientId, conversationId) : {}),
+        ...(files?.length ? { files: files.map(({ name, mimeType, size }) => ({ name, mimeType, size })) } : {}),
         createdAt: at,
         ...(recipient === recipientId ? { readAt: at } : {}),
       })
@@ -213,7 +223,35 @@ export class PersonMessagesService {
     }
     const about = (message: IPersonMessage) => (message.title || message.body.replace(/\s+/g, ' ').trim()).slice(0, 60)
     const label = target ? ` a "${about(target)}" (pedido ${target.id})` : asked ? ` à sua mensagem "${about(asked)}" (${asked.id})` : ''
-    return { input: `[Resposta de ${authorName} pela caixa de Mensagens${label}]\n\n${body}`, agentId: mine[0].agentId, conversationId }
+    // 🎯 Cada resposta volta ao SEU pedido: o agente responde a ele com `notify` + `replyTo`; o que ficar sem resposta, o
+    // gateway preenche com o texto final do turno (ver `ReplyMirror`).
+    const how = target ? `\nResponda a ESTE pedido com ${NOTIFY_TOOL} usando replyTo: "${target.id}".` : ''
+    const attached = files?.length ? `\n(anexos: ${files.map((file) => file.name).join(', ')})` : ''
+    return {
+      input: `[Resposta de ${authorName} pela caixa de Mensagens${label}]${how}${attached}\n\n${body}`.trimEnd(),
+      agentId: mine[0].agentId,
+      conversationId,
+      ...(target ? { requestId: target.id } : {}),
+    }
+  }
+
+  /**
+   * 🎯 O pedido `requestId` já tem resposta do agente DEPOIS da última resposta da pessoa a ele (um `notify` com `replyTo`,
+   * ou a cópia do gateway): o fim do turno não o preenche de novo.
+   */
+  answeredAfterReply(conversationId: string, requestId: string): boolean {
+    let request: IPersonMessage
+    try {
+      request = this.requestAcross(conversationId, requestId)
+    } catch {
+      return true
+    }
+    const mine = this.deps.repository.thread(request.recipientId, conversationId)
+    let lastReply = -1
+    mine.forEach((message, index) => {
+      if (message.from === 'person' && message.replyTo === request.id) lastReply = index
+    })
+    return mine.some((message, index) => index > lastReply && message.from === 'agent' && message.replyTo === request.id)
   }
 
   /** O `replyTo` na cópia de cada destinatário: cada um tem o seu id do mesmo pedido (mesma hora e mesmo texto). */
@@ -225,16 +263,27 @@ export class PersonMessagesService {
     return same ? { replyTo: same.id } : {}
   }
 
-  /** 💬 A resposta do agente ao que a pessoa mandou pela caixa volta para o fio de todos (não lida). */
-  mirror(conversationId: string, agentId: string, text: string, level: TPersonMessageLevel = 'info'): void {
+  /**
+   * 💬 A resposta do agente ao que a pessoa mandou pela caixa volta para o fio de todos (não lida). ⛔ Nunca mais "o pedido
+   * respondido por último": doze respostas na fila caíam todas no mesmo item. Sem `replyTo`, é o item da conversa.
+   */
+  mirror(conversationId: string, agentId: string, text: string, level: TPersonMessageLevel = 'info', replyTo?: string): void {
     const body = text.trim().slice(0, PERSON_MESSAGE_LIMITS.body)
     if (!body) return
     const at = this.now()
+    // 🎯 Com `replyTo`, o retorno vai PARA DENTRO daquele pedido (a cópia de cada destinatário); sem ele, para o item da conversa.
+    let request: IPersonMessage | undefined
+    if (replyTo && !isRequestLevel(level)) {
+      try {
+        request = this.requestAcross(conversationId, replyTo)
+      } catch {
+        request = undefined
+      }
+    }
     for (const recipient of this.deps.repository.recipientsOf(conversationId)) {
       const mine = this.deps.repository.thread(recipient, conversationId)
       const projectId = mine[0]?.projectId
-      // O retorno do agente vai para o item do pedido que a pessoa respondeu por último (o aviso comum, para o da conversa).
-      const answered = isRequestLevel(level) ? undefined : [...mine].reverse().find((message) => message.from === 'person')?.replyTo
+      const answered = request ? this.copyOf(request, recipient, request.recipientId, conversationId).replyTo : undefined
       const message: IPersonMessage = {
         id: `m_${randomBytes(9).toString('hex')}`,
         recipientId: recipient,

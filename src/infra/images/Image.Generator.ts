@@ -85,7 +85,8 @@ async function chat(base: string, key: string, model: string, prompt: string, fe
     redirect: 'error',
   })
   type TImage = { image_url?: { url?: string } }
-  const body = (await response.json().catch(() => undefined)) as { choices?: Array<{ message?: { images?: TImage[] } }>; usage?: Record<string, unknown>; error?: { message?: string } } | undefined
+  const body = (await response.json().catch(() => undefined)) as
+    { choices?: Array<{ message?: { images?: TImage[] } }>; usage?: Record<string, unknown>; error?: { message?: string } } | undefined
   if (!response.ok) throw new Error(clean(body?.error?.message ?? `HTTP ${response.status}`, key))
   const url = body?.choices?.[0]?.message?.images?.find((item) => item.image_url?.url)?.image_url?.url ?? ''
   const match = /^data:(image\/[\w.+-]+);base64,(.+)$/s.exec(url)
@@ -103,7 +104,8 @@ async function google(key: string, model: string, prompt: string, fetcher: typeo
     redirect: 'error',
   })
   type TPart = { inlineData?: { data?: string; mimeType?: string } }
-  const body = (await response.json().catch(() => undefined)) as { candidates?: Array<{ content?: { parts?: TPart[] } }>; usageMetadata?: Record<string, unknown>; error?: { message?: string } } | undefined
+  const body = (await response.json().catch(() => undefined)) as
+    { candidates?: Array<{ content?: { parts?: TPart[] } }>; usageMetadata?: Record<string, unknown>; error?: { message?: string } } | undefined
   if (!response.ok) throw new Error(clean(body?.error?.message ?? `HTTP ${response.status}`, key))
   const part = body?.candidates?.[0]?.content?.parts?.find((item) => item.inlineData?.data)
   if (!part?.inlineData?.data) throw new Error('the model answered without an image (is it an image model?)')

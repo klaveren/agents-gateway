@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { decide, type IPermissionRule } from '@domain/Permission.Policy'
 import type { IPermissionChecker } from '@application/Permissions.Service'
@@ -17,7 +17,7 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { CLAUDE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
-import { CLAUDE_TOOL_NAMES, ClaudeAgentAdapter, cliEnv, preToolUse, windowOf } from './ClaudeAgent.Adapter'
+import { CLAUDE_TOOL_NAMES, ClaudeAgentAdapter, cliEnv, cliSessionExists, mcpPendingContext, preToolUse, windowOf } from './ClaudeAgent.Adapter'
 import { SessionStore } from '@infra/session/Session.Store'
 
 type TQuery = typeof query
@@ -221,7 +221,10 @@ describe('ClaudeAgentAdapter', () => {
     writeFileSync(join(repoB, 'README.md'), 'b')
     writeFileSync(join(repoB, '.env'), 'K=1')
     try {
-      let rules: IPermissionRule[] = [{ category: 'read', pattern: 'repositories/B/**', decision: 'allow' }, { category: 'write', pattern: 'repositories/B/**', decision: 'allow' }]
+      let rules: IPermissionRule[] = [
+        { category: 'read', pattern: 'repositories/B/**', decision: 'allow' },
+        { category: 'write', pattern: 'repositories/B/**', decision: 'allow' },
+      ]
       const permissions = {
         check: (_asker: unknown, subject: Parameters<typeof decide>[0]) => decide(subject, { project: rules }),
         layers: () => ({ project: rules, system: [] }),
@@ -401,6 +404,50 @@ describe('ClaudeAgentAdapter', () => {
     // ⚖️ O nome completo das do gateway vai no prompt: o modelo chamava `use_resource` sem o prefixo.
     assert.ok(String(seen[0].options?.systemPrompt).endsWith(CLAUDE_TOOL_NAMES))
     assert.match(CLAUDE_TOOL_NAMES, /mcp__local__use_resource/)
+  })
+
+  it('⚖️ o CLI espera os MCPs antes do 1.º turno, também sem conexão montada, e o ambiente do gateway segue', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true) })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    const env = seen[0].options?.env ?? {}
+    assert.strictEqual(env.MCP_CONNECTION_NONBLOCKING, '0')
+    assert.strictEqual(env.MCP_CONNECT_TIMEOUT_MS, '15000')
+    assert.strictEqual(env.MCP_TIMEOUT, '15000')
+    assert.strictEqual(env.PATH, process.env.PATH)
+  })
+
+  it('⚖️ MCP que não ligou a tempo: aviso no turno e ao modelo, com o pedido', async () => {
+    const seen: TQueryParams[] = []
+    const init = {
+      type: 'system',
+      subtype: 'init',
+      session_id: CLI_SESSION_ID,
+      mcp_servers: [
+        { name: 'local', status: 'connected' },
+        { name: 'mcp_crm', status: 'pending' },
+      ],
+    }
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(() => [init, ...turn().slice(1)], seen), catalog: catalogWith(true) })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.ok(events.some((event) => event.type === 'warning' && /MCP sem conexão neste turno/.test(String((event.payload as { message?: string }).message))))
+    const hook = seen[0].options?.hooks?.UserPromptSubmit?.[0]?.hooks[0]
+    assert.ok(hook)
+    const output = (await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' } as never, undefined, { signal: new AbortController().signal })) as {
+      hookSpecificOutput?: { additionalContext?: string }
+    }
+    assert.match(String(output.hookSpecificOutput?.additionalContext), /ainda está conectando.*não conclua que não existem/)
+  })
+
+  it('MCP conectado: sem aviso; sem init, o aviso não segura o pedido além do teto', async () => {
+    const hook = mcpPendingContext(Promise.resolve(undefined))
+    assert.deepStrictEqual(await hook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' } as never, undefined, { signal: new AbortController().signal }), {})
+    const never = mcpPendingContext(new Promise(() => {}), 10)
+    assert.deepStrictEqual(await never({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' } as never, undefined, { signal: new AbortController().signal }), {})
   })
 
   it('omits the remote server when no MCP is connected', async () => {
@@ -658,6 +705,59 @@ describe('ClaudeAgentAdapter', () => {
       assert.strictEqual(inside.behavior, 'allow')
     })
 
+    it('⛔ sem repositório, o `cwd` do CLI é uma pasta só da conversa dentro do projeto (nunca a raiz), e ela sai no fim do turno se ficou vazia', async () => {
+      const seen: TQueryParams[] = []
+      const checked: string[] = []
+      const permissions = {
+        check: (_asker: unknown, request: { value: string }) => (checked.push(request.value), { allowed: true, layer: 'default' as const, reason: 'ok' }),
+      } as unknown as IPermissionChecker
+      // Como o sandbox do CLI: os pontos de montagem vazios no `cwd`, durante o turno.
+      const query = ((params: TQueryParams) => {
+        seen.push(params)
+        return (async function* () {
+          for (const name of ['package.json', '.env', '.npmrc']) writeFileSync(join(params.options!.cwd!, name), '')
+          for (const message of turn()) yield message
+        })()
+      }) as unknown as TQuery
+      const adapter = new ClaudeAgentAdapter({ query, catalog: catalogWith(true), sandbox: sandbox(true), permissions })
+      const session = await adapter.createSession(projectAgent(), { agentId: CLAUDE_TEST_AGENT.id })
+      await drain(adapter.sendMessage(projectAgent(), session.id, { text: 'oi' }, {}))
+      const project = join(dataRoot, 'projects', 'xpto')
+      const cwd = seen[0].options!.cwd!
+      assert.strictEqual(cwd, join(project, '.tmp', 'conversations', session.id.replace(/[^a-zA-Z0-9_-]/g, '_')))
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      assert.ok(!existsSync(cwd), 'os pontos saíram, e a pasta vazia também')
+      for (const name of ['package.json', '.env', '.npmrc']) assert.ok(!existsSync(join(project, name)), `nada na raiz: ${name}`)
+
+      // As regras seguem contando da RAIZ do projeto; o relativo resolve no `cwd` do CLI, e não sai do projeto.
+      const gate = seen[0].options!.canUseTool!
+      assert.strictEqual(((await gate('Write', { file_path: join(project, 'src', 'a.ts'), content: 'x' }, options)) as { behavior: string }).behavior, 'allow')
+      assert.strictEqual(checked.at(-1), join('src', 'a.ts'))
+      assert.strictEqual(((await gate('Write', { file_path: '../../../src/b.ts', content: 'x' }, options)) as { behavior: string }).behavior, 'allow')
+      assert.strictEqual(checked.at(-1), join('src', 'b.ts'))
+      // Um nível acima da raiz (a pasta `projects`, nos dados do gateway): recusado.
+      const escape = (await gate('Read', { file_path: '../../../../outro/x' }, options)) as { behavior: string }
+      assert.strictEqual(escape.behavior, 'deny')
+    })
+
+    it('a pasta da conversa com o que o agente gravou fica (só os pontos de montagem saem)', async () => {
+      const seen: TQueryParams[] = []
+      const query = ((params: TQueryParams) => {
+        seen.push(params)
+        return (async function* () {
+          writeFileSync(join(params.options!.cwd!, 'package.json'), '')
+          writeFileSync(join(params.options!.cwd!, 'rascunho.md'), 'do agente')
+          for (const message of turn()) yield message
+        })()
+      }) as unknown as TQuery
+      const adapter = new ClaudeAgentAdapter({ query, catalog: catalogWith(true), sandbox: sandbox(true) })
+      const session = await adapter.createSession(projectAgent(), { agentId: CLAUDE_TEST_AGENT.id })
+      await drain(adapter.sendMessage(projectAgent(), session.id, { text: 'oi' }, {}))
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      const cwd = seen[0].options!.cwd!
+      assert.deepStrictEqual([existsSync(join(cwd, 'package.json')), existsSync(join(cwd, 'rascunho.md'))], [false, true])
+    })
+
     const globalGate = async (tools: string[], extra: Partial<IAgent> = {}) => {
       const seen: TQueryParams[] = []
       const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: sandbox(true) })
@@ -850,6 +950,24 @@ describe('ClaudeAgentAdapter — a memória do CLI na retomada', () => {
 
     for await (const _event of adapter.sendMessage(agent, session.id, { text: 'continua' }, {})) void _event
     assert.strictEqual(seen[0].options?.resume, SDK_ID)
+  })
+
+  it('⚠️ com o `cwd`, a conversa só vale na pasta dele (é onde o `resume` procura); nome longo, pelo começo', () => {
+    const config = join(dir, 'cli-cwd')
+    const cwd = join(dir, 'projects', 'alfa', '.tmp', 'conversations', 'gw_1')
+    const slug = cwd.replace(/[^a-zA-Z0-9]/g, '-')
+    mkdirSync(join(config, 'projects', '-raiz-antiga'), { recursive: true })
+    writeFileSync(join(config, 'projects', '-raiz-antiga', `${SDK_ID}.jsonl`), '{}\n')
+    assert.strictEqual(cliSessionExists(SDK_ID, config), true, 'sem o `cwd`: qualquer pasta')
+    assert.strictEqual(cliSessionExists(SDK_ID, config, cwd), false, 'no `cwd` antigo: recomeça com a transcrição')
+    mkdirSync(join(config, 'projects', slug), { recursive: true })
+    writeFileSync(join(config, 'projects', slug, `${SDK_ID}.jsonl`), '{}\n')
+    assert.strictEqual(cliSessionExists(SDK_ID, config, cwd), true)
+    const long = join(dir, 'x'.repeat(220))
+    const cut = `${long.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 200)}-abc123`
+    mkdirSync(join(config, 'projects', cut), { recursive: true })
+    writeFileSync(join(config, 'projects', cut, `${SDK_ID}.jsonl`), '{}\n')
+    assert.strictEqual(cliSessionExists(SDK_ID, config, long), true)
   })
 
   const sub: IAgent = { ...agent, providers: [{ provider: 'claude-sub', models: ['claude-sonnet-5-5'] }] }

@@ -25,6 +25,9 @@ import { makeConversationRepository } from './Conversations.Factory'
 import { makeOrchestrator } from './Orchestrator.Factory'
 import { makeTools } from './Tools.Factory'
 import { makeAgents } from './Agents.Factory'
+import { browserProfiles } from '@infra/mcp/BrowserProfiles.Service'
+import { keepsBrowserLogin } from '@domain/models/Agent.Model'
+import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { DelegationService } from '@application/Delegation.Service'
 import { backgroundProcesses } from '@infra/tools/Background.Processes'
 
@@ -105,6 +108,8 @@ export function makeUsecases() {
       },
     ),
   )
+  // Com o destino num turno, a mensagem do `talk` entra na fila dele: pelo turno ao vivo a delegação vê a resposta sair.
+  makeTools().delegation.get()?.useLive(live)
   // O `talk` sem mensagem: com quem o agente fala, as conversas abertas com cada um e o estado de uma delas.
   makeTools()
     .delegation.get()
@@ -135,6 +140,16 @@ export function makeUsecases() {
       return agentProvider.describe(id)
     } catch {
       return undefined
+    }
+  })
+  // 🌐 O perfil guardado do navegador: o agente da conversa liga `browser.keepLogin`; um por agente e projeto da conversa.
+  browserProfiles().useOwner((id) => {
+    const live = agentProvider.describe(id)
+    const project = live.metadata?.[PROJECT_METADATA_KEY]
+    return {
+      agentId: live.agentId,
+      ...(typeof project === 'string' && project ? { projectId: project } : {}),
+      keepLogin: keepsBrowserLogin(makeAgents().get(live.agentId)?.browser),
     }
   })
 

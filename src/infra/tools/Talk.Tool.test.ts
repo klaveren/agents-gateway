@@ -16,6 +16,7 @@ const fakeService = () => {
     delegate: async (request: IDelegationRequest) => {
       asked.push(['delegate', request])
       const sessionId = request.sessionId ?? 'nova'
+      if (sessionId === 'gw_ocupada') return { ok: true, agentId: request.agentId, sessionId, reply: '', pending: true, queued: true }
       return request.wait === false
         ? { ok: true, agentId: request.agentId, sessionId, reply: '', pending: true }
         : { ok: true, agentId: request.agentId, sessionId, reply: 'feito' }
@@ -48,6 +49,16 @@ describe('talk — a ferramenta do agente para falar com outro', () => {
       result: JSON.stringify({ conversation: 'gw_1', to: 'integra', running: true }),
     })
     assert.strictEqual((await tool.execute({ conversation: 'gw_x' }, context)).status, 'error')
+  })
+
+  it('destino ocupado: devolve na hora que a mensagem entrou na fila e que a resposta chega aqui', async () => {
+    const { slot } = fakeService()
+    const tool = makeTalkTool(['integra'], slot)
+    const outcome = await tool.execute({ to: 'integra', conversation: 'gw_ocupada', message: 'oi' }, context)
+    assert.strictEqual(outcome.status, 'success')
+    const result = JSON.parse(String(outcome.result))
+    assert.deepStrictEqual([result.status, result.conversation], ['queued', 'gw_ocupada'])
+    assert.match(result.note, /integra está ocupado; sua mensagem entrou na fila e a resposta chega nesta conversa/)
   })
 
   it('fala: `to` abre conversa nova; `conversation` continua, com o agente dela; `wait: 0` não espera', async () => {

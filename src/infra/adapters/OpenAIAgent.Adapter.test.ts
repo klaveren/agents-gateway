@@ -9,7 +9,7 @@ import { fakeMcpRegistry } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { OPENAI_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
-import { hostedName, OpenAIAgentAdapter } from './OpenAIAgent.Adapter'
+import { hostedName, OpenAIAgentAdapter, toolNamesCollide } from './OpenAIAgent.Adapter'
 
 type TRun = typeof run
 
@@ -376,5 +376,42 @@ describe('OpenAIAgentAdapter', () => {
     assert.strictEqual(hostedName('code_interpreter_call'), 'code_interpreter')
     assert.strictEqual(hostedName('search_web'), 'search_web')
     assert.strictEqual(hostedName('algo_call'), 'algo_call')
+  })
+})
+
+describe('OpenAIAgent — a mesma ferramenta em dois servidores MCP', () => {
+  const server = (name: string, tools: string[], toolFilter?: { allowedToolNames?: string[] }) =>
+    ({
+      name,
+      cacheToolsList: false,
+      ...(toolFilter ? { toolFilter } : {}),
+      async connect() {},
+      async close() {},
+      async listTools() {
+        return tools.map((tool) => ({ name: tool, description: tool, inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } }))
+      },
+      async callTool() {
+        return []
+      },
+    }) as unknown as MCPServer
+
+  it('⛔ a Maya opera os dois gateways: as ferramentas dos DOIS ficam, com o servidor no nome (antes: "Duplicate tool names")', async () => {
+    const { getAllMcpTools, Agent: SdkAgent, RunContext } = await import('@openai/agents')
+    // O filtro e os prefixos valem com o contexto do turno (como no `run` de verdade).
+    const inTurn = (mcpServers: MCPServer[], prefix = false) =>
+      getAllMcpTools({ mcpServers, runContext: new RunContext({}), agent: new SdkAgent({ name: 't' }), includeServerInToolNames: prefix })
+    const local = server('gateway', ['list_agents', 'save_agent'])
+    const origin = server('gateway-remote', ['list_agents', 'save_agent', 'only_origin'])
+    await assert.rejects(inTurn([local, origin]), /Duplicate tool names/)
+    assert.deepStrictEqual((await toolNamesCollide([local, origin])).sort(), ['list_agents', 'save_agent'])
+    const names = (await inTurn([local, origin], true)).map((tool) => tool.name).sort()
+    assert.strictEqual(names.length, 5)
+    assert.ok(names.every((name) => name.startsWith('mcp_gateway')))
+    assert.ok(names.some((name) => name.includes('gateway_remote') || name.includes('gateway-remote')))
+  })
+
+  it('sem repetição, nada muda; o filtro do servidor conta (só as escolhidas)', async () => {
+    assert.deepStrictEqual(await toolNamesCollide([server('a', ['x']), server('b', ['y'])]), [])
+    assert.deepStrictEqual(await toolNamesCollide([server('a', ['x', 'y'], { allowedToolNames: ['x'] }), server('b', ['y', 'z'])]), [])
   })
 })

@@ -22,7 +22,7 @@ import { readdir } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { dataDir, projectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
+import { CONVERSATIONS_DIR, dataDir, projectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
 import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { deniedGatewayPorts } from '@infra/permissions/Gateway.Reach'
 import { networkGate } from '@infra/permissions/Network.Gate'
@@ -66,10 +66,11 @@ export interface IProjectSandbox {
   /**
    * ⛔ O comando embrulhado (`wrap`, `wrapWith`) saiu: uma chamada por linha embrulhada. No Linux, o bwrap cria no disco um arquivo
    * vazio (só leitura) para cada caminho negado que não existe (`apps/legacy` numa worktree), e só esta chamada o tira —
-   * depois que o ÚLTIMO comando cercado sai (tirar antes soltaria a negação de quem ainda roda). Sem ela, o arquivo
-   * ficava e o `git status` da worktree acusava a sobra.
+   * depois que o ÚLTIMO comando cercado NAQUELA PASTA sai (tirar antes soltaria a negação de quem ainda roda). Sem ela, o
+   * arquivo ficava e o `git status` da worktree acusava a sobra. `line` é a linha que o `wrap`/`wrapWith` devolveu: diz qual
+   * comando saiu (sem ela, o mais antigo).
    */
-  done?(): void
+  done?(line?: string): void
   /**
    * ⛔ A pasta PRIVADA do servidor para o que é de UM comando (a chave SSH, a configuração do proxychains com o token de rede) e
    * para os logs: fica na pasta de dados, que NENHUM comando lê — só o comando dono recebe leitura da sua subpasta
@@ -78,6 +79,12 @@ export interface IProjectSandbox {
   runDir?(): string
   /** ⚠️ Os `.env` da raiz (caminhos absolutos, sem os modelos): o que a máscara registra quando o projeto liberou a leitura. */
   envFiles?(root: string): Promise<string[]>
+}
+
+/** Um comando cercado rodando: a linha que o embrulho devolveu (quando já devolveu) e as pastas que a varredura dele toca. */
+interface IRunningCommand {
+  line?: string
+  dirs: readonly string[]
 }
 
 /** Onde ficam o rascunho (HOME, TMPDIR, caches) e o `.git` quando a raiz é um repositório ou uma worktree. */
@@ -293,8 +300,12 @@ export class ProjectSandbox implements IProjectSandbox {
   private failedAt?: number
   /** As varreduras das raízes, para achar os modelos poupados sem travar o servidor (ver `TreeIndexCache`). */
   private readonly trees: TreeIndexCache
-  /** Quantos comandos cercados rodam agora (a varredura dos pontos de montagem só roda com zero: ver `sweepMountPoints`). */
-  private active = 0
+  /**
+   * Os comandos cercados que rodam agora: a linha embrulhada e as pastas dele. ⛔ A varredura de uma pasta espera TODO comando que
+   * roda nela, acima dela ou abaixo dela (ver `busy`); os de outras pastas não a seguram — com a esteira contínua, um contador
+   * global quase nunca zerava, e as sobras ficavam.
+   */
+  private readonly running: IRunningCommand[] = []
   /** As pastas onde um comando já rodou: a varredura do fim passa por elas. */
   private readonly sweepDirs = new Set<string>()
 
@@ -361,12 +372,12 @@ export class ProjectSandbox implements IProjectSandbox {
   }
 
   async wrapWith(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string, place: ICercoPlace = {}): Promise<string> {
-    this.begin([root, place.scratchBase])
+    const entry = this.begin([root, place.scratchBase])
     try {
-      return await this.wrapWithPlan(command, root, plan, networkToken, place)
+      return (entry.line = await this.wrapWithPlan(command, root, plan, networkToken, place))
     } catch (error: unknown) {
       // Nada embrulhado, ninguém chama `done()`: a conta fecha aqui.
-      this.finish()
+      this.finish(entry)
       throw error
     }
   }
@@ -452,27 +463,43 @@ export class ProjectSandbox implements IProjectSandbox {
     return join(dataDir(this.env), 'run')
   }
 
-  done(): void {
-    this.finish()
+  done(line?: string): void {
+    const entry = (line !== undefined && this.running.find((command) => command.line === line)) || this.running[0]
+    if (entry) this.finish(entry)
+  }
+
+  /** Algum comando cercado roda nesta pasta, acima ou abaixo dela? Então os pontos dela podem ser dele: nada sai. */
+  private busy(dir: string): boolean {
+    return this.running.some((command) => command.dirs.some((own) => isAtOrUnder(own, dir) || isAtOrUnder(dir, own)))
   }
 
   /**
-   * ⛔ Um comando cercado vai começar: se NENHUM outro roda, varre as sobras de pontos de montagem (do CLI do Claude, de uma
-   * queda, de um reinício). Com outro rodando não se apaga nada: tirar o ponto soltaria a negação de quem ainda está nele.
+   * ⛔ Um comando cercado vai começar: varre as sobras de pontos de montagem (do CLI do Claude, de uma queda, de um reinício)
+   * das pastas dele em que NENHUM outro roda. Pasta com outro rodando fica: tirar o ponto soltaria a negação de quem está nele.
    */
-  private begin(dirs: ReadonlyArray<string | undefined>): void {
-    const real = dirs.filter((dir): dir is string => !!dir)
-    if (this.active === 0) for (const dir of real) sweepMountPoints(dir)
+  private begin(dirs: ReadonlyArray<string | undefined>): IRunningCommand {
+    const real = [...new Set(dirs.filter((dir): dir is string => !!dir))]
+    for (const dir of real) if (!this.busy(dir)) sweepMountPoints(dir)
     for (const dir of real) this.sweepDirs.add(dir)
-    this.active += 1
+    const entry: IRunningCommand = { dirs: real }
+    this.running.push(entry)
     trackSweepOnExit(this.sweepDirs)
+    return entry
   }
 
-  /** O comando cercado saiu (ou nem chegou a ser embrulhado): limpeza do srt e, com o último, a varredura. */
-  private finish(): void {
-    this.active = Math.max(0, this.active - 1)
+  /**
+   * O comando cercado saiu (ou nem chegou a ser embrulhado): limpeza do srt e a varredura das pastas ligadas às dele (a mesma,
+   * acima, abaixo — uma que esperava por ele) onde ninguém mais roda.
+   */
+  private finish(entry: IRunningCommand): void {
+    const index = this.running.indexOf(entry)
+    if (index < 0) return
+    this.running.splice(index, 1)
     const sweep = () => {
-      if (this.active === 0) for (const dir of this.sweepDirs) sweepMountPoints(dir)
+      for (const dir of this.sweepDirs) {
+        const related = entry.dirs.some((own) => isAtOrUnder(own, dir) || isAtOrUnder(dir, own))
+        if (related && !this.busy(dir)) sweepMountPoints(dir)
+      }
     }
     if (!this.manager) return sweep()
     void this.manager
@@ -485,11 +512,11 @@ export class ProjectSandbox implements IProjectSandbox {
     const status = await this.status()
     if (!status.available) throw new Error(`${SANDBOX_UNAVAILABLE}: ${status.reason ?? 'sem motivo'}`)
     const project = projectWorkspace(projectId, this.env)
-    this.begin([project])
+    const entry = this.begin([project])
     try {
-      return await this.wrapProject(command, projectId, project)
+      return (entry.line = await this.wrapProject(command, projectId, project))
     } catch (error: unknown) {
-      this.finish()
+      this.finish(entry)
       throw error
     }
   }
@@ -1190,6 +1217,23 @@ export function sweepProjectMountPoints(env: NodeJS.ProcessEnv = process.env): s
     const dir = join(base, project)
     swept.push(...sweepMountPoints(dir))
     for (const repository of listDir(join(dir, 'repositories'))) swept.push(...sweepMountPoints(join(dir, 'repositories', repository)))
+    // As pastas de conversa (o `cwd` do CLI do Claude) que um processo anterior deixou.
+    const conversations = join(dir, CONVERSATIONS_DIR)
+    for (const conversation of listDir(conversations)) swept.push(...releaseConversationWorkspace(join(conversations, conversation)))
+  }
+  return swept
+}
+
+/**
+ * ⛔ A conversa largou a pasta dela (`conversationWorkspace`, o `cwd` do CLI do Claude): varre os pontos de montagem que o
+ * sandbox do CLI criou ali e apaga a pasta, SÓ se ficou vazia — o que o agente gravou nela fica. Devolve o que varreu.
+ */
+export function releaseConversationWorkspace(dir: string, log?: (message: string) => void): string[] {
+  const swept = sweepMountPoints(dir, log)
+  try {
+    if (isRealDirectory(dir) && !readdirSync(dir).length) rmdirSync(dir)
+  } catch {
+    // Em uso ou sem permissão: fica para a próxima.
   }
   return swept
 }

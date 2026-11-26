@@ -522,6 +522,25 @@ const voiceSchema = {
 
 const nullableText = { type: ['string', 'null'], description: 'Absent leaves it untouched. `null` (or an empty string) deletes it and reverts to the default.' }
 
+const keepSignedInField = {
+  type: 'boolean',
+  description: '"Keep me signed in": the session lasts 30 days and slides with use (renewed at most once an hour). Absent or false: the usual 12 hours, never renewed',
+}
+
+const loginSessionSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    device: { type: 'string', description: 'Browser and device summarized from the user agent (`Safari · iPhone`)' },
+    keepSignedIn: { type: 'boolean' },
+    createdAt: { type: 'string', format: 'date-time' },
+    lastUsedAt: { type: 'string', format: 'date-time' },
+    expiresAt: { type: 'string', format: 'date-time' },
+    current: { type: 'boolean', description: 'The session making this request' },
+  },
+  required: ['id', 'device', 'keepSignedIn', 'createdAt', 'lastUsedAt', 'expiresAt', 'current'],
+}
+
 const accessTokenSchema = {
   type: 'object',
   properties: {
@@ -1689,7 +1708,7 @@ export const OPENAPI_DOCUMENT = {
         security: [],
         requestBody: {
           required: true,
-          ...json({ type: 'object', properties: { email: { type: 'string' }, name: { type: 'string' }, password: passwordField }, required: ['email', 'name', 'password'] }),
+          ...json({ type: 'object', properties: { email: { type: 'string' }, name: { type: 'string' }, password: passwordField, keepSignedIn: keepSignedInField }, required: ['email', 'name', 'password'] }),
         },
         responses: {
           '201': { description: 'Created and signed in', ...json(envelope(authSessionSchema)) },
@@ -1702,7 +1721,10 @@ export const OPENAPI_DOCUMENT = {
       post: {
         summary: 'Sign in with e-mail and password. One message for every failure; five failures lock the e-mail for 15 minutes. Public',
         security: [],
-        requestBody: { required: true, ...json({ type: 'object', properties: { email: { type: 'string' }, password: { type: 'string' } }, required: ['email', 'password'] }) },
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { email: { type: 'string' }, password: { type: 'string' }, keepSignedIn: keepSignedInField }, required: ['email', 'password'] }),
+        },
         responses: {
           '200': { description: 'Signed in', ...json(envelope(authSessionSchema)) },
           '401': { description: '`invalid_credentials`', ...json(failureEnvelope) },
@@ -1785,6 +1807,23 @@ export const OPENAPI_DOCUMENT = {
           '403': { description: 'Called with an access token', ...json(failureEnvelope) },
           '404': failures['404'],
         },
+      },
+    },
+    '/auth/sessions': {
+      get: {
+        summary: 'Your open sign-in sessions (device summarized from the user agent, last use); `current` marks this one. Requires a signed-in session',
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: loginSessionSchema })) }, '401': failures['401'], '403': failures['403'] },
+      },
+      delete: {
+        summary: 'End every OTHER session of your account (copies of old tokens too). This one continues with the session returned. Requires a signed-in session',
+        responses: { '200': { description: 'Ended', ...json(envelope(authSessionSchema)) }, '401': failures['401'], '403': failures['403'] },
+      },
+    },
+    '/auth/sessions/{id}': {
+      delete: {
+        summary: 'End one session of your account. Ending this one is the same as signing out. Requires a signed-in session',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Ended', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '403': failures['403'], '404': failures['404'] },
       },
     },
     '/users': {
@@ -4855,6 +4894,17 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'The file', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, '404': failures['404'] },
       },
     },
+    '/conversations/{id}/files/{fileId}/view': {
+      get: {
+        summary:
+          "A delivered file's content for the screen's viewer: the real type, inline, `nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`. The screen fetches it and builds a blob; it never runs the file's content. Who can see the conversation",
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'fileId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'The file', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } }, '404': failures['404'] },
+      },
+    },
     '/secret-requests': {
       post: {
         summary:
@@ -6103,7 +6153,7 @@ export const OPENAPI_DOCUMENT = {
       },
       put: {
         summary:
-          'Save the fallback groups of the project (`{ groups, defaultModelGroup }`, the whole list). Each step must be a model the project received, with the provider enabled and the model enabled in the catalog; the default may be a project or a gateway group, or `none`. Project administrators',
+          'Save the fallback groups of the project (`{ groups, defaultModelGroup }`, the whole list). Each step must be a model the project received, with the provider enabled and the model enabled in the catalog; the default may be a project or a gateway group, or `none`; a group an agent of the project uses cannot be removed. Project administrators',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,
@@ -7278,6 +7328,22 @@ export const OPENAPI_DOCUMENT = {
           '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { live: { type: 'boolean' } } })) },
           '404': failures['404'],
           '409': { description: '`browser_in_use`: the agent is using this browser (or the agent opened it); it closes when the agent is done', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/agents/{agentId}/browser/clear': {
+      post: {
+        summary: "Delete the agent's saved browser sessions (cookies and sign-ins kept with `browser.keepLogin`). Only who administers the agent",
+        description:
+          'With `projectId`, the profile of that project (absent = conversations without a project); with `all: true`, every project. For a global agent, the admin of `projectId` may clear that project. Refused while the browser is open.',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: false, ...json({ type: 'object', properties: { projectId: { type: 'string', nullable: true }, all: { type: 'boolean' } } }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { cleared: { type: 'boolean' } } })) },
+          '403': failures['403'],
+          '404': failures['404'],
+          '409': { description: '`browser_in_use`: a conversation of this agent has the browser open', ...json(failureEnvelope) },
+          '422': { description: '`validation_error`', ...json(failureEnvelope) },
         },
       },
     },

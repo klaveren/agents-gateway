@@ -1,4 +1,5 @@
 import { LiveBrowser, liveBrowsers, TLiveBrowserInput } from '@infra/mcp/LiveBrowser.Adapter'
+import { browserProfiles, IBrowserProfileOwner } from '@infra/mcp/BrowserProfiles.Service'
 import { PersonBrowsers } from '@infra/mcp/PersonBrowsers.Service'
 import { NOTIFY_TOOL } from '@domain/models/PersonMessage.Model'
 import { PersonMessageError, type PersonMessagesService } from '@application/PersonMessages.Service'
@@ -47,12 +48,12 @@ import { estimateTokens } from '@domain/Token.Estimate'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { bashPolicy } from '@infra/tools/Bash.Guard'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { diagnosticsOn, IAgent, IAgentTarget } from '@domain/models/Agent.Model'
+import { diagnosticsOn, IAgent, IAgentTarget, keepsBrowserLogin } from '@domain/models/Agent.Model'
 import { AgentUnavailableError } from '@domain/errors/Domain.Error'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IConversationScope, toSharedConversation } from '@domain/models/Conversation.Model'
-import { IMessageInput } from '@domain/models/MessageInput.Model'
+import { base64Bytes, IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
 import { LIMIT_BOUNDS, liveLimit, UNLIMITED } from '@domain/models/Limits.Model'
@@ -108,10 +109,12 @@ import { normalizeShares, sharedInto } from '@domain/Share.Policy'
 import { parseBody, replyToOf } from './Request.Parser'
 import {
   agentBodySchema,
+  browserClearSchema,
   createSessionSchema,
   renameConversationSchema,
   channelSchema,
   followTurnSchema,
+  replyMessageSchema,
   sendMessageSchema,
   shareAgentSchema,
   shareConversationSchema,
@@ -132,6 +135,7 @@ import { fromThisMachine } from './Drain.State'
 import { PushError, type WebPushSender } from '@infra/push/WebPush.Sender'
 import { z } from 'zod'
 import type { IHostApprovals } from '@application/HostApprovals.Service'
+import { ReplyMirror } from './Reply.Mirror'
 
 /**
  * As tools LOCAIS que um agente PODE receber — o perímetro, decidido no deploy.
@@ -393,6 +397,21 @@ export class AgentController {
   /** Os turnos assíncronos rodando (por conversa) e o resultado do último de cada uma, até o gravado chegar. */
   private readonly liveTurns = new Map<string, ILiveTurn>()
   private readonly finishedTurns = new Map<string, Record<string, unknown> & { turn: number }>()
+  /** A resposta pela caixa com a conversa rodando: uma espera por conversa, o mesmo turno uma vez só (ver `ReplyMirror`). */
+  private replyMirrorOwn?: ReplyMirror
+  private get replyMirror(): ReplyMirror | undefined {
+    const events = this.usecases.events
+    if (!events) return undefined
+    return (this.replyMirrorOwn ??= new ReplyMirror({
+      events,
+      lastTurn: async (conversationId) => {
+        const last = (await this.usecases.conversations.listTurns(conversationId)).at(-1)
+        return last ? { index: last.index, text: last.text, notified: (last.toolCalls ?? []).some((call) => call.tool === NOTIFY_TOOL) } : undefined
+      },
+      mirror: (conversationId, agentId, text, options) => this.usecases.personMessages?.mirror(conversationId, agentId, text, options?.level ?? 'info', options?.replyTo),
+      answered: (conversationId, requestId) => this.usecases.personMessages?.answeredAfterReply(conversationId, requestId) ?? true,
+    }))
+  }
 
   constructor(private readonly usecases: IAgentControllerDeps) {
     this.health = this.health.bind(this)
@@ -454,6 +473,7 @@ export class AgentController {
     this.updateConversationPanel = this.updateConversationPanel.bind(this)
     this.listConversationFiles = this.listConversationFiles.bind(this)
     this.downloadConversationFile = this.downloadConversationFile.bind(this)
+    this.viewConversationFile = this.viewConversationFile.bind(this)
     this.getSharedConversation = this.getSharedConversation.bind(this)
     this.conversationEvents = this.conversationEvents.bind(this)
     this.sessionLive = this.sessionLive.bind(this)
@@ -1137,6 +1157,7 @@ export class AgentController {
         const terminal = body.terminal === undefined ? this.agents.get(parsed.id)?.terminal : undefined
         const modelGroup = body.modelGroup === undefined ? this.agents.get(parsed.id)?.modelGroup : undefined
         const diagnostics = body.diagnostics === undefined ? this.agents.get(parsed.id)?.diagnostics : undefined
+        const browser = body.browser === undefined ? this.agents.get(parsed.id)?.browser : undefined
         const triggers = body.triggers === undefined ? this.agents.get(parsed.id)?.triggers : undefined
         const tags = body.tags === undefined ? this.agents.get(parsed.id)?.tags : undefined
         const env = body.env === undefined ? this.agents.get(parsed.id)?.env : undefined
@@ -1150,6 +1171,7 @@ export class AgentController {
           ...(terminal ? { terminal } : {}),
           ...(modelGroup ? { modelGroup } : {}),
           ...(diagnostics ? { diagnostics } : {}),
+          ...(keepsBrowserLogin(browser) ? { browser } : {}),
           ...(triggers?.length ? { triggers } : {}),
           ...(tags?.length ? { tags } : {}),
           ...(env && Object.keys(env).length ? { env } : {}),
@@ -1499,6 +1521,7 @@ export class AgentController {
           return undefined
         },
         gatewayGroups: (settings.modelGroups ?? []).map((group) => group.id),
+        usedBy: (group) => this.agents.list().find((agent) => agent.projectId === id && agent.modelGroup === group)?.id,
       })
       return { groups: saved.models?.modelGroups ?? [], ...(saved.models?.defaultModelGroup ? { defaultModelGroup: saved.models.defaultModelGroup } : {}) }
     })
@@ -1989,15 +2012,23 @@ export class AgentController {
   }
 
   /** ⛔ Só o DONO da conversa mexe no navegador dela (404 aos demais), com ou sem navegador aberto. */
-  private async requireBrowserOwner(sessionId: string): Promise<void> {
+  private async requireBrowserOwner(sessionId: string): Promise<IBrowserProfileOwner> {
     const resolved = await this.requireCaller()
-    let metadata: Record<string, unknown> | undefined
+    let found: { agentId: string; metadata?: Record<string, unknown> } | undefined
     try {
-      metadata = (await this.usecases.getSession.execute(sessionId)).metadata
+      found = await this.usecases.getSession.execute(sessionId)
     } catch {
-      metadata = (await this.usecases.conversations.findSession(sessionId).catch(() => undefined))?.metadata
+      found = await this.usecases.conversations.findSession(sessionId).catch(() => undefined)
     }
-    if (!metadata || !this.ownsConversation(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    const metadata = found?.metadata
+    if (!found || !metadata || !this.ownsConversation(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    // 🌐 De quem é o perfil do navegador (a conversa pode não estar viva na memória: o dono vem do que está gravado).
+    const project = metadata[PROJECT_METADATA_KEY]
+    return {
+      agentId: found.agentId,
+      ...(typeof project === 'string' && project ? { projectId: project } : {}),
+      keepLogin: keepsBrowserLogin(this.agents.get(found.agentId)?.browser),
+    }
   }
 
   /**
@@ -2007,12 +2038,33 @@ export class AgentController {
   async browserOpen(req: Request, res: Response) {
     try {
       const id = req.params.id as string
-      await this.requireBrowserOwner(id)
-      await this.personBrowsers().open(id, ((req.body ?? {}) as { url?: unknown }).url)
+      const owner = await this.requireBrowserOwner(id)
+      await this.personBrowsers().open(id, ((req.body ?? {}) as { url?: unknown }).url, owner)
       res.json(ok({ live: true }))
     } catch (error: unknown) {
       this.sendFailure(res, error, '[AgentController.browserOpen]')
     }
+  }
+
+  /**
+   * `POST /agents/:agentId/browser/clear` — 🧹 apaga as sessões guardadas do navegador do agente: as do projeto pedido
+   * (`projectId`; ausente = as das conversas sem projeto) ou, com `all: true`, as de todos. ⛔ Só quem administra o agente
+   * (ou, no agente global, o admin do projeto pedido); 409 com o navegador aberto.
+   */
+  async browserClear(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const agentId = req.params.agentId as string
+      const body = parseBody(browserClearSchema, req.body ?? {})
+      const agent = this.agents.get(agentId)
+      // O global, num projeto: o admin daquele projeto limpa o perfil daquele projeto (o "todos" é do gateway).
+      if (agent && !agent.projectId && body.projectId && !body.all) await requireProjectsAdmin(this.usecases.proof, [body.projectId], 'browserClear')
+      else await this.requireAgentAdmin(agentId, 'browserClear')
+      if (!agent) throw new AgentNotFoundError(agentId)
+      const projectId = body.all ? null : body.projectId || undefined
+      if (!browserProfiles().clear(agentId, projectId))
+        throw new HttpError(409, 'browser_in_use', 'The browser of this agent is open; close the conversation browser and try again')
+      return { cleared: true }
+    })
   }
 
   /** `POST /sessions/:id/browser/close` — fecha o navegador que a pessoa abriu (409 se o agente está usando). */
@@ -2065,8 +2117,8 @@ export class AgentController {
       const event = parseBrowserInput(req.body)
       if (!event) throw new HttpError(422, 'validation_error', 'Invalid browser input')
       const browser = await this.requireOwnBrowser(req.params.id as string)
-      await browser.input(event)
-      res.json(ok({ done: true }))
+      const result = await browser.input(event)
+      res.json(ok({ done: true, ...(result ?? {}) }))
     } catch (error: unknown) {
       this.sendFailure(res, error, '[AgentController.browserInput]')
     }
@@ -2620,17 +2672,20 @@ export class AgentController {
         const { service, recipientId, email } = await this.messagesOf()
         // O id do item: o de um pedido (a resposta é a ele) ou o da conversa.
         const key = req.params.conversationId as string
-        const text = String((req.body as { message?: unknown } | undefined)?.message ?? '')
+        // 📎 Os anexos com as mesmas regras do `POST /sessions/:id/messages` (quantos, o tamanho, o formato).
+        const { message: text, files } = parseBody(replyMessageSchema, req.body ?? {})
         const replyTo = replyToOf(req.body)
         // 🔌 Item da origem: a resposta vai para lá, e é lá que ela entra na conversa.
         const remote = await this.remoteItemOf(service, recipientId, email, key)
         if (remote) {
           if (!text.trim()) throw new HttpError(422, 'validation_error', 'message is required')
+          if (files?.length)
+            throw new HttpError(422, 'validation_error', 'attachments do not reach a connected project yet', [{ field: 'files', message: 'not supported for a connected project' }])
           return this.remote(() => this.usecases.connections!.replyRemoteMessage(remote.projectId, key, text, replyTo))
         }
         const resolved = await this.requireCaller()
         const authorName = (resolved.identity as { name?: string } | undefined)?.name || resolved.identity?.email || 'a pessoa'
-        return this.replyAs({ recipientId, key, text, replyTo, authorName })
+        return this.replyAs({ recipientId, key, text, replyTo, authorName, files })
       },
       { status: 202, message: 'Reply sent to the conversation' },
     )
@@ -2640,13 +2695,14 @@ export class AgentController {
    * 💬 O núcleo da resposta pela caixa (a rota daqui e a `/connect/:projectId/messages/:key/reply` da origem): confere o item da
    * pessoa, grava a resposta no fio, RETOMA a conversa se ela saiu da memória e roda o turno (ou entra na fila dele).
    */
-  async replyAs(input: { recipientId: string; key: string; text: string; replyTo?: string; authorName: string }): Promise<{ queued: boolean }> {
+  async replyAs(input: { recipientId: string; key: string; text: string; replyTo?: string; authorName: string; files?: IFileAttachment[] }): Promise<{ queued: boolean }> {
     const service = this.usecases.personMessages
     if (!service) throw new HttpError(404, 'not_found', 'Not found')
     const { recipientId, key: conversationId, text, replyTo } = input
     // A conversa primeiro: se ela não roda mais, a resposta nem entra no fio (não fica "respondido" sem ter ido).
     if (!service.thread(recipientId, conversationId).length) throw new HttpError(404, 'not_found', 'Not found')
-    if (!text.trim()) throw new HttpError(422, 'validation_error', 'message is required')
+    const files = input.files?.length ? input.files : undefined
+    if (!text.trim() && !files) throw new HttpError(422, 'validation_error', 'message is required')
     try {
       service.checkReplyTo(recipientId, conversationId, replyTo)
     } catch (error: unknown) {
@@ -2654,9 +2710,16 @@ export class AgentController {
       throw error
     }
     const session = await this.sessionForReply(service.resolve(recipientId, conversationId)?.conversationId ?? conversationId)
-    let reply: { input: string; agentId: string; conversationId: string }
+    let reply: { input: string; agentId: string; conversationId: string; requestId?: string }
     try {
-      reply = service.reply(recipientId, conversationId, text, input.authorName, replyTo)
+      reply = service.reply(
+        recipientId,
+        conversationId,
+        text,
+        input.authorName,
+        replyTo,
+        files?.map((file) => ({ name: file.name, mimeType: file.mimeType, size: base64Bytes(file.data) })),
+      )
     } catch (error: unknown) {
       if (error instanceof PersonMessageError && error.field) throw new HttpError(422, 'validation_error', error.message, [{ field: error.field, message: error.message }])
       throw new HttpError(
@@ -2665,11 +2728,13 @@ export class AgentController {
         error instanceof Error ? error.message : String(error),
       )
     }
-    const message: IMessageInput = { text: reply.input }
-    // Conversa rodando: entra na fila do turno; quando ela parar, o último turno volta para o fio.
+    const message: IMessageInput = { text: reply.input, ...(files ? { files } : {}) }
+    // 🎯 O pedido respondido espera o fim do turno: o agente responde a ele com `notify` + `replyTo`, ou recebe o texto final.
+    this.replyMirror?.expect(reply.conversationId, reply.requestId)
+    // Conversa rodando: entra na fila do turno (os anexos juntos, na rodada seguinte); quando ela parar, fecha os pedidos.
     if (session.status === 'running' || this.liveTurns.has(reply.conversationId)) {
-      this.usecases.sendMessage.enqueue(reply.conversationId, reply.input)
-      void this.mirrorWhenIdle(reply.conversationId, reply.agentId)
+      this.usecases.sendMessage.enqueue(reply.conversationId, reply.input, files)
+      void this.replyMirror?.whenIdle(reply.conversationId, reply.agentId)
       return { queued: true }
     }
     const { done } = this.launch(reply.conversationId, session, message, undefined)
@@ -2722,32 +2787,14 @@ export class AgentController {
 
   /** 💬 O turno que a resposta abriu terminou: o texto dele volta para o fio (a menos que o agente já tenha escrito com `notify`). */
   private mirrorFinished(conversationId: string, agentId: string): void {
-    const finished = this.finishedTurns.get(conversationId) as { tools?: string[]; status?: string; error?: string; text?: string } | undefined
-    if (!finished || (finished.tools ?? []).includes(NOTIFY_TOOL)) return
-    if (finished.status === 'error') this.usecases.personMessages?.mirror(conversationId, agentId, `Não consegui responder: ${finished.error ?? 'o turno falhou'}`, 'attention')
-    else this.usecases.personMessages?.mirror(conversationId, agentId, finished.text ?? '')
-  }
-
-  /** 💬 A resposta entrou na fila de um turno rodando: quando a conversa para, o último turno gravado volta para o fio. */
-  private async mirrorWhenIdle(conversationId: string, agentId: string): Promise<void> {
-    const events = this.usecases.events
-    if (!events) return
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => (unsubscribe(), resolve()), 60 * 60_000)
-      timer.unref?.()
-      const unsubscribe = events.subscribe((event) => {
-        if (event.type === 'conversation.idle' && event.sessionId === conversationId) {
-          clearTimeout(timer)
-          unsubscribe()
-          resolve()
-        }
-      })
+    const finished = this.finishedTurns.get(conversationId) as { turn: number; tools?: string[]; status?: string; error?: string; text?: string } | undefined
+    if (!finished) return
+    this.replyMirror?.settle(conversationId, agentId, {
+      index: finished.turn,
+      text: finished.text ?? '',
+      notified: (finished.tools ?? []).includes(NOTIFY_TOOL),
+      ...(finished.status === 'error' ? { error: finished.error ?? '' } : {}),
     })
-    // O turno é gravado um instante depois do fim.
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    const turns = await this.usecases.conversations.listTurns(conversationId).catch(() => [])
-    const last = turns.at(-1)
-    if (last && !(last.toolCalls ?? []).some((call) => call.tool === NOTIFY_TOOL)) this.usecases.personMessages?.mirror(conversationId, agentId, last.text)
   }
 
   async archiveConversation(req: Request, res: Response) {
@@ -2842,6 +2889,19 @@ export class AgentController {
    * interpretar (`nosniff`, CSP fechada): um HTML ou SVG entregue não roda na origem do gateway.
    */
   async downloadConversationFile(req: Request, res: Response) {
+    await this.sendConversationFile(req, res, 'attachment')
+  }
+
+  /**
+   * `GET /conversations/:id/files/:fileId/view`: o conteúdo para o VISUALIZADOR da tela, que o busca com `fetch` e monta
+   * um blob (nunca abre esta URL no documento do gateway). ⛔ A mesma regra de acesso do download. `inline` só diz que
+   * é para ver; quem abrir a URL direto continua sem script nem recurso (`sandbox; default-src 'none'`, `nosniff`).
+   */
+  async viewConversationFile(req: Request, res: Response) {
+    await this.sendConversationFile(req, res, 'inline')
+  }
+
+  private async sendConversationFile(req: Request, res: Response, disposition: 'attachment' | 'inline') {
     try {
       const id = req.params.id as string
       await this.requireConversationAccess(id)
@@ -2849,13 +2909,13 @@ export class AgentController {
       if (!found) throw new HttpError(404, 'not_found', 'File not found')
       const ascii = found.file.name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')
       res.setHeader('Content-Type', found.file.mime)
-      res.setHeader('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(found.file.name)}`)
+      res.setHeader('Content-Disposition', `${disposition}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(found.file.name)}`)
       res.setHeader('X-Content-Type-Options', 'nosniff')
-      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox")
+      res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'")
       res.setHeader('Cache-Control', 'private, no-store')
       res.send(found.data)
     } catch (error: unknown) {
-      this.sendFailure(res, error, '[AgentController.downloadConversationFile]')
+      this.sendFailure(res, error, `[AgentController.${disposition === 'inline' ? 'viewConversationFile' : 'downloadConversationFile'}]`)
     }
   }
 
@@ -3922,6 +3982,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     ...(body.permissions ? { permissions: body.permissions } : {}),
     ...(body.terminal && (body.terminal.timeoutSeconds || body.terminal.maxOutputChars) ? { terminal: body.terminal } : {}),
     ...(body.diagnostics && diagnosticsOn(body.diagnostics) ? { diagnostics: body.diagnostics } : {}),
+    ...(body.browser && keepsBrowserLogin(body.browser) ? { browser: { keepLogin: true } } : {}),
     ...(body.triggers?.length ? { triggers: body.triggers.map((trigger) => ({ id: trigger.id.trim(), when: trigger.when.trim(), body: trigger.body })) } : {}),
     ...(body.env && Object.keys(body.env).length ? { env: { ...body.env } } : {}),
     ...(body.files?.length ? { files: body.files.map(({ path, sha256, bytes }) => ({ path, sha256, bytes })) } : {}),

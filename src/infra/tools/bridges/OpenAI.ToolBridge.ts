@@ -12,20 +12,30 @@ import { ILocalTool } from '../Tool.Types'
  * schema for aberto (`{ type: 'object' }` sem `properties`). A ferramenta assim vai sem estrito, e o turno roda.
  */
 export function buildOpenAITools(local: ILocalTool[], context?: IExecutionContext): Tool[] {
-  return local.map((item) =>
-    tool({
-      name: item.name,
-      description: item.description,
-      strict: strictable(item.inputSchema),
-      parameters: item.inputSchema as never,
-      // A política de segurança vive no executor local, que vale para as três lanes.
-      needsApproval: false,
-      async execute(args: unknown) {
-        const outcome = await item.execute(toArgs(args), context)
-        return outcome.result
-      },
-    }),
-  )
+  return local.map((item) => {
+    const build = (strict: boolean) =>
+      tool({
+        name: item.name,
+        description: item.description,
+        strict,
+        parameters: item.inputSchema as never,
+        // A política de segurança vive no executor local, que vale para as três lanes.
+        needsApproval: false,
+        async execute(args: unknown) {
+          const outcome = await item.execute(toArgs(args), context)
+          return outcome.result
+        },
+      })
+    if (!strictable(item.inputSchema)) return build(false)
+    // ⛔ O SDK recusa no ato o schema que não converte para o estrito ("unsupported keyword `oneOf`…"): antes o turno
+    // inteiro caía em "Internal error". A ferramenta vai sem estrito e o turno roda.
+    try {
+      return build(true)
+    } catch (error: unknown) {
+      console.warn(`[OpenAI.ToolBridge] ${item.name} vai sem modo estrito: ${error instanceof Error ? error.message : String(error)}`)
+      return build(false)
+    }
+  })
 }
 
 /**
@@ -40,7 +50,8 @@ export function buildOpenAIMcpServers(remotes: readonly IAgentMcpServer[] = [], 
     const headers = mcpHeaders(remote, token)
     const options = {
       url: remote.config.url,
-      name: `mcp_${remote.config.id}`,
+      // O id puro: com nomes repetidos, o SDK põe o servidor na frente (`mcp_<id>__<ferramenta>`), sem `mcp_` duplicado.
+      name: remote.config.id,
       cacheToolsList: true,
       // `undefined` = todas (`mcp:<id>/*`); senão, só as escolhidas no agente.
       ...(remote.tools ? { toolFilter: { allowedToolNames: remote.tools } } : {}),
@@ -54,11 +65,15 @@ function toArgs(args: unknown): Record<string, unknown> {
   return typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {}
 }
 
+const STRICT_UNSUPPORTED = ['oneOf', 'allOf', 'not', 'if', 'then', 'else', 'patternProperties', 'dependentSchemas', 'dependentRequired'] as const
+
 /** O schema fecha no modo estrito? Todo objeto com `properties` (o SDK os fecha) ou já `additionalProperties: false`. */
 export function strictable(schema: unknown): boolean {
   if (Array.isArray(schema)) return schema.every(strictable)
   if (typeof schema !== 'object' || schema === null) return true
   const node = schema as Record<string, unknown>
+  // O estrito só aceita `anyOf` entre as combinações: `oneOf`, `allOf`, `not` e os condicionais derrubam o turno.
+  if (STRICT_UNSUPPORTED.some((keyword) => keyword in node)) return false
   const isObject = node.type === 'object' || (Array.isArray(node.type) && node.type.includes('object'))
   if (isObject && typeof node.properties !== 'object' && node.additionalProperties !== false) return false
   if (node.additionalProperties !== undefined && typeof node.additionalProperties !== 'boolean') return false

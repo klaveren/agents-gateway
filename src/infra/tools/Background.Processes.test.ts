@@ -7,7 +7,7 @@ import { after, describe, it } from 'node:test'
 import { decide, IPermissionRule } from '@domain/Permission.Policy'
 import { IPermissionChecker } from '@application/Permissions.Service'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
-import { BackgroundProcesses, clipOutput, startCommand } from './Background.Processes'
+import { BackgroundProcesses, clipOutput, descendantsOf, killGroup, startCommand } from './Background.Processes'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { SecretMasker } from '@infra/secrets/Secret.Masker'
 import { randomBytes } from 'node:crypto'
@@ -45,6 +45,38 @@ describe('Background.Processes (o terminal longo)', () => {
     assert.match(result.output, /comecou/)
     await until(() => !alive(marker))
     assert.strictEqual(alive(marker), false)
+  })
+
+  it('⛔ parar mata também o neto que abriu GRUPO PRÓPRIO (detached/setsid), como o validate-all do pnpm validate', async () => {
+    const marker = `sleep 78${process.pid % 10}`
+    // O pai (node) segue vivo segurando o neto, que roda em sessão própria: fora do grupo do shell.
+    const spawner = `require('child_process').spawn('/bin/sh', ['-c', '${marker}'], { detached: true, stdio: 'ignore' }); setInterval(() => {}, 1000)`
+    const started = startCommand(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(spawner)}`, {
+      cwd: root,
+      env: { PATH: process.env.PATH! },
+      shell: '/bin/bash',
+      timeoutMs: 60_000,
+    })
+    // O `sleep` de verdade, não o `sh -c` que ainda vai criá-lo (`^`: o começo da linha de comando).
+    await until(() => alive(`^${marker}`))
+    assert.strictEqual(alive(`^${marker}`), true)
+    killGroup(started.pid)
+    await started.done
+    await until(() => !alive(marker))
+    assert.strictEqual(alive(marker), false)
+  })
+
+  it('a árvore: só descendentes do pid, sem ciclo e sem os de fora', () => {
+    const table = new Map([
+      [10, 1],
+      [11, 10],
+      [12, 11],
+      [20, 1],
+      [21, 20],
+      [1, 1],
+    ])
+    assert.deepStrictEqual(descendantsOf([10], table).sort(), [11, 12])
+    assert.deepStrictEqual(descendantsOf([99], table), [])
   })
 
   it('a saída inteira vai para o log, na ordem, stdout e stderr juntos', async () => {
