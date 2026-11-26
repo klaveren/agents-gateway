@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { decide, type IPermissionRule } from '@domain/Permission.Policy'
 import type { IPermissionChecker } from '@application/Permissions.Service'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
 import { after, before, describe, it } from 'node:test'
 import type { query } from '@anthropic-ai/claude-agent-sdk'
@@ -796,8 +796,24 @@ describe('ClaudeAgentAdapter', () => {
       }
     })
 
-    it('⛔ o ambiente do CLI liga o scrub das credenciais nos subprocessos', () => {
-      assert.strictEqual(cliEnv({ key: 'k', compatible: false }).CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, '1')
+    it('⛔ o processo do CLI vai sem o modo de limpeza (que escondia package.json e lockfiles) e sem o git status no host', async () => {
+      for (const env of [cliEnv({ key: 'k', compatible: false }), cliEnv({ key: 'k', baseUrl: 'https://x', compatible: true })]) {
+        assert.strictEqual(env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, '0')
+        assert.strictEqual(env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS, '1')
+        // A pasta de configuração (a credencial do CLI) mora nos dados do gateway: o `denyRead` do cerco.
+        assert.ok(env.CLAUDE_CONFIG_DIR?.startsWith(dataDir() + sep), String(env.CLAUDE_CONFIG_DIR))
+      }
+      // Sem conexão montada (o ambiente do gateway), o mesmo.
+      const sent = await globalGate([])
+      assert.strictEqual(sent.env?.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, '0')
+      assert.strictEqual(sent.env?.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS, '1')
+    })
+
+    it('⛔ sem o modo de limpeza, o Bash nativo segue recusado também no agente de projeto: o terminal é o run_bash', async () => {
+      const sent = await globalGate(['sdk:Bash'], { projectId: 'p-scrub' })
+      const bash = (await sent.canUseTool!('Bash', { command: 'env' }, options)) as { behavior: string; message?: string }
+      assert.strictEqual(bash.behavior, 'deny')
+      assert.match(bash.message ?? '', /run_bash/)
     })
 
     it('⛔ worktree: o Edit pela regra escrita a partir da pasta do projeto passa; o que a regra não cobre, não', async () => {

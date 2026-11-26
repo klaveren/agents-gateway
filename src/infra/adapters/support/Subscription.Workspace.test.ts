@@ -3,7 +3,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } fr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { projectHome, projectWorkspace, removeProjectWorkspace, sessionWorkspace, workspaceFor } from './Subscription.Workspace'
+import { terminalEnv } from '@domain/Agent.Identity'
+import { projectHome, projectWorkspace, removeProjectWorkspace, sessionWorkspace, subscriptionEnv, workspaceFor } from './Subscription.Workspace'
 
 describe('pasta de trabalho do agente', () => {
   const root = mkdtempSync(join(tmpdir(), 'gw-workspace-'))
@@ -48,5 +49,29 @@ describe('pasta de trabalho do agente', () => {
     assert.ok(existsSync(projectWorkspace('beta')))
     removeProjectWorkspace('beta')
     assert.ok(!existsSync(join(root, 'projects', 'beta')))
+  })
+})
+
+describe('ambiente do terminal do agente (run_bash)', () => {
+  it('⛔ nenhuma credencial do CLI nem do provedor chega ao comando; as variáveis do agente e as secretas do turno, sim', () => {
+    // O ambiente de um gateway que roda com o CLI logado (o que o processo do CLI recebe) e chaves no `.env`.
+    const gateway = {
+      PATH: '/usr/bin',
+      HOME: '/home/gw',
+      ANTHROPIC_API_KEY: 'sk-ant-x',
+      ANTHROPIC_AUTH_TOKEN: 'sk-or-x',
+      ANTHROPIC_BASE_URL: 'https://openrouter.ai/api',
+      CLAUDE_CODE_OAUTH_TOKEN: 'oat-x',
+      CLAUDE_CONFIG_DIR: '/dados/claude-cli',
+      OPENAI_API_KEY: 'sk-x',
+      SECRETS_KEY: 'k',
+      AUTH_SECRET: 's',
+    }
+    const env = terminalEnv({ DEPLOY_TOKEN: 'do-agente' }, subscriptionEnv({ HOME: '/projeto' }, gateway), { agentId: 'maya', secretEnv: { NPM_TOKEN: 'do-turno' } })
+    const leaked = Object.keys(env).filter((name) => /anthropic|claude|openai|secret|auth/i.test(name))
+    assert.deepStrictEqual(leaked, [])
+    assert.strictEqual(env.DEPLOY_TOKEN, 'do-agente')
+    assert.strictEqual(env.NPM_TOKEN, 'do-turno')
+    assert.strictEqual(env.HOME, '/projeto')
   })
 })
