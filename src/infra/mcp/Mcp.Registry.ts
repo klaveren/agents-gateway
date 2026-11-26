@@ -13,7 +13,7 @@ import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { IToolDefinition } from '@infra/tools/Tool.Types'
 import { INSTALL_PASSTHROUGH, isWritable, projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 import { installDir, resolveCommand } from './Mcp.Install'
-import { IMcpClientOptions, McpServerClient, TURN_WAKE_MS } from './McpServer.Client'
+import { IMcpClientOptions, IMcpStateChange, McpServerClient, TURN_WAKE_MS } from './McpServer.Client'
 import {
   argsForEndpoint,
   argsForOutputDir,
@@ -52,6 +52,20 @@ const MINUTE = 60_000
 const SHARED = '*'
 const maxInstances = () => Number.parseInt(process.env.MCP_CONTAINER_MAX ?? '', 10) || 10
 const idleMs = () => (Number.parseInt(process.env.MCP_CONTAINER_IDLE_MINUTES ?? '', 10) || 15) * MINUTE
+
+/** A cadência padrão do monitor dos MCPs (segundos). */
+export const MCP_MONITOR_DEFAULT_SECONDS = 60
+/** A variável do gateway que ajusta a cadência (segundos; `0` desliga o monitor). */
+export const MCP_MONITOR_SETTING = 'MCP_MONITOR_SECONDS'
+/** Quantas conversas, no máximo, guardam a falha de um mesmo servidor à espera do aviso de volta. */
+const OUTAGE_SESSIONS_MAX = 500
+
+/** A cadência em vigor (ms): a da variável, se for um número ≥ 0; senão a padrão. `0`: desligado. */
+export function mcpMonitorMs(env: Readonly<Record<string, string | undefined>> = process.env): number {
+  const raw = env[MCP_MONITOR_SETTING]
+  const value = raw === undefined || raw.trim() === '' ? Number.NaN : Number(raw)
+  return Math.round((Number.isFinite(value) && value >= 0 ? value : MCP_MONITOR_DEFAULT_SECONDS) * 1000)
+}
 
 /** Só o que o `docker` precisa para falar com o daemon — ⛔ nada do ambiente do gateway (chaves, `.env`). */
 function dockerEnv(): Record<string, string> {
@@ -94,6 +108,14 @@ export class McpRegistry {
   /** O token OAuth de cada pessoa (ver `McpOAuth`). Ligado na composição; ausente, `auth: oauth` não tem cliente. */
   private oauth?: { accessToken(serverKey: string, userId: string): Promise<string | undefined> }
   private reaper?: NodeJS.Timeout
+  private monitor?: NodeJS.Timeout
+  private ticking?: Promise<void>
+  /**
+   * ⚖️ O AVISO DE VOLTA: as conversas que viram um servidor fora (a chave dele) e ainda não souberam que voltou. Na volta,
+   * passam para `recovered` (o id que o agente conhece), que o próximo turno de cada uma leva UMA vez.
+   */
+  private readonly outages = new Map<string, Set<string>>()
+  private readonly recovered = new Map<string, Set<string>>()
   /** Os perfis guardados do navegador (o mesmo do navegador da pessoa). Trocável no teste. */
   profiles: BrowserProfiles = browserProfiles()
 
@@ -159,7 +181,11 @@ export class McpRegistry {
   private async instance(config: IMcpServerConfig, sessionId: string, project?: string): Promise<IInstance | undefined> {
     const key = `${mcpServerKey(config)}\u0000${sessionId}`
     const current = this.instances.get(key)
-    if (current) {
+    // ⚖️ PROCESSO MORTO (o stdio fechou, o `ping` do monitor não voltou): a instância sai e uma nova sobe agora.
+    if (current && !current.client.isConnected()) {
+      console.warn(`[mcp] ${mcpServerKey(config)}: instância parada; relançando`)
+      await current.close().catch(() => undefined)
+    } else if (current) {
       current.lastUsed = Date.now()
       return current
     }
@@ -195,6 +221,7 @@ export class McpRegistry {
     }
     this.instances.set(key, entry)
     this.startReaper()
+    this.cameBack(mcpServerKey(config))
     return entry
   }
 
@@ -347,6 +374,82 @@ export class McpRegistry {
     return victims.length
   }
 
+  /**
+   * ⚖️ O MONITOR: a cada `MCP_MONITOR_SECONDS` (padrão 60 s), confere cada MCP ligado que o gateway mantém aberto — o
+   * remoto compartilhado com um `ping` (e reconecta sozinho se não responder) e cada instância viva de processo/contêiner
+   * (a que não responde sai, e a próxima chamada relança). Sem isto, o servidor que reiniciava (o ambiente reativo
+   * reinicia a cada alteração) ficava "indisponível" até alguém usar, ou clicar em conectar.
+   * ⛔ O `caller` (o MCP do próprio gateway) fica de fora: sem a credencial de quem conversa, o `ping` seria recusado e
+   * pareceria queda.
+   */
+  startMonitor(intervalMs = mcpMonitorMs()): void {
+    if (this.monitor || intervalMs <= 0) return
+    this.monitor = setInterval(() => void this.monitorTick(), intervalMs)
+    this.monitor.unref()
+  }
+
+  stopMonitor(): void {
+    if (this.monitor) clearInterval(this.monitor)
+    this.monitor = undefined
+  }
+
+  /** Um ciclo do monitor (o teste chama direto). Dois ciclos nunca se sobrepõem. */
+  monitorTick(): Promise<void> {
+    this.ticking ??= this.runTick().finally(() => {
+      this.ticking = undefined
+    })
+    return this.ticking
+  }
+
+  private async runTick(): Promise<void> {
+    const shared = this.servers.list().filter((config) => config.enabled && !isLaunchedMcp(config) && config.auth !== 'caller')
+    const checks = shared.flatMap((config) => {
+      const key = mcpServerKey(config)
+      // OAuth: o cliente de cada pessoa que já existe (o monitor não tem pessoa para criar um).
+      const clients = config.auth === 'oauth' ? [...this.clients].filter(([slot]) => slot.startsWith(`${key}\u0000`)).map(([, entry]) => entry.client) : [this.client(key)]
+      return clients.filter((client): client is McpServerClient => !!client).map(async (client) => ((await client.check().catch(() => false)) ? this.cameBack(key) : undefined))
+    })
+    const instances = [...this.instances.entries()].map(async ([key, entry]) => {
+      if (await entry.client.check({ reconnect: false }).catch(() => false)) return
+      console.warn(`[mcp] ${key.split('\u0000')[0]}: instância não responde; sai e a próxima chamada relança`)
+      await entry.close().catch(() => undefined)
+    })
+    await Promise.all([...checks, ...instances])
+  }
+
+  /** Uma conversa viu este servidor fora (a falha de uma ferramenta, o aviso do começo do turno): ela será avisada da volta. */
+  noteOutage(key: string, sessionId: string | undefined): void {
+    if (!sessionId || sessionId.startsWith('probe:')) return
+    const sessions = this.outages.get(key) ?? new Set<string>()
+    if (sessions.size >= OUTAGE_SESSIONS_MAX) sessions.delete(sessions.values().next().value as string)
+    sessions.add(sessionId)
+    this.outages.set(key, sessions)
+  }
+
+  /** Os servidores que voltaram desde que esta conversa os viu fora — UMA vez: quem leu, consumiu. Ids como o agente os conhece. */
+  takeRecovered(sessionId: string): string[] {
+    const ids = this.recovered.get(sessionId)
+    this.recovered.delete(sessionId)
+    return ids ? [...ids].sort() : []
+  }
+
+  /** O servidor está de pé: as conversas que o viram fora passam a ter o aviso de volta. */
+  private cameBack(key: string): void {
+    const sessions = this.outages.get(key)
+    if (!sessions) return
+    this.outages.delete(key)
+    const id = this.servers.get(key)?.id ?? key
+    for (const sessionId of sessions) {
+      const ids = this.recovered.get(sessionId) ?? new Set<string>()
+      ids.add(id)
+      this.recovered.set(sessionId, ids)
+    }
+  }
+
+  private changed(key: string, change: IMcpStateChange): void {
+    if (change.up) this.cameBack(key)
+  }
+
   private startReaper(): void {
     if (this.reaper) return
     this.reaper = setInterval(() => void this.closeInstances({ idleOnly: true }), MINUTE)
@@ -409,6 +512,7 @@ export class McpRegistry {
       header: () => this.header(key),
       ...(person && oauth ? { bearer: () => oauth.accessToken(key, person) } : {}),
       fixedHeaders: () => this.fixedHeaders(this.servers.get(key) ?? config),
+      onChange: (change) => this.changed(key, change),
     })
     this.clients.set(slot, { fingerprint, client })
     return client

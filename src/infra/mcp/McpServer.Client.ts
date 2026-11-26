@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { TMcpAuth, TMcpTransport } from '@domain/models/McpServer.Model'
 import { IToolDefinition, IToolResult, IToolSchema } from '@infra/tools/Tool.Types'
@@ -17,6 +17,19 @@ export const MAX_RETRY_MS = 60_000
 /** O teto da tentativa do começo de um turno (`connectWithin`): o turno não fica parado esperando um servidor caído. */
 export const TURN_WAKE_MS = 3_000
 const STDERR_TAIL = 600
+/** O teto do `ping` do monitor: servidor que não responde nisso conta como caído. */
+export const PING_TIMEOUT_MS = 10_000
+/** Enquanto um servidor segue fora, o log repete um resumo nesta cadência (e só isso — nada a cada tentativa). */
+export const DOWN_SUMMARY_MS = 10 * 60_000
+
+/** A mudança de estado de um servidor, para quem acompanha (o registro: avisos às conversas, relançar instância). */
+export interface IMcpStateChange {
+  up: boolean
+  /** Na queda: o motivo. */
+  reason?: string
+  /** Na volta: quanto tempo ficou fora (ms). */
+  downtimeMs?: number
+}
 
 export interface IMcpClientDeps {
   createClient?: () => Client
@@ -47,6 +60,8 @@ export interface IMcpClientOptions {
   label?: string
   /** Em vez de HTTP: um processo (o `docker run` de um MCP em contêiner, ou o próprio MCP) falando MCP pelo stdio. */
   stdio?: { command: string; args: string[]; env: Record<string, string>; cwd?: string }
+  /** Cada queda e cada volta (só as transições, nunca as tentativas). */
+  onChange?: (change: IMcpStateChange) => void
 }
 
 /**
@@ -73,6 +88,10 @@ export class McpServerClient {
   /** O último erro de conexão ou de chamada, para a tela de MCPs. */
   lastError?: string
   private stderrTail = ''
+  /** Desde quando está fora (a primeira falha depois de estar de pé, ou do boot). `undefined`: de pé, ou nunca tentou. */
+  private downSince?: number
+  private lastSummaryAt = 0
+  private checking?: Promise<boolean>
 
   constructor(
     public readonly serverUrl: string,
@@ -167,17 +186,14 @@ export class McpServerClient {
     if (!(await this.ensureConnected()) || !this.client) return []
 
     try {
-      const response = await this.client.listTools()
+      const response = await this.withSession(this.client, (client) => client.listTools())
       return response.tools.map((tool) => ({
         origin: 'mcp' as const,
         name: tool.name,
         description: tool.description ?? '',
         inputSchema: toSchema(tool.inputSchema),
       }))
-    } catch (error: unknown) {
-      this.lastError = withoutRemoteBody(toMessage(error))
-      console.warn(`[mcp] Falha ao listar tools: ${toMessage(error)}`)
-      await this.markDisconnected()
+    } catch {
       return []
     }
   }
@@ -190,10 +206,8 @@ export class McpServerClient {
     return this.tokenScope.run(token, async () => {
       if (!(await this.ensureConnectedAs(token)) || !this.client) return []
       try {
-        return (await this.client.listTools()).tools as Array<Record<string, unknown>>
-      } catch (error: unknown) {
-        this.lastError = withoutRemoteBody(toMessage(error))
-        await this.markDisconnected()
+        return (await this.withSession(this.client, (client) => client.listTools())).tools as Array<Record<string, unknown>>
+      } catch {
         return []
       }
     })
@@ -207,9 +221,8 @@ export class McpServerClient {
         if (!(await this.ensureConnectedAs(context?.token)) || !this.client)
           return { content: [{ type: 'text', text: `MCP server unavailable; cannot run "${name}".` }], isError: true }
         try {
-          return (await this.client.callTool({ name, arguments: args })) as Record<string, unknown>
+          return (await this.withSession(this.client, (client) => client.callTool({ name, arguments: args }))) as Record<string, unknown>
         } catch (error: unknown) {
-          await this.markDisconnected()
           return { content: [{ type: 'text', text: `MCP call failed: ${toMessage(error)}` }], isError: true }
         }
       },
@@ -229,17 +242,80 @@ export class McpServerClient {
       context?.token,
       async () => {
         try {
-          const response = await client.callTool({ name, arguments: args })
+          const response = await this.withSession(client, (current) => current.callTool({ name, arguments: args }))
           const text = readText(response.content)
 
           return response.isError ? { status: 'error', result: text || 'Unknown MCP error' } : { status: 'success', result: text }
         } catch (error: unknown) {
-          await this.markDisconnected()
           return { status: 'error', result: `MCP call failed: ${toMessage(error)}` }
         }
       },
       this.options.identity ? identityHeaders(context) : undefined,
     )
+  }
+
+  /**
+   * Uma operação na sessão MCP de agora. Falhou: o servidor conta como caído (o backoff de sempre).
+   *
+   * ⚖️ SESSÃO INVÁLIDA (o servidor reiniciou e não conhece mais o `Mcp-Session-Id`: 404, "Session not found"): reconecta
+   * na hora e REPETE UMA VEZ. A requisição recusada por sessão não foi processada — repetir não executa nada duas vezes.
+   * Qualquer outro erro não se repete (uma ferramenta pode ter rodado antes da resposta se perder).
+   */
+  private async withSession<T>(client: Client, operation: (client: Client) => Promise<T>): Promise<T> {
+    try {
+      return await operation(client)
+    } catch (error: unknown) {
+      await this.markDisconnected(reasonOf(error), client)
+      if (!isSessionGone(error) || !(await this.connect()) || !this.client) throw error
+      const fresh = this.client
+      try {
+        return await operation(fresh)
+      } catch (again: unknown) {
+        await this.markDisconnected(reasonOf(again), fresh)
+        throw again
+      }
+    }
+  }
+
+  /**
+   * ⚖️ O MONITOR (ver `McpRegistry.startMonitor`): de pé, um `ping` do protocolo; sem resposta, cai e tenta reconectar NA
+   * HORA (o servidor que só reiniciou volta no mesmo ciclo). Fora do ar, tenta de novo ignorando o backoff — a cadência
+   * do monitor já é a espera. `reconnect: false` (instância de processo): só confere; quem decide relançar é o registro.
+   */
+  async check(options: { reconnect?: boolean; timeoutMs?: number } = {}): Promise<boolean> {
+    this.checking ??= this.runCheck(options.reconnect ?? true, options.timeoutMs ?? PING_TIMEOUT_MS).finally(() => {
+      this.checking = undefined
+    })
+    return this.checking
+  }
+
+  private async runCheck(reconnect: boolean, timeoutMs: number): Promise<boolean> {
+    if (this.inFlight) return this.inFlight
+    const client = this.client
+    if (this.connected && client) {
+      try {
+        await client.ping({ timeout: timeoutMs })
+        return true
+      } catch (error: unknown) {
+        await this.markDisconnected(reasonOf(error), client)
+      }
+    }
+    if (!reconnect) return false
+    const back = await this.attempt()
+    if (!back) this.summarize()
+    return back
+  }
+
+  /** O resumo de quem segue fora: um a cada `DOWN_SUMMARY_MS`, nunca a cada tentativa. */
+  private summarize(): void {
+    if (this.downSince === undefined || this.now() - this.lastSummaryAt < DOWN_SUMMARY_MS) return
+    this.lastSummaryAt = this.now()
+    console.warn(`[mcp] ${this.name} segue fora há ${duration(this.now() - this.downSince)}: ${this.lastError ?? 'sem resposta'}`)
+  }
+
+  /** O nome no log: o id do servidor, ou o endereço. */
+  private get name(): string {
+    return this.options.label ?? this.serverUrl
   }
 
   async close(): Promise<void> {
@@ -299,9 +375,10 @@ export class McpServerClient {
         this.failures = 0
         this.nextAttemptAt = 0
         this.generation += 1
+        this.watch(client, transport)
 
         this.lastError = undefined
-        console.log(`[mcp] Conectado em ${this.serverUrl}`)
+        this.cameBack()
         return true
       } catch (error: unknown) {
         this.lastError = withoutRemoteBody(toMessage(error)) + (this.stderrTail ? ` — ${this.stderrTail}` : '')
@@ -369,8 +446,28 @@ export class McpServerClient {
     }
   }
 
-  private async markDisconnected(): Promise<void> {
+  /**
+   * ⚖️ A QUEDA NA HORA: o transporte avisa. `onclose` (o processo do stdio morreu, o SSE fechou) derruba já; o `onerror`
+   * do Streamable HTTP também dispara por coisa passageira (o stream GET que reconecta sozinho), então ali confere com um
+   * `ping` antes. Só a conexão de agora conta: o fechamento de uma já descartada não derruba a nova.
+   */
+  private watch(client: Client, transport: unknown): void {
+    const confirmFirst = transport instanceof StreamableHTTPClientTransport
+    client.onclose = () => {
+      if (this.client === client) void this.markDisconnected('conexão encerrada', client)
+    }
+    client.onerror = (error: unknown) => {
+      if (this.client !== client) return
+      if (confirmFirst) void this.check()
+      else void this.markDisconnected(reasonOf(error), client)
+    }
+  }
+
+  /** `stale`: a conexão que falhou — se já foi trocada por outra (uma reconexão no meio), nada a derrubar. */
+  private async markDisconnected(reason?: string, stale?: Client): Promise<void> {
+    if (stale && this.client !== stale) return
     this.connected = false
+    if (reason) this.lastError = withoutRemoteBody(reason)
     await this.disposeClient()
     this.scheduleRetry()
   }
@@ -379,8 +476,28 @@ export class McpServerClient {
     this.failures += 1
     const delay = Math.min(BASE_RETRY_MS * 2 ** (this.failures - 1), MAX_RETRY_MS)
     this.nextAttemptAt = this.now() + delay
+    this.wentDown()
+  }
 
-    console.warn(`[mcp] Sem MCP em ${this.serverUrl}; seguindo com as tools locais. Nova tentativa em ${Math.round(delay / 1000)}s.`)
+  /** ⚖️ LOG SÓ NA TRANSIÇÃO: a primeira falha depois de estar de pé (ou a do boot). As tentativas seguintes ficam quietas. */
+  private wentDown(): void {
+    if (this.downSince !== undefined) return
+    this.downSince = this.now()
+    this.lastSummaryAt = this.now()
+    const reason = this.lastError ?? 'sem resposta'
+    console.warn(`[mcp] ${this.name} ${this.generation ? 'caiu' : 'fora do ar'}: ${reason}`)
+    this.options.onChange?.({ up: false, reason })
+  }
+
+  private cameBack(): void {
+    if (this.downSince === undefined) {
+      console.log(`[mcp] Conectado em ${this.serverUrl}`)
+      return
+    }
+    const downtimeMs = this.now() - this.downSince
+    this.downSince = undefined
+    console.log(`[mcp] ${this.name} voltou após ${duration(downtimeMs)}`)
+    this.options.onChange?.({ up: true, downtimeMs })
   }
 
   private async disposeClient(): Promise<void> {
@@ -408,6 +525,28 @@ function readText(content: unknown): string {
     })
     .map((block) => block.text)
     .join('\n')
+}
+
+/**
+ * O servidor não conhece mais a sessão (reiniciou): o 404 do Streamable HTTP, ou o texto que os servidores dão (o SDK
+ * responde 400 "No valid session ID provided").
+ */
+export function isSessionGone(error: unknown): boolean {
+  if (error instanceof StreamableHTTPError && error.code === 404) return true
+  return /session not found|no valid session|invalid session|unknown session/i.test(toMessage(error))
+}
+
+function reasonOf(error: unknown): string {
+  return toMessage(error) || 'erro sem mensagem'
+}
+
+/** `42s`, `3min`, `1h05` — para o log. */
+export function duration(ms: number): string {
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}min`
+  return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}`
 }
 
 function toMessage(error: unknown): string {

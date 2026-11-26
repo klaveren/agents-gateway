@@ -133,7 +133,9 @@ export function makeOrchestrator(): AgentProvider {
         : {}),
     })
   // O começo do turno: os MCPs do agente que caíram e voltaram entram já (sem esperar o backoff); os que seguem fora, avisados.
-  provider.useMcpWake((allowedTools, projectId) => catalog.wakeMcp(allowedTools, projectId))
+  provider.useMcpWake((allowedTools, projectId, sessionId) => catalog.wakeMcp(allowedTools, projectId, sessionId))
+  // O MCP que esta conversa viu fora e já voltou: o agente é avisado uma vez (ver `McpRegistry.takeRecovered`).
+  provider.useMcpRecovered((sessionId) => catalog.mcp.takeRecovered(sessionId))
   // ⚠️ Os `.env` que o admin do projeto deixou o agente ler: os valores mascarados na conversa desde o começo do turno.
   provider.useEnvMask(async (sessionId, projectId, agentId, dir) => {
     const projects = makeProjects()

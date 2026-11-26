@@ -209,15 +209,17 @@ export class ToolCatalog {
    * ⚖️ O COMEÇO DO TURNO: os servidores MCP compartilhados que o agente escolheu tentam conectar AGORA, mesmo no backoff
    * (ver `McpRegistry.wake`). Devolve os ids que seguem fora do ar — o turno avisa o agente, que não confunde "não veio"
    * com "não tenho acesso". O MCP `caller` (o do gateway) já conecta na hora com a credencial do turno; contêiner e
-   * processo sobem por conversa.
+   * processo sobem por conversa. `sessionId`: a conversa que viu a queda — no próximo turno depois da volta, ela é avisada.
    */
-  async wakeMcp(allowed: readonly string[], projectId?: string): Promise<string[]> {
+  async wakeMcp(allowed: readonly string[], projectId?: string, sessionId?: string): Promise<string[]> {
     const down: string[] = []
     await Promise.all(
       [...mcpSelection(allowed).keys()].map(async (id) => {
         const config = this.mcp.resolve(id, projectId)
         if (!config || config.auth === 'caller') return
-        if ((await this.mcp.wake(mcpServerKey(config)).catch(() => undefined)) === false) down.push(id)
+        if ((await this.mcp.wake(mcpServerKey(config)).catch(() => undefined)) !== false) return
+        down.push(id)
+        this.mcp.noteOutage(mcpServerKey(config), sessionId)
       }),
     )
     return down.sort()
@@ -311,10 +313,14 @@ export class ToolCatalog {
     try {
       client = await this.mcp.clientFor(key, context?.sessionId)
     } catch (error: unknown) {
+      this.mcp.noteOutage(key, context?.sessionId)
       return { status: 'error', result: error instanceof Error ? error.message : String(error) }
     }
     if (!client) return { status: 'error', result: `MCP server unavailable: ${config.id}` }
-    return client.callTool(tool, args, context)
+    const outcome = await client.callTool(tool, args, context)
+    // A falha que derrubou a conexão (não o erro da própria ferramenta): a conversa será avisada quando o servidor voltar.
+    if (outcome.status === 'error' && !client.isConnected()) this.mcp.noteOutage(key, context?.sessionId)
+    return outcome
   }
 }
 

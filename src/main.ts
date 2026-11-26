@@ -84,6 +84,8 @@ async function bootstrap() {
   // Conecta os servidores MCP cadastrados sem esperar: nenhum `connect()` lança, e servidor fora do ar
   // tenta de novo sozinho (com backoff) na primeira vez que uma ferramenta dele for pedida.
   void makeTools().mcp.connectAll()
+  // E os mantém de pé: um `ping` a cada `MCP_MONITOR_SECONDS` (padrão 60 s) reconecta sozinho quem caiu (ver `McpRegistry.startMonitor`).
+  makeTools().mcp.startMonitor()
   // Contêineres e redes de MCP que um processo anterior deixou (queda, reinício) saem antes de tudo.
   void cleanupOrphans()
   // Os diretórios vazios das conversas de assinatura de um processo anterior.

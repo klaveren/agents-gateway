@@ -93,6 +93,36 @@ describe('MCP processo local', () => {
     }
   })
 
+  it('⚖️ processo morto: a instância sai e a próxima chamada relança (sozinha, e também pelo monitor)', async () => {
+    const registry = registryWith({})
+    const silence = console.warn
+    console.warn = () => undefined
+    try {
+      const first = await whoami(registry, 's-dead')
+      process.kill(first.pid, 'SIGKILL')
+      // O stdio fecha: o cliente cai na hora (sem esperar o monitor).
+      const client = await registry.clientFor('fx', 's-dead')
+      for (let i = 0; i < 100 && client?.isConnected(); i++) await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.strictEqual(client?.isConnected(), false)
+      const second = await whoami(registry, 's-dead')
+      assert.notStrictEqual(second.pid, first.pid)
+      assert.strictEqual(registry.status()[0].instances, 1)
+
+      // Pelo monitor: a instância que não responde sai, e a conversa que viu a falha é avisada quando a nova sobe.
+      process.kill(second.pid, 'SIGKILL')
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      await registry.monitorTick()
+      assert.strictEqual(registry.status()[0].instances, 0)
+      registry.noteOutage('fx', 's-dead')
+      const third = await whoami(registry, 's-dead')
+      assert.notStrictEqual(third.pid, second.pid)
+      assert.deepStrictEqual(registry.takeRecovered('s-dead'), ['fx'])
+    } finally {
+      console.warn = silence
+      await registry.closeInstances()
+    }
+  })
+
   it('HOME só leitura (o do pod): o processo ganha a pasta de trabalho como HOME', async () => {
     const readOnly = join(root, 'home-ro')
     mkdirSync(readOnly, { mode: 0o500 })
