@@ -1320,7 +1320,8 @@ export function cleanLegacyScratch(base: string): void {
  * O auxiliar de ProxyCommand do SSH: abre um CONNECT na porta do gateway (com o token do `HTTPS_PROXY`) e liga a
  * entrada e a saída do ssh ao túnel. Escrito na HOME do comando (dentro do cerco), que ele pode ler.
  */
-const CONNECTOR_NAME = '.gateway-connect.cjs'
+// O nome muda com a versão do auxiliar: o arquivo é gravado uma vez só (`O_EXCL`), e a casa do comando guarda o antigo.
+export const CONNECTOR_NAME = '.gateway-connect-v2.cjs'
 const CONNECTOR_SOURCE = [
   "const net = require('net')",
   'const [host, port] = process.argv.slice(2)',
@@ -1335,7 +1336,18 @@ const CONNECTOR_SOURCE = [
   "  const end = buffer.indexOf('\\r\\n\\r\\n')",
   '  if (end < 0) return',
   "  socket.off('data', onHead)",
-  "  if (!/^HTTP\\/1\\.[01] 200/.test(buffer.toString('utf8', 0, end))) { process.stderr.write(buffer.toString('utf8', 0, end) + '\\n'); process.exit(1) }",
+  "  const head = buffer.toString('utf8', 0, end)",
+  '  if (!/^HTTP\\/1\\.[01] 200/.test(head)) {',
+  // ⛔ O MOTIVO da recusa vem no corpo (o portão o escreve): antes só o cabeçalho saía, e o agente via "403" sem saber por
+  // quê — achava que era o app e pedia reinício (24/11). Agora sai a linha que ele precisa ("rede local: só com regra exata").
+  "    let body = buffer.subarray(end + 4).toString('utf8')",
+  "    const status = head.split('\\r\\n')[0]",
+  "    const done = () => { process.stderr.write('gateway: conexão a ' + host + ':' + port + ' recusada (' + status + '): ' + (body.trim() || 'sem motivo') + '\\n'); process.exit(1) }",
+  "    socket.on('data', (more) => { body += more.toString('utf8') })",
+  "    socket.on('end', done)",
+  '    setTimeout(done, 1000)',
+  '    return',
+  '  }',
   '  const rest = buffer.subarray(end + 4)',
   '  if (rest.length) process.stdout.write(rest)',
   '  socket.pipe(process.stdout)',
