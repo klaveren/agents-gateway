@@ -5,6 +5,7 @@ import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepositor
 import { SqlitePermissionRequestRepository } from '@infra/persistence/Sqlite.PermissionRequestRepository'
 import { makeAgentLocalLayers } from './AgentLocalLayers.Factory'
 import { makeAgents } from './Agents.Factory'
+import { catalogHistoryParts } from './CatalogHistory.Factory'
 import { makeCatalogEvents } from './CatalogEvents.Factory'
 import { makePermissions } from './Permissions.Factory'
 import { makeProjects } from './Projects.Factory'
@@ -26,6 +27,8 @@ export function makePermissionRequests(): PermissionRequestsService {
       rules: (projectId) => makePermissions().projectRules(projectId).rules,
       save: (projectId, rules, by, change) => makePermissions().saveProjectRules(projectId, rules, by, change),
     },
+    // Pedido NA HORA: o histórico depende de todas as fábricas (ver `makeCatalogHistory`).
+    history: { revisions: (kind, itemId) => catalogHistoryParts().repository.revisions(kind, itemId) },
     events: makeCatalogEvents(),
     secrets: {
       save: (scope, scopeId, input, by, project) => makeResourceSecrets().save(scope, scopeId, input, by, project),

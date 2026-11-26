@@ -14,7 +14,9 @@ import {
   PermissionRequestNotFoundError,
   ProjectNotFoundError,
 } from '@domain/errors/Domain.Error'
+import { agentDocument, documentFromText, ICatalogDocument, projectPermissionsDocument, TCatalogKind } from '@domain/Catalog.Document'
 import { IAgent } from '@domain/models/Agent.Model'
+import { IPastDocument, requestOrigin, TPermissionRequestOrigin } from '@domain/PermissionRequestOrigin.Policy'
 import {
   IPermissionRequest,
   IPermissionRequester,
@@ -45,6 +47,13 @@ export interface IPermissionRequestView extends Omit<IPermissionRequest, 'status
   requestedWidenings: IPermissionRequest['widenings']
   /** O alvo mudou desde o pedido: `widenings` foi recalculado. */
   changed: boolean
+  /**
+   * Só no aberto: `restoration` (o alvo já teve tudo o que o pedido abre, numa revisão anterior) ou `new` (nunca teve).
+   * ⛔ A tela só aprova em lote o `restoration` (ver `PermissionRequestOrigin.Policy`).
+   */
+  origin?: TPermissionRequestOrigin
+  /** `restoration`: a revisão do catálogo em que o alvo já tinha isso. */
+  restoredRevision?: number
 }
 
 /** De quem são as regras: de um agente ou de um projeto (a camada de baixo). Um dos dois. */
@@ -147,6 +156,11 @@ export interface IPermissionRequestsDeps {
   ): { before: IAgent; after: IAgent; check(validation: IAgentValidation): void; save(validation: IAgentValidation, by: string): void } | undefined
   /** As regras dos projetos (a camada de baixo). Ausente: sem pedido de projeto. */
   projects?: IProjectRulesPort
+  /**
+   * As revisões do catálogo de um item (o histórico, da primeira à última): é por elas que o pedido sabe se RESTAURA o que
+   * o alvo já teve ou amplia o que ele nunca teve. Ausente: todo pedido conta como `new`.
+   */
+  history?: { revisions(kind: TCatalogKind, itemId: string): ReadonlyArray<{ revision: number; document?: string; projectId?: string }> }
   /** O aviso às telas abertas (`catalog.changed`, tipo `permission-request`): o pedido novo aparece sem reler. */
   events?: Pick<ICatalogEvents, 'publish'>
   now?: () => Date
@@ -412,7 +426,8 @@ export class PermissionRequestsService {
     const agentId = input.scope === 'agent' ? input.scopeId : requester.agentId
     const agent = agentId ? this.deps.agents.entry(agentId)?.agent : undefined
     this.room(1, agentId, agent?.projectId)
-    return this.store(this.newId(), {
+    const id = this.newId()
+    return this.store(id, {
       kind: 'secret',
       ...(agentId ? { agentId } : {}),
       ...(agent?.projectId ? { projectId: agent.projectId } : {}),
@@ -423,13 +438,15 @@ export class PermissionRequestsService {
       reason,
       requestedBy: requester,
       baseHash: '',
+      batchId: id,
     })
   }
 
   /** Os pedidos: os abertos (pendentes e vencidos) por padrão; `all` traz os decididos também. */
   list(filter: { agentId?: string; projectId?: string; kind?: TPermissionRequestKind; all?: boolean } = {}): IPermissionRequestView[] {
     const { all, ...rest } = filter
-    return this.deps.repository.list({ ...rest, open: !all }).map((request) => this.view(request))
+    const past = pastCache()
+    return this.deps.repository.list({ ...rest, open: !all }).map((request) => this.view(request, past))
   }
 
   get(id: string): IPermissionRequestView {
@@ -553,10 +570,13 @@ export class PermissionRequestsService {
       ])
   }
 
-  /** Os ids dos itens de uma chamada e o lote deles (o id do primeiro): só com mais de um — um item só não precisa de grupo. */
+  /**
+   * Os ids dos itens de uma chamada e o lote deles (o id do primeiro). ⚖️ SEMPRE, mesmo com um item só: a tela agrupa por
+   * lote — a chamada que gerou os pedidos —, e o pedido sem `batchId` é o antigo, sem origem.
+   */
   private batch(items: number): { ids: string[]; batch: { batchId?: string } } {
     const ids = Array.from({ length: items }, () => this.newId())
-    return { ids, batch: items > 1 ? { batchId: ids[0] } : {} }
+    return { ids, batch: items ? { batchId: ids[0] } : {} }
   }
 
   /** O pedido aprovável: existe, está pendente e não venceu. */
@@ -610,35 +630,44 @@ export class PermissionRequestsService {
     }
   }
 
-  private view(request: IPermissionRequest): IPermissionRequestView {
+  private view(request: IPermissionRequest, past: TPastCache = pastCache()): IPermissionRequestView {
     const { status, widenings: requested, baseHash, ...rest } = request
     const open = status === 'pending'
     const agent = request.agentId ? this.deps.agents.entry(request.agentId)?.agent : undefined
     const projectName = request.kind === 'project-rules' && request.projectId ? (this.deps.projects?.name?.(request.projectId) ?? request.projectId) : undefined
     let widenings: IPermissionWidening[] = requested
     let changed = false
+    // O alvo como ficaria com o pedido aprovado (o documento do catálogo): é com ele que o histórico diz se restaura.
+    let wanted: ICatalogDocument | undefined
     if (open) {
       try {
         if (request.kind === 'secret') {
           // Nada a recalcular: a variável é só o nome pedido.
         } else if (request.kind === 'agent-patch' && agent) {
-          widenings = refs(agentWidenings(agent, requestedAgent(agent, request)))
+          const after = requestedAgent(agent, request)
+          widenings = refs(agentWidenings(agent, after))
           changed = agentHash(agent) !== baseHash
+          wanted = agentDocument(after, NO_LINKS)
         } else if (request.kind === 'agent-local') {
           const plan = agent ? this.deps.localLayer?.(agent, request.entries?.add ?? []) : undefined
           if (plan) {
             widenings = refs(agentWidenings(plan.before, plan.after))
             changed = agentHash(plan.before) !== baseHash
+            wanted = agentDocument(plan.after, NO_LINKS)
           }
         } else if (request.kind !== 'agent-patch') {
           const target = this.rulesTarget(request)
           widenings = refs(requestWidenings(target.item, target.rules, request))
           changed = rulesHash(target.rules) !== baseHash
+          const rules = applyRuleChange(target.rules, request)
+          if (target.kind === 'project-rules') wanted = projectPermissionsDocument(target.projectId!, rules)
+          else if (agent) wanted = agentDocument({ ...agent, permissions: rules }, NO_LINKS)
         }
       } catch {
         // O alvo sumiu (agente ou projeto apagado): fica o que foi pedido; aprovar responde 404.
       }
     }
+    const origin = open ? this.origin(request, widenings, wanted, past) : undefined
     return {
       ...rest,
       status: requestStatus(request, this.now(), this.ttlDays),
@@ -648,6 +677,30 @@ export class PermissionRequestsService {
       widenings,
       requestedWidenings: requested,
       changed,
+      ...(origin ? { origin: origin.origin } : {}),
+      ...(origin?.restoredRevision !== undefined ? { restoredRevision: origin.restoredRevision } : {}),
+    }
+  }
+
+  /** ⛔ A variável secreta é sempre `new`: o valor é digitado agora, não há o que restaurar. */
+  private origin(request: IPermissionRequest, widenings: readonly IPermissionWidening[], wanted: ICatalogDocument | undefined, past: TPastCache) {
+    if (request.kind === 'secret') return requestOrigin(['secret'], undefined, [])
+    return requestOrigin(
+      widenings.map((item) => item.key),
+      wanted,
+      wanted ? past(wanted, () => this.past(wanted)) : [],
+    )
+  }
+
+  /** As revisões passadas do item, como documentos. ⚠️ O histórico que falha não derruba a leitura: o pedido fica `new`. */
+  private past(item: ICatalogDocument): IPastDocument[] {
+    try {
+      return (this.deps.history?.revisions(item.kind, item.id) ?? []).flatMap((revision) =>
+        revision.document ? [{ revision: revision.revision, document: documentFromText(item.kind, item.id, revision.projectId, revision.document) }] : [],
+      )
+    } catch (error) {
+      console.warn('[pedidos de permissão] não foi possível ler o histórico do alvo:', error)
+      return []
     }
   }
 
@@ -666,6 +719,20 @@ export class PermissionRequestsService {
 function gate(widenings: readonly IWidening[], confirm: readonly string[] | undefined): void {
   const mismatch = widenings.length ? !confirm || !confirmsWidenings(confirm, widenings) : !!confirm?.length
   if (mismatch) throw new CatalogWideningConfirmationError(refs(widenings))
+}
+
+/** Os vínculos do agente fora da conta (o patch não mexe neles): os mesmos do `AgentPatch.Policy`. */
+const NO_LINKS = { resources: { skills: [], commands: [] }, initialContext: [] }
+
+/** As revisões passadas de cada alvo, lidas uma vez por leitura da lista (centenas de pedidos do mesmo agente). */
+type TPastCache = (item: ICatalogDocument, load: () => IPastDocument[]) => IPastDocument[]
+function pastCache(): TPastCache {
+  const cache = new Map<string, IPastDocument[]>()
+  return (item, load) => {
+    const key = `${item.kind}\0${item.id}`
+    if (!cache.has(key)) cache.set(key, load())
+    return cache.get(key)!
+  }
 }
 
 /** Pedidos abertos por alvo (ver `room`): bem acima do uso real, abaixo do que afoga a tela de quem aprova. */
@@ -703,7 +770,7 @@ function notice(screen: string, done: readonly string[], pending: readonly IPerm
   if (done.length) lines.push(`Aplicado agora (restringe ou não abre acesso):`, ...done.map((line) => `  ${line}`))
   if (pending?.length) {
     lines.push(
-      `PENDENTE — NÃO aplicado: ${pending.length === 1 ? 'esta mudança amplia' : `estas ${pending.length} mudanças ampliam`} acesso e só ${pending.length === 1 ? 'vale' : 'valem'} depois que um administrador confirmar NA TELA, em ${screen} (ou no menu da conta → Notificações, onde ela aprova ou recusa um por um, ou aprova todos de uma vez). Vencem em ${pending[0].expiresAt.toISOString().slice(0, 10)}.`,
+      `PENDENTE — NÃO aplicado: ${pending.length === 1 ? 'esta mudança amplia' : `estas ${pending.length} mudanças ampliam`} acesso e só ${pending.length === 1 ? 'vale' : 'valem'} depois que um administrador confirmar NA TELA, em ${screen} (ou no menu da conta → Notificações, onde os pedidos desta chamada aparecem juntos, num lote: o que só restaura o que o agente já teve ela aprova de uma vez; o que ele nunca teve, item a item). Vencem em ${pending[0].expiresAt.toISOString().slice(0, 10)}.`,
       ...pending.map((item) => `  • ${itemLine(item)} (pedido ${item.id})`),
       `Avise a pessoa agora, com a lista acima. Não diga que o acesso foi liberado: até ela confirmar na tela, nada disso vale. Quando ela decidir, o gateway avisa nesta conversa: não fique conferindo.`,
     )

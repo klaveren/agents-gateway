@@ -5,15 +5,17 @@
   import { ApiError } from '@/lib/api'
   import type { IWideningRef } from '@/lib/catalogHistory'
   import {
+    batchKey,
     type IPermissionRequest,
+    isRestoration,
     itemSummary,
     kindLabel,
+    originLabel,
     patchLine,
     requestEntriesLine,
     ruleLine,
     secretLine,
     secretProjectLine,
-    targetKey,
     targetTitle,
   } from '@/lib/permissionRequests'
   import { PAGE_SIZE, usePaged } from '@/composables/usePaged'
@@ -24,12 +26,15 @@
   /**
    * As NOTIFICAÇÕES (só quem administra projeto): os pedidos de permissão abertos dos agentes (o servidor devolve os dos
    * projetos de que a pessoa é admin), num lugar só. Cada pedido é UM item (uma regra, um campo, uma ferramenta).
-   * ⚖️ A tela separa por ALVO — o agente, o projeto ou a skill que muda —, uma lista para cada, paginada; dentro dela, o
-   * pedido e o motivo aparecem uma vez por chamada do agente (`batchId`). Os vencidos têm a guia deles.
-   * ⛔ Aprovar UM item manda as chaves de todas as ampliações dele e só liga com todas marcadas — igual à
-   * `WideningConfirm`. "Aprovar todos" (da tela ou de um alvo) mostra a lista inteira antes: confirmar a lista é
-   * confirmar cada ampliação dela, e só o que foi listado é aprovado. ⛔ A variável secreta fica fora do "Aprovar todos":
-   * ela só vale com o valor digitado no item.
+   * ⚖️ A tela separa por LOTE — a chamada do agente que gerou os pedidos (`batchId`) —: quem pediu, quando, de qual
+   * conversa, o motivo e quantos itens. Os pedidos antigos, sem lote, ficam juntos no lote "sem origem".
+   * ⚖️ Cada item diz de onde vem (incidente de 26/11): `restauração` (o alvo já teve isso numa revisão anterior do catálogo)
+   * ou `ampliação nova` (nunca teve).
+   * ⛔ "Aprovar este lote" leva SÓ as restaurações. A ampliação nova se aprova item a item, ou num "Aprovar as N ampliações
+   * novas" à parte, que lista cada uma antes. Não há "aprovar todos" da tela inteira: foi o caminho às cegas.
+   * ⛔ Aprovar UM item manda as chaves de todas as ampliações dele e só liga com todas marcadas — igual à `WideningConfirm`.
+   * A lista de uma aprovação em lote é mostrada antes: confirmar a lista é confirmar cada ampliação dela, e só o que foi
+   * listado é aprovado. ⛔ A variável secreta fica fora de toda aprovação em lote: ela só vale com o valor digitado no item.
    * ⚖️ Os pedidos vêm da lista de todos da store (a mesma do selo), que anda sozinha com o `catalog.changed`.
    */
   const projects = useProjectsStore()
@@ -37,9 +42,14 @@
   const store = usePermissionRequestsStore()
   const { data, loading } = useResource(store.lists, () => (projects.managesAny ? '' : undefined))
 
-  interface IGroup {
+  interface IBatch {
+    /** O `batchId`; `''` = sem origem. */
     key: string
-    title: string
+    /** O primeiro pedido do lote: quem pediu, o motivo, a conversa (os mesmos em todo o lote). */
+    head: IPermissionRequest
+    /** Os alvos (o agente, o projeto, a skill): um só num lote de verdade. */
+    targets: string[]
+    createdAt: string
     items: IPermissionRequest[]
   }
 
@@ -47,42 +57,34 @@
   const pending = computed(() => (data.value ?? []).filter((request) => request.status === 'pending').sort(newestFirst))
   const expired = computed(() => (data.value ?? []).filter((request) => request.status === 'expired').sort(newestFirst))
 
-  /** Os pedidos da mesma chamada do agente dividem o pedido e o motivo; sem `batchId`, o pedido é a própria chamada. */
-  const askKey = (request: IPermissionRequest) => request.batchId ?? request.id
-  /** Os de uma chamada ficam juntos, na ordem em que a chamada mais nova aparece. */
-  function byAsk(items: IPermissionRequest[]): IPermissionRequest[] {
-    const asks = new Map<string, IPermissionRequest[]>()
-    for (const request of items) asks.set(askKey(request), [...(asks.get(askKey(request)) ?? []), request])
-    return [...asks.values()].flat()
-  }
-
-  /** Por alvo; a ordem é a do pedido mais novo de cada um. */
-  function grouped(requests: readonly IPermissionRequest[]): IGroup[] {
-    const byKey = new Map<string, IGroup>()
+  /** Por lote; a ordem é a do pedido mais novo de cada um. O "sem origem" vai por último. */
+  function batched(requests: readonly IPermissionRequest[]): IBatch[] {
+    const byKey = new Map<string, IBatch>()
     for (const request of requests) {
-      const key = targetKey(request)
-      const group = byKey.get(key) ?? { key, title: targetTitle(request), items: [] }
-      // O nome do agente vem nos pedidos dele; o de variável pode trazer só o id.
-      if (request.agentName && key.startsWith('agent:')) group.title = targetTitle(request)
-      group.items.push(request)
-      byKey.set(key, group)
+      const key = batchKey(request)
+      const batch = byKey.get(key) ?? { key, head: request, targets: [], createdAt: request.createdAt, items: [] }
+      const title = targetTitle(request)
+      if (!batch.targets.includes(title)) batch.targets.push(title)
+      if (request.createdAt.localeCompare(batch.createdAt) > 0) batch.createdAt = request.createdAt
+      batch.items.push(request)
+      byKey.set(key, batch)
     }
-    return [...byKey.values()].map((group) => ({ ...group, items: byAsk(group.items) }))
+    const list = [...byKey.values()]
+    return [...list.filter((batch) => batch.key), ...list.filter((batch) => !batch.key)]
   }
-  const groups = computed(() => grouped(pending.value))
-  const groupPage = usePaged(groups, { by: (group) => group.key })
+  const batches = computed(() => batched(pending.value))
+  const batchPage = usePaged(batches, { by: (batch) => batch.key })
   const expiredPage = usePaged(expired, { by: (request) => request.id })
 
-  // A página de cada lista (um alvo com muitos pedidos não empurra os outros para fora da tela).
+  // A página de cada lote (um lote com centenas de itens não empurra os outros para fora da tela).
   const itemPages = ref<Record<string, number>>({})
   const visible = computed(() =>
-    groupPage.items.value.map((group) => {
-      const pages = Math.max(1, Math.ceil(group.items.length / PAGE_SIZE))
-      const page = Math.min(itemPages.value[group.key] ?? 0, pages - 1)
-      return { ...group, pages, page, shown: group.items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) }
+    batchPage.items.value.map((batch) => {
+      const pages = Math.max(1, Math.ceil(batch.items.length / PAGE_SIZE))
+      const page = Math.min(itemPages.value[batch.key] ?? 0, pages - 1)
+      return { ...batch, pages, page, shown: batch.items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) }
     }),
   )
-  const opensAsk = (items: IPermissionRequest[], index: number) => index === 0 || askKey(items[index]) !== askKey(items[index - 1])
 
   const tab = ref<'pending' | 'expired'>('pending')
   /** Sem vencido, a guia some: a tela volta aos pendentes. */
@@ -121,7 +123,7 @@
     failures.value = { ...failures.value, [id]: message }
   }
 
-  /** Devolve se deu certo: o "todos" conta os que passaram. */
+  /** Devolve se deu certo: o lote conta os que passaram. */
   async function act(request: IPermissionRequest, work: () => Promise<void>): Promise<boolean> {
     busy.value = [...busy.value, request.id]
     const { [request.id]: _cleared, ...rest } = failures.value
@@ -154,32 +156,54 @@
   const reject = (request: IPermissionRequest) => act(request, () => rejectRequest(request))
 
   /**
-   * "TODOS": a lista é FOTOGRAFADA ao abrir a confirmação — o que chegar depois não entra, e cada aprovação manda as
+   * EM LOTE: a lista é FOTOGRAFADA ao abrir a confirmação — o que chegar depois não entra, e cada aprovação manda as
    * chaves que a pessoa viu (se o servidor recalcular outra coisa, aquele item fica, com o erro nele).
+   * - `restorations`: "Aprovar este lote" — só as restaurações;
+   * - `new`: "Aprovar as N ampliações novas" — só as novas, cada uma listada pelo nome;
+   * - `reject` / `discard`: recusar o lote (ou tudo), descartar os vencidos.
    */
+  type TBulkMode = 'restorations' | 'new' | 'reject' | 'discard'
   type TBulkVerb = 'Aprovar' | 'Recusar' | 'Descartar'
+  const VERB: Record<TBulkMode, TBulkVerb> = { restorations: 'Aprovar', new: 'Aprovar', reject: 'Recusar', discard: 'Descartar' }
   interface IBulk {
+    mode: TBulkMode
     verb: TBulkVerb
     items: IPermissionRequest[]
-    /** As variáveis secretas que o "Aprovar todos" deixou de fora. */
+    /** As variáveis secretas que a aprovação em lote deixou de fora. */
     skipped: number
   }
   const bulk = ref<IBulk>()
   const bulkBusy = ref(false)
   const outcome = ref<{ verb: TBulkVerb; done: number; failed: number }>()
+  /** ⛔ A variável secreta nunca vai em lote: só vale com o valor digitado no item. */
   const approvable = (items: readonly IPermissionRequest[]) => items.filter((request) => request.kind !== 'secret')
-  const bulkGroups = computed(() => grouped(bulk.value?.items ?? []))
+  const restorations = (items: readonly IPermissionRequest[]) => approvable(items).filter(isRestoration)
+  const fresh = (items: readonly IPermissionRequest[]) => approvable(items).filter((request) => !isRestoration(request))
   const DONE: Record<TBulkVerb, [string, string]> = { Aprovar: ['aprovado', 'aprovados'], Recusar: ['recusado', 'recusados'], Descartar: ['descartado', 'descartados'] }
 
-  function openBulk(verb: TBulkVerb, items: readonly IPermissionRequest[]) {
-    const list = verb === 'Aprovar' ? approvable(items) : [...items]
+  function openBulk(mode: TBulkMode, items: readonly IPermissionRequest[]) {
+    const list = mode === 'restorations' ? restorations(items) : mode === 'new' ? fresh(items) : [...items]
     if (!list.length) return
     outcome.value = undefined
-    bulk.value = { verb, items: list, skipped: items.length - list.length }
+    const secrets = items.filter((request) => request.kind === 'secret').length
+    bulk.value = { mode, verb: VERB[mode], items: list, skipped: mode === 'new' ? secrets : 0 }
   }
   function closeBulk() {
     if (!bulkBusy.value) bulk.value = undefined
   }
+  const bulkTitle = computed(() => {
+    const run = bulk.value
+    if (!run) return ''
+    if (run.mode === 'restorations') return `Aprovar ${count(run.items.length, 'restauração', 'restaurações')} deste lote?`
+    if (run.mode === 'new') return `Aprovar ${count(run.items.length, 'ampliação nova', 'ampliações novas')}?`
+    return `${run.verb} ${count(run.items.length, 'pedido', 'pedidos')}?`
+  })
+  const bulkMessage = computed(() => {
+    const mode = bulk.value?.mode
+    if (mode === 'restorations') return 'Só o que o agente alvo já teve numa versão anterior. As ampliações novas deste lote ficam esperando, item a item.'
+    if (mode === 'new') return '⚠️ O agente alvo NUNCA teve nada disto. Confira cada nome: é exatamente isto que passa a valer.'
+    return 'Nada desta lista passa a valer.'
+  })
 
   /** ⚖️ Um por vez: cada aprovação recalcula no servidor sobre o que o anterior gravou, e a falha de um não derruba os outros. */
   async function runBulk() {
@@ -207,7 +231,7 @@
       <header>
         <h1 class="text-xl font-semibold">Notificações</h1>
         <p class="text-xs text-zinc-500">
-          Pedidos de permissão dos agentes, uma lista por agente. Nada vale até você aprovar aqui; o que só restringia já foi aplicado.
+          Pedidos de permissão dos agentes, um lote por chamada. Nada vale até você aprovar aqui; o que só restringia já foi aplicado.
         </p>
       </header>
 
@@ -247,43 +271,73 @@
           <div class="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 px-3 py-2" data-test="bulk-bar">
             <p class="text-sm text-zinc-200" data-test="pending-total">
               {{ count(pending.length, 'pedido', 'pedidos') }}
-              <span class="text-zinc-500">em {{ count(groups.length, 'lista', 'listas') }}</span>
+              <span class="text-zinc-500">em {{ count(batches.length, 'lote', 'lotes') }}</span>
             </p>
             <span class="flex-1" />
-            <button type="button" class="btn btn-primary" :disabled="!approvable(pending).length || bulkBusy" data-test="approve-all" @click="openBulk('Aprovar', pending)">
-              Aprovar todos ({{ approvable(pending).length }})
-            </button>
-            <button type="button" class="btn btn-ghost" :disabled="bulkBusy" data-test="reject-all" @click="openBulk('Recusar', pending)">Recusar todos</button>
+            <button type="button" class="btn btn-ghost" :disabled="bulkBusy" data-test="reject-all" @click="openBulk('reject', pending)">Recusar todos</button>
           </div>
 
           <section
-            v-for="group in visible"
-            :key="group.key"
+            v-for="batch in visible"
+            :key="batch.key || 'none'"
             class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3"
-            :data-group="group.key"
-            data-test="request-group"
+            :data-batch="batch.key || 'none'"
+            data-test="request-batch"
           >
-            <header class="flex flex-wrap items-center gap-2">
-              <h2 class="text-sm font-medium text-zinc-100" data-test="group-title">{{ group.title }}</h2>
-              <span class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400" data-test="group-count">{{ group.items.length }}</span>
-              <span class="flex-1" />
-              <template v-if="group.items.length > 1">
+            <header class="flex flex-col gap-1" data-test="batch-header">
+              <div class="flex flex-wrap items-center gap-2">
+                <h2 class="text-sm font-medium text-zinc-100" data-test="batch-title">
+                  <template v-if="!batch.key">Sem origem</template>
+                  <template v-else-if="batch.head.requestedBy.agentId">
+                    Pedido pelo agente
+                    <code>{{ batch.head.requestedBy.agentId }}</code>
+                  </template>
+                  <template v-else>Pedido pela conta {{ batch.head.requestedBy.by }}</template>
+                </h2>
+                <span class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400" data-test="batch-count">{{ count(batch.items.length, 'item', 'itens') }}</span>
+                <span class="flex-1" />
+                <span class="text-[11px] text-zinc-500">{{ when(batch.createdAt) }}</span>
+              </div>
+              <p v-if="!batch.key" class="text-xs text-zinc-500">Pedidos de antes do lote: cada um diz quem pediu e por quê.</p>
+              <template v-else>
+                <p class="text-xs text-zinc-400">
+                  Para {{ batch.targets.join(', ') }}
+                  <template v-if="batch.head.requestedBy.conversationId">
+                    · na
+                    <RouterLink :to="`/c/${batch.head.requestedBy.conversationId}`" class="underline hover:text-zinc-200" data-test="request-conversation">conversa</RouterLink>
+                  </template>
+                  · com a conta {{ batch.head.requestedBy.by }}
+                </p>
+                <p class="text-sm whitespace-pre-wrap text-zinc-100" data-test="request-reason">{{ batch.head.reason }}</p>
+              </template>
+              <div class="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   type="button"
-                  class="btn btn-sm btn-secondary"
-                  :disabled="!approvable(group.items).length || bulkBusy"
-                  data-test="group-approve-all"
-                  @click="openBulk('Aprovar', group.items)"
+                  class="btn btn-sm btn-primary"
+                  :disabled="!restorations(batch.items).length || bulkBusy"
+                  data-test="batch-approve"
+                  @click="openBulk('restorations', batch.items)"
                 >
-                  Aprovar todos ({{ approvable(group.items).length }})
+                  Aprovar este lote ({{ count(restorations(batch.items).length, 'restauração', 'restaurações') }})
                 </button>
-                <button type="button" class="btn btn-sm btn-ghost" :disabled="bulkBusy" data-test="group-reject-all" @click="openBulk('Recusar', group.items)">Recusar todos</button>
-              </template>
+                <button
+                  v-if="fresh(batch.items).length"
+                  type="button"
+                  class="btn btn-sm btn-secondary"
+                  :disabled="bulkBusy"
+                  data-test="batch-approve-new"
+                  @click="openBulk('new', batch.items)"
+                >
+                  {{ fresh(batch.items).length === 1 ? 'Aprovar a ampliação nova deste lote' : `Aprovar as ${fresh(batch.items).length} ampliações novas deste lote` }}
+                </button>
+                <button type="button" class="btn btn-sm btn-ghost" :disabled="bulkBusy" data-test="batch-reject" @click="openBulk('reject', batch.items)">Recusar o lote</button>
+              </div>
             </header>
 
-            <template v-for="(request, index) in group.shown" :key="request.id">
-              <div v-if="opensAsk(group.shown, index)" class="flex flex-col gap-1 pt-1" data-test="request-ask">
+            <template v-for="request in batch.shown" :key="request.id">
+              <div v-if="!batch.key" class="flex flex-col gap-1 pt-1" data-test="request-ask">
                 <p class="text-xs text-zinc-400">
+                  <span class="font-medium text-zinc-200">{{ targetTitle(request) }}.</span>
                   <template v-if="request.requestedBy.agentId">
                     Pedido pelo agente
                     <code>{{ request.requestedBy.agentId }}</code>
@@ -301,6 +355,13 @@
               <article class="flex flex-col gap-2 rounded-lg border border-zinc-800/80 bg-zinc-900/40 px-3 py-2.5" :data-request="request.id" data-test="request-item">
                 <div class="flex flex-wrap items-center gap-1.5">
                   <span class="rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300" data-test="request-kind">{{ kindLabel(request) }}</span>
+                  <span
+                    class="rounded-full px-2 py-0.5 text-[11px]"
+                    :class="isRestoration(request) ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'"
+                    :title="isRestoration(request) && request.restoredRevision ? `o agente já tinha isso na revisão ${request.restoredRevision}` : undefined"
+                    data-test="request-origin"
+                    >{{ originLabel(request) }}</span
+                  >
                   <span v-if="request.kind === 'agent-local'" class="rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] text-sky-300" data-test="request-local">só nesta máquina</span>
                   <span class="flex-1" />
                   <span class="text-[11px] text-zinc-500">vence em {{ day(request.expiresAt) }}</span>
@@ -369,14 +430,14 @@
             </template>
 
             <ListPager
-              :model-value="group.page"
-              :pages="group.pages"
-              :total="group.items.length"
+              :model-value="batch.page"
+              :pages="batch.pages"
+              :total="batch.items.length"
               :size="PAGE_SIZE"
-              @update:model-value="(page: number) => (itemPages = { ...itemPages, [group.key]: page })"
+              @update:model-value="(page: number) => (itemPages = { ...itemPages, [batch.key]: page })"
             />
           </section>
-          <ListPager v-model="groupPage.page.value" :pages="groupPage.pages.value" :total="groupPage.total.value" :size="groupPage.size" />
+          <ListPager v-model="batchPage.page.value" :pages="batchPage.pages.value" :total="batchPage.total.value" :size="batchPage.size" />
         </template>
       </template>
 
@@ -384,7 +445,7 @@
         <div class="flex flex-wrap items-center gap-2">
           <p class="text-xs text-zinc-500">Passaram do prazo sem decisão: não podem mais ser aprovados. O agente precisa pedir de novo.</p>
           <span class="flex-1" />
-          <button v-if="expired.length > 1" type="button" class="btn btn-sm btn-ghost" :disabled="bulkBusy" data-test="discard-all" @click="openBulk('Descartar', expired)">
+          <button v-if="expired.length > 1" type="button" class="btn btn-sm btn-ghost" :disabled="bulkBusy" data-test="discard-all" @click="openBulk('discard', expired)">
             Descartar todos ({{ expired.length }})
           </button>
         </div>
@@ -422,10 +483,8 @@
 
     <ConfirmDialog
       :open="!!bulk"
-      :title="bulk ? `${bulk.verb} ${count(bulk.items.length, 'pedido', 'pedidos')}?` : ''"
-      :message="
-        bulk?.verb === 'Aprovar' ? 'Confira a lista: é exatamente isto que passa a valer, e amplia o acesso dos agentes listados.' : 'Nada desta lista passa a valer.'
-      "
+      :title="bulkTitle"
+      :message="bulkMessage"
       :action="bulk?.verb"
       :tone="bulk?.verb === 'Aprovar' ? 'neutral' : 'danger'"
       :busy="bulkBusy"
@@ -433,14 +492,13 @@
       @confirm="runBulk"
       @cancel="closeBulk"
     >
-      <div class="mt-3 flex max-h-[45vh] flex-col gap-3 overflow-y-auto rounded-lg border border-zinc-800 p-3" data-test="bulk-list">
-        <section v-for="group in bulkGroups" :key="group.key" class="flex flex-col gap-1" :data-group="group.key">
-          <h3 class="text-xs font-medium text-zinc-200">{{ group.title }} ({{ group.items.length }})</h3>
-          <ul class="flex list-disc flex-col gap-0.5 pl-4 text-xs text-zinc-300">
-            <li v-for="request in group.items" :key="request.id" :data-request="request.id">{{ itemSummary(request) }}</li>
-          </ul>
-        </section>
-      </div>
+      <ul class="mt-3 flex max-h-[45vh] list-disc flex-col gap-0.5 overflow-y-auto rounded-lg border border-zinc-800 p-3 pl-7 text-xs text-zinc-300" data-test="bulk-list">
+        <li v-for="request in bulk?.items ?? []" :key="request.id" :data-request="request.id">
+          <span class="text-zinc-500">{{ targetTitle(request) }}:</span>
+          {{ itemSummary(request) }}
+          <span v-if="bulk?.mode !== 'restorations' && bulk?.verb === 'Aprovar'" class="text-rose-300">({{ originLabel(request) }})</span>
+        </li>
+      </ul>
       <p v-if="bulk?.skipped" class="mt-2 text-xs text-amber-300" data-test="bulk-skipped">
         {{ count(bulk.skipped, 'variável secreta fica de fora: ela', 'variáveis secretas ficam de fora: cada uma') }} só vale com o valor digitado no próprio pedido.
       </p>

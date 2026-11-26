@@ -1355,7 +1355,14 @@ const permissionRequestSchema = {
       properties: { field: { type: 'string' }, add: { type: 'array', items: { type: 'string' } } },
       description: '`agent-patch` of a list field: the entries to add. `agent-local`: the `allowedTools` entry to turn on in the local layer.',
     },
-    batchId: { type: 'string', description: 'One request is one item; the items of the same call share it.' },
+    batchId: { type: 'string', description: 'One request is one item; the items of the same call share it (every request since 26/11; older ones may lack it).' },
+    origin: {
+      type: 'string',
+      enum: ['restoration', 'new'],
+      description:
+        'Open requests only: `restoration` when the target already had everything it opens in a previous catalog revision; `new` otherwise. The screen approves only `restoration` in a batch.',
+    },
+    restoredRevision: { type: 'integer', description: '`restoration`: the catalog revision where the target already had it.' },
     add: { type: 'array', items: permissionRuleSchema },
     remove: { type: 'array', items: permissionRuleSchema },
     widenings: { type: 'array', items: wideningSchema, description: 'What approving would widen NOW (on the current agent): the keys `confirm` must carry.' },

@@ -78,9 +78,10 @@ describe('NotificationsView', () => {
   beforeEach(() => {
     order = []
     all = [
-      request('a1', { batchId: 'b1', createdAt: '2026-11-03T12:00:00Z' }),
+      request('a1', { batchId: 'b1', origin: 'restoration', restoredRevision: 3, createdAt: '2026-11-03T12:00:00Z' }),
       request('a2', {
         batchId: 'b1',
+        origin: 'new',
         createdAt: '2026-11-03T12:00:01Z',
         widenings: [
           { key: 'k:a2:x', description: 'x' },
@@ -94,6 +95,7 @@ describe('NotificationsView', () => {
         projectId: 'alfa',
         projectName: 'Alfa',
         widenings: [],
+        origin: 'restoration',
         createdAt: '2026-11-02T12:00:00Z',
         requestedBy: { by: 'u', conversationId: 'c-1' },
       }),
@@ -121,22 +123,36 @@ describe('NotificationsView', () => {
     document.body.innerHTML = ''
   })
 
-  it('uma lista por alvo, com o pedido e o motivo uma vez por chamada; o vencido fica na guia dele', async () => {
+  const batchIds = (host: HTMLElement) => [...host.querySelectorAll('[data-test="request-batch"]')].map((batch) => batch.getAttribute('data-batch'))
+  const batch = (host: HTMLElement, id: string) => host.querySelector<HTMLElement>(`[data-test="request-batch"][data-batch="${id}"]`)!
+  const text = (element: Element | null | undefined) => element?.textContent?.replace(/\s+/g, ' ').trim()
+
+  it('um lote por chamada: quem pediu, quando, quantos itens, de qual conversa e o motivo; o sem lote fica em "sem origem"; o vencido na guia dele', async () => {
     const host = await mount(NotificationsView)
-    const groups = [...host.querySelectorAll('[data-test="request-group"]')]
-    expect(groups.map((group) => group.getAttribute('data-group'))).toEqual(['agent:theo', 'project:alfa'])
-    expect(groups.map((group) => group.querySelector('[data-test="group-title"]')?.textContent)).toEqual(['Agente Theo', 'Projeto Alfa'])
-    expect([...groups[0].querySelectorAll('[data-test="request-item"]')].map((line) => line.getAttribute('data-request'))).toEqual(['a2', 'a1'])
-    // a1 e a2 vieram da mesma chamada: o pedido e o motivo aparecem uma vez
-    expect(groups[0].querySelectorAll('[data-test="request-ask"]')).toHaveLength(1)
-    expect(groups[0].querySelector('[data-test="request-conversation"]')?.getAttribute('href')).toBe('/c/c-42')
-    expect(groups[0].querySelector('[data-test="request-kind"]')?.textContent).toBe('Regra')
+    expect(batchIds(host)).toEqual(['b1', 'none'])
+    const b1 = batch(host, 'b1')
+    expect(text(b1.querySelector('[data-test="batch-title"]'))).toBe('Pedido pelo agente theo')
+    expect(b1.querySelector('[data-test="batch-count"]')?.textContent).toBe('2 itens')
+    expect(text(b1.querySelector('[data-test="batch-header"]'))).toContain('Para Agente Theo')
+    expect(b1.querySelector('[data-test="request-conversation"]')?.getAttribute('href')).toBe('/c/c-42')
+    expect(b1.querySelectorAll('[data-test="request-reason"]')).toHaveLength(1)
+    expect([...b1.querySelectorAll('[data-test="request-item"]')].map((line) => line.getAttribute('data-request'))).toEqual(['a2', 'a1'])
+    expect(item(host, 'a1').querySelector('[data-test="request-origin"]')?.textContent).toBe('restauração')
+    expect(item(host, 'a1').querySelector('[data-test="request-origin"]')?.getAttribute('title')).toContain('revisão 3')
+    expect(item(host, 'a2').querySelector('[data-test="request-origin"]')?.textContent).toBe('ampliação nova')
+    expect(item(host, 'a1').querySelector('[data-test="request-kind"]')?.textContent).toBe('Regra')
+
+    const none = batch(host, 'none')
+    expect(text(none.querySelector('[data-test="batch-title"]'))).toBe('Sem origem')
+    // sem lote, cada pedido diz o alvo, quem pediu e por quê
+    expect(text(none.querySelector('[data-test="request-ask"]'))).toContain('Projeto Alfa.')
     expect(host.querySelector('[data-test="pending-total"]')?.textContent).toContain('3 pedidos')
+    expect(host.querySelector('[data-test="pending-total"]')?.textContent).toContain('2 lotes')
 
     expect(host.querySelector('[data-test="expired-section"]')).toBeNull()
     expect(host.querySelector('[data-test="tab-expired"]')?.textContent).toContain('1')
     await click(host.querySelector('[data-test="tab-expired"]'))
-    expect(host.querySelector('[data-test="request-group"]')).toBeNull()
+    expect(host.querySelector('[data-test="request-batch"]')).toBeNull()
     const expired = host.querySelector('[data-test="expired-section"]')!
     expect(expired.querySelectorAll('[data-test="expired-item"]')).toHaveLength(1)
     expect(expired.querySelector('[data-test="widening-confirm"]')).toBeNull()
@@ -144,13 +160,13 @@ describe('NotificationsView', () => {
     expect(vi.mocked(api)).toHaveBeenCalledWith('/permission-requests/e1/reject', { method: 'POST', body: {} })
     // sem vencido, a guia some e a tela volta aos pendentes
     expect(host.querySelector('[data-test="tab-expired"]')).toBeNull()
-    expect(host.querySelectorAll('[data-test="request-group"]')).toHaveLength(2)
+    expect(host.querySelectorAll('[data-test="request-batch"]')).toHaveLength(2)
   })
 
-  it('duas chamadas do mesmo agente: cada uma abre com o seu pedido e o seu motivo', async () => {
+  it('duas chamadas do mesmo agente: dois lotes, cada um com o seu motivo, o mais novo primeiro', async () => {
     all = [request('a1', { batchId: 'b1', reason: 'primeiro' }), request('a3', { batchId: 'b2', reason: 'segundo', createdAt: '2026-11-04T12:00:00Z' })]
     const host = await mount(NotificationsView)
-    expect(host.querySelectorAll('[data-test="request-group"]')).toHaveLength(1)
+    expect(batchIds(host)).toEqual(['b2', 'b1'])
     expect([...host.querySelectorAll('[data-test="request-reason"]')].map((line) => line.textContent)).toEqual(['segundo', 'primeiro'])
   })
 
@@ -186,55 +202,76 @@ describe('NotificationsView', () => {
     expect(item(host, 'a2')).toBeTruthy()
   })
 
-  it('"Aprovar todos" mostra a lista antes; confirmada, aprova um por vez com as chaves de cada um, e a falha fica no item', async () => {
+  it('⛔ não há "Aprovar todos" da tela: só por lote', async () => {
     const host = await mount(NotificationsView)
-    const all3 = host.querySelector<HTMLButtonElement>('[data-test="approve-all"]')!
-    expect(all3.textContent).toContain('Aprovar todos (3)')
-    await click(all3)
-    expect(dialog()?.textContent).toContain('Aprovar 3 pedidos?')
-    expect(dialog()?.textContent).toContain('é exatamente isto que passa a valer')
-    expect(listed()).toEqual(['a2', 'a1', 's1'])
-    expect(dialog()?.textContent).toContain('Agente Theo (2)')
-    expect(dialog()?.textContent).toContain('x; y')
-    expect(dialog()?.textContent).toContain('abre a1')
-    expect(dialog()?.textContent).toContain('Acrescentar: permitir terminal "cmd s1"')
-    expect(order).toEqual([])
+    expect(host.querySelector('[data-test="approve-all"]')).toBeNull()
+    expect(host.querySelector('[data-test="group-approve-all"]')).toBeNull()
+  })
 
+  it('⛔ "Aprovar este lote" leva SÓ as restaurações: a ampliação nova fica esperando, e o outro lote também', async () => {
+    const host = await mount(NotificationsView)
+    const button = batch(host, 'b1').querySelector<HTMLButtonElement>('[data-test="batch-approve"]')!
+    expect(text(button)).toBe('Aprovar este lote (1 restauração)')
+    await click(button)
+    expect(dialog()?.textContent).toContain('Aprovar 1 restauração deste lote?')
+    expect(dialog()?.textContent).toContain('As ampliações novas deste lote ficam esperando')
+    expect(listed()).toEqual(['a1'])
+    expect(order).toEqual([])
     await confirmDialog()
-    expect(dialog()).toBeNull()
-    expect(order).toEqual(['approve:a2', 'approve:a1', 'approve:s1'])
+    expect(order).toEqual(['approve:a1'])
     expect(approveBody('a1')).toEqual({ confirm: ['k:a1'] })
+    expect(approveBody('a2')).toBeUndefined()
+    expect(item(host, 'a2')).toBeTruthy()
+    expect(item(host, 's1')).toBeTruthy()
+    expect(host.querySelector('[data-test="bulk-outcome"]')?.textContent?.trim()).toBe('1 aprovado.')
+    // sem restauração no lote, o botão desliga
+    expect(batch(host, 'b1').querySelector<HTMLButtonElement>('[data-test="batch-approve"]')!.disabled).toBe(true)
+  })
+
+  it('o pedido sem `origin` (servidor antigo) conta como ampliação nova: fora do "Aprovar este lote"', async () => {
+    all = [request('o1', { batchId: 'b9' })]
+    const host = await mount(NotificationsView)
+    expect(item(host, 'o1').querySelector('[data-test="request-origin"]')?.textContent).toBe('ampliação nova')
+    expect(batch(host, 'b9').querySelector<HTMLButtonElement>('[data-test="batch-approve"]')!.disabled).toBe(true)
+  })
+
+  it('"Aprovar as N ampliações novas" é à parte e explícito: lista cada nome antes; confirmada, aprova só as novas, e a falha fica no item', async () => {
+    const host = await mount(NotificationsView)
+    expect(batch(host, 'none').querySelector('[data-test="batch-approve-new"]')).toBeNull()
+    const button = batch(host, 'b1').querySelector<HTMLButtonElement>('[data-test="batch-approve-new"]')!
+    expect(text(button)).toBe('Aprovar a ampliação nova deste lote')
+    await click(button)
+    expect(dialog()?.textContent).toContain('Aprovar 1 ampliação nova?')
+    expect(dialog()?.textContent).toContain('NUNCA teve nada disto')
+    expect(listed()).toEqual(['a2'])
+    expect(dialog()?.textContent).toContain('Agente Theo: x; y')
+    expect(dialog()?.textContent).toContain('(ampliação nova)')
+    await confirmDialog()
+    expect(order).toEqual(['approve:a2'])
     expect(approveBody('a2')).toEqual({ confirm: ['k:a2:x', 'k:a2:y'] })
-    expect(approveBody('s1')).toEqual({ confirm: [] })
-    expect(host.querySelector('[data-request="a1"]')).toBeNull()
-    expect(host.querySelector('[data-request="s1"]')).toBeNull()
     // o que o servidor recalculou fica, com o erro nele e a lista nova por confirmar
     expect(item(host, 'a2').querySelector('[data-test="request-error"]')?.textContent).toContain('a lista foi recalculada')
     expect([...item(host, 'a2').querySelectorAll('input[data-key]')].map((box) => box.getAttribute('data-key'))).toEqual(['k:novo'])
-    expect(item(host, 'a2').querySelector<HTMLButtonElement>('[data-test="item-approve"]')!.disabled).toBe(true)
-    const outcome = host.querySelector('[data-test="bulk-outcome"]')?.textContent?.replace(/\s+/g, ' ').trim()
-    expect(outcome).toBe('2 aprovados. 1 não passou: o motivo está em cada um.')
+    expect(text(host.querySelector('[data-test="bulk-outcome"]'))).toBe('0 aprovados. 1 não passou: o motivo está em cada um.')
+    expect(item(host, 'a1')).toBeTruthy()
   })
 
   it('cancelar a confirmação não aprova nada', async () => {
     const host = await mount(NotificationsView)
-    await click(host.querySelector('[data-test="approve-all"]'))
+    await click(batch(host, 'b1').querySelector('[data-test="batch-approve"]'))
     await click(dialog()?.querySelector('.btn:first-child'))
     expect(dialog()).toBeNull()
     expect(order).toEqual([])
     expect(host.querySelectorAll('[data-test="request-item"]')).toHaveLength(3)
   })
 
-  it('"Aprovar todos" de uma lista leva só os pedidos dela; a lista de um pedido só não tem o botão', async () => {
+  it('"Recusar o lote" recusa o lote inteiro, restaurações e novas; o outro lote fica', async () => {
     const host = await mount(NotificationsView)
-    expect(host.querySelector('[data-group="project:alfa"] [data-test="group-approve-all"]')).toBeNull()
-    const button = host.querySelector<HTMLButtonElement>('[data-group="agent:theo"] [data-test="group-approve-all"]')!
-    expect(button.textContent).toContain('Aprovar todos (2)')
-    await click(button)
-    expect(dialog()?.textContent).toContain('Aprovar 2 pedidos?')
+    await click(batch(host, 'b1').querySelector('[data-test="batch-reject"]'))
+    expect(dialog()?.textContent).toContain('Recusar 2 pedidos?')
     expect(listed()).toEqual(['a2', 'a1'])
     await confirmDialog()
-    expect(order).toEqual(['approve:a2', 'approve:a1'])
+    expect(order).toEqual(['reject:a2', 'reject:a1'])
     expect(item(host, 's1')).toBeTruthy()
   })
 
@@ -250,14 +287,16 @@ describe('NotificationsView', () => {
     expect(host.querySelector('[data-test="bulk-outcome"]')?.textContent?.trim()).toBe('3 recusados.')
   })
 
-  it('lista com mais de dez pedidos: pagina, e o "Aprovar todos" leva os de todas as páginas', async () => {
-    all = Array.from({ length: 12 }, (_, index) => request(`n${index}`, { createdAt: `2026-11-03T12:00:${String(59 - index).padStart(2, '0')}Z` }))
+  it('lote com mais de dez itens: pagina, e o "Aprovar este lote" leva as restaurações de todas as páginas', async () => {
+    all = Array.from({ length: 12 }, (_, index) =>
+      request(`n${index}`, { batchId: 'big', origin: 'restoration', createdAt: `2026-11-03T12:00:${String(59 - index).padStart(2, '0')}Z` }),
+    )
     const host = await mount(NotificationsView)
     expect(host.querySelectorAll('[data-test="request-item"]')).toHaveLength(10)
-    expect(host.querySelector('[data-test="group-count"]')?.textContent).toBe('12')
-    await click(host.querySelector('[data-group="agent:theo"] [data-test="pager-next"]'))
+    expect(host.querySelector('[data-test="batch-count"]')?.textContent).toBe('12 itens')
+    await click(host.querySelector('[data-batch="big"] [data-test="pager-next"]'))
     expect([...host.querySelectorAll('[data-test="request-item"]')].map((line) => line.getAttribute('data-request'))).toEqual(['n10', 'n11'])
-    await click(host.querySelector('[data-test="approve-all"]'))
+    await click(host.querySelector('[data-test="batch-approve"]'))
     expect(listed()).toHaveLength(12)
     await confirmDialog()
     expect(order).toHaveLength(12)
@@ -265,22 +304,32 @@ describe('NotificationsView', () => {
     expect(host.querySelector('[data-test="bulk-outcome"]')?.textContent?.trim()).toBe('12 aprovados.')
   })
 
-  it('ferramenta ligada só nesta máquina: diz o que é, onde vale, e a lista do "Aprovar todos" repete', async () => {
+  it('ferramenta ligada só nesta máquina: diz o que é, onde vale, e a lista da aprovação em lote repete', async () => {
     all = [
       request('l1', {
         kind: 'agent-local',
+        batchId: 'b1',
+        origin: 'restoration',
         add: [],
         entries: { field: 'allowedTools', add: ['mcp:github'] },
         widenings: [{ key: 'agent/theo#allowedTools+mcp:github', description: 'Liga o MCP github' }],
       }),
-      request('l2', { kind: 'agent-local', add: [], entries: { field: 'allowedTools', add: ['agent:zeus'] }, widenings: [], createdAt: '2026-11-03T11:00:00Z' }),
+      request('l2', {
+        kind: 'agent-local',
+        batchId: 'b1',
+        origin: 'restoration',
+        add: [],
+        entries: { field: 'allowedTools', add: ['agent:zeus'] },
+        widenings: [],
+        createdAt: '2026-11-03T11:00:00Z',
+      }),
     ]
     const host = await mount(NotificationsView)
     expect(item(host, 'l1').querySelector('[data-test="request-kind"]')?.textContent).toBe('MCP')
     expect(item(host, 'l2').querySelector('[data-test="request-kind"]')?.textContent).toBe('Delegação')
     expect(item(host, 'l1').querySelector('[data-test="request-local"]')?.textContent).toBe('só nesta máquina')
     expect(item(host, 'l1').querySelector('[data-test="request-entries"]')?.textContent).toBe('Ligar só nesta máquina: mcp:github')
-    await click(host.querySelector('[data-test="approve-all"]'))
+    await click(host.querySelector('[data-test="batch-approve"]'))
     expect(dialog()?.textContent).toContain('Liga o MCP github — só nesta máquina')
     expect(dialog()?.textContent).toContain('Ligar só nesta máquina: agent:zeus')
   })
@@ -328,8 +377,8 @@ describe('NotificationsView', () => {
       const host = await mount(NotificationsView)
       expect(item(host, 'p1').querySelector('[data-test="secret-project"]')?.textContent?.trim()).toBe('valor do projeto Alfa')
       expect(item(host, 'v1').querySelector('[data-test="secret-project"]')).toBeNull()
-      // a variável da skill tem a lista dela
-      expect(host.querySelector('[data-test="group-title"]')?.textContent).toBe('Skill gitlab')
+      // o alvo é a skill, não o agente que pediu
+      expect(host.querySelector('[data-test="request-ask"]')?.textContent).toContain('Skill gitlab.')
     })
 
     it('mostra nome, escopo, descrição e motivo; Aprovar só liga com a caixa E o valor; manda { confirm, value } e limpa', async () => {
@@ -353,27 +402,28 @@ describe('NotificationsView', () => {
       expect(host.innerHTML).not.toContain('s3gredo')
     })
 
-    it('fica fora do "Aprovar todos" (só vale com o valor digitado), e a confirmação avisa; entra no "Recusar todos"', async () => {
-      all = [secret('v1'), request('a1')]
+    it('fica fora de toda aprovação em lote (só vale com o valor digitado), e a confirmação avisa; entra no "Recusar o lote"', async () => {
+      all = [secret('v1'), request('a1', { origin: 'new' })].map((one) => ({ ...one, batchId: 'b1' }))
       const host = await mount(NotificationsView)
-      expect(host.querySelector('[data-test="approve-all"]')!.textContent).toContain('Aprovar todos (1)')
-      await click(host.querySelector('[data-test="approve-all"]'))
-      expect(dialog()?.textContent).toContain('Aprovar 1 pedido?')
+      expect(item(host, 'v1').querySelector('[data-test="request-origin"]')?.textContent).toBe('ampliação nova')
+      expect(text(host.querySelector('[data-test="batch-approve-new"]'))).toBe('Aprovar a ampliação nova deste lote')
+      await click(host.querySelector('[data-test="batch-approve-new"]'))
       expect(listed()).toEqual(['a1'])
       expect(dialog()?.querySelector('[data-test="bulk-skipped"]')?.textContent).toContain('1 variável secreta fica de fora')
       await confirmDialog()
       expect(order).toEqual(['approve:a1'])
       expect(item(host, 'v1')).toBeTruthy()
 
-      await click(host.querySelector('[data-test="reject-all"]'))
+      await click(host.querySelector('[data-test="batch-reject"]'))
       expect(listed()).toEqual(['v1'])
       expect(dialog()?.querySelector('[data-test="bulk-skipped"]')).toBeNull()
     })
 
-    it('só variável secreta esperando: o "Aprovar todos" fica desligado', async () => {
-      all = [secret('v1')]
+    it('só variável secreta esperando: nada a aprovar em lote', async () => {
+      all = [{ ...secret('v1'), batchId: 'v1', origin: 'new' }]
       const host = await mount(NotificationsView)
-      expect(host.querySelector<HTMLButtonElement>('[data-test="approve-all"]')!.disabled).toBe(true)
+      expect(host.querySelector<HTMLButtonElement>('[data-test="batch-approve"]')!.disabled).toBe(true)
+      expect(host.querySelector('[data-test="batch-approve-new"]')).toBeNull()
     })
   })
 })
