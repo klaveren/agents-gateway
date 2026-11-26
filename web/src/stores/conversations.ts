@@ -22,7 +22,7 @@ export interface IConversationActivity {
   agents: number
 }
 
-/** Releitura enquanto alguma conversa tem algo em segundo plano: vigia e processo acabam sem aviso na lista. */
+/** De quanto em quanto tempo a lista relê o que roda em segundo plano (vigia e processo acabam e voltam sem aviso). */
 const ACTIVITY_POLL_MS = 15_000
 /** Junta os gatilhos próximos (a lista carregou, vários turnos começaram e acabaram) numa leitura só. */
 const ACTIVITY_SETTLE_MS = 600
@@ -137,7 +137,9 @@ export const useConversationsStore = defineStore('conversations', () => {
     } catch {
       // Sem a leitura, os selos ficam como estavam: a lista segue.
     }
-    if (Object.keys(activity.value).length) scheduleActivity(ACTIVITY_POLL_MS)
+    // ⚖️ SEMPRE de novo (com conversas na lista), não só com selo aceso: uma leitura vazia no meio de um reinício apagava
+    // o selo da vigia, e a lista parava de conferir — parecia que o agendamento tinha sido desligado (26/11).
+    if (items.value.length) scheduleActivity(ACTIVITY_POLL_MS)
   }
   function scheduleActivity(delay = ACTIVITY_SETTLE_MS): void {
     clearTimeout(activityTimer)
@@ -344,7 +346,9 @@ export const useConversationsStore = defineStore('conversations', () => {
           live.value = true
           running.value = new Set()
           // O selo de Mensagens: relido a cada conexão (o que chegou com o stream fora não se perde).
-          void useMessagesStore().load().catch(() => undefined)
+          void useMessagesStore()
+            .load()
+            .catch(() => undefined)
           if (!first) {
             void load(admin)
             // O catálogo também: o aviso de mudança que caiu no meio não chegou.
@@ -356,6 +360,8 @@ export const useConversationsStore = defineStore('conversations', () => {
             const event = frame.data as TStreamFrame
             if (event.type === 'stream.ready') {
               streamId = event.streamId
+              // A conexão voltou (o gateway reiniciou, o celular voltou do segundo plano): os selos se releem na hora.
+              scheduleActivity()
               if (followed) sendFollow()
               // O stream novo não sabe dos canais do antigo: liga de novo os que as telas ainda escutam.
               for (const name of channelListeners.keys()) void putChannel(name, true).catch(() => undefined)
@@ -373,8 +379,7 @@ export const useConversationsStore = defineStore('conversations', () => {
               // 🔊 Lê em voz alta, se a pessoa ligou (no app do Mac, quem fala é o ícone da barra de menus).
               // (Sem id de conversa = aviso de projeto conectado: a voz das mensagens da origem fica de fora.)
               if (created.conversationId) void useSpeechStore().onMessageCreated(created.conversationId)
-            }
-            else if (event.type === 'conversation.running' || event.type === 'conversation.idle')
+            } else if (event.type === 'conversation.running' || event.type === 'conversation.idle')
               markRunning(event.sessionId, event.type === 'conversation.running', event.type === 'conversation.running' ? event.at : undefined)
             else apply(event as TConversationEvent)
           }

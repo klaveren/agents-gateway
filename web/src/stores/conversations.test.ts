@@ -103,7 +103,12 @@ describe('store: a caixa do admin é dele; "De todos" liga o monitor', () => {
     expect(vi.mocked(api).mock.calls.at(-1)?.[1]).toMatchObject({ query: { scope: 'all', mine: 1 } })
 
     await store.setEveryone(true)
-    const query = (vi.mocked(api).mock.calls.filter((call) => call[0] !== '/messages').at(-1)?.[1] as { query: Record<string, unknown> }).query
+    const query = (
+      vi
+        .mocked(api)
+        .mock.calls.filter((call) => call[0] !== '/messages')
+        .at(-1)?.[1] as { query: Record<string, unknown> }
+    ).query
     expect(query.scope).toBe('all')
     expect(query.mine).toBeUndefined()
     store.unsubscribe()
@@ -268,5 +273,36 @@ describe('store: acompanhar a conversa aberta', () => {
       .map(([, request]) => (request as { body: { sessionId: string | null } }).body.sessionId)
     expect(follows).toEqual(['a', 'b'])
     store.unsubscribe()
+  })
+})
+
+describe('store: os selos de vigia e processo', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(api).mockReset()
+  })
+
+  it('⛔ uma leitura vazia (o gateway reiniciando) não apaga o selo para sempre: a lista segue conferindo e ele volta', async () => {
+    vi.useFakeTimers()
+    try {
+      let activityCalls = 0
+      vi.mocked(api).mockImplementation(async (path: string) => {
+        if (path === '/conversations/activity') {
+          activityCalls += 1
+          return (activityCalls === 1 ? {} : { c1: { watches: 1, processes: 0, agents: 0 } }) as never
+        }
+        if (path === '/messages') return [] as never
+        return { sessions: [conversation('c1', '2026-11-26T17:00:00Z')], total: 1 } as never
+      })
+      const store = useConversationsStore()
+      await store.load(true)
+      await vi.advanceTimersByTimeAsync(700)
+      expect(store.activity).toEqual({})
+      await vi.advanceTimersByTimeAsync(16_000)
+      expect(store.activity.c1?.watches).toBe(1)
+      store.unsubscribe()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
