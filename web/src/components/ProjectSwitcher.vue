@@ -49,6 +49,21 @@
     await switchServer(id, project).catch(() => undefined)
   }
 
+  /**
+   * 🔤 Os projetos daqui e os dos outros servidores numa lista só, em ordem alfabética (o mesmo nome em dois servidores
+   * fica junto, pelo nome do servidor). O clique num daqui escolhe o projeto; num de fora, troca de servidor e abre.
+   */
+  const projectEntries = computed(() => {
+    const here = projects.list.map((project) => ({ key: project.id, project, serverId: undefined as string | undefined, serverName: currentServerName.value }))
+    const others = serverList.value
+      ? (otherServerProjects.value ?? []).flatMap((server) =>
+          server.state === 'ok' ? (server.projects ?? []).map((project) => ({ key: `${server.id}:${project.id}`, project, serverId: server.id as string | undefined, serverName: server.name as string | undefined })) : [],
+        )
+      : []
+    const byName = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true })
+    return [...here, ...others].sort((a, b) => byName.compare(a.project.name, b.project.name) || byName.compare(a.serverName ?? '', b.serverName ?? ''))
+  })
+
   /** A paleta do projeto, se ele tem cor. */
   const paletteOf = (color: string | undefined) => (color && color in PALETTES ? PALETTES[color as keyof typeof PALETTES] : undefined)
 </script>
@@ -101,50 +116,32 @@
       </template>
       <template v-if="!lite">
         <div class="border-b border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-500" :class="serverList ? 'border-t' : ''">Projeto</div>
+        <!-- 🗂️ No app do Mac, os projetos dos OUTROS servidores entram na mesma lista, com a tag de qual é; tudo em ordem alfabética. -->
         <button
-          v-for="project in projects.list"
-          :key="project.id"
+          v-for="entry in projectEntries"
+          :key="entry.key"
           type="button"
-          role="menuitemradio"
-          :aria-checked="project.id === projects.current"
+          :role="entry.serverId ? 'menuitem' : 'menuitemradio'"
+          :aria-checked="entry.serverId ? undefined : entry.project.id === projects.current"
           class="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-zinc-800"
-          :class="project.id === projects.current ? 'text-emerald-300' : 'text-zinc-200'"
-          @click="choose(project.id)"
+          :class="!entry.serverId && entry.project.id === projects.current ? 'text-emerald-300' : 'text-zinc-200'"
+          :data-test="entry.serverId ? 'other-project-item' : undefined"
+          @click="entry.serverId ? go(entry.serverId, entry.project.id) : choose(entry.project.id)"
         >
           <!-- 🎨 As iniciais na cor do projeto: dá para achar o projeto pela cor. Sem cor, o cinza de antes. -->
           <span
             class="grid h-6 w-6 shrink-0 place-items-center rounded-md text-[10px] font-semibold"
-            :class="paletteOf(project.color) ? 'text-zinc-950' : 'bg-zinc-800'"
-            :style="paletteOf(project.color) ? { background: paletteOf(project.color)!['500'] } : undefined"
-            data-test="project-swatch"
+            :class="paletteOf(entry.project.color) ? 'text-zinc-950' : 'bg-zinc-800'"
+            :style="paletteOf(entry.project.color) ? { background: paletteOf(entry.project.color)!['500'] } : undefined"
+            :data-test="entry.serverId ? undefined : 'project-swatch'"
           >
-            {{ initials(project.name) }}
+            {{ initials(entry.project.name) }}
           </span>
-          <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
-          <span v-if="serverList && currentServerName" class="server-tag shrink-0" data-test="project-server-tag">{{ currentServerName }}</span>
-          <span v-if="project.id === projects.current" class="text-xs">✓</span>
+          <span class="min-w-0 flex-1 truncate">{{ entry.project.name }}</span>
+          <span v-if="serverList && entry.serverName" class="server-tag shrink-0" :data-test="entry.serverId ? undefined : 'project-server-tag'">{{ entry.serverName }}</span>
+          <span v-if="!entry.serverId && entry.project.id === projects.current" class="text-xs">✓</span>
         </button>
-        <!-- 🗂️ No app do Mac: os projetos dos OUTROS servidores, na mesma lista, com a tag de qual é. O clique troca de servidor e abre o projeto. -->
         <template v-for="server in serverList ? (otherServerProjects ?? []) : []" :key="`server:${server.id}`">
-          <button
-            v-for="project in server.state === 'ok' ? (server.projects ?? []) : []"
-            :key="`${server.id}:${project.id}`"
-            type="button"
-            role="menuitem"
-            class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
-            data-test="other-project-item"
-            @click="go(server.id, project.id)"
-          >
-            <span
-              class="grid h-6 w-6 shrink-0 place-items-center rounded-md text-[10px] font-semibold"
-              :class="paletteOf(project.color) ? 'text-zinc-950' : 'bg-zinc-800'"
-              :style="paletteOf(project.color) ? { background: paletteOf(project.color)!['500'] } : undefined"
-            >
-              {{ initials(project.name) }}
-            </span>
-            <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
-            <span class="server-tag shrink-0">{{ server.name }}</span>
-          </button>
           <button
             v-if="server.state !== 'ok'"
             type="button"
