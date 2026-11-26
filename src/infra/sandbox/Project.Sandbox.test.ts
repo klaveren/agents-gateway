@@ -237,19 +237,19 @@ describe('ProjectSandbox', () => {
       ensureGitProxyAuth(join(base, '.home'))
       writeConnector(join(base, '.home'))
       assert.strictEqual(readFileSync(join(outside, '.gitconfig'), 'utf8'), '[user]\n\tname = Dono\n')
-      assert.strictEqual(existsSync(join(outside, '.gateway-connect.cjs')), false)
+      assert.strictEqual(existsSync(join(outside, '.gateway-connect-v2.cjs')), false)
     })
 
     it('o auxiliar do SSH que é link sem alvo: o servidor não cria o arquivo no alvo', () => {
       const { home, outside } = scene()
-      symlinkSync(join(outside, 'plantado.cjs'), join(home, '.gateway-connect.cjs'))
-      assert.strictEqual(writeConnector(home), join(home, '.gateway-connect.cjs'))
+      symlinkSync(join(outside, 'plantado.cjs'), join(home, '.gateway-connect-v2.cjs'))
+      assert.strictEqual(writeConnector(home), join(home, '.gateway-connect-v2.cjs'))
       assert.strictEqual(existsSync(join(outside, 'plantado.cjs')), false)
     })
 
     it('o auxiliar do SSH que é link para um arquivo de fora: o alvo fica como estava', () => {
       const { home, victim } = scene()
-      symlinkSync(victim, join(home, '.gateway-connect.cjs'))
+      symlinkSync(victim, join(home, '.gateway-connect-v2.cjs'))
       writeConnector(home)
       untouched(victim)
     })
@@ -257,7 +257,7 @@ describe('ProjectSandbox', () => {
     it('⚖️ sem nada plantado, o auxiliar do SSH é gravado uma vez, só para o dono, e o que já existe fica', () => {
       const { home } = scene()
       const path = writeConnector(home)
-      assert.strictEqual(path, join(home, '.gateway-connect.cjs'))
+      assert.strictEqual(path, join(home, '.gateway-connect-v2.cjs'))
       assert.match(readFileSync(path, 'utf8'), /CONNECT /)
       assert.strictEqual(statSync(path).mode & 0o777, 0o600)
       writeFileSync(path, '// do agente\n')
