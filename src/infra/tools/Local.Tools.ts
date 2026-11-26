@@ -49,7 +49,7 @@ import type { IHostApprovals } from '@application/HostApprovals.Service'
 import { commandDirOf, ISshKitIdentity, removeSshKit, writeSshKit, writeSshRoute } from '@infra/accounts/Ssh.Kit'
 import { CLUSTER_SECRET_REFUSAL, dumpsClusterSecret } from '@domain/Secret.Mask'
 import { BACKGROUND_LIMITS, backgroundMaxProcesses, BackgroundProcesses, backgroundProcesses, clipOutput, startCommand, tailOf } from './Background.Processes'
-import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
+import { CONNECTOR_NAME, IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { DOC_KINDS, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind, TDocStatus } from '@domain/models/ProjectDoc.Model'
 import { IDocHit } from '@domain/ports/GuidanceRepository.Port'
 import { AGENT_TRIGGER_TOOL, SEARCH_RESOURCES_TOOL, TUsableKind, USABLE_KINDS, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
@@ -410,7 +410,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       // ⛔ A chave SSH do comando numa pasta PRIVADA do servidor (a de dados, que nenhum comando lê; só este recebe leitura
       // dela), nunca no HOME do projeto que os agentes dividem. Escrita ANTES do cerco, que a libera só para este comando.
       // Entre aspas: no app do Mac o Node mora em "Agents Gateway.app" (o ProxyCommand roda num shell).
-      const viaGate = `"${process.execPath}" "${join(place.scratchBase ?? root, '.home', '.gateway-connect.cjs')}" %h %p`
+      const viaGate = `"${process.execPath}" "${join(place.scratchBase ?? root, '.home', CONNECTOR_NAME)}" %h %p`
       // No Mac, sem conta SSH, o ssh comum também sai pela porta do gateway (lá não há o interceptador de TCP do Linux).
       const kitBin = accounts?.ssh?.length ? writeSshKit(privateDir, accounts.ssh, viaGate).bin : process.platform === 'darwin' ? writeSshRoute(privateDir, viaGate).bin : undefined
       const line = await sandbox.wrapWith(command, root, (base) => (machine ? machinePlan(layers, { ...base, system }) : cercoPlan(layers, { ...base, system })), token, {
