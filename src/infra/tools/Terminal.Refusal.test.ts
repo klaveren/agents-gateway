@@ -363,6 +363,15 @@ describe('terminal — "Read-only file system" no cerco', () => {
     assert.match(readOnlyNote("touch: cannot touch 'zz': EROFS"), /regra de escrita/)
     assert.strictEqual(readOnlyNote('ok'), '')
   })
+
+  it('⛔ conversa em worktree e o caminho é do principal: a nota é a da pasta de trabalho, não a de pedir regra', () => {
+    const place = { dir: '/p/repositories/_wt/x', worktree: 'x', repositoryDir: '/p/repositories/app' }
+    const note = readOnlyNote('mkdir: /p/repositories/app/node_modules/.vite-temp: Read-only file system', 'npm test', place)
+    assert.match(note, /só leitura nesta conversa/)
+    assert.match(note, /`\/p\/repositories\/_wt\/x\/node_modules\/\.vite-temp`/)
+    assert.doesNotMatch(note, /peça a regra/)
+    assert.match(readOnlyNote('/p/repositories/_wt/x/a: Read-only file system', 'npm test', place), /não tem regra de escrita/)
+  })
 })
 
 describe('terminal — a pasta privada do agente', () => {

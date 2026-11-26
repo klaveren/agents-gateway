@@ -18,6 +18,7 @@ import { cercoPlan, machinePlan } from '@domain/Cerco.Plan'
 import { commandMatches, definesGitAlias, ENV_FILE_PATTERNS, hasGitDeny, pathMatches, type IPermissionRule, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { pagedText, plainFileRead, readBudgetChars as defaultReadBudget } from '@domain/Reading.Policy'
+import { type IWorktreePlace, mainRepositoryNote } from '@domain/Worktree.Policy'
 import { exec } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -463,7 +464,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     // ⚠️ Pediu mais que o teto: o corte não é calado. Sem o aviso, o agente lia "Tempo esgotado" sem saber que o tempo
     // pedido nem valeu, e repetia (um pre-commit de 40 s morto aos 20 deixou lock órfão no repositório).
     if (askedSeconds && askedSeconds * 1000 > ceiling) prepared.notes += capNotice(askedSeconds, ceiling)
-    if (deps.exec) return legacyRun(prepared, timeoutMs, limits.maxOutputChars)
+    if (deps.exec) return legacyRun(prepared, timeoutMs, limits.maxOutputChars, command, context?.workFolder)
     const id = processes.newId()
     const logFile = join(prepared.logDir, `${id}.log`)
     const result = await startCommand(prepared.line, { cwd: prepared.root, env: prepared.env, shell: SANDBOX_SHELL, timeoutMs, logFile, onExit: prepared.release }).done
@@ -473,14 +474,14 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const reading = !result.timedOut && result.code === 0 ? fileReadOf(command) : undefined
     if (reading) {
       rmSync(logFile, { force: true })
-      return { status: 'success', result: prepared.notes + pagedText(raw, readBudgetChars(context), reading).text + readOnlyNote(raw) }
+      return { status: 'success', result: prepared.notes + pagedText(raw, readBudgetChars(context), reading).text + readOnlyNote(raw, command, context?.workFolder) }
     }
     const long = raw.length > limits.maxOutputChars
     if (long && context?.sessionId)
       processes.remember({ id, sessionId: context.sessionId, name: command.slice(0, 80), command, startedAt: new Date(), code: result.code, timedOut: result.timedOut, logFile })
     else rmSync(logFile, { force: true })
     const body = clipOutput(raw, limits.maxOutputChars, long && context?.sessionId ? `o log inteiro: bash_logs id ${id}` : undefined)
-    const note = readOnlyNote(raw)
+    const note = readOnlyNote(raw, command, context?.workFolder)
     if (result.timedOut)
       return { status: 'error', result: `${prepared.notes}Tempo esgotado (${Math.round(timeoutMs / 1000)}s): o comando e os filhos dele foram parados.\n${body}${note}` }
     if (result.code !== 0) return { status: 'error', result: `${prepared.notes}Exit code ${result.code ?? 1}: ${body.trim()}${note}` }
@@ -537,7 +538,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
   }
 
   /** O caminho do `exec` injetado (os testes): a mesma preparação, a saída de uma vez. */
-  async function legacyRun(prepared: IPrepared, timeoutMs: number, maxOutputChars: number): Promise<IToolResult> {
+  async function legacyRun(prepared: IPrepared, timeoutMs: number, maxOutputChars: number, command: string, place?: IWorktreePlace): Promise<IToolResult> {
     try {
       const { stdout, stderr } = await run(prepared.line, { cwd: prepared.root, timeout: timeoutMs, maxBuffer: EXEC_BUFFER_BYTES, env: prepared.env, shell: SANDBOX_SHELL })
       // Os avisos ficam fora do corte, como no caminho de verdade (`guardedBash`).
@@ -546,7 +547,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       // A linha embrulhada (a política do cerco) não interessa a quem lê; a saída de erro, sim.
       const failure = error as { stderr?: string; stdout?: string; code?: number }
       const output = [failure.stdout?.trim(), failure.stderr?.trim()].filter(Boolean).join('\n')
-      if (output) return { status: 'error', result: prepared.notes + clipOutput(`Exit code ${failure.code ?? 1}: ${output}`, maxOutputChars) + readOnlyNote(output) }
+      if (output)
+        return { status: 'error', result: prepared.notes + clipOutput(`Exit code ${failure.code ?? 1}: ${output}`, maxOutputChars) + readOnlyNote(output, command, place) }
       return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
     } finally {
       prepared.release()
@@ -977,8 +979,11 @@ const RULE_HINT =
  * dentro mostra `/` somente leitura. Sem a nota, o Argos leu isso e pediu fsck do servidor seis vezes (07/11), e a Vera
  * não entendia por que a ferramenta de escrita criava o arquivo que o terminal recusava (ver `withWriteGlobsExpanded`).
  */
-export function readOnlyNote(output: string): string {
+export function readOnlyNote(output: string, command = '', place?: IWorktreePlace): string {
   if (!/Read-only file system|EROFS/.test(output)) return ''
+  // O principal, na conversa em worktree: não é regra que falta, é a pasta errada (ver `mainRepositoryNote`).
+  const main = mainRepositoryNote(output, command, place)
+  if (main) return main
   return (
     '\n\nℹ️ No cerco, "Read-only file system" quer dizer que você não tem regra de escrita nesse caminho; o disco do servidor não está somente leitura. ' +
     `Arquivo NOVO por regra com curinga (\`**/*.test.ts\`) se cria pela ferramenta de escrita (Write), não pelo terminal. Fora disso, ${RULE_HINT}.`
@@ -1717,7 +1722,9 @@ function backgroundTools(
               .slice(-lines)
               .join('\n')
           : text
-        return { status: 'success', result: `${describe(entry)}\n${clipOutput(picked || '(sem saída ainda)', 20_000)}` }
+        // O `bash_start` que escreveu no principal (conversa em worktree): a mesma nota do `run_bash`, só a dela.
+        const main = mainRepositoryNote(picked, entry.command, context?.workFolder)
+        return { status: 'success', result: `${describe(entry)}\n${clipOutput(picked || '(sem saída ainda)', 20_000)}${main}` }
       },
     },
     {

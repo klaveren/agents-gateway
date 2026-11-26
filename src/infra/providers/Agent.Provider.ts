@@ -1,4 +1,5 @@
 import { DELIVER_FILE_TOOL } from '@domain/models/ConversationFile.Model'
+import { emptyTurnSummary, type ITurnFailure } from '@domain/EmptyTurn.Policy'
 import { BOARD_TOOL, freshIds, IConversationPanel, LEGACY_BOARD_TOOL, panelMarkdown, panelTurnNote } from '@domain/models/ConversationPanel.Model'
 import { PLAN_TOOL } from '@domain/models/ConversationPlan.Model'
 import { deprecatedCitedIn } from '@domain/Tool.Deprecations'
@@ -435,6 +436,8 @@ export class AgentProvider implements IAgentProvider {
       }
 
       let textGap = false
+      // A última ferramenta que terminou, se falhou: o turno que acaba vazio depois dela é fechado com o motivo.
+      let lastFailure: ITurnFailure | undefined
       for (;;) {
         let exhausted: { message: string; resetsAt?: string; kind: TProviderFailure; next: IFallbackStep } | undefined
         // O fim da rodada fica retido: com mensagem na fila, o turno ainda não acabou.
@@ -481,6 +484,8 @@ export class AgentProvider implements IAgentProvider {
             textGap = false
             turn.text += text
           } else if (event.type === 'tool.result' || event.type === 'tool.error' || event.type === 'message.injected') textGap = true
+          if (event.type === 'tool.error') lastFailure = { tool: event.payload.tool, reason: event.payload.message }
+          else if (event.type === 'tool.result') lastFailure = undefined
           else if (event.type === 'tool.started') turn.tools.push(event.payload.tool)
           if (event.type === 'tool.started') this.loops?.observe(sessionId, { type: 'tool.started', tool: event.payload.tool, args: event.payload.args })
           if (event.type === 'tool.started' && [BOARD_TOOL, LEGACY_BOARD_TOOL, PLAN_TOOL].includes(event.payload.tool)) panelTouched = true
@@ -512,6 +517,13 @@ export class AgentProvider implements IAgentProvider {
             sent = { text: interjectionRound(rest), ...(files?.length ? { files } : {}) }
             extraRound = true
             continue
+          }
+          // ⛔ O TURNO VAZIO DEPOIS DE UMA FERRAMENTA QUE FALHOU, em qualquer lane: a conversa e quem delegou recebem o que
+          // falhou, marcado como do gateway, em vez de nada (ver `emptyTurnSummary`).
+          if (!turn.text.trim() && lastFailure) {
+            const text = emptyTurnSummary(lastFailure)
+            turn.text += text
+            yield { type: 'text.delta', sessionId, timestamp: new Date(), payload: { text } }
           }
           yield completed
           break
@@ -771,7 +783,16 @@ export class AgentProvider implements IAgentProvider {
     return {
       agentId: agent.id,
       ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: home === projectId } } : {}),
-      ...(folder?.repository ? { repository: { name: folder.repository, ...(folder.worktree ? { worktree: folder.worktree } : {}), ...(branch ? { branch } : {}) } } : {}),
+      ...(folder?.repository
+        ? {
+            repository: {
+              name: folder.repository,
+              ...(folder.worktree ? { worktree: folder.worktree } : {}),
+              ...(branch ? { branch } : {}),
+              ...(folder.worktree && folder.repositoryDir ? { main: folder.repositoryDir } : {}),
+            },
+          }
+        : {}),
       ...(folder ? { directory: folder.dir } : home ? { directory: projectWorkspacePath(home) } : {}),
       ...this.agentFolderOf(agent, projectOf(metadata)),
       ...(hasTerminal(agent.allowedTools) ? { terminal: true } : {}),

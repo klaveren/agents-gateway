@@ -299,6 +299,19 @@ describe('AntigravityAgentAdapter', () => {
     const events = await collect(adapter.sendMessage(agent, session.id, { text: 'olá' }, {}))
     assert.strictEqual(calls.length, 1 + ANTIGRAVITY_FOLLOW_UPS)
     assert.strictEqual(events.at(-1)?.type, 'message.completed')
+    // ⛔ Nunca vazio: o gateway fecha o turno com o que falhou, marcado como dele, antes do fim.
+    const texts = events.filter((event) => event.type === 'text.delta')
+    assert.strictEqual(texts.length, 1)
+    assert.match(texts[0].payload.text, /^\[gateway\] .*Parou em `run_command`: negado pelo sandbox do Antigravity \(RunCommand\)\./)
+    assert.strictEqual(events.at(-2), texts[0])
+  })
+
+  it('a continuação respondeu: nada de resumo do gateway', async () => {
+    const calls: ISpawned[] = []
+    const adapter = new AntigravityAgentAdapter({ store: new SessionStore(), spawn: fakeSpawn(calls, (n) => (n === 1 ? deniedNative : answered)), home: () => '/h' })
+    const session = await adapter.createSession(agent, {})
+    const events = await collect(adapter.sendMessage(agent, session.id, { text: 'olá' }, {}))
+    assert.ok(!events.some((event) => event.type === 'text.delta' && event.payload.text.startsWith('[gateway]')))
   })
 
   it('ferramenta que falhou e o modelo respondeu depois: nada de continuação', async () => {

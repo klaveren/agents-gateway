@@ -1,6 +1,7 @@
 import { cliTerminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
+import { emptyTurnSummary, ITurnFailure } from '@domain/EmptyTurn.Policy'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -53,9 +54,9 @@ export const ANTIGRAVITY_FOLLOW_UPS = 1
 const SANDBOX_DENIED = 'Negado pelo sandbox:'
 
 /** A mensagem que segue o turno mudo: o que falhou e por onde continuar. */
-export function followUpMessage(failure: string | undefined): string | undefined {
+export function followUpMessage(failure: ITurnFailure | undefined): string | undefined {
   if (!failure) return undefined
-  return `A ferramenta falhou (${failure.split('\n')[0].slice(0, 300)}). Continue com as ferramentas do gateway (${ANTIGRAVITY_TURN_TOOLS_SERVER}): o terminal é o run_bash, os arquivos são read_file, write_file e edit_file. O terminal nativo (run_command) está desligado.`
+  return `A ferramenta falhou (${`${failure.tool}: ${failure.reason}`.split('\n')[0].slice(0, 300)}). Continue com as ferramentas do gateway (${ANTIGRAVITY_TURN_TOOLS_SERVER}): o terminal é o run_bash, os arquivos são read_file, write_file e edit_file. O terminal nativo (run_command) está desligado.`
 }
 
 /**
@@ -180,9 +181,13 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     try {
       // ⚖️ O turno que PARA logo depois de uma ferramenta negada ou com erro (o `run_command` nativo, que o sandbox do CLI
       // nega e encerra o turno) segue mais uma vez, com o motivo, em vez de acabar vazio. Teto: `ANTIGRAVITY_FOLLOW_UPS`.
+      let spoke = false
+      let failed: ITurnFailure | undefined
       for (let round = 0; ; round += 1) {
         const outcome: IAntigravityRound = yield* this.runOnce(agent, record, message, workspace, home, abort, context)
         if (outcome.stop) return
+        spoke ||= outcome.spoke
+        failed = outcome.failure ?? failed
         const followUp = round < ANTIGRAVITY_FOLLOW_UPS && native.conversationId ? followUpMessage(outcome.failure) : undefined
         if (!followUp) break
         yield {
@@ -193,6 +198,8 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
         }
         message = followUp
       }
+      // ⛔ Seguiu e parou de novo sem uma palavra: o gateway fecha o turno com o que falhou (ver `emptyTurnSummary`).
+      if (!spoke && failed) yield { type: 'text.delta', sessionId, timestamp: now(), payload: { text: emptyTurnSummary(failed) } }
       yield { type: 'message.completed', sessionId, timestamp: now() }
     } catch (error: unknown) {
       if (abort.signal.aborted) {
@@ -240,7 +247,9 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     // A última ferramenta, enquanto nada veio depois dela: o que a rodada deixou pendurado.
     let last: { tool: string; error?: string } | undefined
     let denied: string | undefined
-    const failure = () => (last ? `${last.tool}: ${last.error ?? (denied ? `negado pelo sandbox do Antigravity (${denied})` : 'não terminou')}` : undefined)
+    let spoke = false
+    const failure = (): ITurnFailure | undefined =>
+      last ? { tool: last.tool, reason: last.error ?? (denied ? `negado pelo sandbox do Antigravity (${denied})` : 'não terminou') } : undefined
     try {
       for await (const line of createInterface({ input: child.stdout! })) {
         for (const event of antigravityEvents(line, sessionId, state)) {
@@ -250,6 +259,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
           if (event.type === 'tool.started') last = { tool: event.payload.tool }
           else if (event.type === 'tool.error' && last) last.error = event.payload.message
           else if (event.type === 'tool.result' || (event.type === 'text.delta' && event.payload.text.trim())) last = undefined
+          if (event.type === 'text.delta' && event.payload.text.trim()) spoke = true
           else if (event.type === 'warning' && event.payload.message.startsWith(SANDBOX_DENIED))
             denied = event.payload.message.slice(SANDBOX_DENIED.length).trim().replace(/\.$/, '')
         }
@@ -269,7 +279,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
         yield { type: 'error', sessionId, timestamp: now(), payload: errorPayload(stderr, antigravityFailure(stderr, code)) }
         return { stop: true }
       }
-      return { stop: false, failure: failure() }
+      return { stop: false, spoke, failure: failure() }
     } finally {
       if (child.exitCode === null) child.kill('SIGTERM')
     }
@@ -396,11 +406,15 @@ export function antigravityFailure(stderr: string, code: number | null): string 
   return stderr.trim().split('\n').slice(-3).join(' ') || `agy saiu com código ${code}`
 }
 
-interface IAntigravityRound {
-  stop: boolean
-  /** A ferramenta que fechou a rodada sem dar certo (erro, ou negada pelo sandbox do CLI sem resultado), e o motivo. */
-  failure?: string
-}
+type IAntigravityRound =
+  | { stop: true }
+  | {
+      stop: false
+      /** A rodada teve texto do modelo. */
+      spoke: boolean
+      /** A ferramenta que fechou a rodada sem dar certo (erro, ou negada pelo sandbox do CLI sem resultado), e o motivo. */
+      failure?: ITurnFailure
+    }
 
 interface IAntigravityTurn {
   native: IAntigravityNative

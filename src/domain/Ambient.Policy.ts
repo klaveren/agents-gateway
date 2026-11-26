@@ -8,8 +8,8 @@ export interface IAmbient {
   agentId: string
   /** O projeto da conversa. `own`: o agente é dele, e trabalha na pasta dele. */
   project?: { id: string; name?: string; own: boolean }
-  /** Aberta num repositório do projeto (e numa worktree dele). */
-  repository?: { name: string; worktree?: string; branch?: string }
+  /** Aberta num repositório do projeto (e numa worktree dele). `main`: o repositório principal, na conversa em worktree. */
+  repository?: { name: string; worktree?: string; branch?: string; main?: string }
   /**
    * O diretório de operação: o do repositório ou da worktree, senão o do projeto do agente. É o `cwd` das lanes de código
    * (Claude Agent SDK, Codex) e a raiz das ferramentas do gateway (`run_bash`, arquivos). Ausente: a pasta vazia da conversa.
@@ -55,6 +55,14 @@ export function talkLine(): string {
 export const GATEWAY_PORT_LINE =
   '- Rede: as portas do próprio gateway (a da API dele e a do portão de rede) são sempre negadas aos seus comandos e aos processos que eles sobem, mesmo com regra de rede. A da API só abre se o admin ligar "Agentes alcançam a API deste gateway" (Sistema → Configurações); aí vale só com a regra exata `localhost:<porta>`.'
 
+/**
+ * ⛔ A WORKTREE É A PASTA DE TRABALHO: desde que o cerco lê o repositório principal (o `package.json` e o `node_modules` da
+ * raiz, #640), a Vera passou a rodar testes e scripts nele e recebia `Read-only file system` e `vitest: not found` (26/11).
+ */
+export function worktreeLine(worktree: string, main: string): string {
+  return `- Sua pasta de trabalho é \`${worktree}\` (rode testes, builds e scripts lá). O repositório principal \`${main}\` é só leitura nesta conversa.`
+}
+
 /** A seção "## Ambiente" do system prompt. */
 export function ambientSection(ambient: IAmbient): string {
   const lines = ['## Ambiente', `- Agente: ${ambient.agentId}.`]
@@ -70,6 +78,8 @@ export function ambientSection(ambient: IAmbient): string {
       `- Diretório de trabalho: ${directory}, o ponto de partida. Você é um AGENTE DE MÁQUINA: lê e grava tudo o que o usuário desta máquina pode (a casa dele, outros repositórios, \`/opt\`), usa a rede sem regra e vê os processos dele. Ficam fechados os dados e a configuração do gateway e os segredos (\`.env\`, chaves). \`sudo\` e o que apaga ou desliga a máquina param e pedem a aprovação da pessoa na conversa (o \`sudo\`, com a senha dela): aprovado, roda fora do cerco; recusado, não insista.`,
     )
   else if (!directory) lines.push('- Diretório de trabalho: uma pasta vazia, só desta conversa.')
+  else if (repository?.main)
+    lines.push(`- Diretório de trabalho: ${directory}. Fora dele você não grava; o git dele funciona (status, commit, push).`, worktreeLine(directory, repository.main))
   else if (repository) lines.push(`- Diretório de trabalho: ${directory}. Fora dele você não lê nem grava; o git dele funciona (status, commit, push).`)
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
   if (ambient.files) lines.push(agentFolderLine(ambient.files))

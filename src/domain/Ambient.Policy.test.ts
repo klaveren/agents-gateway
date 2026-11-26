@@ -54,6 +54,20 @@ describe('Ambient.Policy', () => {
     assert.match(text, /- Diretório de trabalho: \/dados\/projects\/alfa\/repositories\/gateway\/_wt\/wt-x\. Fora dele você não lê nem grava; o git dele funciona/)
   })
 
+  it('⛔ worktree com o principal conhecido: a pasta de trabalho é a worktree, o principal é só leitura', () => {
+    const text = ambientSection({
+      agentId: 'vera',
+      project: { id: 'alfa', own: false },
+      repository: { name: 'logiccus', worktree: 'wt-x', main: '/dados/projects/alfa/repositories/logiccus' },
+      directory: '/dados/projects/alfa/repositories/_wt/wt-x',
+    })
+    assert.match(text, /- Diretório de trabalho: \/dados\/projects\/alfa\/repositories\/_wt\/wt-x\. Fora dele você não grava;/)
+    assert.match(
+      text,
+      /\n- Sua pasta de trabalho é `\/dados\/projects\/alfa\/repositories\/_wt\/wt-x` \(rode testes, builds e scripts lá\)\. O repositório principal `\/dados\/projects\/alfa\/repositories\/logiccus` é só leitura nesta conversa\.\n/,
+    )
+  })
+
   it('o id da conversa, numa linha marcada como do sistema', () => {
     assert.strictEqual(conversationNote('gw_01ABC'), '<contexto>id desta conversa: gw_01ABC</contexto>')
   })
