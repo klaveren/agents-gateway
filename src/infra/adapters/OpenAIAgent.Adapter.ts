@@ -267,7 +267,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
         }
       }),
     )
-    return opened.filter((server): server is MCPServer => !!server)
+    return withoutDuplicateTools(opened.filter((server): server is MCPServer => !!server))
   }
 
   private async closeMcpServers(servers: MCPServer[]): Promise<void> {
@@ -370,4 +370,28 @@ function hostedTool(name: string): Tool | undefined {
 export function hostedName(name: string): string {
   const base = name.replace(/_call$/, '')
   return NATIVE_TOOLS.some((tool) => tool.protocol === EProvider.OPENAI && tool.sdkName === base) ? base : name
+}
+
+/**
+ * ⛔ UM NOME, UM SERVIDOR: o SDK da OpenAI recusa o turno inteiro ("Duplicate tool names found across MCP servers") quando
+ * dois servidores trazem a mesma ferramenta — caso real: o gateway local e o da origem (projeto conectado), ambos com as
+ * ferramentas do gateway, num agente no Qwen (26/11). O Claude e o Codex separam por servidor e não sentem. Fica a do
+ * PRIMEIRO servidor (a ordem do agente); nos seguintes ela sai pelo filtro, e o turno roda.
+ */
+export async function withoutDuplicateTools(servers: MCPServer[]): Promise<MCPServer[]> {
+  const seen = new Set<string>()
+  for (const server of servers) {
+    if (typeof server.listTools !== 'function') continue
+    const names = (await server.listTools().catch(() => [])).map((tool) => tool.name)
+    const filter = server.toolFilter && typeof server.toolFilter === 'object' ? server.toolFilter : undefined
+    const visible = names.filter((name) => (!filter?.allowedToolNames || filter.allowedToolNames.includes(name)) && !filter?.blockedToolNames?.includes(name))
+    const repeated = visible.filter((name) => seen.has(name))
+    for (const name of visible) seen.add(name)
+    if (!repeated.length) continue
+    console.warn(
+      `[OpenAIAgent] ${server.name}: ${repeated.length} ferramenta(s) com o mesmo nome de outro servidor ficam de fora (${repeated.slice(0, 5).join(', ')}${repeated.length > 5 ? '…' : ''})`,
+    )
+    server.toolFilter = { ...(filter ?? {}), blockedToolNames: [...(filter?.blockedToolNames ?? []), ...repeated] }
+  }
+  return servers
 }

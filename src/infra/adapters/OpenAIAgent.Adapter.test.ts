@@ -9,7 +9,7 @@ import { fakeMcpRegistry } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { OPENAI_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
-import { hostedName, OpenAIAgentAdapter } from './OpenAIAgent.Adapter'
+import { hostedName, OpenAIAgentAdapter, withoutDuplicateTools } from './OpenAIAgent.Adapter'
 
 type TRun = typeof run
 
@@ -376,5 +376,42 @@ describe('OpenAIAgentAdapter', () => {
     assert.strictEqual(hostedName('code_interpreter_call'), 'code_interpreter')
     assert.strictEqual(hostedName('search_web'), 'search_web')
     assert.strictEqual(hostedName('algo_call'), 'algo_call')
+  })
+})
+
+describe('OpenAIAgent — a mesma ferramenta em dois servidores MCP', () => {
+  const server = (name: string, tools: string[], toolFilter?: { allowedToolNames?: string[] }) =>
+    ({
+      name,
+      cacheToolsList: false,
+      ...(toolFilter ? { toolFilter } : {}),
+      async connect() {},
+      async close() {},
+      async listTools() {
+        return tools.map((tool) => ({ name: tool, description: tool, inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } }))
+      },
+      async callTool() {
+        return []
+      },
+    }) as unknown as MCPServer
+
+  it('⛔ o gateway local e o da origem com as mesmas ferramentas: fica a do primeiro e o SDK não derruba o turno (antes: "Duplicate tool names")', async () => {
+    const { getAllMcpTools, Agent: SdkAgent, RunContext } = await import('@openai/agents')
+    // O filtro dos servidores só vale com o contexto do turno (como no `run` de verdade).
+    const inTurn = (mcpServers: MCPServer[]) => getAllMcpTools({ mcpServers, runContext: new RunContext({}), agent: new SdkAgent({ name: 't' }) })
+    const local = server('mcp_gateway', ['list_agents', 'save_agent'])
+    const origin = server('mcp_gateway-remote', ['list_agents', 'save_agent', 'only_origin'])
+    await assert.rejects(inTurn([server('a', ['x']), server('b', ['x'])]), /Duplicate tool names/)
+    const servers = await withoutDuplicateTools([local, origin])
+    const names = (await inTurn(servers)).map((tool) => tool.name).sort()
+    assert.deepStrictEqual(names, ['list_agents', 'only_origin', 'save_agent'])
+    assert.deepStrictEqual((origin.toolFilter as { blockedToolNames?: string[] }).blockedToolNames, ['list_agents', 'save_agent'])
+  })
+
+  it('respeita o filtro que o servidor já tinha (só as escolhidas contam)', async () => {
+    const first = server('a', ['x', 'y'], { allowedToolNames: ['x'] })
+    const second = server('b', ['y', 'z'])
+    await withoutDuplicateTools([first, second])
+    assert.strictEqual((second.toolFilter as { blockedToolNames?: string[] } | undefined)?.blockedToolNames, undefined)
   })
 })
