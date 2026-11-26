@@ -59,6 +59,8 @@ export interface IContextWorkFolder {
   projectDir: string
   repository?: string
   worktree?: string
+  /** A pasta do repositório principal (`<projeto>/repositories/<repo>`); na worktree, só leitura. */
+  repositoryDir?: string
   gitCommonDir?: string
   worktreeGitDir?: string
 }
