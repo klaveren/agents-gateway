@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { expandReadDenyGlobs } from './ReadDeny.Globs'
+import { drainConcurrently, expandReadDenyGlobs, READ_DENY_WALK_LIMIT } from './ReadDeny.Globs'
 
 /** Uma worktree de mentira: segredos na raiz, num app, num pacote (`node_modules`) e atrás de um link. */
 function tree(): string {
@@ -74,10 +74,78 @@ describe('expandReadDenyGlobs (as negações de leitura com curinga, expandidas 
     let listed = 0
     const { readdir, stat, realpath } = await import('node:fs/promises')
     const fs = { read: (dir: string) => ((listed += 1), readdir(dir, { withFileTypes: true })), stat: (p: string) => stat(p), realpath: (p: string) => realpath(p) }
-    const out = await expandReadDenyGlobs(['/', `${root}/**/.env`, `${root}/**/*.pem`, `${root}/apps/a/**/.env`], fs)
+    const out = await expandReadDenyGlobs(['/', `${root}/**/.env`, `${root}/**/*.pem`, `${root}/**/.env.*`], fs)
     assert.strictEqual(out[0], '/')
     assert.ok(out.includes(join(root, 'infra/ssl/server.pem')))
-    // A árvore (sem node_modules e .git) tem 8 pastas; a base `apps/a` reaproveita as listagens.
+    assert.ok(out.includes(join(root, 'apps/a/.env.local')))
+    // A árvore (sem node_modules e .git) tem 8 pastas: os três padrões da mesma base dividem uma varredura só.
     assert.ok(listed <= 8, `listou ${listed} pastas`)
+  })
+
+  it('⚡ lê em paralelo, até o teto: a varredura não espera uma volta do loop por pasta', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'deny-wide-')))
+    for (let i = 0; i < 40; i += 1) mkdirSync(join(root, `p${i}`, 'src'), { recursive: true })
+    writeFileSync(join(root, 'p7', 'src', '.env'), 'x')
+    let inFlight = 0
+    let peak = 0
+    const { readdir, stat, realpath } = await import('node:fs/promises')
+    const fs = {
+      read: async (dir: string) => {
+        inFlight += 1
+        peak = Math.max(peak, inFlight)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        inFlight -= 1
+        return readdir(dir, { withFileTypes: true })
+      },
+      stat: (p: string) => stat(p),
+      realpath: (p: string) => realpath(p),
+    }
+    assert.deepStrictEqual(await expandReadDenyGlobs([`${root}/**/.env`], fs, { concurrency: 8 }), [join(root, 'p7/src/.env')])
+    assert.strictEqual(peak, 8, `no máximo 8 leituras juntas (foram ${peak})`)
+  })
+
+  it('o teto da varredura é alto (a árvore não fica na memória): a pasta de um projeto com rascunho grande não volta ao runtime', async () => {
+    assert.ok(READ_DENY_WALK_LIMIT >= 1_000_000)
+    const root = tree()
+    // Com teto, sobe a falha fechada; os padrões das OUTRAS bases seguem expandidos.
+    const other = realpathSync(mkdtempSync(join(tmpdir(), 'deny-other-')))
+    writeFileSync(join(other, '.env'), 'x')
+    assert.deepStrictEqual(await expandReadDenyGlobs([`${root}/**/.env`, `${other}/**/.env`], undefined, { walk: 3 }), [`${root}/**/.env`, join(other, '.env')])
+  })
+})
+
+describe('drainConcurrently', () => {
+  it('a fila cresce enquanto anda, respeita o teto de tarefas e para quando pedido', async () => {
+    const queue = [0]
+    const done: number[] = []
+    let active = 0
+    let peak = 0
+    await drainConcurrently(queue, 3, async (n) => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      if (n < 20) queue.push(n * 2 + 1, n * 2 + 2)
+      done.push(n)
+      active -= 1
+    })
+    assert.strictEqual(done.length, queue.length)
+    assert.ok(peak <= 3)
+    const stopped: number[] = []
+    await drainConcurrently(
+      [1, 2, 3, 4, 5, 6],
+      2,
+      async (n) => void stopped.push(n),
+      () => stopped.length >= 2,
+    )
+    assert.deepStrictEqual(stopped, [1, 2])
+  })
+
+  it('a tarefa que falha rejeita', async () => {
+    await assert.rejects(
+      drainConcurrently([1, 2], 2, async (n) => {
+        if (n === 2) throw new Error('falhou')
+      }),
+      /falhou/,
+    )
   })
 })

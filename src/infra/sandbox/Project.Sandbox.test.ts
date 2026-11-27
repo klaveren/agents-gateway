@@ -19,6 +19,7 @@ import {
   TreeIndexCache,
   forBubblewrap,
   withWriteGlobsExpanded,
+  globLister,
   hostSocketDirs,
   writeConnector,
   localForwards,
@@ -869,18 +870,51 @@ describe('expandGlobPath — a escrita com curinga no Linux (o runtime a ignora)
   const root = mkdtempSync(join(tmpdir(), 'gw-glob-'))
   after(() => rmSync(root, { recursive: true, force: true }))
 
-  it('⚖️ vira os caminhos que existem: os arquivos do padrão e a pasta do `/**`; sem node_modules; sem curinga, nada', () => {
+  it('⚖️ vira os caminhos que existem: os arquivos do padrão e a pasta do `/**`; sem node_modules; sem curinga, nada', async () => {
     const repo = join(root, 'repo')
     for (const dir of ['apps/a/src', 'apps/b', 'node_modules/x', '_worktrees/EP-1/evidence', '_worktrees/EP-2/evidence', '_worktrees/EP-3'])
       mkdirSync(join(repo, dir), { recursive: true })
     for (const file of ['apps/a/src/x.test.ts', 'apps/a/src/x.ts', 'apps/b/y.test.ts', 'node_modules/x/z.test.ts']) writeFileSync(join(repo, file), '')
-    assert.deepStrictEqual(expandGlobPath(join(repo, '**/*.test.ts')).sort(), [join(repo, 'apps/a/src/x.test.ts'), join(repo, 'apps/b/y.test.ts')])
-    assert.deepStrictEqual(expandGlobPath(join(repo, '_worktrees/*/evidence/**')).sort(), [join(repo, '_worktrees/EP-1/evidence/**'), join(repo, '_worktrees/EP-2/evidence/**')])
-    assert.deepStrictEqual(expandGlobPath(join(repo, 'apps/**')), [])
+    assert.deepStrictEqual((await expandGlobPath(join(repo, '**/*.test.ts'))).sort(), [join(repo, 'apps/a/src/x.test.ts'), join(repo, 'apps/b/y.test.ts')])
+    assert.deepStrictEqual((await expandGlobPath(join(repo, '_worktrees/*/evidence/**'))).sort(), [
+      join(repo, '_worktrees/EP-1/evidence/**'),
+      join(repo, '_worktrees/EP-2/evidence/**'),
+    ])
+    assert.deepStrictEqual(await expandGlobPath(join(repo, 'apps/**')), [])
     // O plano: o padrão fica, e os caminhos entram na escrita e na negação.
-    const plan = withWriteGlobsExpanded({ readAllow: [], readDeny: [], writeAllow: [join(repo, '**/*.test.ts')], writeDeny: [join(repo, 'apps/*/src/x.test.ts')] })
+    const plan = await withWriteGlobsExpanded({ readAllow: [], readDeny: [], writeAllow: [join(repo, '**/*.test.ts')], writeDeny: [join(repo, 'apps/*/src/x.test.ts')] })
     assert.ok(plan.writeAllow.includes(join(repo, '**/*.test.ts')) && plan.writeAllow.includes(join(repo, 'apps/b/y.test.ts')))
     assert.ok(plan.writeDeny.includes(join(repo, 'apps/a/src/x.test.ts')))
+  })
+
+  it('⚡ uma listagem por pasta para todos os padrões do plano; o literal segue o link, o curinga não entra nele', async () => {
+    const repo = join(root, 'shared')
+    for (const dir of ['apps/a/src', 'apps/b/tests', 'real/inside']) mkdirSync(join(repo, dir), { recursive: true })
+    for (const file of ['apps/a/src/x.test.ts', 'apps/b/tests/y.ts', 'real/inside/z.test.ts']) writeFileSync(join(repo, file), '')
+    symlinkSync(join(repo, 'real'), join(repo, 'via'))
+    const reads = new Map<string, number>()
+    const list = globLister(async (dir) => {
+      reads.set(dir, (reads.get(dir) ?? 0) + 1)
+      return readdirSync(dir, { withFileTypes: true })
+    })
+    const plan = await withWriteGlobsExpanded(
+      {
+        readAllow: [],
+        readDeny: [],
+        writeAllow: [join(repo, '**/*.test.ts'), join(repo, '**/tests/**'), join(repo, 'via/inside/*.test.ts')],
+        writeDeny: [join(repo, '**/src/**')],
+      },
+      list,
+    )
+    assert.ok(plan.writeAllow.includes(join(repo, 'apps/a/src/x.test.ts')))
+    assert.ok(plan.writeAllow.includes(join(repo, 'apps/b/tests/**')))
+    assert.ok(plan.writeAllow.includes(join(repo, 'via/inside/z.test.ts')), 'o literal `via` segue o link')
+    assert.ok(!(await expandGlobPath(join(repo, '**/*.test.ts'), list)).includes(join(repo, 'via/inside/z.test.ts')), 'o `**` não entra no link')
+    assert.ok(plan.writeDeny.includes(join(repo, 'apps/a/src/**')))
+    assert.ok(
+      [...reads.values()].every((count) => count === 1),
+      'cada pasta lida uma vez só',
+    )
   })
 })
 
