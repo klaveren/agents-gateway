@@ -156,6 +156,10 @@ describe('File.Tools', () => {
     assert.match((await run('read_file', { path: '.ENV' })).result, /this file is protected/)
     assert.match((await run('write_file', { path: '.GIT/config', content: 'x' })).result, /protected/)
     assert.equal(deniedPath(join(dir, 'a.txt'), dir), undefined)
+    // Modelo de env é versionado e editável; o `.env` de verdade segue protegido.
+    for (const path of ['.env.example', 'apis/x/.env.example', '.ENV.Sample', '.env.template', '.env.dist']) assert.equal(deniedPath(join(dir, path), dir), undefined, path)
+    assert.match((await run('write_file', { path: '.env.example', content: 'A=1' })).result, /^(?!.*protected)/s)
+    for (const path of ['.env.local', '.env.production', '.env']) assert.ok(deniedPath(join(dir, path), dir), path)
   })
 
   it('📖 arquivo grande sem limit vem em partes até o teto, com o offset para continuar; com limit, só o pedido', async () => {
