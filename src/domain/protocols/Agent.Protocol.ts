@@ -27,6 +27,7 @@ Um agente do gateway é um registro: id, nome, soul, prompt, providers e modelos
 - **Lanes:** agent quando ele trabalha em vários passos ou usa o que o provedor tem de nativo; chat para conversa pura. Assinatura só roda agent.
 - **Raciocínio:** os níveis que o trabalho pede (low, medium, high).
 - **Ferramentas:** as CAPACIDADES (cap:terminal, cap:files.read, cap:files.write, cap:web.search, cap:web.fetch, cap:todos, cap:watch — o gateway decide o que roda em cada provedor), os extras de um provedor (sdk:…) e as de MCP (mcp:<servidor>/<ferramenta>) — confira com list_tools; MCP de projeto só serve a agente do mesmo projeto. cap:todos para quem faz trabalho de muitos passos. cap:watch (vigias: a conversa retoma sozinha quando o que o agente espera acontecer) para todo agente que conversa com gente; subagente não.
+- **Mudar as ferramentas de quem já existe:** patch_agent com { add: [...], remove: [...] } (allowedTools, modes), nunca a lista inteira; até 5 por chamada, com dryRun antes de tirar. Num projeto conectado, a lista da origem (originAllowedTools) e a que roda aqui (effectiveAllowedTools) são diferentes: não copie uma para a outra máquina.
 - **Delegação:** agent:<id> só para quem é do mesmo projeto ou global; subagente (role subagent) é quem só é chamado por outro agente.
 - **Recursos:** por padrão ele usa todas as skills e commands do escopo dele; restrinja (ids, ou nenhum) quando o papel pedir.
 - **Contexto inicial:** as specs que ele carrega inteiras além das do projeto. Diga quantos tokens isso soma: pesa em toda conversa.

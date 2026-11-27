@@ -159,16 +159,29 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
       JSON.parse(((await client.callTool({ name: 'get_agent', arguments: { agentId, ...(fields ? { fields } : {}) } })) as { content: Array<{ text: string }> }).content[0].text)
     try {
       const picked = await read('sre', ['allowedTools'])
-      assert.deepStrictEqual(Object.keys(picked).sort(), ['allowedTools', 'effectiveAllowedTools', 'id', 'localLayer'])
-      assert.deepStrictEqual(picked.allowedTools, [`off:${AUTO}`])
+      // ⛔ Sem `allowedTools` ambígua: a da origem e a que roda aqui, com nome próprio.
+      assert.deepStrictEqual(Object.keys(picked).sort(), ['effectiveAllowedTools', 'id', 'localLayer', 'originAllowedTools'])
+      assert.deepStrictEqual(picked.originAllowedTools, [`off:${AUTO}`])
       assert.deepStrictEqual(picked.effectiveAllowedTools, ['agent:ajudante'])
       assert.deepStrictEqual(picked.localLayer.allowedTools, ['agent:ajudante', AUTO])
       assert.deepStrictEqual(Object.keys(await read('sre', ['name'])).sort(), ['id', 'name'])
       assert.deepStrictEqual((await read('sre')).effectiveAllowedTools, ['agent:ajudante'])
-      // Sem camada (e fora de projeto conectado): só o agente.
-      for (const id of ['ops', 'de-fora', 'ajudante']) {
+      // A API também: na listagem, nada de `allowedTools` (era a efetiva); no detalhe, a da origem e as duas com nome.
+      const listed = ((await call('GET', '/agents?project=logiccus')).body.result as Array<Record<string, unknown>>).find((item) => item.id === 'sre')!
+      assert.deepStrictEqual([listed.allowedTools, listed.originAllowedTools, listed.effectiveAllowedTools], [undefined, [`off:${AUTO}`], ['agent:ajudante']])
+      const detail = (await call('GET', '/agents/sre')).body.result
+      assert.deepStrictEqual([detail.allowedTools, detail.originAllowedTools, detail.effectiveAllowedTools], [[`off:${AUTO}`], [`off:${AUTO}`], ['agent:ajudante']])
+      // Conectado sem camada: as duas listas, iguais, e nada de `localLayer`.
+      const bare = await read('ops')
+      assert.deepStrictEqual(
+        [bare.allowedTools, bare.localLayer, bare.originAllowedTools, bare.effectiveAllowedTools],
+        [undefined, undefined, ['agent:ajudante'], ['agent:ajudante']],
+      )
+      // Fora de projeto conectado: só o agente.
+      for (const id of ['de-fora', 'ajudante']) {
         const plain = await read(id)
-        assert.deepStrictEqual([plain.localLayer, plain.effectiveAllowedTools], [undefined, undefined], id)
+        assert.deepStrictEqual([plain.localLayer, plain.originAllowedTools, plain.effectiveAllowedTools], [undefined, undefined, undefined], id)
+        assert.ok(Array.isArray(plain.allowedTools), id)
       }
     } finally {
       await client.close()
@@ -230,7 +243,11 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
       return { error: answer.isError === true, body: JSON.parse(answer.content[0].text) }
     }
     try {
-      const off = await patch('ops', { localLayer: { disabledTools: ['agent:ajudante', 'fantasma'] } })
+      // ⛔ Lista inteira: 400 com o que vale AQUI.
+      const whole = await patch('ops', { localLayer: { disabledTools: ['agent:ajudante'] } })
+      assert.deepStrictEqual([whole.error, whole.body.code], [true, 'delta_required'])
+      assert.deepStrictEqual(whole.body.details.current.effectiveAllowedTools, ['agent:ajudante', `off:${AUTO_TOOLS[1]}`])
+      const off = await patch('ops', { localLayer: { disabledTools: { add: ['agent:ajudante', 'fantasma'] } } })
       assert.strictEqual(off.error, false, JSON.stringify(off.body))
       assert.deepStrictEqual(off.body.localLayer.disabledTools, [AUTO_TOOLS[1], 'agent:ajudante'])
       assert.deepStrictEqual(off.body.ignored, ['fantasma'])
@@ -251,9 +268,9 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
       const widen = await call('PATCH', LOCAL, { allowedTools: ['agent:ops'] })
       assert.deepStrictEqual([widen.status, widen.body.code], [422, 'validation_error'])
       assert.match(JSON.stringify(widen.body), /local-tool-requests/)
-      assert.strictEqual((await patch('sre', { localLayer: { disabledTools: [] }, name: 'Outro' })).error, true)
-      assert.strictEqual((await patch('ajudante', { localLayer: { disabledTools: ['x'] } })).error, true)
-      assert.strictEqual((await patch('de-fora', { localLayer: { disabledTools: ['x'] } })).error, true)
+      assert.strictEqual((await patch('sre', { localLayer: { disabledTools: { add: [] } }, name: 'Outro' })).error, true)
+      assert.strictEqual((await patch('ajudante', { localLayer: { disabledTools: { add: ['x'] } } })).error, true)
+      assert.strictEqual((await patch('de-fora', { localLayer: { disabledTools: { add: ['x'] } } })).error, true)
       assert.deepStrictEqual(running().allowedTools, ['agent:ajudante'])
       // O patch comum segue recusado, e agora diz onde mexer.
       const plain = await patch('sre', { name: 'Outro' })
@@ -282,7 +299,7 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
     const approve = (id: string, confirm: string[], headers?: Record<string, string>) => call('POST', `/permission-requests/${id}/approve`, { confirm }, headers)
     try {
       // `agent:ajudante` já está ligado aqui: só o que muda o agente vira pedido.
-      const asked = await patch('sre', { localLayer: { allowedTools: ['agent:ops', 'agent:ajudante'] } })
+      const asked = await patch('sre', { localLayer: { allowedTools: { add: ['agent:ops', 'agent:ajudante'] } } })
       assert.strictEqual(asked.error, false, JSON.stringify(asked.body))
       assert.match(asked.texts[0], /PENDENTE/)
       assert.match(asked.texts[0], /Notificações/)
@@ -293,7 +310,7 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
       assert.deepStrictEqual([request.kind, request.agentId, request.entries], ['agent-local', 'sre', { field: 'allowedTools', add: ['agent:ops'] }])
       assert.deepStrictEqual(running().allowedTools, ['agent:ajudante'])
       // Pedir de novo não repete: volta o que já está na fila.
-      const again = await patch('sre', { localLayer: { allowedTools: ['agent:ops'] } })
+      const again = await patch('sre', { localLayer: { allowedTools: { add: ['agent:ops'] } } })
       assert.deepStrictEqual(
         again.body.pending.map((item: { id: string }) => item.id),
         [request.id],
@@ -314,13 +331,13 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
       assert.deepStrictEqual((await call('GET', LOCAL)).body.result.layer.allowedTools, ['agent:ajudante', AUTO, 'agent:ops'])
 
       // O ajuste e o pedido na mesma chamada: desligar vale já, ligar espera.
-      const mixed = await patch('sre', { localLayer: { disabledTools: ['agent:fantasma'], allowedTools: ['agent:ajudante'] } })
+      const mixed = await patch('sre', { localLayer: { disabledTools: { add: ['agent:fantasma'] }, allowedTools: { add: ['agent:ajudante'] } } })
       assert.strictEqual(mixed.error, false, JSON.stringify(mixed.body))
       assert.strictEqual(mixed.body.pending, undefined)
       assert.deepStrictEqual(mixed.body.ignored, ['agent:fantasma'])
 
       // Religar o que foi desligado AQUI não amplia nada além do que a origem já dava, mas é pedido do mesmo jeito.
-      const back = await patch('ops', { localLayer: { allowedTools: [AUTO_TOOLS[1]] } })
+      const back = await patch('ops', { localLayer: { disabledTools: { remove: [AUTO_TOOLS[1]] } } })
       assert.strictEqual(back.error, false, JSON.stringify(back.body))
       const [again2] = back.body.pending
       assert.deepStrictEqual(again2.entries, { field: 'allowedTools', add: [AUTO_TOOLS[1]] })
@@ -331,12 +348,12 @@ describe('projeto conectado: a camada local do agente (integração)', () => {
       assert.deepStrictEqual(makeAgents().entry('ops')!.agent.allowedTools, ['agent:ajudante'])
 
       // ⛔ O que o cadastro recusa nem vira pedido; sem motivo, também não; fora de projeto conectado não há camada.
-      const unknown = await patch('sre', { localLayer: { allowedTools: ['mcp:nao-existe/*'] } })
+      const unknown = await patch('sre', { localLayer: { allowedTools: { add: ['mcp:nao-existe/*'] } } })
       assert.strictEqual(unknown.error, true)
       assert.match(JSON.stringify(unknown.body), /unknown MCP server/)
-      assert.strictEqual((await patch('sre', { localLayer: { allowedTools: ['agent:de-fora'] } })).error, true)
-      assert.strictEqual((await patch('sre', { localLayer: { allowedTools: ['agent:ops'], disabledTools: ['agent:ops'] } })).error, true)
-      assert.strictEqual((await patch('ajudante', { localLayer: { allowedTools: ['agent:ops'] } })).error, true)
+      assert.strictEqual((await patch('sre', { localLayer: { allowedTools: { add: ['agent:de-fora'] } } })).error, true)
+      assert.strictEqual((await patch('sre', { localLayer: { allowedTools: { add: ['agent:ops'] }, disabledTools: { add: ['agent:ops'] } } })).error, true)
+      assert.strictEqual((await patch('ajudante', { localLayer: { allowedTools: { add: ['agent:ops'] } } })).error, true)
       const direct = await call('POST', '/agents/sre/local-tool-requests', { allowedTools: ['agent:ops'], reason: '  ' })
       assert.strictEqual(direct.status, 422, JSON.stringify(direct.body))
       const pendingNow = (await call('GET', '/agents/sre/permission-requests')).body.result as Array<{ status: string }>

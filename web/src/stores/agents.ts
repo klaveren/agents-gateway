@@ -30,7 +30,12 @@ const WATCH_LABELS: Record<string, string> = {
 
 export const useAgentsStore = defineStore('agents', () => {
   // Os do projeto e os globais (o Atlas).
-  const lists = keyedResource((project) => api<IAgent[]>('/agents', { query: project ? { project } : {} }))
+  // 🔌 O agente de projeto conectado vem sem `allowedTools` (ambígua): `originAllowedTools` e `effectiveAllowedTools`. Na
+  // tela, a lista do agente é a que roda aqui.
+  const lists = keyedResource(async (project) => {
+    const found = await api<IAgent[]>('/agents', { query: project ? { project } : {} })
+    return Array.isArray(found) ? found.map((agent) => (agent.allowedTools ? agent : { ...agent, allowedTools: agent.effectiveAllowedTools ?? [] })) : found
+  })
   const details = keyedResource((id) => api<IAgentDetail>(`/agents/${encodeURIComponent(id)}`))
   const toolsResource = keyedResource(() => api<IToolsResult>('/tools'))
 

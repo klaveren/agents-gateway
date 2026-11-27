@@ -293,7 +293,18 @@ const agentSchema = {
     },
     reasoningEfforts: { type: 'array', items: { type: 'string' }, description: 'The levels the agent offers; each provider uses the ones its protocol accepts.' },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
-    allowedTools: { type: 'array', items: { type: 'string' } },
+    allowedTools: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'In the LIST, absent for an agent of a CONNECTED project (it would be ambiguous): see originAllowedTools and effectiveAllowedTools. In the detail it is the origin list (the read-only form).',
+    },
+    originAllowedTools: { type: 'array', items: { type: 'string' }, description: 'Connected project only: the list of the origin gateway.' },
+    effectiveAllowedTools: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Connected project only: what the agent runs with on THIS machine (origin plus the local layer). Never write it back to the origin as a whole list.',
+    },
     role: { type: 'string', enum: ['subagent'], description: 'Present on subagents: only called by another agent.' },
     adminOnly: { type: 'boolean', description: 'Present when only administrators can talk to the agent.' },
     modelGroup: {
@@ -3941,7 +3952,8 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope(agentResources)) }, '401': failures['401'], '404': failures['404'] },
       },
       put: {
-        summary: 'Replace the skills and commands an agent may use. Administrators only',
+        summary:
+          'Replace the skills and commands an agent may use (both lists; the screen). Administrators only. The self MCP `set_agent_resources` takes only `{ add, remove }` (at most 5 per call, computed against this gateway) and writes through here',
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json(agentResources) },
         responses: { '200': { description: 'OK', ...json(envelope(agentResources)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
@@ -6510,7 +6522,7 @@ export const OPENAPI_DOCUMENT = {
       },
       get: {
         summary:
-          'The agents, including the lanes each supports. Members see only the active ones; admins see all, each inactive one with `unavailable`. With `project`, that project agents plus the global ones (404 for a project you cannot use); without it, everything you can use. Requires a proven caller; never exposes the system prompt',
+          'The agents, including the lanes each supports. Members see only the active ones; admins see all, each inactive one with `unavailable`. With `project`, that project agents plus the global ones (404 for a project you cannot use); without it, everything you can use. Requires a proven caller; never exposes the system prompt. An agent of a CONNECTED project comes WITHOUT `allowedTools`: `originAllowedTools` (the origin) and `effectiveAllowedTools` (what runs here)',
         parameters: [{ name: 'project', in: 'query', schema: { type: 'string' } }],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: agentSchema })) }, '401': failures['401'] },
       },
@@ -6518,7 +6530,7 @@ export const OPENAPI_DOCUMENT = {
     '/agents/{agentId}': {
       patch: {
         summary:
-          'Change only some fields of an agent (the self MCP `patch_agent`), through the normal agent write path with the same rules as PUT; `null` removes a field. Whatever widens access (by the catalog widening detector: tools, delegation, permissions, exposure, scope, sandbox, environment) is NOT applied: it becomes a pending permission request that only an administrator signed in on the screen approves; the rest applies at once. Administrators only',
+          'Change only some fields of an agent (the self MCP `patch_agent`), through the normal agent write path with the same rules as PUT; `null` removes a field. Whatever widens access (by the catalog widening detector: tools, delegation, permissions, exposure, scope, sandbox, environment) is NOT applied: it becomes a pending permission request that only an administrator signed in on the screen approves; the rest applies at once. ⛔ The agent route (the screen writes with PUT): list fields only as `{ add, remove }`, at most 5 entries per call, computed against this gateway; `dryRun` simulates. Administrators only',
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,
@@ -6526,8 +6538,14 @@ export const OPENAPI_DOCUMENT = {
             type: 'object',
             required: ['patch', 'reason'],
             properties: {
-              patch: { type: 'object', description: 'Fields of PUT /agents/{agentId} (no id or files), each with its new value.' },
+              patch: {
+                type: 'object',
+                description:
+                  'Fields of PUT /agents/{agentId} (no id or files), each with its new value. ⛔ The list fields `allowedTools` and `modes` go ONLY as a change `{ add?: [...], remove?: [...] }`, computed against the agent stored on THIS gateway; a whole list answers 400 `delta_required` (unless it equals the current one, which changes nothing). At most 5 entries per call (add + remove together): above it 409 `too_many_changes`.',
+              },
               reason: { type: 'string', maxLength: 1000, description: 'Why: shown to the administrator who confirms.' },
+              dryRun: { type: 'boolean', description: 'Only simulate: returns `{ dryRun, added, removed, applied, pending }` and writes nothing.' },
+              creating: { type: 'boolean', description: 'Internal (`save_agent` of a NEW agent, born with nothing): a whole list that only adds is accepted, with no limit; all of it is pending.' },
             },
           }),
         },
@@ -6537,17 +6555,33 @@ export const OPENAPI_DOCUMENT = {
             ...json(
               envelope({
                 type: 'object',
-                properties: { agentId: { type: 'string' }, applied: { type: 'array', items: { type: 'string' } }, pending: permissionRequestSchema, notice: { type: 'string' } },
+                properties: {
+                  agentId: { type: 'string' },
+                  applied: { type: 'array', items: { type: 'string' } },
+                  pending: permissionRequestSchema,
+                  notice: { type: 'string' },
+                  changes: {
+                    type: 'array',
+                    description: 'Per list field: `added`, `removed` and `ignored` (asked to remove, not there), against this gateway.',
+                    items: { type: 'object' },
+                  },
+                  dryRun: { type: 'boolean', description: 'With `dryRun`: nothing was written; `added`/`removed` per field and the items that would be pending.' },
+                },
               }),
             ),
           },
+          '400': { description: '`delta_required`: a list field came as a whole list. `details.current` has the current lists on this gateway', ...json(failureEnvelope) },
           '404': failures['404'],
+          '409': {
+            description: '`too_many_changes`: more than 5 entries (`details.limit`, `details.count`, `details.changes` with what would leave and enter). Or `project_read_only` (connected project)',
+            ...json(failureEnvelope),
+          },
           '422': failures['422'],
         },
       },
       get: {
         summary:
-          'One agent in full, system prompt included. Administrators of the owner project only; anyone else gets 404. Exception, READ-ONLY: an administrator of a project the agent is shared with gets it too, with `sharedFrom` (the owner project) and `sharedWith` reduced to the projects they administer; every write stays with the owner project (404 for them)',
+          'One agent in full, system prompt included. Administrators of the owner project only; anyone else gets 404. Exception, READ-ONLY: an administrator of a project the agent is shared with gets it too, with `sharedFrom` (the owner project) and `sharedWith` reduced to the projects they administer; every write stays with the owner project (404 for them). CONNECTED project: `allowedTools` is the origin list, and `originAllowedTools` and `effectiveAllowedTools` (what runs here) come with their own names',
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'OK', ...json(envelope(agentDetailSchema)) }, '401': failures['401'], '404': failures['404'] },
       },

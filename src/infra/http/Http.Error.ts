@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { AgentDeltaTooLargeError, AgentListDeltaError } from '@domain/AgentPatchDelta.Policy'
 import {
   AdapterNotFoundError,
   AgentNotFoundError,
@@ -110,6 +111,8 @@ export type TErrorCode =
   | 'revision_conflict'
   | 'widening_confirmation_required'
   | 'plan_changed'
+  | 'delta_required'
+  | 'too_many_changes'
   | 'permission_request_closed'
   | 'import_blocked'
   | 'import_state_conflict'
@@ -402,6 +405,14 @@ export function toHttpFailure(error: unknown): IHttpFailure {
   // ⚠️ 404 para os dois: setup fechado e conta inexistente não contam nada a quem sonda.
   if (error instanceof SetupUnavailableError || error instanceof UserNotFoundError) {
     return { status: 404, code: 'not_found', message: 'Not found' }
+  }
+
+  if (error instanceof AgentListDeltaError) {
+    return { status: 400, code: 'delta_required', message: error.message, details: { field: error.field, ...(error.current ? { current: error.current } : {}) } }
+  }
+
+  if (error instanceof AgentDeltaTooLargeError) {
+    return { status: 409, code: 'too_many_changes', message: error.message, details: { limit: error.limit, count: error.count, changes: error.changes } }
   }
 
   if (error instanceof InvalidAgentError) {

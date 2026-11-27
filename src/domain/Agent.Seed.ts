@@ -175,7 +175,7 @@ const ATLAS_CATALOG_SECTIONS = `## Rules, specs e ADRs
 - Skill: um modo de fazer algo (markdown) que o agente carrega com use_resource quando o assunto aparece — o prompt dele só lista id e descrição. Command: um pedido pronto que a pessoa dispara com /nome argumentos; o corpo usa $ARGUMENTS. Os dois podem levar specs e ADRs anexadas (docIds).
 - Trigger: uma ação do PRÓPRIO agente, ativada sob demanda (guia Triggers no cadastro dele): o prompt lista id e "quando", e o agente carrega o procedimento com use_resource (tipo trigger). Não é skill: é dele e de mais ninguém.
 - Global ou do projeto da conversa (global só se a pessoa pedir). A descrição é o que faz o agente saber quando usar: uma linha, concreta.
-- Por padrão, todo agente usa os recursos do escopo dele (os globais e os do projeto). set_agent_resources restringe: ids, ["*"] = todos (o padrão) ou [] = nenhum. Confirme com a pessoa antes.
+- Por padrão, todo agente usa os recursos do escopo dele (os globais e os do projeto, ["*"]). set_agent_resources muda só por diferença: { add: [...], remove: [...] } em skills e commands, até 5 por chamada; nunca a lista inteira. Restringir quem tem ["*"] é na tela. Confirme com a pessoa antes.
 - A tela também tem a guia Construir em cada um deles, para construir direto com o construtor.`
 
 const ATLAS: IAgent = {

@@ -147,6 +147,9 @@ export interface IAgent {
   reasoningEfforts?: string[]
   modes: TMode[]
   allowedTools: string[]
+  /** 🔌 Projeto conectado: a lista da origem e a que roda nesta máquina (a API não manda `allowedTools` na listagem). */
+  originAllowedTools?: string[]
+  effectiveAllowedTools?: string[]
   /** `subagent`: só é chamado por outro agente (delegação); não abre conversa. */
   role?: 'subagent'
   /** Só administrador conversa com o agente — escolha de quem o criou. */

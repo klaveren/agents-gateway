@@ -10,7 +10,20 @@ import type { TProviderFailure } from '@domain/Provider.Failure'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
 import type { IAgent } from '@domain/models/Agent.Model'
 import { isEmptyLayer, mergeLocalLayer, TAgentLocalLayerInput } from '@domain/models/AgentLocalLayer.Model'
+import { toCapabilities } from '@domain/Capability.Catalog'
 import { PEOPLE_ONLY_GATEWAY_TOOLS } from '@domain/models/Delegation.Model'
+import {
+  AGENT_DELTA_LIMIT,
+  AgentDeltaTooLargeError,
+  applyListDelta,
+  assertWithinLimit,
+  changeCount,
+  IListChange,
+  IListDelta,
+  isListDelta,
+  LIST_REFUSED,
+} from '@domain/AgentPatchDelta.Policy'
+import { ALL_RESOURCES } from '@domain/models/Resource.Model'
 import { SELF_MCP_SERVER_ID } from '@application/McpServers.Service'
 import { ISelfReply, selfApi, selfBase, TSelfApi } from './Self.Api'
 import { agentScopeOf, scopedWrites } from './SelfMcp.Guard'
@@ -33,8 +46,8 @@ function callerApi(req: Request): TSelfApi {
 
 const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] })
 
-/** O que o `get_agent` acrescenta ao agente de projeto conectado; vem junto de `allowedTools` quando se pede só alguns campos. */
-const LOCAL_LAYER_FIELDS: readonly string[] = ['localLayer', 'effectiveAllowedTools']
+/** As listas do agente de projeto conectado no `get_agent`: vêm juntas quando se pede `allowedTools` (ou uma delas). */
+const LOCAL_LAYER_FIELDS: readonly string[] = ['localLayer', 'originAllowedTools', 'effectiveAllowedTools']
 
 /** O erro da API vira resultado de ferramenta com `isError` — o cliente vê a mensagem; nada lança. */
 function reply(answer: ISelfReply, pick: (result: unknown) => unknown = (result) => result) {
@@ -327,50 +340,134 @@ function pendingReply(answer: ISelfReply) {
   }
 }
 
+/** O erro de uma ferramenta, no envelope da API (`status`, `code`, `message`, `details`). */
+const refusal = (status: number, code: string, message: string, details?: unknown) => ({ ...text({ status, code, message, ...(details ? { details } : {}) }), isError: true })
+
 /**
  * 🔌 `patch_agent` com `localLayer`: a camada local de um agente de projeto conectado. Vai sozinho no patch: o resto do
- * agente é da origem e não muda aqui. ⚖️ O que NÃO amplia (desligar o que veio da origem, trocar os modelos daqui) vale
- * já; o que LIGA (`allowedTools`: ferramenta, MCP, delegação) vira pedido, que a pessoa aprova na tela.
+ * agente é da origem e não muda aqui. ⛔ Só por delta, como todo campo-lista que agente grava (`AgentPatchDelta.Policy`):
+ * `allowedTools: { add, remove }` e `disabledTools: { add, remove }`, contra a lista que roda NESTA máquina, com teto.
+ * ⚖️ O que DESLIGA (tirar de `allowedTools`, pôr em `disabledTools`) e trocar os modelos daqui vale já; o que LIGA
+ * (pôr em `allowedTools`, tirar de `disabledTools`) vira pedido, que a pessoa aprova na tela.
  */
-async function adjustLocalLayer(api: TSelfApi, agentId: string, patch: Record<string, unknown>, reason: string) {
-  const refused = (message: string) => ({ ...text({ status: 422, code: 'validation_error', message }), isError: true })
+async function adjustLocalLayer(api: TSelfApi, agentId: string, patch: Record<string, unknown>, reason: string, dryRun: boolean) {
+  const refused = (message: string) => refusal(422, 'validation_error', message)
   if (Object.keys(patch).length > 1) return refused('`localLayer` goes alone in the patch: the other fields of a connected-project agent are changed at the origin')
   const change = patch.localLayer
   if (!change || typeof change !== 'object' || Array.isArray(change))
-    return refused('`localLayer` must be an object: { "allowedTools"?: [...], "disabledTools"?: [...], "providers"?: [...] | null }')
-  const { allowedTools, ...adjust } = change as Record<string, unknown>
-  if (allowedTools !== undefined && (!Array.isArray(allowedTools) || allowedTools.some((tool) => typeof tool !== 'string')))
-    return refused('`localLayer.allowedTools` must be a list of names: a tool, `mcp:<id>/*` or `agent:<id>`')
-  const asked = (allowedTools as string[] | undefined) ?? []
-  const off = Array.isArray(adjust.disabledTools) ? (adjust.disabledTools as unknown[]) : []
-  const both = asked.filter((tool) => off.includes(tool))
-  if (both.length) return refused(`in both \`allowedTools\` and \`disabledTools\`: ${both.join(', ')}. Turn it on or off, not both`)
+    return refused('`localLayer` must be an object: { "allowedTools"?: { "add"?, "remove"? }, "disabledTools"?: { "add"?, "remove"? }, "providers"?: [...] | null }')
+  const { allowedTools, disabledTools, ...adjust } = change as Record<string, unknown>
   const found = await api('GET', `/agents/${encodeURIComponent(agentId)}`)
   if (!found.ok) return reply(found)
   const agent = found.result as Record<string, unknown>
-  if (typeof agent.projectId !== 'string') return refused('This agent is not in a connected project: change its fields directly (allowedTools, providers…)')
+  if (typeof agent.projectId !== 'string' || !Array.isArray(agent.originAllowedTools))
+    return refused('This agent is not in a connected project: change its fields directly (allowedTools: { add, remove }, providers…)')
+  const local = await api('GET', `/connections/${encodeURIComponent(agent.projectId)}/agents/${encodeURIComponent(agentId)}/local`)
+  const empty: TAgentLocalLayerInput = { allowedTools: [], permissions: [] }
+  const layer = (local.ok ? (local.result as { layer?: TAgentLocalLayerInput }).layer : undefined) ?? empty
+  const effective = Array.isArray(agent.effectiveAllowedTools) ? (agent.effectiveAllowedTools as string[]) : mergeLocalLayer(agent as unknown as IAgent, layer).allowedTools
+  // ⛔ Lista inteira: recusa com o que vale AQUI (a efetiva e a camada), para o agente mandar só a diferença.
+  for (const [field, value] of [
+    ['allowedTools', allowedTools],
+    ['disabledTools', disabledTools],
+  ] as const)
+    if (value !== undefined && !isListDelta(value))
+      return refusal(400, 'delta_required', `localLayer.${field}: ${LIST_REFUSED}`, {
+        field: `localLayer.${field}`,
+        current: { effectiveAllowedTools: effective, localLayer: layer },
+      })
+  const on = allowedTools as IListDelta | undefined
+  const off = disabledTools as IListDelta | undefined
+  const turnOn = [...(on?.add ?? []), ...(off?.remove ?? [])]
+  const turnOff = [...(on?.remove ?? []), ...(off?.add ?? [])]
+  let diff: ReturnType<typeof applyListDelta>
+  try {
+    diff = applyListDelta('localLayer.allowedTools', effective, { add: turnOn, remove: turnOff }, toCapabilities)
+    assertWithinLimit([diff.change])
+  } catch (error) {
+    if (error instanceof AgentDeltaTooLargeError) return refusal(409, 'too_many_changes', error.message, { limit: error.limit, count: error.count, changes: error.changes })
+    return refused((error as Error).message)
+  }
+  const { added, removed, ignored } = diff.change
+  if (dryRun)
+    return text({ agentId, dryRun: true, added, removed, pending: added, ...(ignored ? { ignored } : {}), ...(Object.keys(adjust).length ? { applied: Object.keys(adjust) } : {}) })
   // O pedido primeiro: se ele for recusado (motivo em branco, MCP que não existe aqui), nada foi aplicado.
   let pending: { notice: string; pending?: unknown[] } | undefined
-  if (allowedTools !== undefined) {
-    const requested = await api('POST', `/agents/${encodeURIComponent(agentId)}/local-tool-requests`, { body: { allowedTools: asked, reason } })
+  if (added.length) {
+    const requested = await api('POST', `/agents/${encodeURIComponent(agentId)}/local-tool-requests`, { body: { allowedTools: added, reason } })
     if (!requested.ok) return reply(requested)
     pending = requested.result as { notice: string; pending?: unknown[] }
   }
+  const body = { ...adjust, ...(removed.length ? { disabledTools: removed } : {}) }
   // ⛔ O aviso do que ficou pendente vem PRIMEIRO e em texto, como no `pendingReply`: é o que o agente repassa à pessoa.
   const first = pending ? [{ type: 'text' as const, text: pending.notice }] : []
-  if (!Object.keys(adjust).length) return { content: [...first, ...text({ agentId, applied: [], ...(pending?.pending ? { pending: pending.pending } : {}) }).content] }
-  const saved = await api('PATCH', `/connections/${encodeURIComponent(agent.projectId)}/agents/${encodeURIComponent(agentId)}/local`, { body: adjust })
+  const extra = { ...(pending?.pending ? { pending: pending.pending } : {}), ...(ignored ? { ignored, ignoredNote: 'Not on here: nothing to turn off' } : {}) }
+  if (!Object.keys(body).length) return { content: [...first, ...text({ agentId, applied: [], ...extra }).content] }
+  const saved = await api('PATCH', `/connections/${encodeURIComponent(agent.projectId)}/agents/${encodeURIComponent(agentId)}/local`, { body })
   if (!saved.ok) return { ...reply(saved), content: [...first, ...reply(saved).content] }
-  const { layer, ignored } = saved.result as { layer: TAgentLocalLayerInput; ignored: string[] }
+  const { layer: next } = saved.result as { layer: TAgentLocalLayerInput }
   const done = text({
     agentId,
-    localLayer: layer,
-    effectiveAllowedTools: mergeLocalLayer(agent as unknown as IAgent, layer).allowedTools,
-    ...(ignored.length ? { ignored, ignoredNote: 'The agent does not have these: nothing to turn off (names must be as in allowedTools)' } : {}),
-    ...(pending?.pending ? { pending: pending.pending } : {}),
-    notice: `${Object.keys(adjust).join(' and ')} applied now, on this machine only; the origin did not change. A conversation already open may keep the tools and model it started with.`,
+    localLayer: next,
+    effectiveAllowedTools: mergeLocalLayer(agent as unknown as IAgent, next).allowedTools,
+    ...(removed.length ? { removed } : {}),
+    ...extra,
+    notice: `${[...(removed.length ? ['turning off'] : []), ...Object.keys(adjust)].join(' and ')} applied now, on this machine only; the origin did not change. A conversation already open may keep the tools and model it started with.`,
   })
   return { content: [...first, ...done.content] }
+}
+
+/** Um campo-lista que agente grava: só a diferença. A lista inteira passa pelo esquema para voltar 400 com a de agora. */
+const listDeltaShape = z
+  .union([z.object({ add: z.array(z.string()).optional(), remove: z.array(z.string()).optional() }), z.array(z.string())])
+  .describe('{ "add"?: [...], "remove"?: [...] } — never the whole list')
+
+/**
+ * ⛔ `set_agent_resources` por delta: lê as listas DESTA máquina, aplica `{ add, remove }`, confere o teto e grava as
+ * duas (a rota troca as duas inteiras; a que não veio ficaria "nenhum").
+ */
+async function changeAgentResources(api: TSelfApi, agentId: string, asked: { skills?: unknown; commands?: unknown }, dryRun: boolean) {
+  const path = `/agents/${encodeURIComponent(agentId)}/resources`
+  const found = await api('GET', path)
+  if (!found.ok) return reply(found)
+  const current = found.result as { skills: string[]; commands: string[] }
+  const next = { skills: current.skills, commands: current.commands }
+  const changes: IListChange[] = []
+  for (const field of ['skills', 'commands'] as const) {
+    const value = asked[field]
+    if (value === undefined) continue
+    if (!isListDelta(value)) return refusal(400, 'delta_required', `${field}: ${LIST_REFUSED}`, { field, current })
+    const all = current[field].includes(ALL_RESOURCES)
+    const add = (value.add ?? []).map((entry) => entry.trim()).filter(Boolean)
+    const remove = (value.remove ?? []).map((entry) => entry.trim()).filter(Boolean)
+    if (all && remove.length)
+      return refusal(422, 'validation_error', `${field}: the agent has every one ("*"); removing one is done by a person on the screen (the agent → Recursos)`, { field, current })
+    if (all) {
+      changes.push({ field, added: [], removed: [] })
+      continue
+    }
+    try {
+      const applied = add.includes(ALL_RESOURCES)
+        ? { next: [ALL_RESOURCES], change: { field, added: [ALL_RESOURCES], removed: [] } as IListChange }
+        : applyListDelta(field, current[field], { add, remove })
+      next[field] = applied.next
+      changes.push(applied.change)
+    } catch (error) {
+      return refusal(422, 'validation_error', (error as Error).message)
+    }
+  }
+  try {
+    assertWithinLimit(changes)
+  } catch (error) {
+    if (error instanceof AgentDeltaTooLargeError) return refusal(409, 'too_many_changes', error.message, { limit: error.limit, count: error.count, changes: error.changes })
+    throw error
+  }
+  const by = (key: 'added' | 'removed') => Object.fromEntries(changes.filter((change) => change[key].length).map((change) => [change.field, change[key]]))
+  if (dryRun) return text({ agentId, dryRun: true, added: by('added'), removed: by('removed') })
+  if (!changeCount(changes)) return text({ agentId, ...current, applied: [] })
+  const saved = await api('PUT', path, { body: next })
+  if (!saved.ok) return reply(saved)
+  return text({ agentId, ...(saved.result as object), added: by('added'), removed: by('removed') })
 }
 
 const permissionRuleShape = z.object({
@@ -450,7 +547,7 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     'list_agents',
     {
       description:
-        'List the agents: providers, each with its models (with price) and reasoning levels per model, lanes and tools, and `projectId` (absent = global). With `projectId`, only that project agents, the ones other projects shared with it (`sharedFrom`: talk only, the owner project edits) and the global ones. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
+        'List the agents: providers, each with its models (with price) and reasoning levels per model, lanes and tools, and `projectId` (absent = global). An agent of a CONNECTED project has no `allowedTools`: `originAllowedTools` (the origin list) and `effectiveAllowedTools` (what runs HERE); never write either back as a whole list. With `projectId`, only that project agents, the ones other projects shared with it (`sharedFrom`: talk only, the owner project edits) and the global ones. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
       inputSchema: { projectId: z.string().optional() },
       annotations: { readOnlyHint: true },
     },
@@ -728,7 +825,7 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
     'get_agent',
     {
       description:
-        'One agent in full, system prompt included, and its importIssues (problems recorded when it was imported; fix them, then resolve_import_issue). `fields` returns only those fields (e.g. ["allowedTools","permissions"]). In a connected project the agent is the one from the origin: `localLayer` is what this machine adds or turns off, and `effectiveAllowedTools` is what it runs with here (both come with `allowedTools`).',
+        'One agent in full, system prompt included, and its importIssues (problems recorded when it was imported; fix them, then resolve_import_issue). `fields` returns only those fields (e.g. ["allowedTools","permissions"]). In a CONNECTED project there is no `allowedTools`: `originAllowedTools` is the list of the origin, `effectiveAllowedTools` is what the agent runs with HERE (origin plus `localLayer`, what this machine adds or turns off). Never send either as a whole list to another gateway: changes go as add/remove (patch_agent).',
       inputSchema: { agentId: z.string(), fields: z.array(z.string()).optional() },
       annotations: { readOnlyHint: true },
     },
@@ -736,13 +833,18 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
       const found = await api('GET', `/agents/${encodeURIComponent(agentId)}`)
       if (!found.ok) return reply(found)
       const agent = found.result as Record<string, unknown> & Pick<IAgent, 'allowedTools'>
-      // 🔌 Projeto conectado: o cadastro é o da origem, e o agente RODA com a camada desta máquina por cima. Sem ela aqui,
-      // o agente lê as próprias ferramentas e conclui que o que foi ligado na camada "não chegou".
+      // 🔌 Projeto conectado: o cadastro é o da origem, e o agente RODA com a camada desta máquina por cima. ⛔ Sem um
+      // `allowedTools` ambíguo: as duas listas com nome próprio (ver `connectedTools` na API).
+      const connected = Array.isArray(agent.originAllowedTools)
       const local =
-        typeof agent.projectId === 'string' ? await api('GET', `/connections/${encodeURIComponent(agent.projectId)}/agents/${encodeURIComponent(agentId)}/local`) : undefined
+        connected && typeof agent.projectId === 'string'
+          ? await api('GET', `/connections/${encodeURIComponent(agent.projectId)}/agents/${encodeURIComponent(agentId)}/local`)
+          : undefined
       const layer = local?.ok ? (local.result as { layer?: TAgentLocalLayerInput }).layer : undefined
-      const full = layer && !isEmptyLayer(layer) ? { ...agent, localLayer: layer, effectiveAllowedTools: mergeLocalLayer(agent as unknown as IAgent, layer).allowedTools } : agent
-      const asked = (key: string) => key === 'id' || fields!.includes(key) || (LOCAL_LAYER_FIELDS.includes(key) && fields!.includes('allowedTools'))
+      const { allowedTools: _ambiguous, ...rest } = agent
+      const full = connected ? { ...rest, ...(layer && !isEmptyLayer(layer) ? { localLayer: layer } : {}) } : agent
+      const tools = (key: string) => LOCAL_LAYER_FIELDS.includes(key) && fields!.some((field) => field === 'allowedTools' || LOCAL_LAYER_FIELDS.includes(field))
+      const asked = (key: string) => key === 'id' || fields!.includes(key) || tools(key)
       return text(fields?.length ? Object.fromEntries(Object.entries(full).filter(([key]) => asked(key))) : full)
     },
   )
@@ -1365,20 +1467,23 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
   server.registerTool(
     'patch_agent',
     {
-      description:
-        'Change only some fields of an agent (same fields and rules as save_agent; null removes). What widens access (tools, delegation, permissions, exposure, sandbox…) stays PENDING until an administrator confirms on the screen (account menu → Notificações, one by one or all at once); the rest applies now. Tell the person what is pending and where (the result says); never say it was granted before that. When they decide, a gateway notice comes into the conversation that asked (queued into the running turn, or as a new turn): do not poll, and if none came, list_permission_rules shows what is still pending. An agent of a CONNECTED project (get_agent shows `localLayer`; a plain patch answers 409 project_read_only) is read-only here: send only `{ "localLayer": { "allowedTools"?: [...], "disabledTools"?: [...], "providers"?: [...] | null } }`. `allowedTools` ASKS to turn on, on THIS machine only, a tool, an MCP (`mcp:<id>/*`) or delegation (`agent:<id>`), including one that was turned off here: each entry becomes a PENDING request and nothing is on before the person approves it. `disabledTools` turns off tools that came from the origin (names as in allowedTools; it adds to what is already off) and `providers` changes the models used here (`null` = back to the ones of the origin): both apply now. None of it ever changes the origin. Permission rules of such an agent: save_permission_rules with the agent as the target. Sandbox, exposure and the other fields are changed at the origin.',
+      description: `Change only some fields of an agent (same fields and rules as save_agent; null removes). ⛔ LIST FIELDS ONLY AS A CHANGE: \`allowedTools\` and \`modes\` go as \`{ "add": [...], "remove": [...] }\`, never the whole list (a whole list answers 400 delta_required, with the current list of THIS machine in details.current). The difference is computed against the agent stored on the gateway that writes, never against a list you read elsewhere. At most ${AGENT_DELTA_LIMIT} entries per call (add + remove together): above it, 409 too_many_changes with the difference (details.changes: what would leave, what would enter) — do it in parts and confirm with the person between them. \`dryRun: true\` returns { added, removed, applied, pending } and writes nothing: use it before removing anything. Removing applies now; what widens access (tools, delegation, permissions, exposure, sandbox…) stays PENDING until an administrator confirms on the screen (account menu → Notificações, one by one or all at once). Tell the person what is pending and where (the result says); never say it was granted before that. When they decide, a gateway notice comes into the conversation that asked (queued into the running turn, or as a new turn): do not poll, and if none came, list_permission_rules shows what is still pending. An agent of a CONNECTED project (get_agent shows \`originAllowedTools\` and \`effectiveAllowedTools\`; a plain patch answers 409 project_read_only) is read-only here: send only \`{ "localLayer": { "allowedTools"?: { "add"?, "remove"? }, "disabledTools"?: { "add"?, "remove"? }, "providers"?: [...] | null } }\`, compared with effectiveAllowedTools (what runs HERE). Adding to allowedTools (or removing from disabledTools) ASKS to turn on, on THIS machine only, a tool, an MCP (\`mcp:<id>/*\`) or delegation (\`agent:<id>\`): each entry becomes a PENDING request. Removing from allowedTools (or adding to disabledTools) turns it off here, now. \`providers\` changes the models used here (\`null\` = back to the ones of the origin), now. None of it ever changes the origin. Permission rules of such an agent: save_permission_rules with the agent as the target. Sandbox, exposure and the other fields are changed at the origin.`,
       inputSchema: {
         agentId: z.string(),
         patch: z
           .record(z.string(), z.unknown())
-          .describe('Field → new value, e.g. { "allowedTools": [...] }. Connected project: only { "localLayer": { "allowedTools"?, "disabledTools"?, "providers"? } }.'),
+          .describe(
+            'Field → new value; list fields as a change, e.g. { "allowedTools": { "add": ["cap:web.fetch"], "remove": ["mcp:jira/*"] } }. Connected project: only { "localLayer": { "allowedTools"?: { add, remove }, "disabledTools"?: { add, remove }, "providers"? } }.',
+          ),
         reason: z.string().describe('Why; shown to whoever confirms.'),
+        dryRun: z.boolean().optional().describe('Only simulate: returns { added, removed, applied, pending } and writes nothing.'),
       },
     },
-    async ({ agentId, patch, reason }) =>
-      'localLayer' in patch
-        ? adjustLocalLayer(api, agentId, patch, reason)
-        : pendingReply(await api('PATCH', `/agents/${encodeURIComponent(agentId)}`, { body: { patch, reason } })),
+    async ({ agentId, patch, reason, dryRun }) => {
+      if ('localLayer' in patch) return adjustLocalLayer(api, agentId, patch, reason, dryRun === true)
+      const answer = await api('PATCH', `/agents/${encodeURIComponent(agentId)}`, { body: { patch, reason, ...(dryRun ? { dryRun: true } : {}) } })
+      return dryRun ? reply(answer) : pendingReply(answer)
+    },
   )
 
   server.registerTool(
@@ -1565,11 +1670,15 @@ function registerTools(full: McpServer, api: TSelfApi, access: { admin: boolean;
   server.registerTool(
     'set_agent_resources',
     {
-      description:
-        'Replace which skills and commands an agent may use: ids, or ["*"] = every global one plus those of its project (a global agent: only global ones). Send both lists; ["*"] = all (the default), an empty list = none on purpose. It applies to conversations started from now on. Confirm with the person first.',
-      inputSchema: { agentId: z.string(), skills: z.array(z.string()), commands: z.array(z.string()) },
+      description: `Change which skills and commands an agent may use, ONLY as a change: \`skills\` and \`commands\` go as \`{ "add": [...], "remove": [...] }\` (ids; "*" = every global one plus those of its project). A whole list answers 400 delta_required with the current lists in details.current. The difference is computed against this gateway; at most ${AGENT_DELTA_LIMIT} entries per call (add + remove together), above it 409 too_many_changes with the difference: do it in parts. While the agent has "*", removing one id is refused: a person picks the list on the screen. \`dryRun: true\` returns { added, removed } and writes nothing. It applies to conversations started from now on. Confirm with the person first.`,
+      inputSchema: {
+        agentId: z.string(),
+        skills: listDeltaShape.optional(),
+        commands: listDeltaShape.optional(),
+        dryRun: z.boolean().optional().describe('Only simulate: returns { added, removed } and writes nothing.'),
+      },
     },
-    async ({ agentId, ...resources }) => reply(await api('PUT', `/agents/${encodeURIComponent(agentId)}/resources`, { body: resources })),
+    async ({ agentId, dryRun, ...asked }) => changeAgentResources(api, agentId, asked, dryRun === true),
   )
 
   server.registerTool(
