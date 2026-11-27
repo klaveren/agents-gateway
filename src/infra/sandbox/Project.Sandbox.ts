@@ -13,12 +13,11 @@ import {
   realpathSync,
   rmdirSync,
   rmSync,
-  statSync,
   unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs'
-import { readdir } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -27,7 +26,7 @@ import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { deniedGatewayPorts } from '@infra/permissions/Gateway.Reach'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import { commandDirOf } from '@infra/accounts/Ssh.Kit'
-import { expandReadDenyGlobs } from '@infra/sandbox/ReadDeny.Globs'
+import { drainConcurrently, expandReadDenyGlobs, READ_DENY_WALK_CONCURRENCY } from '@infra/sandbox/ReadDeny.Globs'
 import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
 import { ENV_FILE_PATTERNS, globToRegex, pathMatches, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import { FILE_DIRS } from '@domain/models/ResourceFile.Model'
@@ -398,7 +397,7 @@ export class ProjectSandbox implements IProjectSandbox {
     const wantsTcp = process.platform === 'linux' && (place.tcp || place.machine)
     if (wantsTcp) mkdirSync(own, { recursive: true, mode: 0o700 })
     if (existsSync(own)) planned.readAllow.push(own)
-    const bubblewrap = this.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir, [dirname(own)])) : undefined
+    const bubblewrap = this.platform === 'linux' ? await withWriteGlobsExpanded(forBubblewrap(planned, root, listDir, [dirname(own)])) : undefined
     // ⚡ No Linux as negações de leitura com curinga chegam ao runtime já expandidas (ver `ReadDeny.Globs`): a varredura
     // dele, a cada comando, prendia o servidor por minutos numa worktree com `node_modules`.
     const cerco = bubblewrap ? { ...bubblewrap, readDeny: await expandReadDenyGlobs(bubblewrap.readDeny) } : planned
@@ -780,12 +779,17 @@ function isAtOrUnder(path: string, dir: string): boolean {
  * ⚖️ Criar um arquivo NOVO por um padrão desses segue só pela ferramenta de edição: o terminal não abre a pasta inteira.
  * As negações com curinga também se expandem: o que existe fica fechado.
  */
-export function withWriteGlobsExpanded(plan: ICercoPlan, list: (dir: string) => Array<{ name: string; dir: boolean }> = listEntries): ICercoPlan {
-  const expand = (paths: readonly string[]) => [...new Set(paths.flatMap((path) => [path, ...expandGlobPath(path, list)]))]
-  const allow = expand(plan.writeAllow)
+export async function withWriteGlobsExpanded(plan: ICercoPlan, list: TGlobLister = globLister()): Promise<ICercoPlan> {
+  // ⚡ Uma listagem por pasta para TODOS os padrões (`list` guarda as lidas): cada `<raiz>/**/x` repetia a árvore inteira.
+  const expand = async (paths: readonly string[]) => {
+    const out: string[] = []
+    for (const path of paths) out.push(path, ...(await expandGlobPath(path, list)))
+    return [...new Set(out)]
+  }
+  const allow = await expand(plan.writeAllow)
   // ⛔ Cada caminho é uma montagem, e o bwrap aceita ~3000: passou do teto, a LIBERAÇÃO expandida sai (fica o padrão, que o
   // runtime ignora: escrever ali pelo terminal falha, mas o terminal funciona). A NEGAÇÃO expandida fica sempre.
-  return { ...plan, writeAllow: allow.length > WRITE_EXPAND_TOTAL ? [...plan.writeAllow] : allow, writeDeny: expand(plan.writeDeny) }
+  return { ...plan, writeAllow: allow.length > WRITE_EXPAND_TOTAL ? [...plan.writeAllow] : allow, writeDeny: await expand(plan.writeDeny) }
 }
 
 /** Teto das liberações de escrita expandidas, somadas: o bwrap para em ~9000 argumentos (~3000 montagens) no total. */
@@ -793,60 +797,96 @@ const WRITE_EXPAND_TOTAL = 1500
 
 /** Teto de caminhos por padrão: numa árvore enorme, o que passa fica fechado (falha fechada para a escrita). */
 const GLOB_EXPAND_LIMIT = 4000
+/** Teto de passos por padrão (pasta × trecho do padrão): numa árvore enorme, para aí. */
+const GLOB_VISIT_LIMIT = 200_000
 /** As pastas que o `**` não atravessa: dependências e o git por dentro. */
 const GLOB_SKIP = new Set(['node_modules', '.git'])
 
-/** Os caminhos que existem e casam um padrão absoluto com curinga; nada se ele não tem curinga (o runtime o lê). */
-export function expandGlobPath(path: string, list: (dir: string) => Array<{ name: string; dir: boolean }> = listEntries): string[] {
-  const whole = path.endsWith('/**')
-  const base = whole ? path.slice(0, -3) : path
-  if (!/[*?[\]{}]/.test(base) || !isAbsolute(base)) return []
-  const segments = base.split('/').filter(Boolean)
-  const found: string[] = []
-  let visited = 0
-  // Desce segmento a segmento: o literal só entra; o curinga lista a pasta; o `**` vale zero ou mais pastas.
-  const walk = (dir: string, rest: readonly string[]): void => {
-    if (found.length >= GLOB_EXPAND_LIMIT || visited > 200_000) return
-    visited += 1
-    const [head, ...tail] = rest
-    if (head === undefined) {
-      found.push(dir)
-      return
+/** Uma entrada de pasta para a expansão: o nome, se é pasta e se é link (o literal segue o link; o curinga, não). */
+export interface IGlobEntry {
+  name: string
+  dir: boolean
+  link?: boolean
+}
+/** Lista uma pasta; `undefined` = não se lista (sem permissão, sumiu). */
+export type TGlobLister = (dir: string) => Promise<IGlobEntry[] | undefined>
+
+/** O lister de verdade, assíncrono, com as pastas já lidas guardadas (uma chamada de `withWriteGlobsExpanded`, não mais). */
+export function globLister(read: (dir: string) => Promise<Dirent[]> = (dir) => readdir(dir, { withFileTypes: true })): TGlobLister {
+  const listed = new Map<string, Promise<IGlobEntry[] | undefined>>()
+  return (dir) => {
+    let hit = listed.get(dir)
+    if (!hit) {
+      hit = read(dir).then(
+        (entries) => entries.map((entry) => ({ name: entry.name, dir: entry.isDirectory(), ...(entry.isSymbolicLink() ? { link: true } : {}) })),
+        () => undefined,
+      )
+      listed.set(dir, hit)
     }
-    if (head === '**') {
-      walk(dir, tail)
-      // ⚖️ O `**` não atravessa as worktrees (cada uma repete o repositório inteiro); quem quer uma worktree a nomeia
-      // (`_worktrees/*/evidence/**`).
-      for (const entry of list(dir)) if (entry.dir && !GLOB_SKIP.has(entry.name) && !WORKTREE_DIRS.has(entry.name)) walk(join(dir, entry.name), rest)
-      return
-    }
-    if (!/[*?[\]{}]/.test(head)) {
-      const next = join(dir, head)
-      // O literal segue o link (no Mac, `/var` é `/private/var`); o curinga não entra em link.
-      if (!tail.length ? existsSync(next) : isDirectory(next)) walk(next, tail)
-      return
-    }
-    const matcher = globToRegex(head)
-    for (const entry of list(dir)) if (matcher.test(entry.name) && (tail.length ? entry.dir : !whole || entry.dir)) walk(join(dir, entry.name), tail)
+    return hit
   }
-  walk('/', segments)
-  return found.map((item) => (whole ? `${item}/**` : item))
 }
 
-function isDirectory(path: string): boolean {
+/** Existe (e, com `dir`, é pasta), seguindo o link. */
+async function existsAs(path: string, dir: boolean): Promise<boolean> {
   try {
-    return statSync(path).isDirectory()
+    const found = await stat(path)
+    return !dir || found.isDirectory()
   } catch {
     return false
   }
 }
 
-function listEntries(dir: string): Array<{ name: string; dir: boolean }> {
-  try {
-    return readdirSync(dir, { withFileTypes: true }).map((entry) => ({ name: entry.name, dir: entry.isDirectory() }))
-  } catch {
-    return []
-  }
+/**
+ * Os caminhos que existem e casam um padrão absoluto com curinga; nada se ele não tem curinga (o runtime o lê). ⚡ Sem
+ * travar o servidor: assíncrona e em paralelo (ver `READ_DENY_WALK_CONCURRENCY`); a síncrona prendia o thread ~1,5 s por
+ * comando numa worktree e ~4 s na raiz do projeto (27/11).
+ */
+export async function expandGlobPath(path: string, list: TGlobLister = globLister()): Promise<string[]> {
+  const whole = path.endsWith('/**')
+  const base = whole ? path.slice(0, -3) : path
+  if (!/[*?[\]{}]/.test(base) || !isAbsolute(base)) return []
+  const segments = base.split('/').filter(Boolean)
+  const found = new Set<string>()
+  let visited = 0
+  // Desce segmento a segmento: o literal só entra; o curinga lista a pasta; o `**` vale zero ou mais pastas.
+  const queue: Array<{ dir: string; rest: readonly string[] }> = [{ dir: '/', rest: segments }]
+  await drainConcurrently(
+    queue,
+    READ_DENY_WALK_CONCURRENCY,
+    async ({ dir, rest }) => {
+      visited += 1
+      const [head, ...tail] = rest
+      if (head === undefined) {
+        found.add(dir)
+        return
+      }
+      if (head === '**') {
+        queue.push({ dir, rest: tail })
+        // ⚖️ O `**` não atravessa as worktrees (cada uma repete o repositório inteiro); quem quer uma worktree a nomeia
+        // (`_worktrees/*/evidence/**`).
+        for (const entry of (await list(dir)) ?? []) if (entry.dir && !GLOB_SKIP.has(entry.name) && !WORKTREE_DIRS.has(entry.name)) queue.push({ dir: join(dir, entry.name), rest })
+        return
+      }
+      if (!/[*?[\]{}]/.test(head)) {
+        const next = join(dir, head)
+        // O literal segue o link (no Mac, `/var` é `/private/var`): pela listagem já lida; sem ela (pasta só de passagem), pelo `stat`.
+        const entries = await list(dir)
+        const entry = entries?.find((item) => item.name === head)
+        const ok = entries === undefined || entry?.link ? await existsAs(next, tail.length > 0) : !!entry && (!tail.length || entry.dir)
+        if (ok) queue.push({ dir: next, rest: tail })
+        return
+      }
+      const matcher = globToRegex(head)
+      for (const entry of (await list(dir)) ?? [])
+        if (matcher.test(entry.name) && (tail.length ? entry.dir : !whole || entry.dir)) queue.push({ dir: join(dir, entry.name), rest: tail })
+    },
+    () => found.size >= GLOB_EXPAND_LIMIT || visited > GLOB_VISIT_LIMIT,
+  )
+  return [...found]
+    .sort()
+    .slice(0, GLOB_EXPAND_LIMIT)
+    .map((item) => (whole ? `${item}/**` : item))
 }
 
 /** Teto da busca dos modelos: numa árvore maior, o que sobra fica escondido (falha fechada). */
@@ -874,24 +914,29 @@ async function walkTree(root: string, read: (dir: string) => Promise<Dirent[]>):
   const worktreeDirs: string[] = []
   const pending = ['']
   let seen = 0
-  for (let next = 0; next < pending.length && seen < FIND_LIMIT; next += 1) {
-    const dir = pending[next]!
-    let entries: Dirent[]
-    try {
-      entries = await read(join(root, dir))
-    } catch {
-      continue
-    }
-    for (const entry of entries) {
-      seen += 1
-      const path = dir ? `${dir}/${entry.name}` : entry.name
-      if (entry.isDirectory()) {
-        if (entry.name === 'node_modules' || entry.name === '.git') continue
-        if (WORKTREE_DIRS.has(entry.name)) worktreeDirs.push(path)
-        else pending.push(path)
-      } else if (entry.isFile()) files.push(path)
-    }
-  }
+  // ⚡ Em paralelo (ver `READ_DENY_WALK_CONCURRENCY`): uma pasta por vez, cada leitura esperava uma volta do loop.
+  await drainConcurrently(
+    pending,
+    READ_DENY_WALK_CONCURRENCY,
+    async (dir) => {
+      let entries: Dirent[]
+      try {
+        entries = await read(join(root, dir))
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        seen += 1
+        const path = dir ? `${dir}/${entry.name}` : entry.name
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '.git') continue
+          if (WORKTREE_DIRS.has(entry.name)) worktreeDirs.push(path)
+          else pending.push(path)
+        } else if (entry.isFile()) files.push(path)
+      }
+    },
+    () => seen >= FIND_LIMIT,
+  )
   return { files, worktreeDirs }
 }
 
