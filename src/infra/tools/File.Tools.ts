@@ -14,6 +14,7 @@ import {
   mimeOf,
 } from '@domain/models/ConversationFile.Model'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+import { pathMatches, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import { pagedText, readBudgetChars } from '@domain/Reading.Policy'
 import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
 import { ILocalTool, IToolResult } from './Tool.Types'
@@ -127,7 +128,8 @@ export function resolveInside(root: string, path: string): string | undefined {
 export function deniedPath(absPath: string, root: string, machine = false, sibling?: (real: string) => boolean): string | undefined {
   // ⛔ Sem distinção de caixa: no disco do Mac (APFS) `.ENV` é o `.env` e `.GIT/config` é o `.git/config`.
   const name = basename(absPath).toLowerCase()
-  if (name === '.env' || name.startsWith('.env.')) return 'environment file'
+  // Modelo (`.env.example`, `.sample`, `.template`, `.dist`) não é segredo: é versionado e o engenheiro o edita.
+  if ((name === '.env' || name.startsWith('.env.')) && !SECRET_TEMPLATES.some((template) => pathMatches(template, name))) return 'environment file'
   if (name.endsWith('.key') || name.endsWith('.pem')) return 'key file'
   if (name.startsWith('id_rsa')) return 'SSH key'
   if (name.startsWith('secrets.')) return 'secrets file'
