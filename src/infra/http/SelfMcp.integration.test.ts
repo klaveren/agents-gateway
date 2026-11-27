@@ -698,8 +698,13 @@ describe('MCP do próprio gateway (integração)', () => {
         JSON.stringify(pending),
       )
 
-      // Editar sem projectId mantém o projeto; pedir a ferramenta de novo não a grava.
-      const edited = await client.callTool({ name: 'save_agent', arguments: { ...agent, name: 'Filho 2', allowedTools: ['run_bash'] } })
+      // ⛔ Agente que existe: a lista inteira diferente da de agora é recusada (só patch_agent com add/remove), e nada grava.
+      const listed = await client.callTool({ name: 'save_agent', arguments: { ...agent, name: 'Filho 2', allowedTools: ['run_bash'] } })
+      assert.ok((listed as { isError?: boolean }).isError, JSON.stringify(listed))
+      assert.match(JSON.stringify(listed), /delta_required/)
+      assert.strictEqual((await call('/agents/filho-save', { token: admin })).result.name, 'Filho')
+      // Editar sem projectId mantém o projeto; a mesma lista de agora não muda nada.
+      const edited = await client.callTool({ name: 'save_agent', arguments: { ...agent, name: 'Filho 2', allowedTools: [] } })
       assert.ok(!(edited as { isError?: boolean }).isError, JSON.stringify(edited))
       const after = (await call('/agents/filho-save', { token: admin })).result
       assert.deepStrictEqual([after.name, after.projectId, (after.allowedTools ?? []).length], ['Filho 2', 'projsave', 0])

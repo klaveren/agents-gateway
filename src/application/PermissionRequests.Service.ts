@@ -2,6 +2,7 @@ import { secretNameIssue } from '@domain/models/ResourceSecret.Model'
 import { randomUUID } from 'node:crypto'
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
 import { toCapabilities } from '@domain/Capability.Catalog'
+import { IListChange, resolveAgentPatchDelta } from '@domain/AgentPatchDelta.Policy'
 import { agentHash, agentWidenings, AGENT_PATCH_FIELDS, applyAgentPatch, requestedAgent, splitAgentPatchItems, TAgentPatch } from '@domain/AgentPatch.Policy'
 import { confirmsWidenings, IWidening, TWideningItem, wideningKeys } from '@domain/Catalog.Widening'
 import {
@@ -97,6 +98,28 @@ export interface IAgentPatchResult {
   /** Um pedido por item (campo, ou entrada de lista). */
   pending?: IPermissionRequestView[]
   notice: string
+  /** O que a chamada muda nos campos-lista (por delta), contra o agente desta máquina. */
+  changes?: IListChange[]
+}
+
+export interface IAgentPatchInput {
+  patch: TAgentPatch
+  reason: string
+  /** ⛔ Quem grava é agente: os campos-lista só por delta, com teto (ver `AgentPatchDelta.Policy`). */
+  delta?: { creating?: boolean }
+  dryRun?: boolean
+}
+
+/** `dryRun`: o que a chamada faria, sem gravar nada. */
+export interface IAgentPatchDryRun {
+  agentId: string
+  dryRun: true
+  added: Record<string, string[]>
+  removed: Record<string, string[]>
+  /** Os campos que valeriam já. */
+  applied: string[]
+  /** Os itens que virariam pedido (um campo, ou uma entrada de lista), com o que cada um amplia. */
+  pending: Array<{ patch?: TAgentPatch; entries?: { field: string; add: string[] }; widenings: IPermissionWidening[] }>
 }
 
 /**
@@ -286,11 +309,13 @@ export class PermissionRequestsService {
    * amplia (o detector do catálogo) vira pedido; o resto vale já. O agente inteiro, com o patch, é validado ANTES de
    * gravar qualquer parte: todos os problemas voltam juntos.
    */
-  async patchAgent(agentId: string, input: { patch: TAgentPatch; reason: string }, requester: IPermissionRequester): Promise<IAgentPatchResult> {
+  async patchAgent(agentId: string, input: IAgentPatchInput & { dryRun?: false }, requester: IPermissionRequester): Promise<IAgentPatchResult>
+  async patchAgent(agentId: string, input: IAgentPatchInput, requester: IPermissionRequester): Promise<IAgentPatchResult | IAgentPatchDryRun>
+  async patchAgent(agentId: string, input: IAgentPatchInput, requester: IPermissionRequester): Promise<IAgentPatchResult | IAgentPatchDryRun> {
     const reason = input.reason.trim()
     // ⚖️ Os ids antigos (`run_bash`, `search_web`) viram a capacidade, como no `save`: senão a ferramenta que o agente já
     // tem (gravada como `cap:`) pareceria nova, e o pedido ampliaria o que não amplia.
-    if (Array.isArray(input.patch.allowedTools)) input = { ...input, patch: { ...input.patch, allowedTools: toCapabilities(input.patch.allowedTools as string[]) } }
+    if (!input.delta && Array.isArray(input.patch.allowedTools)) input = { ...input, patch: { ...input.patch, allowedTools: toCapabilities(input.patch.allowedTools as string[]) } }
     const fields = AGENT_PATCH_FIELDS.filter((field) => field in input.patch)
     const asked: Array<{ field: string; message: string }> = []
     if (!reason) asked.push({ field: 'reason', message: 'required: why the agent needs this (shown to whoever confirms)' })
@@ -300,11 +325,27 @@ export class PermissionRequestsService {
     const validation = await this.agentValidation()
     // Depois de esperar: daqui até gravar, nada assíncrono.
     const current = this.agent(agentId)
+    // ⛔ Agente grava lista só por delta, contra o agente DESTA máquina, com teto por chamada (ver `AgentPatchDelta.Policy`).
+    const delta = input.delta
+      ? resolveAgentPatchDelta(current as unknown as Record<string, unknown>, input.patch, { creating: input.delta.creating, normalize: { allowedTools: toCapabilities } })
+      : undefined
+    if (delta) input = { ...input, patch: delta.patch as TAgentPatch }
     const whole = applyAgentPatch(current, input.patch)
     const issues = [...validation.issues(whole), ...agentIssues(whole, { ...validation.rules, takenIds: [] })]
     if (issues.length) throw new InvalidAgentError(issues)
 
     const split = splitAgentPatchItems(current, input.patch)
+    if (input.dryRun) {
+      const by = (key: 'added' | 'removed') => Object.fromEntries((delta?.changes ?? []).filter((change) => change[key].length).map((change) => [change.field, change[key]]))
+      return {
+        agentId,
+        dryRun: true,
+        added: by('added'),
+        removed: by('removed'),
+        applied: agentHash(split.agent) !== agentHash(current) ? Object.keys(split.immediate) : [],
+        pending: split.items.map((item) => ({ ...(item.patch ? { patch: item.patch } : {}), ...(item.entries ? { entries: item.entries } : {}), widenings: refs(item.widenings) })),
+      }
+    }
     const appliedFields = agentHash(split.agent) !== agentHash(current) ? Object.keys(split.immediate) : []
     if (appliedFields.length)
       this.deps.agents.save(split.agent, { rules: validation.rules, by: label(requester), creating: false, change: { source: 'agent', note: `patch do agente: ${reason}` } })
@@ -331,7 +372,14 @@ export class PermissionRequestsService {
         )
       : undefined
     const done = appliedFields.map((field) => `${field}`)
-    return { agentId, applied: appliedFields, ...(pending ? { pending } : {}), notice: notice(agentScreen(split.agent.name), done, pending) }
+    const changes = delta?.changes.filter((change) => change.added.length || change.removed.length || change.ignored)
+    return {
+      agentId,
+      applied: appliedFields,
+      ...(pending ? { pending } : {}),
+      notice: notice(agentScreen(split.agent.name), done, pending),
+      ...(changes?.length ? { changes } : {}),
+    }
   }
 
   /**

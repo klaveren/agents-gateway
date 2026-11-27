@@ -76,7 +76,10 @@ const SAVE_REASON = 'Gravado por um agente (save_agent): o que amplia acesso esp
  */
 async function saveAgentWithoutWidening(api: TSelfApi, method: 'POST' | 'PUT', path: string, body: Record<string, unknown>): Promise<ISelfReply> {
   const patch = Object.fromEntries(AGENT_PATCH_FIELDS.filter((field) => field in body).map((field) => [field, body[field]]))
-  const asked = (id: string) => api('PATCH', `/agents/${encodeURIComponent(id)}`, { body: { patch, reason: SAVE_REASON } })
+  // ⛔ Agente que existe: as listas (allowedTools, modes) só mudam pelo `patch_agent` com add/remove; a mesma lista de agora
+  // passa (não muda nada). Agente novo (`creating`): nasceu sem nada, a lista só acrescenta — tudo vira pedido.
+  const asked = (id: string, creating = false) =>
+    api('PATCH', `/agents/${encodeURIComponent(id)}`, { body: { patch, reason: SAVE_REASON, ...(creating ? { creating: true } : {}) } })
   if (method === 'PUT') {
     const id = segment(path, 1)
     if (!Object.keys(patch).length) return api('GET', `/agents/${encodeURIComponent(id)}`)
@@ -94,7 +97,7 @@ async function saveAgentWithoutWidening(api: TSelfApi, method: 'POST' | 'PUT', p
   for (const field of ['permissions', 'terminal', 'env', 'modelGroup']) delete minimum[field]
   const created = await api('POST', '/agents', { body: minimum })
   if (!created.ok) return created
-  const patched = await asked(id)
+  const patched = await asked(id, true)
   if (!patched.ok) {
     await api('DELETE', `/agents/${encodeURIComponent(id)}`)
     return patched

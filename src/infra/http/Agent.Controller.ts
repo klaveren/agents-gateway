@@ -616,7 +616,7 @@ export class AgentController {
           .filter(({ admin, unavailable }) => admin || !unavailable)
           .map(({ entry, admin, unavailable }) => ({
             // ⛔ Quem não administra só vê os providers que rodam para ele: um desligado não é escolha.
-            ...this.listedAgent(entry.agent, admin),
+            ...this.connectedTools(this.listedAgent(entry.agent, admin)),
             // ⚖️ Só a origem vê com quem o agente é compartilhado; quem recebe vê de onde ele veio (somente leitura).
             ...(admin && entry.agent.sharedWith?.length ? { sharedWith: entry.agent.sharedWith } : {}),
             ...(project && sharedInto(entry.agent, project) ? { sharedFrom: entry.agent.projectId } : {}),
@@ -924,6 +924,17 @@ export class AgentController {
     })
   }
 
+  /**
+   * ⛔ 🔌 O agente de projeto CONECTADO na listagem: a lista é a que roda AQUI (origem + camada desta máquina), e um
+   * `allowedTools` com ela foi lido como a da origem — uma agente regravou 11 agentes da origem com a efetiva do Mac e
+   * derrubou 171 ferramentas (26/11). Sai `allowedTools`; entram `originAllowedTools` (a da origem) e `effectiveAllowedTools`.
+   */
+  private connectedTools<T extends { id: string; projectId?: string; allowedTools: string[] }>(dto: T): Omit<T, 'allowedTools'> | T {
+    if (!isConnectedProject(dto.projectId)) return dto
+    const { allowedTools, ...rest } = dto
+    return { ...rest, originAllowedTools: this.agents.entry(dto.id)?.agent.allowedTools ?? allowedTools, effectiveAllowedTools: allowedTools }
+  }
+
   /** Nome e protocolo do banco (não um rótulo fixo no código), preços e raciocínio do catálogo. */
   private providerFacts(providerId: string, disabled: Record<string, string[]> = {}): IAgentProviderFacts {
     const models = this.usecases.models
@@ -968,7 +979,10 @@ export class AgentController {
       const disabled = this.agents.unusableModels(entry.agent)
       // ⚖️ A guia Arquivos mostra a pasta como está no disco: o que a tela pôs e o que o agente gravou.
       const live = this.agents.liveFiles(entry.agent)
-      return toAgentDetailDto(live ? { ...entry, agent: { ...entry.agent, files: live } } : entry, (providerId) => this.providerFacts(providerId, disabled))
+      const detail = toAgentDetailDto(live ? { ...entry, agent: { ...entry.agent, files: live } } : entry, (providerId) => this.providerFacts(providerId, disabled))
+      // 🔌 Projeto conectado: `allowedTools` aqui é a da ORIGEM (o formulário só leitura); as duas listas vêm com nome próprio.
+      if (!isConnectedProject(entry.agent.projectId)) return detail
+      return { ...detail, originAllowedTools: entry.agent.allowedTools, effectiveAllowedTools: this.agents.get(entry.agent.id)?.allowedTools ?? entry.agent.allowedTools }
     })
   }
 

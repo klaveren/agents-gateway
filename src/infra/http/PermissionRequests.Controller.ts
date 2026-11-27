@@ -44,7 +44,21 @@ const changeSchema = z.object({
 })
 // O `patch_agent`: os campos do `PUT /agents` que o patch muda (sem id, arquivos e problemas da importação).
 const patchFields = Object.fromEntries(AGENT_PATCH_FIELDS.map((field) => [field, true])) as { [K in TAgentPatchField]: true }
-const patchSchema = z.object({ patch: agentBodySchema.pick(patchFields).partial().strict(), reason: z.string().max(1000) })
+// ⛔ Os campos-lista vêm como delta `{ add, remove }` (ver `AgentPatchDelta.Policy`): a lista inteira passa pelo esquema só
+// para o serviço responder com a lista de agora (e aceitar a que não muda nada, ou a do agente recém-criado).
+const listDelta = z.object({ add: z.array(z.string().max(300)).max(500).optional(), remove: z.array(z.string().max(300)).max(500).optional() }).strict()
+const patchSchema = z.object({
+  patch: agentBodySchema
+    .pick(patchFields)
+    .extend({ allowedTools: z.union([z.array(z.string().max(300)).max(500), listDelta]), modes: z.union([agentBodySchema.shape.modes, listDelta]) })
+    .partial()
+    .strict(),
+  reason: z.string().max(1000),
+  /** Só simula: devolve `{ added, removed, applied, pending }` sem gravar. */
+  dryRun: z.boolean().optional(),
+  /** O `save_agent` de um agente NOVO (nasceu sem nada): a lista que só acrescenta vale, sem teto. */
+  creating: z.boolean().optional(),
+})
 // 🔌 As entradas de `allowedTools` a LIGAR na camada local (ferramenta, `mcp:<id>/*`, `agent:<id>`).
 const localToolsSchema = z.object({ allowedTools: z.array(z.string().min(1).max(200)).max(100), reason: z.string().max(1000) }).strict()
 const approveSchema = z.object({ confirm: z.array(z.string().max(1000)).max(500).optional(), value: z.string().max(SECRET_LIMITS.value).optional() })
@@ -144,7 +158,10 @@ export class PermissionRequestsController {
     })
   }
 
-  /** `PATCH /agents/:agentId { patch, reason }` — só os campos pedidos; o que amplia vira pedido (ver `AgentPatch.Policy`). */
+  /**
+   * `PATCH /agents/:agentId { patch, reason, dryRun? }` — só os campos pedidos; o que amplia vira pedido (ver `AgentPatch.Policy`).
+   * ⛔ É a rota do agente (o `patch_agent`; a tela grava pelo `PUT`): os campos-lista só por delta, com teto (`AgentPatchDelta.Policy`).
+   */
   async patchAgent(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { service, by } = await this.admin({ agentId: req.params.agentId as string }, 'patchAgent')
@@ -152,7 +169,8 @@ export class PermissionRequestsController {
       const body = parseBody(patchSchema, req.body)
       // Só o que veio: um padrão do esquema (`allowedTools: []`) não pode virar campo pedido.
       const patch = Object.fromEntries(Object.entries(body.patch).filter(([field]) => field in raw)) as TAgentPatch
-      return service.patchAgent(req.params.agentId as string, { patch, reason: body.reason }, await this.requester(req, by))
+      const options = { delta: { creating: body.creating === true }, ...(body.dryRun ? { dryRun: true } : {}) }
+      return service.patchAgent(req.params.agentId as string, { patch, reason: body.reason, ...options }, await this.requester(req, by))
     })
   }
 
