@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { cercoPlan, machinePlan, projectAnchored, toSandboxPath } from './Cerco.Plan'
+import { cercoPlan, hiddenWriteNote, machinePlan, projectAnchored, repositoryFolders, toSandboxPath } from './Cerco.Plan'
 import { IPermissionRule } from './Permission.Policy'
 
 const rule = (category: IPermissionRule['category'], pattern: string, decision: IPermissionRule['decision'] = 'allow'): IPermissionRule => ({ category, pattern, decision })
@@ -225,5 +225,92 @@ describe('machinePlan — o cerco aberto do agente de máquina', () => {
       for (const path of ['config', 'hooks', 'modules', 'info/attributes']) assert.ok(plan.writeDeny.includes(`/w/p/repositories/${name}/.git/${path}`), `${name}/${path}`)
     assert.ok(!plan.writeDeny.includes('/w/p/repositories/A'), 'o repositório em si segue gravável')
     assert.ok(!plan.readDeny.some((path) => path.startsWith('/w/p/repositories')))
+  })
+})
+
+describe('repositório liberado dá a pasta de trabalho', () => {
+  const repo = '/w/p/repositories/brandshub'
+  const other = '/w/p/repositories/outro'
+  const inRepo = { ...base, root: repo, projectRoot: '/w/p', gitCommonDir: `${repo}/.git`, repositories: [repo, other] }
+  const inProject = { ...base, root: '/w/p', repositories: [repo, other] }
+
+  it('sem nenhuma regra, a conversa NO repositório lê e grava a pasta; .git/config e hooks seguem fechados', () => {
+    const plan = cercoPlan({}, inRepo)
+    assert.ok(plan.readAllow.includes(repo) && plan.writeAllow.includes(repo))
+    for (const path of [`${repo}/.git/config`, `${repo}/.git/hooks`]) assert.ok(plan.writeDeny.includes(path), path)
+    assert.ok(plan.readDeny.includes('/w/p/repositories/brandshub/**/.env'), '.env segue fechado')
+  })
+
+  it('o .git/config e os hooks seguem fechados também sem gitCommonDir', () => {
+    const plan = cercoPlan({}, { ...inRepo, gitCommonDir: undefined })
+    assert.ok(plan.writeDeny.includes(`${repo}/.git/config`) && plan.writeDeny.includes(`${repo}/.git/hooks`))
+  })
+
+  it('o .env e os segredos do sistema seguem fechados para leitura e escrita', () => {
+    const plan = cercoPlan({}, inRepo)
+    assert.ok(plan.readDeny.some((path) => path.includes('.env')))
+    assert.ok(plan.writeDeny.some((path) => path.includes('.env')))
+  })
+
+  it('a conversa na raiz do projeto abre cada repositório liberado, não a raiz', () => {
+    const plan = cercoPlan({}, inProject)
+    assert.ok(plan.readAllow.includes(repo) && plan.readAllow.includes(other))
+    assert.ok(plan.writeAllow.includes(repo) && plan.writeAllow.includes(other))
+    assert.ok(!plan.writeAllow.includes('/w/p') && !plan.readAllow.includes('/w/p'))
+  })
+
+  it('repositório NEGADO não ganha nada (conversa no projeto e irmão)', () => {
+    const layers = { project: [rule('repository', 'outro', 'deny')] }
+    const project = cercoPlan(layers, inProject)
+    assert.ok(project.writeAllow.includes(repo) && !project.writeAllow.includes(other) && !project.readAllow.includes(other))
+    const sibling = cercoPlan(layers, inRepo)
+    assert.ok(!sibling.readAllow.includes(other))
+    const denied = cercoPlan({ agent: [rule('repository', 'brandshub', 'deny')] }, inRepo)
+    assert.ok(!denied.readAllow.includes(repo) && !denied.writeAllow.includes(repo))
+  })
+
+  it('irmão: lê (com as negações ancoradas nele) e nunca grava', () => {
+    const plan = cercoPlan({}, inRepo)
+    assert.ok(plan.readAllow.includes(other))
+    assert.ok(!plan.writeAllow.includes(other) && plan.writeDeny.includes(other))
+    assert.ok(plan.readDeny.some((path) => path.startsWith(`${other}/`) && path.includes('.env')))
+  })
+
+  it('Negar explícito (leitura ou escrita) vence a liberação do repositório', () => {
+    const plan = cercoPlan({ project: [rule('write', 'docs/**', 'deny'), rule('read', 'segredos/**', 'deny')] }, inRepo)
+    assert.ok(plan.writeDeny.includes(`${repo}/docs/**`))
+    assert.ok(plan.readDeny.includes(`${repo}/segredos/**`))
+  })
+
+  it('a regra exata libera: write .git/hooks/** allow continua tirando a negação de sistema como antes', () => {
+    const before = cercoPlan({ agent: [rule('write', 'repositories/brandshub/.git/hooks/**')] }, inRepo)
+    assert.ok(before.writeAllow.some((path) => path.includes('.git/hooks')))
+  })
+
+  it('worktree no repositório liberado: abre a worktree', () => {
+    const tree = `${repo}/_worktrees/EP-1`
+    const plan = cercoPlan({}, { ...base, root: tree, projectRoot: '/w/p', gitCommonDir: `${repo}/.git`, worktreeGitDir: `${repo}/.git/worktrees/EP-1`, repositories: [repo] })
+    assert.ok(plan.readAllow.includes(tree) && plan.writeAllow.includes(tree))
+  })
+
+  it('agente de máquina e projeto sem repositório: nada muda', () => {
+    assert.deepStrictEqual(repositoryFolders({ machine: true }, inRepo), { work: [], siblings: [] })
+    const plan = cercoPlan({}, base)
+    assert.ok(!plan.readAllow.includes('/w/p') && !plan.writeAllow.includes('/w/p'))
+  })
+
+  it('regras antigas (read ** e write repositories/x/**) ficam iguais e somam', () => {
+    const plan = cercoPlan({ project: [rule('read', '**'), rule('write', 'repositories/brandshub/**')] }, inProject)
+    assert.ok(plan.readAllow.includes('/w/p/**') && plan.writeAllow.includes('/w/p/repositories/brandshub/**'))
+  })
+})
+
+describe('aviso de gravação sem permissão', () => {
+  it('pasta escondida e sem escrita + comando que grava: avisa; liberada ou sem gravar: nada', () => {
+    const hiddenPlan = cercoPlan({}, base)
+    assert.match(hiddenWriteNote(hiddenPlan, '/w/p', 'git checkout -- README.md'), /some ao terminar/)
+    assert.strictEqual(hiddenWriteNote(hiddenPlan, '/w/p', 'ls -la'), '')
+    const open = cercoPlan({}, { ...base, repositories: ['/w/p'] })
+    assert.strictEqual(hiddenWriteNote(open, '/w/p', 'touch a'), '')
   })
 })

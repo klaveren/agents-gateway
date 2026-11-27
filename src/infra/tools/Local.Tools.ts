@@ -14,7 +14,8 @@ import { aliasWarning, deprecatedTool } from '@domain/Tool.Deprecations'
 import { printsSecret } from '@domain/models/ResourceSecret.Model'
 import { terminalEnv } from '@domain/Agent.Identity'
 import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
-import { cercoPlan, machinePlan } from '@domain/Cerco.Plan'
+import { accountOpensHost } from '@domain/AccountHosts.Policy'
+import { cercoPlan, hiddenWriteNote, ICercoPlan, machinePlan, repositoryFolders } from '@domain/Cerco.Plan'
 import { definesGitAlias, ENV_FILE_PATTERNS, hasGitDeny, matches, pathMatches, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { pagedText, plainFileRead, readBudgetChars as defaultReadBudget } from '@domain/Reading.Policy'
@@ -195,7 +196,7 @@ export interface ILocalToolDeps {
   agentDiagnostics?: (agentId: string) => IAgentDiagnostics | undefined
   /** As contas do projeto que vão para cada comando (ver `ProjectAccounts.Service`). Ausente = nenhuma. */
   accounts?: {
-    commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<{ env: Record<string, string>; problems: string[]; ssh?: ISshKitIdentity[] }>
+    commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<{ env: Record<string, string>; problems: string[]; ssh?: ISshKitIdentity[]; hosts?: string[] }>
     /** A assinatura com a chave SSH importada (`ssh_sign`). Ausente = sem a ferramenta. */
     sign?(projectId: string, id: string, namespace: string, data: string): Promise<string>
   }
@@ -380,6 +381,9 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const token = gate.register((host, port) => {
       // O portão quer o PADRÃO que liberou: rede local só passa com regra exata (sem `*`).
       const verdict = permissions.check(asker, { category: 'network', value: `${host}:${port}` }, { log: true })
+      // ⚖️ A conta liberada abre a rede para o servidor dela (o GitHub, o host do Git HTTPS) sem regra `network`. Só onde nenhuma
+      // regra decidiu (`default`): negar, do agente ou do projeto, e as travas do sistema seguem vencendo.
+      if (accountOpensHost(verdict, accounts?.hosts, host, port)) return { allowed: true, reason: `permitido pela conta liberada (${host})`, ...(machine ? { open: true } : {}) }
       return { allowed: verdict.allowed, reason: verdict.reason, ...(verdict.rule ? { pattern: verdict.rule.pattern } : {}), ...(machine && verdict.allowed ? { open: true } : {}) }
     })
     // ⛔ O token de rede deste comando também é segredo da conversa: se aparecer em qualquer saída (`processes`, `run_bash`), sai mascarado.
@@ -402,7 +406,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       const viaGate = `"${process.execPath}" "${join(place.scratchBase ?? root, '.home', CONNECTOR_NAME)}" %h %p`
       // No Mac, sem conta SSH, o ssh comum também sai pela porta do gateway (lá não há o interceptador de TCP do Linux).
       const kitBin = accounts?.ssh?.length ? writeSshKit(privateDir, accounts.ssh, viaGate).bin : process.platform === 'darwin' ? writeSshRoute(privateDir, viaGate).bin : undefined
-      const line = await sandbox.wrapWith(command, root, (base) => (machine ? machinePlan(layers, { ...base, system }) : cercoPlan(layers, { ...base, system })), token, {
+      let plan: ICercoPlan | undefined
+      const line = await sandbox.wrapWith(command, root, (base) => (plan = machine ? machinePlan(layers, { ...base, system }) : cercoPlan(layers, { ...base, system })), token, {
         ...place,
         localPorts,
         tcp,
@@ -416,7 +421,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       const secrets = deps.secrets?.envFor(context?.agentId, context?.sessionId, context?.conversationProjectId).env
       const env: Record<string, string> = { ...terminalEnv(envOf(context), subscriptionEnv({ HOME: root }), context), ...accounts?.env, ...secrets }
       if (kitBin) env.PATH = `${kitBin}:${env.PATH ?? process.env.PATH ?? '/usr/bin:/bin'}`
-      return { line, root, env, notes, release, logDir: logDirOf(context?.sessionId) }
+      const hidden = plan && process.platform === 'linux' && !machine ? hiddenWriteNote(plan, root, command) : ''
+      return { line, root, env, notes: `${notes}${hidden}`, release, logDir: logDirOf(context?.sessionId) }
     } catch (error: unknown) {
       release()
       return { status: 'error', result: `${toMessage(error)}. O terminal fica bloqueado até o cerco funcionar.` }
@@ -569,6 +575,22 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     }
   }
 
+  /**
+   * ⚖️ O repositório liberado dá a pasta de trabalho (ver `repositoryFolders`): o arquivo dentro dela, sem regra de leitura ou
+   * escrita que decida, vale. Na escrita, o `.git` que roda código fora do cerco (config, hooks…) segue fechado.
+   */
+  function openedByRepository(context: IExecutionContext | undefined, kind: 'read' | 'write', path: string): boolean {
+    const layers = deps.permissions?.layers?.(askerOf(context))
+    const folder = context?.workFolder
+    if (!layers || !folder) return false
+    const root = fileRoot(context)
+    const { work, siblings } = repositoryFolders(layers, { root: realOf(root), repositories: repositoryDirs(folder.projectDir) })
+    const abs = realOf(resolve(root, path))
+    const within = (dirs: readonly string[]) => dirs.some((dir) => abs === dir || abs.startsWith(`${dir}/`))
+    if (kind === 'read') return within(work) || within(siblings)
+    return within(work) && !/(^|\/)\.git(\/(config|config\.worktree|hooks|modules|info\/attributes|worktrees\/[^/]+\/(config\.worktree|commondir|gitdir))(\/|$)|$)/.test(abs)
+  }
+
   // As travas dos arquivos: as mesmas no `read_file` e no `deliver_file`.
   const fileDeps: IFileToolDeps = {
     rootFor: fileRoot,
@@ -595,6 +617,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
               }
               deps.mask.register(context.sessionId, envSecrets(text))
             }
+            if (!verdict.allowed && verdict.layer === 'default' && openedByRepository(context, kind, path)) return undefined
             return verdict.allowed ? undefined : verdict.reason
           },
         }

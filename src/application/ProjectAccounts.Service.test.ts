@@ -83,6 +83,17 @@ describe('ProjectAccountsService', () => {
     assert.strictEqual(await accounts.gitEnv('p2', 'gh-1'), undefined, 'a conta é do projeto dela')
   })
 
+  it('⚖️ a conta liberada abre só o servidor dela na rede: GitHub, o host do Git HTTPS; conta não liberada, nenhum', async () => {
+    const { accounts } = service()
+    await accounts.save('p1', 'gh', { kind: 'github-token', label: 'GH', public: { owner: 'empresa1' }, secret: 'ghp_1' }, 'admin')
+    await accounts.save('p1', 'git', { kind: 'git-https', label: 'Git', public: { baseUrl: 'https://git.empresa.com.br/grupo', username: 'bot' }, secret: 'tok' }, 'admin')
+    await accounts.save('p1', 'gitlab', { kind: 'secret-env', label: 'GitLab', public: { envName: 'GITLAB_TOKEN' }, secret: 'glpat-x' }, 'admin')
+    assert.deepStrictEqual((await accounts.commandEnv('p1', (id) => id === 'gh')).hosts.sort(), ['api.github.com:443', 'github.com:443'])
+    assert.deepStrictEqual((await accounts.commandEnv('p1', (id) => id === 'git')).hosts, ['git.empresa.com.br:443'])
+    assert.deepStrictEqual((await accounts.commandEnv('p1', (id) => id === 'gitlab')).hosts, [])
+    assert.deepStrictEqual((await accounts.commandEnv('p1', () => false)).hosts, [])
+  })
+
   it('duas contas GitHub: cada dono com a sua, e sem GH_TOKEN (o `gh` não saberia qual)', async () => {
     const { accounts } = service()
     await accounts.save('p1', 'gh-1', { kind: 'github-token', label: '1', public: { owner: 'empresa1' }, secret: 'ghp_1' }, 'admin')

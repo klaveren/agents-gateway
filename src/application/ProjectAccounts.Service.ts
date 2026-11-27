@@ -45,6 +45,11 @@ export interface IAccountCommandEnv {
   problems: string[]
   /** As identidades SSH, que o terminal grava numa pasta do comando (ver `Ssh.Kit`). */
   ssh: IAccountSshIdentity[]
+  /**
+   * ⚖️ Os servidores (`host:porta`) das contas liberadas de git/GitHub: o portão de rede os abre sem regra `network` (a conta
+   * liberada é a regra). Uma negação de rede explícita continua vencendo.
+   */
+  hosts: string[]
 }
 
 /**
@@ -169,6 +174,7 @@ export class ProjectAccountsService {
     let gitSlots = 0
     let gcp: string | undefined
     const ssh: IAccountSshIdentity[] = []
+    const hosts = new Set<string>()
     // ⛔ O segredo do aviso de fim de turno é do gateway, não do agente: nunca entra no comando, com regra ou sem.
     for (const account of this.repository.list(projectId).filter((item) => item.kind !== TURN_CALLBACK_KIND && allowed(item.id))) {
       const secret = this.repository.secret(projectId, account.id)
@@ -216,6 +222,7 @@ export class ProjectAccountsService {
           problems.push(`conta ${account.id}: URL ou usuário inválidos; cadastre de novo`)
           continue
         }
+        hosts.add(new URL(base.url).port ? new URL(base.url).host : `${new URL(base.url).host}:443`)
         const slot = `GATEWAY_GIT_${gitSlots++}`
         env[slot] = secret
         // O usuário passou pela validação (sem aspas nem espaço); o valor vazio zera os helpers do repositório para a URL.
@@ -234,6 +241,7 @@ export class ProjectAccountsService {
           continue
         }
       }
+      hosts.add('github.com:443').add('api.github.com:443')
       const slot = `GATEWAY_GH_${github.length}`
       env[slot] = token
       github.push(token)
@@ -250,7 +258,7 @@ export class ProjectAccountsService {
         env[`GIT_CONFIG_VALUE_${index}`] = value
       })
     }
-    return { env, problems, ssh }
+    return { env, problems, ssh, hosts: [...hosts] }
   }
 
   /**
