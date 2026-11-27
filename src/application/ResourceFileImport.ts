@@ -22,6 +22,8 @@ export interface IRepositoryFileImport {
 /** Nomes que nunca entram (pasta ou arquivo). */
 const NEVER = new Set(['node_modules', '.git', '.credentials', '.DS_Store', '__pycache__', '.venv', 'venv'])
 const SECRET_NAME = /^\.env(\..*)?$|\.(pem|key|p12|pfx|jks|keystore)$|^id_(rsa|ed25519|ecdsa)$|credentials?\.json$|^secrets?\./i
+/** Quantos itens (pastas e arquivos) a varredura visita antes de parar. */
+const IMPORT_VISIT_MAX = 20_000
 /** Os de exemplo (`.env.example`) entram: não têm valor — mas só se a máscara não achar nada neles. */
 const EXAMPLE = /\.(example|sample|template)$/i
 
@@ -47,10 +49,21 @@ export function importRepositoryFiles(
   const added: IResourceFile[] = []
   const skipped: Array<{ path: string; reason: string }> = []
   let total = 0
+  // ⚡ Passou do teto de arquivos, para: a varredura é síncrona, e apontar a raiz do projeto (200 mil arquivos) lia e
+  // mascarava cada um deles com o servidor parado, para no fim recusar quase todos.
+  let visited = 0
+  let stopped = false
+  const stop = (path: string, reason: string) => {
+    stopped = true
+    skipped.push({ path, reason: `${reason}: stopped here` })
+  }
 
   const visit = (absolute: string, inside: string) => {
+    if (stopped) return
     const name = inside.split('/').pop() ?? ''
     if (NEVER.has(name)) return void skipped.push({ path: inside, reason: 'not part of a resource' })
+    visited += 1
+    if (visited > IMPORT_VISIT_MAX) return stop(inside, `more than ${IMPORT_VISIT_MAX} items in the folder`)
     const stat = lstatSync(absolute)
     if (stat.isSymbolicLink()) return void skipped.push({ path: inside, reason: 'symbolic link' })
     if (stat.isDirectory()) {
@@ -63,13 +76,13 @@ export function importRepositoryFiles(
     const issue = filePathIssue(path)
     if (issue) return void skipped.push({ path, reason: issue })
     if (stat.size > RESOURCE_FILE_MAX_BYTES) return void skipped.push({ path, reason: `larger than ${RESOURCE_FILE_MAX_BYTES} bytes` })
+    if (added.length >= RESOURCE_FILES_MAX_COUNT) return stop(path, `more than ${RESOURCE_FILES_MAX_COUNT} files`)
     // ⛔ O agente escreve nesta pasta: entre o `lstat` e a leitura o arquivo pode virar link para fora (ou crescer).
     const content = readUnlinked(absolute, RESOURCE_FILE_MAX_BYTES)
     if (!content) return void skipped.push({ path, reason: 'changed while it was being read' })
     if (content.subarray(0, 8192).includes(0)) return void skipped.push({ path, reason: 'binary: only text files' })
     const secrets = deps.secretsIn?.(content.toString('utf8')) ?? []
     if (secrets.length) return void skipped.push({ path, reason: `has a secret (${[...new Set(secrets)].join(', ')}): read it from a secret variable` })
-    if (added.length >= RESOURCE_FILES_MAX_COUNT) return void skipped.push({ path, reason: `more than ${RESOURCE_FILES_MAX_COUNT} files` })
     if (total + content.length > RESOURCE_FILES_MAX_BYTES) return void skipped.push({ path, reason: `over ${RESOURCE_FILES_MAX_BYTES} bytes in all` })
     total += content.length
     added.push({ path, ...deps.files.put(content) })

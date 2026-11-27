@@ -64,4 +64,16 @@ describe('ResourceFileImport', () => {
       ],
     )
   })
+
+  it('⚡ passou do teto de arquivos, para de varrer (e não lê o resto)', () => {
+    const many = join(root, 'muitos')
+    mkdirSync(many)
+    for (let index = 0; index < 205; index += 1) writeFileSync(join(many, `f${String(index).padStart(3, '0')}.txt`), `${index}\n`)
+    let read = 0
+    const counting = { put: (content: Buffer) => (read++, files.put(content)) }
+    const result = importRepositoryFiles(root, 'muitos', '', { files: counting })
+    assert.equal(result.added.length, 200)
+    assert.equal(read, 200)
+    assert.deepStrictEqual(result.skipped, [{ path: 'f200.txt', reason: 'more than 200 files: stopped here' }])
+  })
 })

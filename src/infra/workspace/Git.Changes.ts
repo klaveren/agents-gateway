@@ -1,6 +1,7 @@
 import { deniedPath } from '@infra/tools/File.Tools'
 import { join } from 'node:path'
 import { IGitPlace, safeGit } from './Git.Safe'
+import { drainConcurrently } from '@infra/sandbox/ReadDeny.Globs'
 
 export type TChangeScope = 'conversation' | 'uncommitted' | 'branch'
 export const CHANGE_SCOPES: readonly TChangeScope[] = ['conversation', 'uncommitted', 'branch']
@@ -34,6 +35,8 @@ export interface IChanges {
 }
 
 export const CHANGE_LIMITS = { files: 300, diffBytes: 200 * 1024 } as const
+/** Quantos `git` de contagem de linhas (arquivo novo) rodam juntos. */
+const LINE_COUNT_CONCURRENCY = 8
 
 /** ⛔ O git só de leitura é o endurecido e compartilhado (`Git.Safe`): git e pasta calculados pelo servidor. */
 const git = (place: IGitPlace, args: readonly string[], maxBuffer = 8 * 1024 * 1024): Promise<string> => safeGit(place, args, { maxBuffer })
@@ -121,9 +124,18 @@ export async function changesOf(place: IGitPlace, scope: TChangeScope, options: 
   // ⚖️ Contra a ÁRVORE DE TRABALHO (sem `..HEAD`): entra o commitado no recorte e o que ainda não foi.
   const base = from ? [from] : []
   const files = parseFiles(await git(place, ['diff', ...DIFF_FLAGS, '--name-status', '-z', ...base]), await git(place, ['diff', ...DIFF_FLAGS, '--numstat', '-z', ...base]))
-  for (const path of (await git(place, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean)) {
-    if (!files.some((file) => file.path === path)) files.push({ path, status: 'A', additions: await lineCount(place, path), deletions: 0, binary: false })
-  }
+  // ⚡ Os novos: um `git diff --no-index` por arquivo, em paralelo e só para os que a lista mostra (ela para em
+  // `CHANGE_LIMITS.files`). Um por vez, e para todos, uma pasta nova com milhares de arquivos levava minutos.
+  const listed = new Set(files.map((file) => file.path))
+  const untracked = (await git(place, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter((path) => path && !listed.has(path))
+  const shown = new Set([...listed, ...untracked].sort((a, b) => a.localeCompare(b)).slice(0, CHANGE_LIMITS.files))
+  const additions = new Map<string, number>()
+  await drainConcurrently(
+    untracked.filter((path) => shown.has(path)),
+    LINE_COUNT_CONCURRENCY,
+    async (path) => void additions.set(path, await lineCount(place, path)),
+  )
+  for (const path of untracked) files.push({ path, status: 'A', additions: additions.get(path) ?? 0, deletions: 0, binary: false })
   const commits = scope === 'uncommitted' || !from ? [] : await commitsOf(place, `${from}..HEAD`)
   return finish(place, { scope, ...(from ? { from } : {}), files, commits, truncated: false })
 }
