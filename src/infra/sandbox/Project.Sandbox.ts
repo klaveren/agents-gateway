@@ -438,6 +438,13 @@ export class ProjectSandbox implements IProjectSandbox {
       all_proxy: socks,
       // O `fetch` do Node só segue o proxy com isto (Node 24+).
       NODE_USE_ENV_PROXY: '1',
+      // ☁️ O `gcloud` não lê o HTTPS_PROXY com credencial (cai em 407) e um agente pode gravar o token de um comando que já
+      // acabou em `gcloud config set proxy/*`. Variável CLOUDSDK_* vence a config gravada, então o token vale sempre o deste comando.
+      CLOUDSDK_PROXY_TYPE: 'http',
+      CLOUDSDK_PROXY_ADDRESS: '127.0.0.1',
+      CLOUDSDK_PROXY_PORT: String(gatePort),
+      CLOUDSDK_PROXY_USERNAME: networkToken,
+      CLOUDSDK_PROXY_PASSWORD: 'x',
       // ⚖️ Linux: o cerco tem rede PRÓPRIA (`--unshare-net`), então o loopback é do comando (o servidor que o teste sobe, o
       // encaminhador de `localPorts`) e vai DIRETO; pelo proxy, cada `127.0.0.1:<porta efêmera>` caía no portão ("só com a
       // regra exata"). Mac: o seatbelt divide a rede com o host, o loopback é o do host e só passa pelo portão (`''`).

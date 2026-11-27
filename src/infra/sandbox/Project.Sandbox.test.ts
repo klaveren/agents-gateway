@@ -554,6 +554,20 @@ describe('ProjectSandbox', () => {
     assert.deepStrictEqual([noProxyFor('linux'), noProxyFor('darwin')], ['localhost,127.0.0.1,::1', ''])
   })
 
+  it('☁️ o prelúdio põe o proxy do `gcloud` com o token do comando (vence o que ficou gravado na config)', async () => {
+    const project = join(root, 'projeto-gcloud')
+    mkdirSync(project, { recursive: true })
+    const srt = fakeSrt()
+    const sandbox = new ProjectSandbox(env, srt.load, 'darwin')
+    await sandbox.wrapWith('gcloud compute instances list', project, (base) => cercoPlan({}, { ...base, system: [] }), 'tok-gc')
+    const command = srt.calls.at(-1)!.command
+    assert.match(command, /export CLOUDSDK_PROXY_TYPE='http'/)
+    assert.match(command, /export CLOUDSDK_PROXY_ADDRESS='127\.0\.0\.1'/)
+    assert.match(command, /export CLOUDSDK_PROXY_PORT='\d+'/)
+    assert.match(command, /export CLOUDSDK_PROXY_USERNAME='tok-gc'/)
+    assert.match(command, /export CLOUDSDK_PROXY_PASSWORD='x'/)
+  })
+
   it('⛔ a varredura roda antes de um comando cercado sozinho, e NÃO com outro rodando; e de novo quando o último termina', async () => {
     const srt = fakeSrt()
     const sandbox = new ProjectSandbox(env, srt.load)
