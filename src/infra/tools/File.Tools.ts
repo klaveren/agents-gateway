@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { constants as fsc, existsSync, realpathSync } from 'node:fs'
-import { FileHandle, glob, lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
+import { FileHandle, lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createContext, Script } from 'node:vm'
@@ -18,6 +18,7 @@ import { pathMatches, SECRET_TEMPLATES } from '@domain/Permission.Policy'
 import { pagedText, readBudgetChars } from '@domain/Reading.Policy'
 import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
 import { ILocalTool, IToolResult } from './Tool.Types'
+import { globWalk, IGlobWalk } from './Glob.Walk'
 import { agentFolderOwner, globalResourcesDir, isResourceFilePath } from '@infra/workspace/Resource.Files'
 
 export interface IFileToolDeps {
@@ -66,6 +67,8 @@ const SEARCH_MAX = 200
 const SEARCH_PATTERN_MAX_CHARS = 1000
 /** O tempo que UMA busca pode gastar casando a regex, somados os arquivos. */
 const SEARCH_REGEX_BUDGET_MS = 1500
+/** Quantos arquivos o `search_files` lê juntos (e casa numa chamada só da regex). */
+const SEARCH_WINDOW = 64
 
 const MATCH_BOX = createContext({ regex: undefined, lines: undefined, max: 0 })
 const MATCH_LINES = new Script('(() => { const hits = []; for (let i = 0; i < lines.length && hits.length < max; i++) if (regex.test(lines[i])) hits.push(i); return hits })()')
@@ -94,6 +97,51 @@ const SKIPPED_DIRS = new Set(['node_modules', '.git'])
 /** O caminho real do alvo; se ele não existe, o do ancestral mais próximo que existe + o resto. */
 /** O caminho canônico (links resolvidos; o que ainda não existe, pelo ancestral que existe). */
 export function realOf(target: string): string {
+  const hit = realMemo?.get(target)
+  if (hit !== undefined) return hit
+  const real = realOfDisk(target)
+  // O real do real é ele mesmo: a conferência seguinte (`deniedPath` sobre o que o `resolveInside` devolveu) não vai ao disco.
+  realMemo?.set(target, real).set(real, real)
+  return real
+}
+
+/**
+ * ⚡ O `realOf` lembrado durante um trecho SÍNCRONO (`withRealMemo`): numa listagem, cada caminho conferia de novo a raiz,
+ * a pasta de dados e a de recursos globais (~45 µs por arquivo, 4,5 s em 100 mil, com o servidor parado). Síncrono de
+ * propósito: nada do disco muda de lugar no meio, e o que está lembrado morre no fim do trecho.
+ */
+let realMemo: Map<string, string> | undefined
+
+function withRealMemo<T>(fn: () => T): T {
+  const outer = realMemo
+  realMemo = outer ?? new Map()
+  try {
+    return fn()
+  } finally {
+    realMemo = outer
+  }
+}
+
+/** Quantos caminhos uma listagem confere por volta do loop do servidor (entre um bloco e outro, o loop atende os outros). */
+const CHECK_CHUNK = 500
+const yieldLoop = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+/** Os caminhos que passam em `check`, conferidos em blocos com o `realOf` lembrado e uma volta do loop entre blocos. */
+async function checkedInChunks<T>(names: readonly string[], check: (name: string) => T | undefined): Promise<T[]> {
+  const out: T[] = []
+  for (let at = 0; at < names.length; at += CHECK_CHUNK) {
+    if (at) await yieldLoop()
+    withRealMemo(() => {
+      for (const name of names.slice(at, at + CHECK_CHUNK)) {
+        const item = check(name)
+        if (item !== undefined) out.push(item)
+      }
+    })
+  }
+  return out
+}
+
+function realOfDisk(target: string): string {
   const rest: string[] = []
   let current = target
   while (!existsSync(current)) {
@@ -182,6 +230,9 @@ function placeOf(
 
 /** ⛔ A pasta de agente onde o caminho mora: a do próprio (`mine`), a de outro (`other`) ou nenhuma. */
 function folderOf(abs: string, own: IOwnFolder | undefined): 'mine' | 'other' | undefined {
+  // ⚡ Fora da pasta de dados (pelo nome e pelo real) não há pasta de agente: sem resolver de novo a pasta de dados por arquivo.
+  const data = dataDir()
+  if (!abs.startsWith(data + sep) && !abs.startsWith(realOf(data) + sep)) return undefined
   const owner = agentFolderOwner(abs)
   if (!owner) return undefined
   return own && realOf(resolve(owner.dir)) === realOf(resolve(own.dir)) ? 'mine' : 'other'
@@ -302,27 +353,13 @@ const WALK_MAX = 100_000
 const WALK_CAPPED = `scan stopped at ${WALK_MAX} entries: narrow \`path\` or the pattern`
 
 /**
- * Percorre o glob sem entrar em node_modules/.git e devolve só caminhos relativos ao cwd.
+ * Percorre o glob sem entrar em node_modules/.git e devolve só caminhos relativos ao cwd (em paralelo: `Glob.Walk`).
  * ⛔ O padrão é relativo à pasta pedida: absoluto ou com `..` fazia o gateway varrer o disco do servidor fora do projeto
  * (o resultado era descartado depois, mas a varredura já tinha acontecido).
  */
-async function walk(cwd: string, pattern: string): Promise<{ names: string[]; capped: boolean }> {
+async function walk(cwd: string, pattern: string): Promise<IGlobWalk> {
   if (isAbsolute(pattern) || pattern.split(/[\\/]/).includes('..')) throw new Error('the pattern must be relative, without `..` (use `path` to choose the folder)')
-  const found: string[] = []
-  let capped = false
-  const exclude = (entry: unknown) => {
-    const name = typeof entry === 'string' ? basename(entry) : ((entry as { name?: string }).name ?? '')
-    return SKIPPED_DIRS.has(name)
-  }
-  for await (const entry of glob(pattern, { cwd, exclude: exclude as never })) {
-    if (entry.split(sep).some((part) => SKIPPED_DIRS.has(part))) continue
-    if (found.length >= WALK_MAX) {
-      capped = true
-      break
-    }
-    found.push(entry)
-  }
-  return { names: found.sort(), capped }
+  return globWalk(cwd, pattern, { skip: SKIPPED_DIRS, max: WALK_MAX })
 }
 
 function numbered(lines: string[], first: number): string {
@@ -403,12 +440,11 @@ function listFilesTool(deps: IFileToolDeps): ILocalTool {
       const checked = guard(root, args.path ?? '.', undefined, false, own, !!shared, !!machine)
       if ('error' in checked) return checked.error
       try {
-        const names: string[] = []
         const walked = await walk(checked.abs, pattern)
-        for (const name of walked.names) {
+        const names = await checkedInChunks(walked.names, (name) => {
           const abs = resolveInside(root, join(checked.abs, name))
-          if (listable(abs, root, own, (item) => !!shared || !deps.access?.(context, 'read', relOf(root, item), false))) names.push(show(abs))
-        }
+          return listable(abs, root, own, (item) => !!shared || !deps.access?.(context, 'read', relOf(root, item), false)) ? show(abs) : undefined
+        })
         const note = walked.capped ? `\n(${WALK_CAPPED})` : ''
         if (!names.length) return { status: 'success', result: `No files match.${note}` }
         const shown = names.slice(0, LIST_MAX).join('\n')
@@ -454,34 +490,52 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
         let truncated = false
         let budget = SEARCH_REGEX_BUDGET_MS
         const walked = await walk(checked.abs, fileGlob)
-        for (const name of walked.names) {
+        const permitted = (item: string) => !!shared || !deps.access?.(context, 'read', relOf(root, item), false)
+        // ⚡ Em janelas: os arquivos da janela são lidos juntos e casados numa chamada só da regex. Um por vez, cada
+        // arquivo esperava ~6 voltas do loop do servidor, e o prazo do `vm` (~40 µs por chamada) esgotava o orçamento
+        // da regex em ~40 mil arquivos sem casar nada. O resultado segue a ordem dos caminhos.
+        const allowed = await checkedInChunks(walked.names, (name) => {
           const abs = resolveInside(root, join(checked.abs, name))
-          if (!listable(abs, root, own, (item) => !!shared || !deps.access?.(context, 'read', relOf(root, item), false))) continue
-          let text: string
-          try {
-            const { handle, size } = await openChecked(abs, fsc.O_RDONLY)
-            try {
-              if (size > SEARCH_FILE_MAX_BYTES || (await isBinary(handle))) continue
-              text = await handle.readFile('utf8')
-            } finally {
-              await handle.close()
-            }
-          } catch {
-            continue // não é arquivo, é link, mudou no caminho: fora da busca
-          }
-          const lines = text.split('\n')
+          return listable(abs, root, own, permitted) ? abs : undefined
+        })
+        for (let at = 0; at < allowed.length && !truncated; at += SEARCH_WINDOW) {
+          const read = (
+            await Promise.all(
+              allowed.slice(at, at + SEARCH_WINDOW).map(async (abs) => {
+                try {
+                  const { handle, size } = await openChecked(abs, fsc.O_RDONLY)
+                  try {
+                    if (size > SEARCH_FILE_MAX_BYTES || (await isBinary(handle))) return undefined
+                    return { abs, lines: (await handle.readFile('utf8')).split('\n') }
+                  } finally {
+                    await handle.close()
+                  }
+                } catch {
+                  return undefined // não é arquivo, é link, mudou no caminho: fora da busca
+                }
+              }),
+            )
+          ).filter((file) => file !== undefined)
+          if (!read.length) continue
           const started = performance.now()
-          const hits = matchingLines(regex, lines, SEARCH_MAX - matches.length + 1, budget)
+          const hits = matchingLines(
+            regex,
+            read.flatMap((file) => file.lines),
+            SEARCH_MAX - matches.length + 1,
+            budget,
+          )
           budget -= performance.now() - started
           if (!hits) return fail('Search stopped: the regular expression is too slow (catastrophic backtracking?). Use a simpler pattern, or narrow `path`/`glob`.')
+          let file = 0
+          let offset = 0
           for (const index of hits) {
+            while (index >= offset + read[file].lines.length) offset += read[file++].lines.length
             if (matches.length >= SEARCH_MAX) {
               truncated = true
               break
             }
-            matches.push(`${show(abs)}:${index + 1}: ${lines[index].trim().slice(0, LINE_MAX_CHARS)}`)
+            matches.push(`${show(read[file].abs)}:${index - offset + 1}: ${read[file].lines[index - offset].trim().slice(0, LINE_MAX_CHARS)}`)
           }
-          if (truncated) break
         }
         const note = walked.capped ? `\n(${WALK_CAPPED})` : ''
         if (!matches.length) return { status: 'success', result: `No matches.${note}` }

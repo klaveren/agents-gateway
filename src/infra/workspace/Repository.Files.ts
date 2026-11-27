@@ -86,12 +86,17 @@ export function parseStatus(out: string): Record<string, TFileStatus> {
 export async function listRepositoryFiles(
   folder: IWorkFolder,
 ): Promise<{ files: string[]; ignored: string[]; secrets: string[]; truncated: boolean; status: Record<string, TFileStatus> }> {
-  const [out, ignoredOut, porcelain] = await Promise.all([
+  const [out, deletedOut, ignoredOut, porcelain] = await Promise.all([
     safeGit(folder, ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { maxBuffer: 64 * 1024 * 1024 }),
+    safeGit(folder, ['ls-files', '--deleted', '-z'], { maxBuffer: 16 * 1024 * 1024 }).catch(() => undefined),
     safeGit(folder, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'], { maxBuffer: 16 * 1024 * 1024 }).catch(() => ''),
     safeGit(folder, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { maxBuffer: 16 * 1024 * 1024 }).catch(() => ''),
   ])
-  const all = [...new Set(out.split('\0').filter(Boolean))].filter((path) => !path.split('/').includes('.git') && existsSync(join(folder.dir, path)))
+  // Os versionados que sumiram da pasta saem pelo próprio git (`--deleted`). ⚡ Um `existsSync` por arquivo, num repositório
+  // grande, eram centenas de milhares de leituras com o servidor parado; ele fica só para quando o git não responde.
+  const deleted = deletedOut === undefined ? undefined : new Set(deletedOut.split('\0').filter(Boolean))
+  const present = (path: string) => (deleted ? !deleted.has(path) : existsSync(join(folder.dir, path)))
+  const all = [...new Set(out.split('\0').filter(Boolean))].filter((path) => !path.split('/').includes('.git') && present(path))
   all.sort((a, b) => a.localeCompare(b))
   const ignored = ignoredOut
     .split('\0')

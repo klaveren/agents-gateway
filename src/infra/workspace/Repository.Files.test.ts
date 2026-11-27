@@ -54,6 +54,16 @@ describe('Repository.Files — o editor de arquivos da conversa', () => {
     assert.equal(status['.env'], 'U')
   })
 
+  it('o versionado que sumiu da pasta sai da lista (pelo `git ls-files --deleted`)', async () => {
+    writeFileSync(join(root, 'src', 'gone.ts'), 'x\n')
+    execFileSync('git', ['add', 'src/gone.ts'], { cwd: root })
+    rmSync(join(root, 'src', 'gone.ts'))
+    const { files } = await listRepositoryFiles(folder)
+    assert.ok(!files.includes('src/gone.ts'))
+    assert.ok(files.includes('src/a.ts'))
+    execFileSync('git', ['rm', '-q', '--cached', 'src/gone.ts'], { cwd: root })
+  })
+
   it('lê o porcelain: modificado, adicionado, novo, renomeado', () => {
     assert.deepEqual(parseStatus(' M a.ts\0A  b.ts\0?? c.ts\0R  novo.ts\0velho.ts\0 D d.ts\0'), { 'a.ts': 'M', 'b.ts': 'A', 'c.ts': 'U', 'novo.ts': 'R', 'd.ts': 'D' })
   })
