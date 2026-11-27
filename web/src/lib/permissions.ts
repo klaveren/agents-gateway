@@ -19,7 +19,7 @@ export const PERMISSION_SECTIONS: ReadonlyArray<{ category: TPermissionCategory;
   {
     category: 'repository',
     label: 'Repositórios',
-    hint: 'Os repositórios do projeto já são liberados: use Negar para tirar o agente de um deles, pelo nome.',
+    hint: 'Liberar o repositório dá ao agente leitura e escrita da pasta dele, menos segredos, .git/config e hooks (para hooks, libere a regra exata). Os repositórios do projeto já vêm liberados: use Negar para tirar o agente de um deles, pelo nome.',
     example: 'logiccus',
   },
   {

@@ -1,4 +1,4 @@
-import { isAbsolute, join, relative } from 'node:path'
+import { basename, isAbsolute, join, relative } from 'node:path'
 import { siblingDir, siblingPattern } from './SiblingRepository.Policy'
 import { decide, globToRegex, IPermissionLayers, IPermissionRule, ISystemRule, opened, pathMatches, SYSTEM_RULES } from './Permission.Policy'
 
@@ -135,6 +135,47 @@ export function projectAnchored(pattern: string, root: string, projectRoot: stri
   return join(root, parts.slice(steps.length).join('/'))
 }
 
+/**
+ * ⚖️ O REPOSITÓRIO LIBERADO DÁ A PASTA DE TRABALHO: quando o agente pode entrar no repositório (a regra `repository` não o
+ * nega; sem regra, vale o padrão aberto), a pasta dele se lê e se grava. Nada se o repositório é negado.
+ * - `work`: a pasta da conversa quando ela é um repositório (ou uma worktree dele), ou cada repositório liberado dentro da
+ *   raiz quando a conversa é a do projeto.
+ * - `siblings`: os outros repositórios do projeto que o agente pode entrar (só leitura; a escrita nunca).
+ * O que o sistema, o `.git/config`, os hooks e uma negação de leitura/escrita fecham continua fechado: as listas de negação
+ * do cerco seguem valendo por cima destas pastas.
+ */
+export function repositoryFolders(layers: IPermissionLayers, base: Pick<ICercoBase, 'root' | 'repositories' | 'system'>): { work: string[]; siblings: string[] } {
+  if (layers.machine) return { work: [], siblings: [] }
+  const repositories = base.repositories ?? []
+  const may = (dir: string) => decide({ category: 'repository', value: basename(dir) }, layers, base.system).allowed
+  const work: string[] = []
+  const siblings: string[] = []
+  for (const dir of repositories) {
+    if (!may(dir)) continue
+    if (contains(dir, base.root)) work.push(base.root)
+    else if (contains(base.root, dir)) work.push(dir)
+    else siblings.push(dir)
+  }
+  return { work: [...new Set(work)], siblings }
+}
+
+/**
+ * ⚠️ No Linux o cerco esconde a pasta de trabalho sob um tmpfs quando a leitura dela está fechada: o que se grava nela (sem
+ * regra de escrita) SOME ao fim do comando, sem erro (o runtime não monta esse tmpfs somente leitura). O aviso diz isso e qual
+ * regra libera. Só quando a pasta fica escondida e sem escrita, e o comando parece gravar.
+ */
+export function hiddenWriteNote(plan: ICercoPlan, root: string, command: string): string {
+  const hidden = plan.readDeny.includes(root) && !plan.readAllow.includes(root)
+  const writable = plan.writeAllow.some((path) => path === root || path === `${root}/**` || path === `${root}/*`)
+  if (
+    !hidden ||
+    writable ||
+    !/(^|[\s;&|])(git\s+(checkout|clone|pull|merge|reset|restore|apply|stash|commit|add|rm|mv)|touch|mkdir|cp|mv|rm|tee|sed\s+-i|npm\s+(i|install|ci)|yarn|pnpm)\b|>/.test(command)
+  )
+    return ''
+  return '⚠️ Esta pasta de trabalho não está liberada para leitura nem escrita: o que o comando gravar aqui some ao terminar (sem erro). Libere o repositório (regra `repository` sem Negar) ou peça a regra `write <pasta>/**` (e `read`) ao admin.\n'
+}
+
 /** A negação `deny` sai se uma liberação da camada de cima mora dentro dela (o agente reabriu um pedaço). */
 function reopened(deny: string, allows: readonly IPermissionRule[]): boolean {
   const base = deny.replace(/\/\*\*$/, '')
@@ -144,6 +185,7 @@ function reopened(deny: string, allows: readonly IPermissionRule[]): boolean {
 export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPlan {
   const pick = (rules: readonly IPermissionRule[] | undefined, category: 'read' | 'write', decision: 'allow' | 'deny') =>
     (rules ?? []).filter((rule) => rule.category === category && rule.decision === decision)
+  const opens = repositoryFolders(layers, base)
   const lists = (category: 'read' | 'write') => {
     const agentAllow = pick(layers.agent, category, 'allow')
     const projectAllow = pick(layers.project, category, 'allow')
@@ -163,7 +205,9 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
     const projectRoot = base.projectRoot
     const sibling = (pattern: string) => (projectRoot ? siblingPattern(pattern, projectRoot, base.root) : undefined)
     const siblingDirs =
-      category === 'read' && projectRoot ? [...new Set([...agentAllow, ...projectAllow].flatMap((rule) => siblingDir(rule.pattern, projectRoot, base.root) ?? []))] : []
+      category === 'read'
+        ? [...new Set([...(projectRoot ? [...agentAllow, ...projectAllow].flatMap((rule) => siblingDir(rule.pattern, projectRoot, base.root) ?? []) : []), ...opens.siblings])]
+        : []
     const allowPaths = paths([...agentAllow, ...projectAllow], false)
     return {
       allow:
@@ -200,6 +244,8 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
         ...base.alwaysRead,
         ...git,
         ...read.allow,
+        ...opens.work,
+        ...opens.siblings,
         // ⛔ A entrada que uma negação pega não se reabre (o `.env` da raiz: no Linux o runtime só casa `**/.env` abaixo da pasta).
         ...(base.checkout?.entries ?? []).filter((entry) => !checkoutDeny.some((pattern) => pathMatches(pattern, entry))),
         ...(base.readOnly ?? []),
@@ -207,13 +253,15 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
         ...sparedTemplates(layers, base),
       ]),
     ],
-    writeAllow: [...new Set([...base.scratch, ...git, ...write.allow, ...own(base, 'write')])],
+    writeAllow: [...new Set([...base.scratch, ...git, ...write.allow, ...opens.work, ...own(base, 'write')])],
     writeDeny: [
       ...new Set([
         ...base.alwaysDeny.filter((path) => !contains(path, base.root)),
         ...write.deny,
         ...(base.gitCommonDir ? gitWriteDenies(base.gitCommonDir, base.worktreeGitDir ? { dir: base.root, gitDir: base.worktreeGitDir } : undefined) : []),
         ...inner,
+        // O `.git` do repositório da conversa, quando o servidor não o informou (ver `gitCommonDir`): config e hooks seguem fechados.
+        ...(base.gitCommonDir ? [] : repositories.filter((dir) => contains(dir, base.root) && dir === base.root).flatMap((dir) => gitWriteDenies(join(dir, '.git')))),
         ...siblings,
         ...(base.readOnly ?? []),
       ]),

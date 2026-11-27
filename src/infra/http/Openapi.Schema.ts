@@ -1289,7 +1289,7 @@ const permissionRuleSchema = {
     pattern: {
       type: 'string',
       description:
-        'terminal: words (`git push *`); read/write: glob on the canonical path (`apps/**`, `*.env`); network: host[:port] (`*.x.com`); mcp: `server/tool`; skill/delegate: id glob',
+        'terminal: words (`git push *`); read/write: glob on the canonical path (`apps/**`, `*.env`); network: host[:port] (`*.x.com`); mcp: `server/tool`; skill/delegate: id glob; account: account id (also opens the network to that account host); repository: repository name (allowed unless denied; allowing it gives read and write of its working folder, except secrets and .git/config and hooks)',
     },
     decision: { type: 'string', enum: ['allow', 'deny'] },
     note: { type: 'string' },
@@ -6967,7 +6967,7 @@ export const OPENAPI_DOCUMENT = {
                   repository: {
                     type: 'string',
                     description:
-                      'A repository of the project (`<project>/repositories/<name>`). The agent works there: cwd, file tools and sandbox root. Needs the agent permission `repository <name>`. Fixed for the conversation.',
+                      'A repository of the project (`<project>/repositories/<name>`). The agent works there: cwd, file tools and sandbox root. Needs the agent permission `repository <name>` (open unless denied), which also gives read and write of the working folder, except secrets, `.git/config` and `.git/hooks`. Fixed for the conversation.',
                   },
                   worktree: { type: 'string', description: 'A git worktree of that repository, by folder name or branch. Requires `repository`. The gateway does not create it.' },
                   title: {
